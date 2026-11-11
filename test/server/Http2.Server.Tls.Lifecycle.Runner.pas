@@ -408,7 +408,7 @@ begin
     // A readable socket can hold payload bytes or EOF. Peek so an open
     // session keeps its TLS bytes for the later protocol assertion.
     {$IFDEF UNIX}
-    N := fpRecv(ASocket.Socket, @B, SizeOf(B), MSG_PEEK or MSG_DONTWAIT);
+    N := fpRecv(ASocket.Sock.Socket, @B, SizeOf(B), MSG_PEEK or MSG_DONTWAIT);
     if N = 0 then
       Result := True
     else if N > 0 then
