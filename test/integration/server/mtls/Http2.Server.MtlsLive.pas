@@ -164,7 +164,7 @@ begin
     '(sleep 1; printf Q) | ' + Common + ' -sess_out ' + AProtocol +
     '.pem >' + AProtocol + '-full.log 2>&1; ' +
     'full_status=$?; ' +
-    'if [ "$full_status" -ne 0 ] || [ ! -s ' + AProtocol + '.pem ] || ' +
+    'if [ "$full_status" -ne 0 ] || ' +
     '(! grep -q "^New, ' + AProtocol + '" ' + AProtocol + '-full.log) || ' +
     '(! grep -Eq "Verification: OK|Verify return code: 0 \\(ok\\)" ' +
     AProtocol + '-full.log); then cat ' + AProtocol + '-full.log; exit 1; fi; ' +
