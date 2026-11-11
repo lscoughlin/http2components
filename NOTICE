@@ -16,8 +16,8 @@ The client and server NOTICE files are preserved as
 LICENSES/NOTICE-http2client.txt and LICENSES/NOTICE-http2server.txt. Their
 attribution and third-party statements apply to the source project named in
 each file. File-level provenance is recorded in
-LICENSES/source-provenance.tsv. The working inventory and target mapping are
-also recorded in plan/merge-0.30.0-inventory.tsv.
+LICENSES/source-provenance.tsv. The unit migration map is recorded in
+doc/migration-0.30.0.md.
 
 The repository owner confirmed ownership of the project copyright and
 authorized this dual-license choice for project-owned code and documentation.
