@@ -33,7 +33,8 @@ uses
   Http2.Server.Errors, Http2.Common.Frames, Http2.Common.Hpack,
   Http2.Common.Headers, Http2.Server.Config, Http2.Server.Config.Limits,
   Http2.Server.Seam, Http2.Server.Stream, Http2.Server.Connection,
-  Http2.Server.Async, Http2.Server.Async.Options, Http2.Server.Async.Sweep;
+  Http2.Server.Async, Http2.Server.Async.Options, Http2.Server.Async.Sweep,
+  Http2.Server.Test.Socket;
 
 type
   /// the pure decisions of WriteStalled, without sockets
@@ -521,18 +522,21 @@ begin
 end;
 
 function TStallClient.IsClosed: Boolean;
-var
-  Pending: TCrtSocketPending;
 begin
-  Pending := FSock.SockReceivePending(100);
-  Result := Pending in [cspSocketError, cspSocketClosed,
-    cspDataAvailableOnClosedSocket];
+  Result := TestSocketClosed(FSock, True);
 end;
 
 procedure TStallClient.Drain;
+var
+  Pending: TCrtSocketPending;
+  Chunk: RawByteString;
 begin
-  while FSock.SockReceivePending(0) = cspDataAvailable do
-    FSock.SockReceiveString;
+  repeat
+    Pending := FSock.SockReceivePending(0);
+    if not (Pending in [cspDataAvailable, cspDataAvailableOnClosedSocket]) then
+      Exit;
+    Chunk := FSock.SockReceiveString;
+  until Chunk = '';
 end;
 
 function TStallClient.DrainAndWaitClosed(const ATimeoutMs: Integer): Boolean;

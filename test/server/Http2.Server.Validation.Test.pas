@@ -30,7 +30,7 @@ uses
   mormot.net.sock,
   Http2.Server,
   Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Config,
-  Http2.Common.Frames, Http2.Common.Headers;
+  Http2.Common.Frames, Http2.Common.Headers, Http2.Server.Test.Socket;
 
 type
   /// a handler that answers a generated body, an echo, or a text answer
@@ -703,17 +703,14 @@ end;
 function TRawClient.PeerClosed(const ATimeoutMs: Integer): Boolean;
 var
   Deadline: QWord;
-  Pending: TCrtSocketPending;
 begin
   Result := False;
   Deadline := GetTickCount64 + QWord(ATimeoutMs);
   while GetTickCount64 < Deadline do
   begin
-    Pending := FSock.SockReceivePending(100);
-    if Pending in [cspSocketError, cspSocketClosed,
-       cspDataAvailableOnClosedSocket] then
+    if TestSocketClosed(FSock, True) then
       Exit(True);
-    Sleep(20);
+    Sleep(100);
   end;
 end;
 
