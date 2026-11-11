@@ -79,6 +79,18 @@ type
   /// the lifecycle state exposed for connection-pool eligibility
   TConnectionState = (csOpening, csOpen, csGoAway, csClosed);
 
+  /// one worker thread per connection. Close stops and joins the worker.
+  TConnectionThread = class(TThread)
+  private
+    FWorker: Pointer;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(AConn: TConnection);
+    destructor Destroy; override;
+    function WorkerTerminated: Boolean;
+  end;
+
   /// the seam S08's stream lease registers with, so a dying connection can
   /// terminate every in-flight stream exactly once
   IConnectionStream = interface
@@ -105,7 +117,7 @@ type
     FSocket: IHttp2Socket;
     FOutbound: IBlockingQueue<TFrame>;
     FInbound: IBlockingQueue<TFrame>;
-    FThread: TThread;
+    FThread: TConnectionThread;
     FHeaderDecoder: THpackCodec; // weak; owner outlives the connection thread
     FHeaderEncoder: THpackCodec; // weak; owner outlives the connection thread
     FHeaderEncoderLock: TCriticalSection; // weak; shared with stream encoding
@@ -147,7 +159,6 @@ type
     FSendCreditWaiters: Integer;
     function GetState: TConnectionState;
     function GetPeerSettings: TConnectionSettings;
-    procedure SetState(const AValue: TConnectionState);
     function GetObserver: IHttp2Observer;
     procedure SetObserver(const AValue: IHttp2Observer);
     procedure SetHeaderDecoder(const AValue: THpackCodec);
@@ -157,22 +168,15 @@ type
     /// account for received DATA and return window credit to the peer when
     /// enough has accrued (RFC 7540 section 6.9). Called for every inbound
     /// DATA frame, stream-scoped or not.
-    procedure TrackReceivedData(const AStreamId: LongWord;
-      const ALength: LongWord);
     /// emit any still-pending WINDOW_UPDATEs (e.g. when a stream ends)
     procedure FlushStreamCredit(const AStreamId: LongWord);
     /// apply an inbound WINDOW_UPDATE to SEND-side credit (RFC 9113 section
     /// 6.9) and wake any sender starved on this window
-    procedure ApplyWindowUpdate(const AStreamId, AIncrement: LongWord);
   public
-    /// access used by the connection worker while it owns the socket loop
-    procedure WorkerSetState(const AValue: TConnectionState);
-    procedure WorkerMarkGoAway(const ALastStreamId: LongWord);
-    procedure WorkerApplyWindowUpdate(const AStreamId, AIncrement: LongWord);
-    procedure WorkerTrackReceivedData(const AStreamId, ALength: LongWord);
-    function WorkerDispatchStreamFrame(const AFrame: TFrame): Boolean;
-    procedure WorkerFailWith(const AMessage: string;
-      const ACode: THttp2ErrorCode; const AClientAuthAlert: string = '');
+    /// internal state operations used by the connection worker
+    procedure SetState(const AValue: TConnectionState);
+    procedure TrackReceivedData(const AStreamId, ALength: LongWord);
+    procedure ApplyWindowUpdate(const AStreamId, AIncrement: LongWord);
     /// release every sender parked on FSendCreditEvent; each re-checks its own
     /// window and its AAbort flag, so a wake that is not for it is harmless
     procedure WakeSendCredit;
@@ -259,7 +263,7 @@ type
     property LocalSettings: TConnectionSettings read FLocalSettings;
     property WorkerHeaderStream: LongWord read FHeaderStream;
     property LastActivity: QWord read FLastActivity;
-    property Thread: TThread read FThread;
+    property Thread: TConnectionThread read FThread;
     property Outbound: IBlockingQueue<TFrame> read FOutbound;
     property Inbound: IBlockingQueue<TFrame> read FInbound;
     property Socket: IHttp2Socket read FSocket;
@@ -390,45 +394,40 @@ begin
   inherited Destroy;
 end;
 
-procedure TConnection.WorkerSetState(const AValue: TConnectionState);
+constructor TConnectionThread.Create(AConn: TConnection);
 begin
-  SetState(AValue);
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FWorker := Http2.Client.Connection.Thread.TConnectionWorker.Create(Self,
+    AConn);
 end;
 
-procedure TConnection.WorkerMarkGoAway(const ALastStreamId: LongWord);
+destructor TConnectionThread.Destroy;
 begin
-  MarkGoAway(ALastStreamId);
+  if not Finished then
+  begin
+    Terminate;
+    WaitFor;
+  end;
+  Http2.Client.Connection.Thread.TConnectionWorker(FWorker).Free;
+  inherited Destroy;
 end;
 
-procedure TConnection.WorkerApplyWindowUpdate(const AStreamId,
-  AIncrement: LongWord);
+procedure TConnectionThread.Execute;
 begin
-  ApplyWindowUpdate(AStreamId, AIncrement);
+  Http2.Client.Connection.Thread.TConnectionWorker(FWorker).Run;
 end;
 
-procedure TConnection.WorkerTrackReceivedData(const AStreamId,
-  ALength: LongWord);
+function TConnectionThread.WorkerTerminated: Boolean;
 begin
-  TrackReceivedData(AStreamId, ALength);
-end;
-
-function TConnection.WorkerDispatchStreamFrame(
-  const AFrame: TFrame): Boolean;
-begin
-  Result := DispatchStreamFrame(AFrame);
-end;
-
-procedure TConnection.WorkerFailWith(const AMessage: string;
-  const ACode: THttp2ErrorCode; const AClientAuthAlert: string);
-begin
-  FailWith(AMessage, ACode, AClientAuthAlert);
+  Result := Terminated;
 end;
 
 procedure TConnection.Start;
 begin
   if FThread = nil then
   begin
-    FThread := Http2.Client.Connection.Thread.TConnectionThread.Create(Self);
+    FThread := TConnectionThread.Create(Self);
     FThread.Start;
   end;
 end;

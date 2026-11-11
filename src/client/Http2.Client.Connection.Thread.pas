@@ -24,8 +24,9 @@ type
   /// one background thread per connection; it is the sole writer to the
   /// socket. It holds ONLY a weak (raw Pointer) reference to TConnection so
   /// the TConnection <-> thread pair cannot form an ARC cycle.
-  TConnectionThread = class(TThread)
+  TConnectionWorker = class
   private
+    FThread: TConnectionThread;
     FConn: TConnection;                // weak class pointer; Close joins worker
     FOutbound: IBlockingQueue<TFrame>;
     FInbound: IBlockingQueue<TFrame>;
@@ -37,8 +38,10 @@ type
     FPendingPing: Boolean;
     FPendingPingPayload: TBytes;
     FPingSentAt: QWord;
-  protected
-    procedure Execute; override;
+  public
+    constructor Create(AThread: TConnectionThread; AConn: TConnection);
+    destructor Destroy; override;
+    procedure Run;
     procedure DoPreface;
     procedure ApplyPeerSettings(const ASettings: TConnectionSettings);
     procedure RouteInbound(const AFrame: TFrame);
@@ -49,8 +52,6 @@ type
     procedure HandlePingAck(const APayload: TBytes);
     procedure Fail(const AMessage: string; const ACode: THttp2ErrorCode;
       const AClientAuthAlert: string = '');
-  public
-    constructor Create(AConn: TConnection);
   end;
 
 
@@ -76,6 +77,12 @@ type
     function Seek(const AOffset: Int64; AOrigin: TSeekOrigin): Int64;
       override;
   end;
+
+destructor TConnectionWorker.Destroy;
+begin
+  FSockStream.Free;
+  inherited Destroy;
+end;
 
 constructor TSocketStream.Create(const ASocket: IHttp2Socket);
 begin
@@ -127,10 +134,10 @@ begin
   raise EStreamError.Create('TSocketStream is not seekable');
 end;
 
-constructor TConnectionThread.Create(AConn: TConnection);
+constructor TConnectionWorker.Create(AThread: TConnectionThread; AConn: TConnection);
 begin
-  inherited Create(True);           // start suspended; caller calls Start
-  FreeOnTerminate := False;
+  inherited Create;
+  FThread := AThread;
   FConn := AConn;                   // weak class pointer; Close joins the worker
   FSocket := AConn.Socket;
   FOutbound := AConn.Outbound;
@@ -151,21 +158,21 @@ begin
     Result := '';
 end;
 
-procedure TConnectionThread.Execute;
+procedure TConnectionWorker.Run;
 var
   Frame: TFrame;
 begin
   try
     DoPreface;
-    FConn.WorkerSetState(csOpen);
+    FConn.SetState(csOpen);
     FConn.Notifications.EmitConnectionOpen;
-    while not Terminated do
+    while not FThread.WorkerTerminated do
     begin
       DrainOutbound;
-      if Terminated then
+      if FThread.WorkerTerminated then
         Break;
       CheckPingKeepAlive;
-      if Terminated then
+      if FThread.WorkerTerminated then
         Break;
       try
         Frame := ReadFrame(FSockStream, FPeerMaxFrameSize);
@@ -199,7 +206,7 @@ begin
   end;
 end;
 
-procedure TConnectionThread.DoPreface;
+procedure TConnectionWorker.DoPreface;
 var
   Preface: TBytes;
 begin
@@ -209,20 +216,20 @@ begin
   WriteTracked(BuildSettingsFrame(FLocalSettings));
 end;
 
-procedure TConnectionThread.WriteTracked(const AFrame: TFrame);
+procedure TConnectionWorker.WriteTracked(const AFrame: TFrame);
 begin
   WriteFrame(FSockStream, AFrame);
   FConn.Notifications.EmitFrameOut(AFrame);
 end;
 
-procedure TConnectionThread.ApplyPeerSettings(
+procedure TConnectionWorker.ApplyPeerSettings(
   const ASettings: TConnectionSettings);
 begin
   FConn.ApplyPeerSettingsValue(ASettings);
   FPeerMaxFrameSize := ASettings.MaxFrameSize;
 end;
 
-procedure TConnectionThread.RouteInbound(const AFrame: TFrame);
+procedure TConnectionWorker.RouteInbound(const AFrame: TFrame);
 var
   LastStreamId: LongWord;
   Code: THttp2ErrorCode;
@@ -253,7 +260,7 @@ begin
     ftGoAway:
       begin
         ParseGoAway(AFrame, LastStreamId, Code, Debug);
-        FConn.WorkerMarkGoAway(LastStreamId);
+        FConn.MarkGoAway(LastStreamId);
       end;
     ftPushPromise:
       // We advertise SETTINGS_ENABLE_PUSH = 0 (see TConnectionSettings.Defaults),
@@ -274,7 +281,7 @@ begin
       // is what lets a sender starved on the peer's window resume
       // (RFC 9113 section 6.9)
       Increment := ParseWindowUpdate(AFrame);
-      FConn.WorkerApplyWindowUpdate(AFrame.Header.StreamId, Increment);
+      FConn.ApplyWindowUpdate(AFrame.Header.StreamId, Increment);
       FConn.Notifications.EmitWindowUpdate(AFrame.Header.StreamId, Increment);
     end;
     if not IsKnownFrameType(AFrame.Header.FrameType) then
@@ -287,7 +294,7 @@ begin
     // must happen for connection-level DATA (stream 0) as well as the
     // stream-scoped case, else a large response stalls on the peer's window
     if AFrame.Header.FrameType = ftData then
-      FConn.WorkerTrackReceivedData(AFrame.Header.StreamId,
+      FConn.TrackReceivedData(AFrame.Header.StreamId,
         AFrame.DataLength);
     // route stream-scoped frames to their owning lease; anything unclaimed
     // (no lease registered yet) stays on the shared inbound queue.
@@ -301,14 +308,14 @@ begin
     if (AFrame.Header.StreamId <> 0) and
        (AFrame.Header.FrameType <> ftWindowUpdate) then
     begin
-      if not FConn.WorkerDispatchStreamFrame(AFrame) then
+      if not FConn.DispatchStreamFrame(AFrame) then
         FInbound.Push(AFrame);
     end;
   end;
   end;
 end;
 
-procedure TConnectionThread.DrainOutbound;
+procedure TConnectionWorker.DrainOutbound;
 var
   Frame: TFrame;
 begin
@@ -319,7 +326,7 @@ begin
   end;
 end;
 
-procedure TConnectionThread.CheckPingKeepAlive;
+procedure TConnectionWorker.CheckPingKeepAlive;
 var
   Now: QWord;
   Interval, Timeout: Integer;
@@ -334,7 +341,7 @@ begin
     if (Timeout > 0) and (Now - FPingSentAt >= QWord(Timeout)) then
     begin
       Fail('PING acknowledgement timed out', ecNoError);
-      Terminate;
+      FThread.Terminate;
     end;
     Exit;
   end;
@@ -349,7 +356,7 @@ begin
   end;
 end;
 
-procedure TConnectionThread.HandlePingAck(const APayload: TBytes);
+procedure TConnectionWorker.HandlePingAck(const APayload: TBytes);
 begin
   if FPendingPing and (Length(APayload) = 8) and
      (CompareMem(@APayload[0], @FPendingPingPayload[0], 8)) then
@@ -359,11 +366,11 @@ begin
   end;
 end;
 
-procedure TConnectionThread.Fail(const AMessage: string;
+procedure TConnectionWorker.Fail(const AMessage: string;
   const ACode: THttp2ErrorCode; const AClientAuthAlert: string);
 begin
   if FConn <> nil then
-    FConn.WorkerFailWith(AMessage, ACode, AClientAuthAlert);
+    FConn.FailWith(AMessage, ACode, AClientAuthAlert);
 end;
 
 end.
