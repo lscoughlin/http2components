@@ -29,6 +29,12 @@ flowchart TD
   Server --> Common
 ```
 
+The library source directories are `src/common`, `src/client`, and
+`src/server`. Each directory contains the units with its matching namespace.
+No library unit is directly under `src/`. A client build uses the common
+and client search paths; a server build uses the common and server search
+paths. A combined build uses all three directories.
+
 ## Shared protocol ownership
 
 `Http2.Common.Errors` owns the common exception hierarchy and error codes.

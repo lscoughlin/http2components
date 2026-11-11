@@ -2,19 +2,12 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: http2, client
+keywords: http2, client, proxy
 notes:
-  - Imported from http2client source revision 709336f542cbedf9ce1ab67d83bddcfd560eb1c0.
-  - Unit references use the common and client namespaces.
+  - This unit holds client proxy value and selector contracts.
 ---
 }
-/// Proxy routing: proxy values, URL parsing, the no-proxy list, the proxy
-/// environment variables, and the built-in selectors
-// - this unit is part of the http2client project (see doc/design/proxy.md).
-// - it depends on the RTL and Http2.Client.Errors only.  mORMot2 (TUri, TIp4SubNet,
-//   NetIsIP4/6, IsLocalHost, TCrtSocket.DoOpenTunnel) is the design reference
-//   for the parsers below, not a dependency.
-unit Http2.Client.Proxy;
+unit Http2.Client.Proxy.Match;
 
 {$mode delphi}{$H+}
 {$modeswitch advancedrecords}
@@ -23,76 +16,9 @@ unit Http2.Client.Proxy;
 interface
 
 uses
-  SysUtils, Classes, Http2.Client.Errors;
-
-const
-  cProxyDefaultHttpPort   = 80;
-  cProxyDefaultHttpsPort  = 443;
-  cProxyDefaultSocksPort  = 1080;
-  /// RFC 1929: user name and password are each at most 255 octets
-  cSocksMaxCredentialLen  = 255;
+  SysUtils, Classes, Http2.Client.Errors, Http2.Client.Proxy.Types;
 
 type
-  /// pkHttp: HTTP CONNECT over TCP; pkHttps: HTTP CONNECT over TLS;
-  /// pkSocks5: SOCKS5 CONNECT over TCP
-  TProxyKind = (pkHttp, pkHttps, pkSocks5);
-
-  /// one proxy endpoint.  Credentials are optional.
-  IProxy = interface
-    ['{7B1D5E02-9F6A-4C57-8A31-5D2E0C4A9B11}']
-    function GetHost: string;
-    function GetPort: Word;
-    function GetKind: TProxyKind;
-    function GetUserName: string;
-    function GetPassword: string;
-    property Host: string read GetHost;
-    property Port: Word read GetPort;
-    /// how the proxy is spoken to; also decides whether the leg to it is TLS
-    property Kind: TProxyKind read GetKind;
-    property UserName: string read GetUserName;
-    property Password: string read GetPassword;
-  end;
-
-  /// chooses the route for one request URI
-  IProxySelector = interface
-    ['{7B1D5E02-9F6A-4C57-8A31-5D2E0C4A9B12}']
-    /// the proxy to use for AUri, or nil for a direct connection
-    function SelectProxy(const AUri: string): IProxy;
-  end;
-
-  TProxy = class(TInterfacedObject, IProxy)
-  private
-    FHost: string;
-    FPort: Word;
-    FKind: TProxyKind;
-    FUserName: string;
-    FPassword: string;
-  public
-    constructor Create(const AHost: string; const APort: Word); overload;
-    constructor Create(const AHost: string; const APort: Word;
-      const AUserName, APassword: string); overload;
-    constructor Create(const AKind: TProxyKind; const AHost: string;
-      const APort: Word); overload;
-    constructor Create(const AKind: TProxyKind; const AHost: string;
-      const APort: Word; const AUserName, APassword: string); overload;
-    function GetHost: string;
-    function GetPort: Word;
-    function GetKind: TProxyKind;
-    function GetUserName: string;
-    function GetPassword: string;
-  end;
-
-  /// the proxy variables of the process environment, captured once
-  TProxyEnvironment = record
-    HttpProxy: string;
-    HttpsProxy: string;
-    AllProxy: string;
-    NoProxy: string;
-  end;
-
-  /// reads one environment variable by exact name ('' when unset)
-  TEnvLookup = function(const AName: string): string;
-
   /// the no-proxy list (doc/design/proxy.md "The no-proxy list")
   TNoProxyList = class
   private
@@ -117,6 +43,7 @@ type
     /// does AHost (lowercase, no brackets) on APort match any entry?
     function Matches(const AHost: string; const APort: Word): Boolean;
   end;
+
 
 /// parse '[scheme://][user[:password]@]host[:port][/...]' (doc/design/proxy.md
 /// "Proxy URL values").  Raises EHttpProxyConfigError; messages never contain
@@ -147,19 +74,6 @@ function IsLoopbackHost(const AHost: string): Boolean;
 
 /// base64 of 'user:password' for Proxy-Authorization: Basic
 function ProxyBasicCredentials(const AUserName, APassword: string): string;
-
-/// resolve the proxy variables through ALookup.  Lowercase names win over
-/// uppercase; uppercase HTTP_PROXY is ignored; an empty value is unset.
-function ReadProxyEnvironmentUsing(const ALookup: TEnvLookup): TProxyEnvironment;
-/// resolve the proxy variables of the process environment
-function ReadProxyEnvironment: TProxyEnvironment;
-
-/// collapse every proxy source into one selector (doc/design/proxy.md
-/// "Precedence"): ACustom wins outright; else AFixed, then AAllProxyUrl, then
-/// the environment AEnv (when AUseEnv), all filtered by loopback and the
-/// no-proxy list ANoProxy.  Returns nil when no source is configured, i.e. the
-/// route is direct for every request.  Raises EHttpProxyConfigError for an
-/// unusable proxy value.
 function BuildProxySelector(const ACustom: IProxySelector;
   const AFixed: IProxy; const AAllProxyUrl: string; const AUseEnv: Boolean;
   const AEnv: TProxyEnvironment; const ANoProxy: string): IProxySelector;
@@ -225,61 +139,6 @@ begin
       Exit(False);
   APort := StrToInt(S);
   Result := (APort >= 1) and (APort <= 65535);
-end;
-
-{ ---- TProxy ---- }
-
-constructor TProxy.Create(const AHost: string; const APort: Word);
-begin
-  Create(pkHttp, AHost, APort, '', '');
-end;
-
-constructor TProxy.Create(const AHost: string; const APort: Word;
-  const AUserName, APassword: string);
-begin
-  Create(pkHttp, AHost, APort, AUserName, APassword);
-end;
-
-constructor TProxy.Create(const AKind: TProxyKind; const AHost: string;
-  const APort: Word);
-begin
-  Create(AKind, AHost, APort, '', '');
-end;
-
-constructor TProxy.Create(const AKind: TProxyKind; const AHost: string;
-  const APort: Word; const AUserName, APassword: string);
-begin
-  inherited Create;
-  FKind := AKind;
-  FHost := AHost;
-  FPort := APort;
-  FUserName := AUserName;
-  FPassword := APassword;
-end;
-
-function TProxy.GetHost: string;
-begin
-  Result := FHost;
-end;
-
-function TProxy.GetPort: Word;
-begin
-  Result := FPort;
-end;
-
-function TProxy.GetKind: TProxyKind;
-begin
-  Result := FKind;
-end;
-
-function TProxy.GetUserName: string;
-begin
-  Result := FUserName;
-end;
-
-function TProxy.GetPassword: string;
-begin
-  Result := FPassword;
 end;
 
 { ---- literals ---- }
@@ -960,35 +819,6 @@ begin
         end;
     end;
   end;
-end;
-
-{ ---- environment ---- }
-
-function Pick(const ALookup: TEnvLookup; const ALower, AUpper: string): string;
-begin
-  Result := ALookup(ALower);
-  if (Result = '') and (AUpper <> '') then
-    Result := ALookup(AUpper);
-end;
-
-function ReadProxyEnvironmentUsing(const ALookup: TEnvLookup): TProxyEnvironment;
-begin
-  // uppercase HTTP_PROXY is never read: in a CGI process the Proxy: request
-  // header surfaces under that name (httpoxy)
-  Result.HttpProxy := Pick(ALookup, 'http_proxy', '');
-  Result.HttpsProxy := Pick(ALookup, 'https_proxy', 'HTTPS_PROXY');
-  Result.AllProxy := Pick(ALookup, 'all_proxy', 'ALL_PROXY');
-  Result.NoProxy := Pick(ALookup, 'no_proxy', 'NO_PROXY');
-end;
-
-function ProcessEnvLookup(const AName: string): string;
-begin
-  Result := GetEnvironmentVariable(AName);
-end;
-
-function ReadProxyEnvironment: TProxyEnvironment;
-begin
-  Result := ReadProxyEnvironmentUsing(ProcessEnvLookup);
 end;
 
 { ---- built-in selector ---- }

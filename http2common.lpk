@@ -11,9 +11,9 @@
     <CompilerOptions>
       <Version Value="11" />
       <SearchPaths>
-        <IncludeFiles Value="src" />
+        <IncludeFiles Value="src/common;src/client;src/server" />
         <UnitOutputDirectory Value="bin/$(TargetCPU)-$(TargetOS)/default/package-http2common/units" />
-        <OtherUnitFiles Value="src" />
+        <OtherUnitFiles Value="src/common" />
       </SearchPaths>
       <Parsing>
         <SyntaxOptions>
@@ -24,27 +24,27 @@
     </CompilerOptions>
     <Files Count="6">
       <Item1>
-        <Filename Value="src/Http2.Common.Errors.pas" />
+        <Filename Value="src/common/Http2.Common.Errors.pas" />
         <UnitName Value="Http2.Common.Errors" />
       </Item1>
       <Item2>
-        <Filename Value="src/Http2.Common.FlowControl.pas" />
+        <Filename Value="src/common/Http2.Common.FlowControl.pas" />
         <UnitName Value="Http2.Common.FlowControl" />
       </Item2>
       <Item3>
-        <Filename Value="src/Http2.Common.Frames.pas" />
+        <Filename Value="src/common/Http2.Common.Frames.pas" />
         <UnitName Value="Http2.Common.Frames" />
       </Item3>
       <Item4>
-        <Filename Value="src/Http2.Common.Headers.pas" />
+        <Filename Value="src/common/Http2.Common.Headers.pas" />
         <UnitName Value="Http2.Common.Headers" />
       </Item4>
       <Item5>
-        <Filename Value="src/Http2.Common.Hpack.pas" />
+        <Filename Value="src/common/Http2.Common.Hpack.pas" />
         <UnitName Value="Http2.Common.Hpack" />
       </Item5>
       <Item6>
-        <Filename Value="src/Http2.Common.pas" />
+        <Filename Value="src/common/Http2.Common.pas" />
         <UnitName Value="Http2.Common" />
       </Item6>
     </Files>

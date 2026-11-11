@@ -34,9 +34,11 @@ def render(name: str, sources: list[Path]) -> dict[Path, str]:
     opts = ET.SubElement(pkg, 'CompilerOptions')
     value(opts, 'Version', '11')
     paths = ET.SubElement(opts, 'SearchPaths')
-    value(paths, 'IncludeFiles', 'src')
+    value(paths, 'IncludeFiles', 'src/common;src/client;src/server')
     value(paths, 'UnitOutputDirectory', 'bin/$(TargetCPU)-$(TargetOS)/default/package-' + name + '/units')
-    search = ['src']
+    search = ['src/common']
+    if name != 'http2common':
+        search.append('src/' + ('server' if name == 'http2server' else 'client'))
     if name != 'http2common':
         search.extend('third_party/mORMot2/src/' + p for p in ('core', 'lib', 'net', 'crypt'))
     value(paths, 'OtherUnitFiles', ';'.join(search))
@@ -71,7 +73,7 @@ def main():
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
     groups = {name: [] for name in ('http2common', 'http2client', 'http2server', 'http2clientreaders')}
-    for source in sorted((ROOT / 'src').glob('*.pas')):
+    for source in sorted((ROOT / 'src').rglob('*.pas')):
         groups[package_for(source.stem)].append(source)
     stale = []
     for name, sources in groups.items():

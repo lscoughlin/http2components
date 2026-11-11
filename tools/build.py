@@ -11,6 +11,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -81,8 +82,8 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
     role = component.removesuffix("-test")
     if role.startswith("examples-"):
         role = "examples"
-    flags = ["-O2", "-vw", "-Mdelphi", "-Fu./src"]
-    if role in ("client", "server", "readers", "examples", "api"):
+    flags = ["-O2", "-vw", "-Mdelphi", "-Fu./src/common", "-Fu./src/client", "-Fu./src/server"]
+    if role in ("client", "server", "readers", "examples", "api", "integration"):
         verify_mormot()
         mormot = Path(os.environ.get("MORMOT", "third_party/mORMot2/src"))
         for part in ("core", "lib", "net", "crypt"):
@@ -95,7 +96,7 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
         unit_root = fpc_unit_root()
         flags.append(f"-Fu{Path(unit_root) / 'fcl-fpcunit'}")
         flags.extend(("-Fu./test", "-Fu./test/common", "-Fu./test/client",
-                      "-Fu./test/server", "-Fu./test/api", "-Fu./examples", "-Fu./examples/client",
+                      "-Fu./test/server", "-Fu./test/api", "-Fu./test/integration", "-Fu./examples", "-Fu./examples/client",
                       "-Fu./examples/server"))
     flags.extend(shlex.split(os.environ.get("FPCFLAGS", "")))
     return flags
@@ -120,7 +121,7 @@ def compile_file(source: Path, component: str, *, tests: bool = False) -> Path:
     units, programs = output(component)
     args = [compiler(), *base_flags(component, tests=tests),
             f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))]
-    uses_tls = component in ("client", "server", "readers", "examples", "api-test") or component.startswith("examples-")
+    uses_tls = component in ("client", "server", "readers", "examples", "api-test", "integration-test") or component.startswith("examples-")
     run(args, env=open_ssl_env() if uses_tls else None)
     return programs / source.stem
 
@@ -139,10 +140,10 @@ def open_ssl_env() -> dict[str, str]:
 
 def build(component: str) -> None:
     facade = {
-        "common": "src/Http2.Common.pas",
-        "client": "src/Http2.Client.pas",
-        "server": "src/Http2.Server.pas",
-        "readers": "src/Http2.Client.Readers.pas",
+        "common": "src/common/Http2.Common.pas",
+        "client": "src/client/Http2.Client.pas",
+        "server": "src/server/Http2.Server.pas",
+        "readers": "src/client/Http2.Client.Readers.pas",
     }[component]
     compile_file(ROOT / facade, component)
 
@@ -178,8 +179,26 @@ def run_api_tests() -> None:
         run([str(program)], env=open_ssl_env(), timeout=30)
 
 
-def run_suite(binary: Path, needs_openssl: bool = False) -> None:
+def run_integration_tests() -> None:
+    binary = compile_file(ROOT / "test/integration/Http2.Integration.RunTests.pas",
+                          "integration-test", tests=True)
+    generated = ROOT / "bin" / target_name() / profile() / "integration-test"
+    with tempfile.TemporaryDirectory(prefix="pki-", dir=generated) as directory:
+        env = open_ssl_env()
+        if platform.system() == "Darwin":
+            openssl_bin = Path(env.get("OPENSSL_LIBPATH", "")).parent / "bin"
+            if (openssl_bin / "openssl").exists():
+                env["PATH"] = str(openssl_bin) + os.pathsep + env.get("PATH", "")
+        run(["sh", "tools/server/certs/make_mtls_pki.sh", directory], env=env, timeout=30)
+        env["HTTP2_TEST_PKI"] = directory
+        run_suite(binary, True, env)
+
+
+def run_suite(binary: Path, needs_openssl: bool = False,
+              env_override: dict[str, str] | None = None) -> None:
     env = open_ssl_env() if needs_openssl else dict(os.environ)
+    if env_override:
+        env.update(env_override)
     suite = os.environ.get("TEST_SUITE")
     args = [str(binary), *( [f"--suite={suite}"] if suite else ["--all"]),
             "--format=plain", "--sparse"]
@@ -355,7 +374,9 @@ def main() -> int:
         examples()
     elif target == "test:api":
         run_api_tests()
-    elif target in ("test:integration", "validate:fast", "validate"):
+    elif target == "test:integration":
+        run_integration_tests()
+    elif target in ("validate:fast", "validate"):
         incomplete(target, "required integration and API probes are supplied by later stories")
     elif target.startswith("validate:"):
         incomplete(target, "the source validation gates arrive with M09")
