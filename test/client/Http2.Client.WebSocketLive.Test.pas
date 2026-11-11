@@ -25,7 +25,7 @@ interface
 uses
   SysUtils, Classes, fpcunit, testregistry, Http2.Client.Errors, Http2.Client,
   Http2.Client.Tls, Http2.Client.RequestObserver, Http2.Client.WebSocket, Http2.Client.WebSocketClient.Support,
-  Http2.Client.RequestObserver.Support;
+  Http2.Client.RequestObserver.Support, Http2.Client.Test.TlsContext;
 
 type
   TWebSocketLiveTest = class(TTestCase)
@@ -119,7 +119,8 @@ end;
 
 function TWebSocketLiveTest.NewClient(const AFactory: THttpClientFactory): IHttpClient;
 begin
-  Result := AFactory.WithCACertFile(FCa).WithConnectTimeout(5000).Build;
+  Result := AFactory.WithTlsContext(OpenSslClientTestContext(FCa))
+    .WithConnectTimeout(5000).Build;
 end;
 
 function TWebSocketLiveTest.Connect(const AClient: IHttpClient;

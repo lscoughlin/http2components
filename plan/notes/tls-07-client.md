@@ -82,3 +82,31 @@ still call removed role-native TLS loaders or setters and must be migrated to
 the provider facade before the broad client test runner can compile. The pool
 fake verifies context-key isolation; it does not run two complete HTTPS
 requests through distinct contexts.
+
+## Provider-backed legacy test migration
+
+After the OpenSSL provider merge, the client mutual-TLS fixtures now load
+identities with `TOpenSSLIdentity` and build immutable client contexts with
+`TOpenSSLTlsContextFactory`. Their CA trust anchors and proxy contexts remain
+independent. Subject and fingerprint assertions use `ITLSIdentity.Leaf`.
+
+The old `TFakeTlsSocket` subclass and its native method-seam checks were
+removed from `Http2.Client.Tls.Support`. Their behavioral coverage remains in
+the bounded fake-session runner: SNI, ALPN, partial I/O, context lifetime,
+handshake deadline, EOF, close, cancellation, and backpressure. The real
+self-signed handshake tests now use an OpenSSL client context with explicit
+verification policy. The existing fd-read and proxy CONNECT assertions remain.
+Native provider loader, certificate parser, trust, and key ownership checks
+remain in the OpenSSL provider suite.
+
+All remaining client live tests use `OpenSslClientTestContext` instead of the
+removed CA-file and insecure setters. The live context helper uses a configured
+trust anchor when present and system trust only when no anchor is supplied and
+verification remains enabled.
+
+The full `Http2.Client.RunTests` program now compiles with
+`-Fu tls/openssl/src -dUSE_OPENSSL`. No broad client test executable has run.
+The registered bounded mutual-TLS groups are
+`TMutualTlsRoutingTest`, `TMutualTlsOtherTest`, `TMutualTlsAcceptTest`,
+`TMutualTlsRejectTest`, and `TMutualTlsRequestTest`. Proxy transport groups are
+`TProxyTransportTest` and `TProxyTransportAdditionalTest`.

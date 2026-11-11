@@ -25,7 +25,7 @@ uses
   Http2.Client.Sse, Http2.Client.WebSocket, Http2.Client.RequestObserver,
   Http2.Client.RequestObserver.Support, Http2.Client.MutualTls.Support,
   Http2.Client.MutualTls.Server.Support,
-  Http2.Client.MutualTls.Client.Support;
+  Http2.Client.MutualTls.Client.Support, Http2.OpenSSL;
 
 type
   TMutualTlsOtherTest = class(TMutualTlsTestBase)
@@ -183,7 +183,7 @@ begin
   StartServer(mkH2, cTls13);
   Sel := TCountingSelector.Create;
   SelRef := Sel;
-  Sel.Answer := TClientIdentity.FromPemFiles(Fixture('expired.crt'),
+  Sel.Answer := TOpenSSLIdentity.FromPemFiles(Fixture('expired.crt'),
     Fixture('expired.key'));
   Client := SelectorClient(SelRef);
   Msg := '';
@@ -212,7 +212,7 @@ begin
   StartServer(mkWebSocket, cTls13);
   Sel := TCountingSelector.Create;
   SelRef := Sel;
-  Sel.Answer := TClientIdentity.FromPemFiles(Fixture('expired.crt'),
+  Sel.Answer := TOpenSSLIdentity.FromPemFiles(Fixture('expired.crt'),
     Fixture('expired.key'));
   Client := SelectorClient(SelRef);
   Failed := False;
@@ -237,7 +237,7 @@ var
 begin
   StartServer(mkH2, cTls13);
   Client := RouteVia(THttpClientFactory.Create
-    .WithCACertFile(Fixture('ca.crt'))
+    .WithTlsContext(ClientTlsContext(nil))
     .WithConnectTimeout(3000)
     .WithHeaderTimeout(1500)
     .WithMaxConnectionsPerHost(1)).Build;
@@ -250,7 +250,7 @@ begin
   AssertEquals('the cap holds across identities', 1, Stats.Connections);
   AssertEquals('one pool key', 1, Length(Stats.PerOrigin));
   AssertTrue('the surviving connection is the new identity',
-    Pos(Id2.Fingerprint, Stats.PerOrigin[0].Origin) > 0);
+    Pos(Id2.Leaf.FingerprintSha256, Stats.PerOrigin[0].Origin) > 0);
   AssertTrue('the origin saw the new identity',
     SubjectIs(FServer.LastSubject, 'mtls client two'));
   Client.Close;
@@ -266,7 +266,7 @@ var
 begin
   StartServer(mkH2, cTls13);
   Client := RouteVia(THttpClientFactory.Create
-    .WithCACertFile(Fixture('ca.crt'))
+    .WithTlsContext(ClientTlsContext(nil))
     .WithConnectTimeout(3000)
     .WithHeaderTimeout(1500)
     .WithMaxTotalConnections(1)).Build;
@@ -291,7 +291,7 @@ var
 begin
   StartServer(mkHttp1, cTls13);
   Client := RouteVia(THttpClientFactory.Create
-    .WithCACertFile(Fixture('ca.crt'))
+    .WithTlsContext(ClientTlsContext(nil))
     .WithConnectTimeout(3000)
     .WithHeaderTimeout(300)
     .WithHttp1Fallback(True)
@@ -325,7 +325,7 @@ var
 begin
   StartServer(mkHttp1, cTls13);
   Client := RouteVia(THttpClientFactory.Create
-    .WithCACertFile(Fixture('ca.crt'))
+    .WithTlsContext(ClientTlsContext(nil))
     .WithConnectTimeout(3000)
     .WithHeaderTimeout(300)
     .WithHttp1Fallback(True)
@@ -422,13 +422,12 @@ begin
   StartServer(mkH2, cTls13);
   Logger := TRecordingLogger.Create;
   LoggerRef := Logger;
-  Id := TClientIdentity.FromPemFiles(Fixture('client-chain.pem'),
+  Id := TOpenSSLIdentity.FromPemFiles(Fixture('client-chain.pem'),
     Fixture('client-encrypted.key'), cPass);
-  Fingerprint := Id.Fingerprint;
+  Fingerprint := Id.Leaf.FingerprintSha256;
   Client := THttpClientFactory.Create
-    .WithCACertFile(Fixture('ca.crt'))
-    .WithClientCertificateFiles(Fixture('client-chain.pem'),
-      Fixture('client-encrypted.key'), cPass)
+    .WithTlsContext(ClientTlsContext(Id))
+    .WithClientIdentity(Id)
     .WithLogger(LoggerRef)
     .Build;
   AssertEquals('status', 200, Fetch(Client, Body));
@@ -439,7 +438,7 @@ begin
   for I := 0 to Logger.Count - 1 do
   begin
     Joined := Joined + Logger.MessageAt(I) + #10;
-    if (Pos(Id.Subject, Logger.MessageAt(I)) > 0) and
+    if (Pos(Id.Leaf.Subject, Logger.MessageAt(I)) > 0) and
        (Pos(Fingerprint, Logger.MessageAt(I)) > 0) then
     begin
       Found := True;

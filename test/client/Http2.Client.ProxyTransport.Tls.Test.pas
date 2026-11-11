@@ -26,7 +26,8 @@ interface
 uses
   SysUtils, Classes, Sockets, BaseUnix, fpcunit, testregistry,
   mormot.core.base, mormot.lib.openssl11,
-  Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Socks, Http2.Client.Tls, Http2.Client;
+  Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Socks, Http2.Client.Tls,
+  Http2.Client, Http2.Client.Test.TlsContext;
 
 type
   TProxyMode = (pmHttp, pmHttps, pmSocks5);
@@ -670,7 +671,8 @@ begin
   // the server only sees the CONNECT request after decrypting the proxy leg,
   // so a recorded Proxy-Authorization proves it travelled inside TLS
   Sock := TTlsSocket.DialCleartextVia('origin.example', 80, 3000,
-    TProxy.Create(pkHttps, cLocalhost, FPort, 'bob', 'pw'), True);
+    TProxy.Create(pkHttps, cLocalhost, FPort, 'bob', 'pw'), False, '', nil,
+    OpenSslClientTestContext('', True));
   EchoRoundTrip(Sock, 400);
   Sock.Close;
   FServer.WaitFor;
@@ -687,7 +689,8 @@ begin
   StartServer(pmHttps);
   FServer.Start;
   Sock := TTlsSocket.DialCleartextVia('origin.example', 80, 3000,
-    TProxy.Create(pkHttps, cLocalhost, FPort), True);
+    TProxy.Create(pkHttps, cLocalhost, FPort), False, '', nil,
+    OpenSslClientTestContext('', True));
   EchoRoundTrip(Sock, 1000);
   Sock.Close;
   FServer.WaitFor;
@@ -702,8 +705,9 @@ begin
   StartServer(pmHttps);
   FServer.OriginTls := True;
   FServer.Start;
-  Sock := TTlsSocket.DialWithAlpnVia('localhost', 443, nil, True, 3000, '',
-    TProxy.Create(pkHttps, cLocalhost, FPort));
+  Sock := TTlsSocket.DialWithAlpnVia('localhost', 443, nil, False, 3000, '',
+    TProxy.Create(pkHttps, cLocalhost, FPort), nil, nil,
+    OpenSslClientTestContext('', True), OpenSslClientTestContext('', True));
   EchoRoundTrip(Sock, 1500);
   Sock.Close;
   FServer.WaitFor;
@@ -719,8 +723,9 @@ begin
   StartServer(pmHttps);
   FServer.OriginTls := True;
   FServer.Start;
-  Sock := TTlsSocket.DialWithAlpnVia('localhost', 443, nil, True, 5000, '',
-    TProxy.Create(pkHttps, cLocalhost, FPort));
+  Sock := TTlsSocket.DialWithAlpnVia('localhost', 443, nil, False, 5000, '',
+    TProxy.Create(pkHttps, cLocalhost, FPort), nil, nil,
+    OpenSslClientTestContext('', True), OpenSslClientTestContext('', True));
   // far more than one 16 KiB TLS record, in both layers
   EchoRoundTrip(Sock, 200000);
   Sock.Close;
@@ -739,8 +744,8 @@ begin
   // is 'localhost', which the certificate names
   try
     Sock := TTlsSocket.DialCleartextVia('origin.example', 80, 3000,
-      TProxy.Create(pkHttps, 'localhost', FPort), False,
-      CertPath('localhost.crt'));
+      TProxy.Create(pkHttps, 'localhost', FPort), False, '', nil,
+      OpenSslClientTestContext(CertPath('localhost.crt')));
   except
     on E: EHttpConnectionError do
     begin
@@ -772,8 +777,8 @@ begin
   Msg := '';
   try
     TTlsSocket.DialCleartextVia('origin.example', 80, 3000,
-      TProxy.Create(pkHttps, cLocalhost, FPort), False,
-      CertPath('other.crt'));
+      TProxy.Create(pkHttps, cLocalhost, FPort), False, '', nil,
+      OpenSslClientTestContext(CertPath('other.crt')));
   except
     on E: EHttpConnectionError do
       Msg := E.Message;
@@ -794,7 +799,8 @@ begin
   Msg := '';
   try
     TTlsSocket.DialCleartextVia('origin.example', 80, 2000,
-      TProxy.Create(pkHttps, cLocalhost, FPort), True);
+      TProxy.Create(pkHttps, cLocalhost, FPort), False, '', nil,
+      OpenSslClientTestContext('', True));
   except
     on E: EHttpError do
       Msg := E.Message;
@@ -813,7 +819,8 @@ begin
   Msg := '';
   try
     TTlsSocket.DialCleartextVia('origin.example', 80, 3000,
-      TProxy.Create(pkHttps, cLocalhost, FPort), True);
+      TProxy.Create(pkHttps, cLocalhost, FPort), False, '', nil,
+      OpenSslClientTestContext('', True));
   except
     on E: EHttpConnectionError do
       Msg := E.Message;

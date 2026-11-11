@@ -23,7 +23,8 @@ interface
 
 uses
   SysUtils, Classes, fpcunit, testregistry, Http2.Client.Errors, Http2.Client.Tls,
-  Http2.Client.Stream, Http2.Client.Messages, Http2.Client.Proxy, Http2.Client;
+  Http2.Client.Stream, Http2.Client.Messages, Http2.Client.Proxy, Http2.Client,
+  Http2.Client.Test.TlsContext;
 
 type
   TProxyLiveTest = class(TTestCase)
@@ -82,7 +83,8 @@ begin
   // the origins speak HTTP/1.1 only: take the fallback; trust the test CA
   // bundle (it names other.example and localhost)
   Result := AFactory.WithHttp1Fallback(True).WithClearText(ctUpgrade)
-    .WithCACertFile(FCa).WithConnectTimeout(5000).WithHeaderTimeout(8000);
+    .WithTlsContext(OpenSslClientTestContext(FCa))
+    .WithConnectTimeout(5000).WithHeaderTimeout(8000);
 end;
 
 function TProxyLiveTest.Get(const AFactory: THttpClientFactory;
@@ -191,7 +193,8 @@ begin
   // the proxy here refuses everything but other.example, so success proves the
   // request never went through it
   AssertEquals('origin-tls', Get(THttpClientFactory.Create
-    .WithProxy('127.0.0.1', FOpen + 2).WithInsecureTls,
+    .WithProxy('127.0.0.1', FOpen + 2)
+    .WithTlsContext(OpenSslClientTestContext('', True)),
     'https://localhost:' + IntToStr(FOpen) + '/'));
 end;
 
@@ -207,7 +210,8 @@ begin
   H2Base := StrToIntDef(GetEnvironmentVariable('PROXY_LIVE_H2_BASE'), 0);
   if H2Base = 0 then Exit;           // nghttpd was not available
   // strict: no WithHttp1Fallback, so anything but ALPN h2 raises
-  Client := THttpClientFactory.Create.WithCACertFile(FCa)
+  Client := THttpClientFactory.Create
+    .WithTlsContext(OpenSslClientTestContext(FCa))
     .WithConnectTimeout(5000).WithHeaderTimeout(10000)
     .WithAllProxy(StringReplace(AProxyUrl, '%d', IntToStr(H2Base), [])).Build;
   try

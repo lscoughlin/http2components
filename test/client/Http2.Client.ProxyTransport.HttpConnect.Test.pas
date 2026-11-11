@@ -26,7 +26,8 @@ interface
 uses
   SysUtils, Classes, Sockets, BaseUnix, fpcunit, testregistry,
   mormot.core.base, mormot.lib.openssl11,
-  Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Socks, Http2.Client.Tls, Http2.Client;
+  Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Socks, Http2.Client.Tls,
+  Http2.Client, Http2.Client.Test.TlsContext;
 
 type
   TProxyMode = (pmHttp, pmHttps, pmSocks5);
@@ -815,8 +816,9 @@ begin
   StartServer(pmSocks5);
   FServer.OriginTls := True;
   FServer.Start;
-  Sock := TTlsSocket.DialWithAlpnVia('localhost', 443, nil, True, 3000, '',
-    TProxy.Create(pkSocks5, cLocalhost, FPort));
+  Sock := TTlsSocket.DialWithAlpnVia('localhost', 443, nil, False, 3000, '',
+    TProxy.Create(pkSocks5, cLocalhost, FPort), nil, nil,
+    OpenSslClientTestContext('', True));
   EchoRoundTrip(Sock, 2000);
   Sock.Close;
   FServer.WaitFor;

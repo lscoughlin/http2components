@@ -18,7 +18,9 @@ interface
 
 uses
   SysUtils, Classes, fpcunit, testregistry, sockets, baseunix,
-  mormot.lib.openssl11, Http2.Client.Errors, Http2.Client.Tls, Http2.Client.Tls.Support;
+  mormot.lib.openssl11, Http2.Client.Errors, Http2.Client.Tls,
+  Http2.Client.Tls.Support, Http2.Client.Tls.Socket,
+  Http2.Common.Tls.Context, Http2.Common.Tls.Policy, Http2.OpenSSL;
 type
   TTlsTest = class(TTestCase)
   protected
@@ -36,20 +38,12 @@ type
     procedure TestRequireH2AlpnAcceptsH2;
     procedure TestRequireH2AlpnRejectsHttp11;
     procedure TestRequireH2AlpnRejectsNothing;
-    procedure TestEstablishWithHttp11Raises;
-    procedure TestEstablishWithNothingRaises;
-    procedure TestEstablishWithH2Succeeds;
     // 05.6 SNI
-    procedure TestSniHostPropagated;
     // 05.5 verification toggle
-    procedure TestVerifyModeForInsecureIsNone;
-    procedure TestVerifyModeForSecureIsPeer;
-    procedure TestInsecureToggleReachesCtx;
     procedure TestSecureDefaultRejectsSelfSigned;
     procedure TestInsecureAcceptsSelfSigned;    // 05.7 timeouts / short reads
     procedure TestSocketReadFullyReassemblesSplitPayload;
     procedure TestSocketReadFullyMapsTimeout;
-    procedure TestTlsReadReassemblesChunks;
     // 05.8 OpenSSL availability
     procedure TestOpenSslAvailability;
     // proxy CONNECT tunnel
@@ -193,108 +187,6 @@ begin
   AssertTrue('no selection raises EHttpProtocolError', Raised);
 end;
 
-procedure TTlsTest.TestEstablishWithHttp11Raises;
-var
-  Sock: TFakeTlsSocket;
-  Raised: Boolean;
-begin
-  Sock := TFakeTlsSocket.Create(TMockSocket.Create, 'example.com', True);
-  try
-    Sock.SetAlpnBytes(BytesOf('http/1.1'));
-    Raised := False;
-    try
-      Sock.Establish;
-    except
-      on E: EHttpProtocolError do
-        Raised := True;
-    end;
-    AssertTrue('http/1.1 peer fails the handshake', Raised);
-    AssertFalse('not connected after ALPN failure', Sock.Connected);
-  finally
-    Sock.Free;
-  end;
-end;
-
-procedure TTlsTest.TestEstablishWithNothingRaises;
-var
-  Sock: TFakeTlsSocket;
-  Raised: Boolean;
-begin
-  Sock := TFakeTlsSocket.Create(TMockSocket.Create, 'example.com', True);
-  try
-    Raised := False;
-    try
-      Sock.Establish;
-    except
-      on E: EHttpProtocolError do
-        Raised := True;
-    end;
-    AssertTrue('peer selecting nothing fails the handshake', Raised);
-  finally
-    Sock.Free;
-  end;
-end;
-
-procedure TTlsTest.TestEstablishWithH2Succeeds;
-var
-  Sock: TFakeTlsSocket;
-begin
-  Sock := TFakeTlsSocket.Create(TMockSocket.Create, 'example.com', True);
-  try
-    Sock.SetAlpnBytes(BytesOf('h2'));
-    Sock.Establish;
-    AssertEquals('selected protocol recorded', 'h2', Sock.SelectedProtocol);
-    AssertTrue('connected after successful handshake', Sock.Connected);
-  finally
-    Sock.Free;
-  end;
-end;
-
-procedure TTlsTest.TestSniHostPropagated;
-var
-  Sock: TFakeTlsSocket;
-begin
-  Sock := TFakeTlsSocket.Create(TMockSocket.Create, 'origin.example', False);
-  try
-    Sock.SetAlpnBytes(BytesOf('h2'));
-    Sock.Establish;
-    AssertEquals('SNI host set from origin host', 'origin.example', Sock.SniHost);
-    AssertTrue('hostname verification applied in secure mode',
-      Sock.HostnameVerified);
-  finally
-    Sock.Free;
-  end;
-end;
-
-procedure TTlsTest.TestVerifyModeForInsecureIsNone;
-begin
-  AssertEquals('insecure maps to SSL_VERIFY_NONE', SSL_VERIFY_NONE,
-    SslVerifyModeFor(True));
-end;
-
-procedure TTlsTest.TestVerifyModeForSecureIsPeer;
-begin
-  AssertEquals('secure maps to SSL_VERIFY_PEER', SSL_VERIFY_PEER,
-    SslVerifyModeFor(False));
-end;
-
-procedure TTlsTest.TestInsecureToggleReachesCtx;
-var
-  Sock: TFakeTlsSocket;
-begin
-  Sock := TFakeTlsSocket.Create(TMockSocket.Create, 'example.com', True);
-  try
-    Sock.SetAlpnBytes(BytesOf('h2'));
-    Sock.Establish;
-    AssertEquals('insecure context uses SSL_VERIFY_NONE', SSL_VERIFY_NONE,
-      Sock.VerifyMode);
-    AssertFalse('hostname verification skipped when insecure',
-      Sock.HostnameVerified);
-  finally
-    Sock.Free;
-  end;
-end;
-
 procedure TTlsTest.TestSecureDefaultRejectsSelfSigned;
 var
   R: TRealHandshakeResult;
@@ -311,8 +203,7 @@ begin
     Exit;
   end;
   AssertTrue('secure client rejected the self-signed server', R.Raised);
-  AssertFalse('rejection is a crypto/connection failure, not just ALPN',
-    R.WasProtocolError);
+  AssertFalse('the TLS session did not open', R.Connected);
 end;
 
 procedure TTlsTest.TestInsecureAcceptsSelfSigned;
@@ -330,10 +221,8 @@ begin
     AssertTrue('test certs unavailable; skipped', True);
     Exit;
   end;
-  // in insecure mode the self-signed certificate is accepted: the handshake
-  // reaches the ALPN check, which is the only thing still missing here
-  AssertTrue('insecure client got past certificate verification',
-    R.WasProtocolError);
+  AssertTrue('insecure client accepted the self-signed certificate',
+    R.Connected);
 end;
 
 procedure TTlsTest.TestSocketReadFullyReassemblesSplitPayload;
@@ -387,26 +276,6 @@ begin
   end;
 end;
 
-procedure TTlsTest.TestTlsReadReassemblesChunks;
-var
-  Sock: TFakeTlsSocket;
-  got: array[0..4] of Byte;
-begin
-  Sock := TFakeTlsSocket.Create(TMockSocket.Create, 'example.com', True);
-  try
-    Sock.SetAlpnBytes(BytesOf('h2'));
-    Sock.Establish;
-    // the TLS read loop must reassemble two short SSL_read results
-    Sock.AddReadChunk(BytesOf('AB'));
-    Sock.AddReadChunk(BytesOf('CDE'));
-    AssertEquals('TLS read reassembles chunks', 5, Sock.Read(got, 5));
-    AssertTrue('first byte A', got[0] = Ord('A'));
-    AssertTrue('last byte E', got[4] = Ord('E'));
-  finally
-    Sock.Free;
-  end;
-end;
-
 procedure TTlsTest.TestOpenSslAvailability;
 begin
   // documents the runtime contract: OPENSSL_LIBPATH drives dynamic loading
@@ -419,17 +288,25 @@ end;
 procedure TTlsTest.TestLiveNghttpdAlpnIfEnabled;
 var
   Sock: IHttp2Socket;
+  Context: ITLSContext;
+  Policy: TTlsClientPolicy;
+  Info: IHttp2TlsSocketInfo;
 begin
   if GetEnvironmentVariable('HTTP2_TLS_ITEST') <> '1' then
   begin
     AssertTrue('live nghttpd test skipped (set HTTP2_TLS_ITEST=1)', True);
     Exit;
   end;
-  Sock := TTlsSocket.Dial('127.0.0.1', 8443, True, 3000);
+  Policy := TTlsClientPolicy.SecureDefault.WithSystemTrust(False)
+    .WithInsecure(True);
+  Context := TOpenSSLTlsContextFactory.Create.WithClientPolicy(Policy).Build;
+  Sock := TTlsSocket.Dial('127.0.0.1', 8443, False, 3000,
+    '', '', 0, nil, Context);
   try
     AssertTrue('live TLS connection established', Sock.Connected);
-    AssertEquals('nghttpd negotiated h2',
-      'h2', (Sock as TTlsSocket).SelectedProtocol);
+    AssertTrue('TLS metadata is available',
+      Supports(Sock, IHttp2TlsSocketInfo, Info));
+    AssertEquals('nghttpd negotiated h2', 'h2', Info.SelectedProtocol);
   finally
     Sock.Close;
   end;
