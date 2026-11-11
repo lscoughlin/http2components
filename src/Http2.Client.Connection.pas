@@ -1000,18 +1000,19 @@ begin
   // it enters the connection lock, so keep the same order here.
   if FHeaderEncoderLock <> nil then
     FHeaderEncoderLock.Acquire;
-  FLock.Acquire;
   try
-    // a SETTINGS_INITIAL_WINDOW_SIZE change adjusts every open stream window
-    Delta := ASettings.InitialWindowSize - FPeerSettings.InitialWindowSize;
-    FPeerSettings := ASettings;
-    FPeerSettingsReceived := True;
-    if Delta <> 0 then
-      FFlowControl.ApplyInitialWindowDelta(Delta);
-  finally
-    FLock.Release;
-  end;
-  try
+    FLock.Acquire;
+    try
+      // a SETTINGS_INITIAL_WINDOW_SIZE change adjusts every open stream window
+      Delta := Int64(ASettings.InitialWindowSize) -
+        Int64(FPeerSettings.InitialWindowSize);
+      FPeerSettings := ASettings;
+      FPeerSettingsReceived := True;
+      if Delta <> 0 then
+        FFlowControl.ApplyInitialWindowDelta(Delta);
+    finally
+      FLock.Release;
+    end;
     if FHeaderEncoder <> nil then
       FHeaderEncoder.SetPeerTableSize(ASettings.HeaderTableSize);
   finally

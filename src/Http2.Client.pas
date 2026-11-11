@@ -2849,13 +2849,13 @@ begin
   inherited Create;
   FConn := AConn;
   FOrigin := AOrigin;
+  FLock := TCriticalSection.Create;
   FEncoder := THpackCodec.Create;
   FDecoder := THpackCodec.Create;
   FConn.HeaderEncoderLock := FLock;
   FConn.HeaderEncoder := FEncoder;
   FConn.HeaderDecoder := FDecoder;
   FAllocator := TStreamIdAllocator.Create;
-  FLock := TCriticalSection.Create;
   FMaxStreamsPerConnection := AMaxStreamsPerConnection;
   FClosing := False;
 end;
@@ -2863,6 +2863,9 @@ end;
 destructor THttpConnection.Destroy;
 begin
   FConn.Close;
+  FConn.HeaderDecoder := nil;
+  FConn.HeaderEncoder := nil;
+  FConn.HeaderEncoderLock := nil;
   FConn.Free;
   FEncoder.Free;
   FDecoder.Free;
