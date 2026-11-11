@@ -746,7 +746,7 @@ var
   Client: TStallClient;
   Ping: TBytes;
   SawClosedSocket: Boolean;
-  Start, Deadline: QWord;
+  Start, Deadline, ClosedAt: QWord;
 begin
   // the PING frames mark the connection active, so the idle callback
   // misses this peer; only the sweep sees that no octet leaves
@@ -790,14 +790,15 @@ begin
       Sleep(20);
     AssertTrue('the server kept the pinging connection after the peer write failed',
       ServerSideGone);
+    ClosedAt := GetTickCount64 - Start;
+    AssertTrue('the close came before the timeout passed',
+      ClosedAt > CloseFloorMs);
+    AssertTrue('the close took longer than about 3 s after the timeout',
+      ClosedAt < CloseCeilingMs);
     // The unread response body can precede the FIN. Drain only after the
     // no-read stall interval and server-side close have both been observed.
     AssertTrue('the pinging peer did not receive EOF after draining the body',
       Client.DrainAndWaitClosed(CloseTimeoutMs));
-    AssertTrue('the close came before the timeout passed',
-      GetTickCount64 - Start > CloseFloorMs);
-    AssertTrue('the close took longer than about 3 s after the timeout',
-      GetTickCount64 - Start < CloseCeilingMs);
   finally
     Client.Free;
   end;
