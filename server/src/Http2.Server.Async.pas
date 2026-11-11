@@ -618,7 +618,8 @@ begin
     // peer stops reading. Track the same queued and socket-held bytes as the
     // exchange backpressure check, so a partial drain does not hide a stall.
     Backlog := FH1.Core.OutputBacklog;
-    if (Backlog > 0) and (Backlog < FLastSweepBacklog) then
+    if (Backlog > 0) and
+       ((FLastSweepBacklog <= 0) or (Backlog < FLastSweepBacklog)) then
       FLastWriteProgressMs := ANowMs;
     FLastSweepBacklog := Backlog;
     if WriteStalled(ANowMs, FLastWriteProgressMs, ATimeoutMs, Backlog) then
