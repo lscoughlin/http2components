@@ -354,3 +354,14 @@ remain intact. All clients close on failure, and post-disconnect server memory
 and CPU samples are recorded. Controlled early-close peers verify rejection.
 The required final load remains 10,000 WebSocket connections plus 10,000 SSE
 connections with 50 ordinary requests per second for 20 seconds.
+
+## LV-20: Complete server conformance result evidence
+
+The preserved server conformance script discards h2spec and h2load output.
+The h2load process exit alone does not prove that every request succeeded.
+The server owner retains external tool output under a run-specific validation
+directory and checks the h2load summary for exactly 200 completed successful
+requests with zero failed or errored requests. The independent h2spec HTTP/2
+and HPACK packages both run, with counts and original output preserved. Each
+required failure remains a failure. Tools and load parameters stay fixed.
+A controlled incomplete h2load summary confirms failure detection.
