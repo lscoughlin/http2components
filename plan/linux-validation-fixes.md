@@ -451,3 +451,13 @@ client owner reviews the raw peer and server shutdown order. A test-peer
 cleanup error is handled at that boundary only; a genuine truncated response
 must still fail. A production defect receives a separate narrow repair.
 All 40 live mTLS cases must pass again, and initial failed logs remain.
+
+## LV-27: Abuse gate uses the wrong server readiness parser
+
+The independent abuse gate reports that the strict interop server did not
+become ready. It starts that binary with the generic example helper, which
+expects a URL in the readiness line. The interop binary reports a port and
+has its own helper. The runner owner corrects the helper and port use, keeps
+strict mode, and preserves startup and peer output on success and failure.
+A controlled readiness check and the full Linux abuse gate verify the change.
+The HTTP/1 WebSocket abuse checks already pass and remain required.
