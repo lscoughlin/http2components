@@ -27,6 +27,7 @@ copy hashes were checked on 2026-11-11.
 | `rfc1928.txt` | SOCKS Protocol Version 5 | https://www.rfc-editor.org/rfc/rfc1928.txt | 2026-11-11 | `ddc2916419a52bedae0fc7d0c051ea513e88c2b930dda27128982fb0c1d6fe2a` |
 | `rfc1929.txt` | Username/Password Authentication for SOCKS V5 | https://www.rfc-editor.org/rfc/rfc1929.txt | 2026-11-11 | `b023357f33b42ba1f3ae10b45ebfcc6dd7b6b13eba0743052b08ae3f7ae3581b` |
 | `rfc4514.txt` | Lightweight Directory Access Protocol (LDAP): String Representation of Distinguished Names | https://www.rfc-editor.org/rfc/rfc4514.txt | 2026-10-25 | `b272176d48a231b28e478c30c59c4bee6073883a0ca25bafd93ea3526702b7de` |
+| `rfc5246.txt` | The Transport Layer Security (TLS) Protocol Version 1.2 | https://www.rfc-editor.org/rfc/rfc5246.txt | 2026-11-11 | `2ebe1b8e651696aeacc8ab3848bedb465505737901ea3b691acf40c392958feb` |
 | `rfc5280.txt` | Internet X.509 Public Key Infrastructure Certificate and CRL Profile | https://www.rfc-editor.org/rfc/rfc5280.txt | 2026-10-25 | `a2f2628c0a83b873fc4786abd921f9b2c02395954b655d190bf16b831633345d` |
 | `rfc6454.txt` | The Web Origin Concept | https://www.rfc-editor.org/rfc/rfc6454.txt | 2026-10-22 | `6a42d01bf407e87255e3bd8d870fda0f473e09f3272592ba438b57c983bc5399` |
 | `rfc6455.txt` | The WebSocket Protocol | https://www.rfc-editor.org/rfc/rfc6455.txt | 2026-10-22 | `765775326aee0ecca9b04bde3fd1f52932d498e33e34e428bd61b8a24da0fa3b` |
@@ -44,6 +45,7 @@ copy hashes were checked on 2026-11-11.
 | `rfc9112.txt` | HTTP/1.1 | https://www.rfc-editor.org/rfc/rfc9112.txt | 2026-10-22 | `e4f426bac6206b67fdf9e0da826154f70588db2133a0a86b15cde4ff725d8937` |
 | `rfc9113.txt` | HTTP/2 | https://www.rfc-editor.org/rfc/rfc9113.txt | 2026-10-22 | `a00ef91b64e111a282e77ec66980f5242e77c0bb5e33e0927e3b6757080506de` |
 | `rfc9218.txt` | Extensible Prioritization Scheme for HTTP | https://www.rfc-editor.org/rfc/rfc9218.txt | 2026-10-22 | `b7ae1a59fde881e839f947e2fbd01f7a859e9ffedbaf0a38e78a97aeea01d190` |
+| `rfc9525.txt` | Service Identity in TLS | https://www.rfc-editor.org/rfc/rfc9525.txt | 2026-11-11 | `ed8116c2435376dffe37ec2ca688c3a8515e36820852b29e0b6cdfbe92abd2c5` |
 | `whatwg-html-server-sent-events.txt` | Server-sent events | https://html.spec.whatwg.org/multipage/server-sent-events.html#server-sent-events | 2026-10-22 | `efb3a39f31627db5d02363162f3d0db1001adf29b6291fd6910a0c6211a02fcc` |
 
 RFC 1928 states that distribution of the memo is unlimited. The table does
