@@ -608,6 +608,20 @@ The existing concurrent-request check and a controlled overlap trace serve
 as regression evidence. Whether this caused the observed timeout remains
 a separate question until the traces establish it.
 
+The fixed-owner trace still fails. Four client uploads start together; one
+finishes immediately and three finish only at the three-second deadline.
+The first two server handlers wait for those request bodies. A later
+request cannot reach a handler before its header timeout. The client owner
+checks send-credit wake delivery when several uploads wait before SETTINGS
+or WINDOW_UPDATE. Repeated signals on one auto-reset event can combine and
+leave other waiters asleep. A controlled multiple-waiter case must prove
+the cause and fail on the old code. The repair wakes each eligible waiter
+without a busy loop, preserves credit accounting and deadlines, and handles
+connection failure and stream cancellation. Focused client flow-control
+cases, concurrent integration, and the complete client suite validate any
+client change before final acceptance and load runs. The server owner
+reviews the wake design independently without remote jobs.
+
 ## LV-34: Performance server output can block at high session counts
 
 The performance driver reads server stdout only for readiness and explicit
