@@ -28,6 +28,18 @@ type
       const AResponse: IServerResponse);
   end;
 
+  TProviderObserver = class(TInterfacedObject, IHttp2ServerObserver)
+  public
+    Accepted: Integer;
+    procedure OnEvent(const AEvent: TServerEvent);
+  end;
+
+procedure TProviderObserver.OnEvent(const AEvent: TServerEvent);
+begin
+  if AEvent.Kind = seConnectionAccepted then
+    InterlockedIncrement(Accepted);
+end;
+
 procedure TFixedHandler.Handle(const ARequest: IServerRequest;
   const AResponse: IServerResponse);
 const
@@ -51,17 +63,32 @@ begin
   raise Exception.Create('TLS version must be 1.2 or 1.3');
 end;
 
+function ClientAuth(const AValue: string): TTlsClientAuthMode;
+begin
+  if (AValue = '') or (AValue = 'none') then
+    Exit(tlsAuthNone);
+  if AValue = 'request' then
+    Exit(tlsAuthRequest);
+  if AValue = 'require' then
+    Exit(tlsAuthRequire);
+  raise Exception.Create('client auth mode must be none, request, or require');
+end;
+
 var
   Identity: ITLSIdentity;
   Policy: TTlsServerPolicy;
   Context: ITLSContext;
   Server: IHttp2Server;
+  Observer: IHttp2ServerObserver;
+  ProviderObserver: TProviderObserver;
   Provider: string;
+  AuthMode: TTlsClientAuthMode;
+  TrustAnchor: string;
   Line: string;
 begin
-  if ParamCount <> 4 then
+  if (ParamCount < 4) or (ParamCount > 6) then
   begin
-    WriteLn(StdErr, 'usage: Http2.Server.ProviderLive <openssl|tlslib> <certificate> <key> <1.2|1.3>');
+    WriteLn(StdErr, 'usage: Http2.Server.ProviderLive <openssl|tlslib> <certificate> <key> <1.2|1.3> [none|request|require [trust-anchor.pem]]');
     Halt(2);
   end;
   try
@@ -72,8 +99,19 @@ begin
       Identity := TOpenSSLIdentity.FromPemFiles(ParamStr(2), ParamStr(3))
     else
       raise Exception.Create('provider must be openssl or tlslib');
+    AuthMode := tlsAuthNone;
+    if ParamCount >= 5 then
+      AuthMode := ClientAuth(ParamStr(5));
+    TrustAnchor := '';
+    if ParamCount = 6 then
+      TrustAnchor := ParamStr(6);
     Policy := TTlsServerPolicy.SecureDefault.WithServerIdentity(Identity)
-      .WithVersions(Version(ParamStr(4)), Version(ParamStr(4)));
+      .WithVersions(Version(ParamStr(4)), Version(ParamStr(4)))
+      .WithClientAuth(AuthMode);
+    if TrustAnchor <> '' then
+      Policy := Policy.WithTrustAnchors([TrustAnchor]);
+    ProviderObserver := TProviderObserver.Create;
+    Observer := ProviderObserver;
     if Provider = 'tlslib' then
       Context := TTlsLibContextFactory.Create.WithServerPolicy(Policy).Build
     else
@@ -86,11 +124,21 @@ begin
       .WithHandler(TFixedHandler.Create)
       .WithHandlerThreads(2)
       .WithIOThreads(2)
-      .Build;
+      .Build(Observer);
     Server.Start;
     WriteLn('READY port ', Server.Port);
     Flush(Output);
-    ReadLn(Line);
+    while not EOF(Input) do
+    begin
+      ReadLn(Line);
+      if SameText(Trim(Line), 'stats') then
+      begin
+        WriteLn('STATS accepted ', ProviderObserver.Accepted);
+        Flush(Output);
+      end
+      else
+        Break;
+    end;
     Server.Stop;
   except
     on E: Exception do
