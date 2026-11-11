@@ -44,6 +44,10 @@ const
   cHttp1MaxHeaderBytes = 64 * 1024;
   /// one transport read fills at most this many bytes
   cHttp1ReadBufferSize = 16 * 1024;
+  bfNone = Http2.Client.Http1.Body.bfNone;
+  bfContentLength = Http2.Client.Http1.Body.bfContentLength;
+  bfChunked = Http2.Client.Http1.Body.bfChunked;
+  bfUntilClose = Http2.Client.Http1.Body.bfUntilClose;
 
 type
   THttp1HeaderField = Http2.Client.Http1.Body.THttp1HeaderField;
