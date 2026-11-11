@@ -378,6 +378,8 @@ def setup_harness() -> None:
 
 def check(kind: str) -> None:
     run([sys.executable, "tools/check/repository.py", kind])
+    if kind == "source":
+        run([sys.executable, "tools/check/test_accounting.py"])
 
 
 def packages_check() -> None:
