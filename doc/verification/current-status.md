@@ -15,6 +15,7 @@ OpenSSL 3. It separates completed checks from runs without a final result.
 
 | Check | Result |
 | --- | --- |
+| Clean source archive | Candidate `6ac7077` builds common, client, server, and optional Readers from an empty output tree. Source, documentation, and test-accounting checks pass in the extracted archive. |
 | Common unit suite | 229 passed. |
 | API unit suite | 16 passed. |
 | API compile probes | Six passed. The probes cover the common facade, client facade, server facade, combined facades, optional Readers, and connection-lifetime API. |
