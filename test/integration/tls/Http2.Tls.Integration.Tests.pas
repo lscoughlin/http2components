@@ -34,6 +34,7 @@ type
     constructor Create(const AClient: IHttpClient; const APort: Integer;
       const ACaseId: string);
     property ErrorText: string read FErrorText;
+    property CaseId: string read FCaseId;
   end;
   TEchoHandler = class(TInterfacedObject, IHttp2Handler)
     procedure Handle(const ARequest: IServerRequest;
@@ -93,7 +94,6 @@ begin
     Response := FClient.Send(THttpRequest.Create(hmGet, Url));
     Check(Response.StatusCode = 200, 'concurrent request returned non-200');
     Check(ReadText(Response) = cBody, 'concurrent request body differs');
-    WriteLn('CASE ', FCaseId, ': concurrent HTTP/2 response ok');
   except
     on E: Exception do FErrorText := E.ClassName + ': ' + E.Message;
   end;
@@ -528,8 +528,10 @@ begin
     ThreadB.WaitFor;
     Check(GConcurrentObserved, 'two live handler calls overlapped');
     Check(ThreadA.ErrorText = '', 'first concurrent request: ' + ThreadA.ErrorText);
+    WriteLn('CASE ', ThreadA.CaseId, ': concurrent HTTP/2 response ok');
     Inc(CaseCount);
     Check(ThreadB.ErrorText = '', 'second concurrent request: ' + ThreadB.ErrorText);
+    WriteLn('CASE ', ThreadB.CaseId, ': concurrent HTTP/2 response ok');
     Inc(CaseCount);
   finally
     if ThreadA <> nil then ThreadA.Free;
