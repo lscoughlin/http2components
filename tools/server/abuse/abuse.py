@@ -213,9 +213,11 @@ def main():
     flood_check("SETTINGS flood", host, port,
                 [frame(FT_SETTINGS, 0, 0) for _ in range(40)])
 
-    # empty DATA flood on stream zero
+    # empty DATA frames on stream zero are a protocol error, so open a valid
+    # request stream first and keep its inbound half open during the flood.
     flood_check("empty DATA flood", host, port,
-                [frame(FT_DATA, 0, 0, b"") for _ in range(40)])
+                [frame(FT_HEADERS, FF_END_HEADERS, 1, request_block("/"))] +
+                [frame(FT_DATA, 0, 1, b"") for _ in range(40)])
 
     # tiny WINDOW_UPDATE flood on the connection
     flood_check("WINDOW_UPDATE flood", host, port,
