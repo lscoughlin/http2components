@@ -32,10 +32,12 @@ type
     FClient: IHttpClient;
     FPort: Integer;
     FErrorText: string;
+    FCaseId: string;
   protected
     procedure Execute; override;
   public
-    constructor Create(const AClient: IHttpClient; const APort: Integer);
+    constructor Create(const AClient: IHttpClient; const APort: Integer;
+      const ACaseId: string);
     property ErrorText: string read FErrorText;
   end;
   TEchoHandler = class(TInterfacedObject, IHttp2Handler)
@@ -52,12 +54,14 @@ var
 
 procedure Check(const AValue: Boolean; const AMessage: string); forward;
 
-constructor TRequestThread.Create(const AClient: IHttpClient; const APort: Integer);
+constructor TRequestThread.Create(const AClient: IHttpClient; const APort: Integer;
+  const ACaseId: string);
 begin
   inherited Create(True);
   FreeOnTerminate := False;
   FClient := AClient;
   FPort := APort;
+  FCaseId := ACaseId;
 end;
 
 procedure TRequestThread.Execute;
@@ -68,6 +72,7 @@ begin
     Response := FClient.Send(THttpRequest.Create(hmGet, Url));
     Check(Response.StatusCode = 200, 'concurrent request returned non-200');
     Check(ReadText(Response) = cBody, 'concurrent request body differs');
+    WriteLn('CASE ', FCaseId, ': concurrent HTTP/2 response ok');
   except
     on E: Exception do FErrorText := E.ClassName + ': ' + E.Message;
   end;
@@ -243,14 +248,16 @@ var Factory: THttpClientFactory;
 begin
   AContext := ClientContext(AProvider, AVersion);
   Factory := THttpClientFactory.Create.WithTlsContext(AContext)
-    .WithConnectTimeout(cTimeoutMs).WithHeaderTimeout(cTimeoutMs);
+    .WithConnectTimeout(cTimeoutMs).WithHeaderTimeout(cTimeoutMs)
+    .WithIdleTimeout(cTimeoutMs);
   Result := Factory.Build;
 end;
 
 function NewClientWithContext(const AContext: ITLSContext): IHttpClient;
 begin
   Result := THttpClientFactory.Create.WithTlsContext(AContext)
-    .WithConnectTimeout(cTimeoutMs).WithHeaderTimeout(cTimeoutMs).Build;
+    .WithConnectTimeout(cTimeoutMs).WithHeaderTimeout(cTimeoutMs)
+    .WithIdleTimeout(cTimeoutMs).Build;
 end;
 
 procedure FeedAll(const ASession: ITLSSession; const AData: TBytes);
@@ -426,6 +433,8 @@ begin
   Response := AClient.Send(THttpRequest.Create(hmGet, Url));
   Check(Response.StatusCode = 200, ALabel + ' returned a non-200 status');
   Check(ReadText(Response) = cBody, ALabel + ' returned a different response body');
+  WriteLn('CASE ', ALabel,
+    ': fresh connection, h2 stream, verified principal and body ok');
 end;
 
 procedure CheckFreshResponse(const AProvider: TProvider; const APort: Integer;
@@ -452,16 +461,16 @@ begin
     OpenSslServer := NewServer(prOpenSSL, tls13, OpenSslServerTls);
     TlsLibServer := NewServer(prTlsLib, tls13, TlsLibServerTls);
     OpenSslServerTls := nil; TlsLibServerTls := nil;
-    CheckFreshResponse(prOpenSSL, OpenSslServer.Port, 'OpenSSL listener first accept');
-    CheckFreshResponse(prTlsLib, TlsLibServer.Port, 'TlsLib listener first accept');
-    CheckFreshResponse(prOpenSSL, OpenSslServer.Port, 'OpenSSL listener interleaved accept');
+    CheckFreshResponse(prOpenSSL, OpenSslServer.Port, 'A04-O-first');
+    CheckFreshResponse(prTlsLib, TlsLibServer.Port, 'A04-T-first');
+    CheckFreshResponse(prOpenSSL, OpenSslServer.Port, 'A04-O-interleaved');
     OpenSslServer.Stop;
     OpenSslServer := nil;
     CheckFreshResponse(prTlsLib, TlsLibServer.Port,
-      'TlsLib listener after OpenSSL listener stop');
+      'A04-T-after-O-stop');
     Inc(CaseCount, 4);
     CheckFreshResponse(prTlsLib, TlsLibServer.Port,
-      'TlsLib listener accepts a new connection after OpenSSL listener stop');
+      'A04-T-new-accept-after-O-stop');
     Inc(CaseCount);
   finally
     if OpenSslServer <> nil then OpenSslServer.Stop;
@@ -476,6 +485,7 @@ var
   Server: IHttp2Server;
   ClientA, ClientB: IHttpClient;
   ThreadA, ThreadB: TRequestThread;
+  CaseBase: string;
 begin
   Context := DualRoleContext(AProvider, AVersion);
   Server := nil; ClientA := nil; ClientB := nil;
@@ -488,8 +498,9 @@ begin
     ClientA := NewClientWithContext(Context);
     ClientB := NewClientWithContext(Context);
     Context := nil;
-    ThreadA := TRequestThread.Create(ClientA, Server.Port);
-    ThreadB := TRequestThread.Create(ClientB, Server.Port);
+    CaseBase := 'A02-' + ProviderCode(AProvider) + '-' + VersionName(AVersion);
+    ThreadA := TRequestThread.Create(ClientA, Server.Port, CaseBase + '-request1');
+    ThreadB := TRequestThread.Create(ClientB, Server.Port, CaseBase + '-request2');
     ThreadA.Start;
     ThreadB.Start;
     ThreadA.WaitFor;

@@ -52,6 +52,10 @@ that both concurrent requests are active at the same time. Listener requests
 use new clients so each request creates a new connection. The listener cases
 use OpenSSL and TlsLib in one process, interleave requests, stop one listener,
 and verify fresh connections to the other. The expected count is 29 cases.
+Output case IDs use A03 for the 16 TLS metadata and HTTP/2 pairs, A04 for the
+five listener requests, and A02 for the eight concurrent requests. API probes
+check exact common facade and declaration assignments, client/server factory
+acceptance, and OpenSSL/TlsLib identity, context, and factory aliases.
 The run limit is 30 seconds. The worker compiled this program at base `f52bdf7`
 with the pinned providers; it did not execute the program. Runtime results
 remain pending the coordinator's bounded run.
