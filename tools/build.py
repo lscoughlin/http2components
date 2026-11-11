@@ -923,6 +923,12 @@ def main() -> int:
             sources.append(required(
                 ROOT / "test/server/Http2.Server.Tls.Lifecycle.Runner.pas",
                 "bounded TLS server listener runner"))
+        elif suite == "integration":
+            sources.append(required(
+                ROOT / "test/integration/tls/Http2.Tls.Security.Tests.pas",
+                "bounded TLS security matrix runner"))
+            compile_file(ROOT / "test/api/Http2.Tls.ApiIdentity.Probe.pas",
+                         owners[suite], tests=True)
         run_directory = output(owners[suite])[1]
         for source in sources:
             binary = compile_file(source, owners[suite], tests=True)
