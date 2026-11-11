@@ -3,13 +3,14 @@
 
 Use PROVIDER_LIVE_BINARY to select an existing ProviderLive executable.
 The target is configured with a 1000 ms handshake timeout and a 64 connection
-limit. The async listener admits 64 connections. It stores the configured
-limit minus one, then checks whether the current reader count is strictly
-greater before adding the next connection.
+limit. The async listener reserves each connection slot before it enters the
+first-read queue. It must close excess peers within the capacity observation
+window and retain the accepted peers until their handshake deadlines.
 """
 
 from __future__ import annotations
 
+import errno
 import os
 import queue
 import re
@@ -156,6 +157,11 @@ def make_peer(port: int, index: int, kind: str) -> Peer:
         return Peer(index, kind, None, started, admission="tcp_connection_refused",
                     close_kind=f"connect_error:{type(error).__name__}",
                     close_ms=round((time.monotonic() - started) * 1000))
+    except ConnectionResetError:
+        return Peer(index, kind, None, started,
+                    admission="server_closed_during_capacity_observation",
+                    close_kind="server_reset",
+                    close_ms=round((time.monotonic() - started) * 1000))
     except OSError as error:
         return Peer(index, kind, None, started, admission="peer_connect_error",
                     close_kind=f"connect_error:{type(error).__name__}",
@@ -165,6 +171,12 @@ def make_peer(port: int, index: int, kind: str) -> Peer:
     if kind == "partial_client_hello":
         try:
             peer.sendall(client_hello_prefix())
+        except ConnectionResetError:
+            item.close_kind = "server_reset"
+            item.admission = "server_closed_during_capacity_observation"
+            item.close_ms = round((time.monotonic() - started) * 1000)
+            peer.close()
+            item.sock = None
         except OSError as error:
             item.close_kind = f"write_error:{type(error).__name__}"
             item.admission = "client_write_error"
@@ -190,14 +202,20 @@ def poll_peer(peer: Peer, now: float) -> bool:
         socket_error = peer.sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
         if socket_error == 0:
             return False
-        peer.close_kind = f"socket_error:{socket_error}"
+        peer.close_kind = (
+            "server_reset" if socket_error == errno.ECONNRESET
+            else f"socket_error:{socket_error}"
+        )
     elif readable:
         try:
             data = peer.sock.recv(65535)
         except BlockingIOError:
             return False
         except OSError as error:
-            peer.close_kind = f"socket_error:{type(error).__name__}"
+            peer.close_kind = (
+                "server_reset" if isinstance(error, ConnectionResetError)
+                else f"socket_error:{type(error).__name__}"
+            )
         else:
             if data:
                 if not peer.first_data_hex:
@@ -314,6 +332,23 @@ def during_load_request(port: int, version: str, ca_file: str,
                 raise RuntimeError(f"HTTP/2 response arrived after load window: {elapsed_ms:.0f} ms")
             return "verified_http2_200_during_load", elapsed_ms
         raise RuntimeError(f"load-time curl returned unexpected response: {stats!r}")
+    stderr = result.stderr.decode(errors="replace")
+    if (result.returncode == 35 and
+            ("SSL_ERROR_SYSCALL" in stderr or "Connection reset by peer" in stderr)):
+        body, stats = result.stdout.rsplit(b"\n", 1)
+        fields = stats.decode(errors="replace").split()
+        if (body or len(fields) != 4 or fields[0] != "0" or fields[1] != "000" or
+                fields[3] != "0"):
+            raise RuntimeError(
+                f"TLS refusal returned unexpected response data: {stats!r}"
+            )
+        if admitted != EFFECTIVE_CONNECTION_LIMIT or elapsed_ms > 500:
+            raise RuntimeError(
+                f"TLS refusal did not occur promptly at the measured admission cap: "
+                f"admitted={admitted} cap={EFFECTIVE_CONNECTION_LIMIT} "
+                f"elapsed_ms={elapsed_ms:.0f}"
+            )
+        return "request_not_accepted_at_measured_cap_tls_reset_exit_35", elapsed_ms
     if (admitted != EFFECTIVE_CONNECTION_LIMIT or elapsed_ms > 500 or
             result.returncode not in (7, 52, 56)):
         raise RuntimeError(
@@ -367,10 +402,11 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
         f"handshake_timeout_ms={HANDSHAKE_TIMEOUT_MS}\n"
         f"scheduler_margin_ms={SCHEDULER_MARGIN_MS}\n"
         f"listener_max_connections={MAX_CONNECTIONS}\n"
-        f"source_effective_admission_limit={EFFECTIVE_CONNECTION_LIMIT}\n"
-        "limit_source=server/src/Http2.Server.Async.pas:THttp2AsyncServer.Create sets "
-        "MaxConnections := public_limit - 1; third_party/mORMot2/src/net/mormot.net.async.pas "
-        "checks fRead.Count > fMaxConnections before ConnectionCreate\n"
+        f"effective_admission_limit={EFFECTIVE_CONNECTION_LIMIT}\n"
+        "limit_source=server/src/Http2.Server.Async.Admission.inc:"
+        "THttp2AsyncServer.ConnectionNew reserves before inherited ConnectionNew; "
+        "server/src/Http2.Server.Async.Counters.pas:NewConnectionAdmission uses an "
+        "atomic active-claim count; zero means unlimited\n"
         f"silent_peers={SILENT_PEERS}\npartial_client_hello_peers={PARTIAL_PEERS}\n",
         encoding="utf-8",
     )
@@ -434,41 +470,51 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
             )
             accepted_after_excess = server_accepted_count(process, events)
             excess_snapshot = time.monotonic()
-            if accepted_after_excess != accepted_at_limit:
-                raise RuntimeError(
-                    f"listener admitted excess peers at its cap: before={accepted_at_limit} "
-                    f"after={accepted_after_excess}"
-                )
             for peer in peers[excess_start:]:
                 peer.admission_observed_ms = round(
                     (excess_snapshot - peer.started) * 1000
                 )
                 if peer.admission == "tcp_connection_refused":
                     peer.admission = "tcp_connection_refused"
+                elif peer.close_kind in ("eof", "server_reset"):
+                    peer.admission = "server_closed_during_capacity_observation"
                 elif not peer.tcp_connected:
                     peer.admission = "peer_error_before_capacity_observation"
-                elif peer.close_kind == "eof" or peer.close_kind.startswith("socket_error:"):
-                    peer.admission = "server_closed_during_capacity_observation"
                 elif peer.sock is None:
                     peer.admission = "peer_error_before_capacity_observation"
                 else:
-                    peer.admission = "not_admitted_during_observation"
-                if peer.sock is not None:
+                    peer.admission = "still_open_at_capacity_observation"
                     peer.close_kind = "client_closed_after_capacity_observation"
-                    peer.close_ms = round((time.monotonic() - peer.started) * 1000)
+                    peer.close_ms = round((excess_snapshot - peer.started) * 1000)
+                if peer.sock is not None:
                     peer.sock.close()
                     peer.sock = None
+            peer_rows(raw_dir / "peers.tsv", peers)
             tcp_connected = sum(peer.tcp_connected for peer in peers)
             not_admitted = len(peers) - admitted
             early_client_refusals = sum(
                 peer.admission == "tcp_connection_refused" for peer in peers
             )
+            excess_client_refusals = sum(
+                peer.admission == "tcp_connection_refused"
+                for peer in peers[excess_start:]
+            )
             server_closed_excess = sum(
                 peer.admission == "server_closed_during_capacity_observation"
                 for peer in peers[excess_start:]
             )
+            server_reset_excess = sum(
+                peer.admission == "server_closed_during_capacity_observation" and
+                peer.close_kind == "server_reset"
+                for peer in peers[excess_start:]
+            )
+            server_eof_excess = sum(
+                peer.admission == "server_closed_during_capacity_observation" and
+                peer.close_kind == "eof"
+                for peer in peers[excess_start:]
+            )
             client_closed_excess = sum(
-                peer.admission == "not_admitted_during_observation"
+                peer.admission == "still_open_at_capacity_observation"
                 for peer in peers[excess_start:]
             )
             peer_error_excess = sum(
@@ -483,7 +529,10 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
             result["admitted"] = admitted
             result["not_admitted"] = not_admitted
             result["server_closed_excess"] = server_closed_excess
+            result["server_reset_excess"] = server_reset_excess
+            result["server_eof_excess"] = server_eof_excess
             result["client_closed_excess"] = client_closed_excess
+            result["excess_client_refusals"] = excess_client_refusals
             result["peer_error_excess"] = peer_error_excess
             result["tcp_connected"] = tcp_connected
             result["early_client_refusals"] = early_client_refusals
@@ -500,6 +549,17 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                     f"tcp_connected={tcp_connected} not_admitted={not_admitted} "
                     f"server_closed_excess={server_closed_excess} "
                     f"early_client_refusals={early_client_refusals}"
+                )
+            if accepted_after_excess != accepted_at_limit:
+                raise RuntimeError(
+                    f"listener admitted excess peers at its cap: before={accepted_at_limit} "
+                    f"after={accepted_after_excess}"
+                )
+            if client_closed_excess:
+                raise RuntimeError(
+                    f"{client_closed_excess} excess peers remained open after the "
+                    f"{ADMISSION_OBSERVE_MS} ms capacity-refusal window; they were "
+                    "closed by the probe and are not counted as server refusals"
                 )
             before_load_request = server_accepted_count(process, events)
             load_outcome, load_request_ms = during_load_request(
@@ -532,7 +592,7 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
             timed_out = [
                 p for p in peers
                 if p.admission == "admitted" and
-                (p.close_kind == "eof" or p.close_kind.startswith("socket_error:")) and
+                p.close_kind in ("eof", "server_reset") and
                 HANDSHAKE_TIMEOUT_MS - 100 <= p.close_ms <=
                 HANDSHAKE_TIMEOUT_MS + SCHEDULER_MARGIN_MS
             ]
@@ -577,7 +637,10 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                 f"provider={provider}\ntls_version={version}\n"
                 f"admitted={admitted}\nnot_admitted_during_observation={not_admitted}\n"
                 f"server_closed_excess={server_closed_excess}\n"
+                f"server_reset_excess={server_reset_excess}\n"
+                f"server_eof_excess={server_eof_excess}\n"
                 f"client_closed_excess={client_closed_excess}\n"
+                f"excess_client_refusals={excess_client_refusals}\n"
                 f"peer_error_excess={peer_error_excess}\n"
                 f"tcp_connected={tcp_connected}\nearly_client_refusals={early_client_refusals}\n"
                 f"timeout_close_count={len(timed_out)}\n"
