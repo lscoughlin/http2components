@@ -23,7 +23,7 @@ uses
   Http2.Client.Stream,
   Http2.Client,
   Http2.Client.Sse, Http2.Client.WebSocket, Http2.Client.RequestObserver,
-  Http2.Client.RequestObserver.Support;
+  Http2.Client.RequestObserver.Support, Http2.Client.Test.OpenSSL.SigPipe;
 
 const
   cPass = 'mtls-test-pass';
@@ -164,7 +164,7 @@ begin
   while Sent < N do
   begin
     if C.Ssl <> nil then
-      R := SSL_write(C.Ssl, PByte(@ABuf) + Sent, N - Sent)
+      R := TestSslWrite(C.Ssl, PByte(@ABuf) + Sent, N - Sent)
     else
       R := fpSend(C.Fd, PByte(@ABuf) + Sent, N - Sent, 0);
     if R <= 0 then
@@ -482,7 +482,7 @@ begin
   C.Ssl := SSL_new(FCtx);
   SSL_set_fd(C.Ssl, AFd);
   try
-    if SSL_accept(C.Ssl) <> 1 then
+    if TestSslAccept(C.Ssl) <> 1 then
     begin
       InterlockedIncrement(Refused);
       // the alert is already sent; read what the client wrote after its
@@ -585,7 +585,7 @@ begin
           end;
         end;
     end;
-    SSL_shutdown(C.Ssl);
+    TestSslShutdown(C.Ssl);
   finally
     SSL_free(C.Ssl);
   end;
@@ -682,7 +682,7 @@ begin
     begin
       C.Ssl := SSL_new(FCtx);
       SSL_set_fd(C.Ssl, AFd);
-      if SSL_accept(C.Ssl) <> 1 then
+      if TestSslAccept(C.Ssl) <> 1 then
       begin
         InterlockedIncrement(Refused);
         // let the client read the alert before the close
@@ -792,7 +792,7 @@ begin
   finally
     if C.Ssl <> nil then
     begin
-      SSL_shutdown(C.Ssl);
+      TestSslShutdown(C.Ssl);
       SSL_free(C.Ssl);
     end;
   end;
