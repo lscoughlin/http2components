@@ -196,14 +196,29 @@ case "$gate" in
     exit "$exit_code"
     ;;
   abuse)
-    if ! start_example_server "$SERVER_BIN/interop_server" 0 strict; then
+    abuse_server_log="$log_dir/abuse-strict-server-$run_id.log"
+    abuse_peer_log="$log_dir/abuse-strict-peer-$run_id.log"
+    : > "$abuse_server_log"
+    : > "$abuse_peer_log"
+    INTEROP_ERR=$abuse_server_log
+    INTEROP_LOG=$abuse_server_log
+    export INTEROP_ERR INTEROP_LOG
+    if ! start_interop_server "$SERVER_BIN/interop_server" strict; then
       report_fail "strict example server did not become ready"
-    elif python3 "$here/../abuse/abuse.py" 127.0.0.1 "$EXAMPLE_PORT"; then
-      report_pass "HTTP/2 abuse checks"
     else
-      report_fail "HTTP/2 abuse checks"
+      if python3 "$here/../abuse/abuse.py" 127.0.0.1 "$INTEROP_PORT" \
+        >"$abuse_peer_log" 2>&1; then
+        report_pass "HTTP/2 abuse checks"
+      else
+        report_fail "HTTP/2 abuse checks"
+      fi
+      stop_interop_server
     fi
-    stop_example_server
+    echo "--- strict server output: $abuse_server_log ---"
+    cat "$abuse_server_log"
+    echo "--- HTTP/2 abuse peer output: $abuse_peer_log ---"
+    cat "$abuse_peer_log"
+    unset INTEROP_ERR INTEROP_LOG
     if start_example_server "$SERVER_BIN/ws_echo" 127.0.0.1 0; then
       if python3 "$here/../abuse/ws_abuse.py" 127.0.0.1 "$EXAMPLE_PORT"; then
         report_pass "HTTP/1.1 WebSocket abuse checks"

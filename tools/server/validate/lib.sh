@@ -86,6 +86,9 @@ stop_interop_server() {
     kill "$INTEROP_PID" 2>/dev/null || true
     wait "$INTEROP_PID" 2>/dev/null || true
     INTEROP_PID=''
+    if [ -n "${INTEROP_LOG:-}" ] && [ -f "$interop_out" ]; then
+      cat "$interop_out" >> "$INTEROP_LOG"
+    fi
     rm -f "$interop_out"
   fi
 }
