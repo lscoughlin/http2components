@@ -31,3 +31,17 @@ separate evidence. No resource-intensive tests or Linux checks ran.
 
 Further M11 cases remain: retained TLS/mTLS programs, protocol range tests,
 SSE/WebSocket cases, and separate-process peer checks.
+
+## Local event protocols
+
+The integration runner now includes four event protocol cases. SSE uses a
+real response body on HTTP/2 and HTTP/1.1, then sends Last-Event-ID on a
+second request and checks the next event. WebSocket uses ws and wss,
+checks the selected subprotocol, sends a fragmented text message, and
+checks the echo and close status. The peers use ephemeral loopback ports.
+The listener wait is five seconds. The whole runner has a process deadline.
+
+On macOS aarch64, all nine integration cases passed in 3.938 seconds on
+2026-11-11. The log is `bin/review-events-integration.log`. This is local
+agreement between the merged roles. It is not independent conformance
+proof. Independent peers, load, and Linux remain deferred.
