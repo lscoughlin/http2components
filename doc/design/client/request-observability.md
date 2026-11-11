@@ -1,0 +1,749 @@
+---
+license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+copyright: Copyright 2026 Liam Seamus Coughlin
+title: "Request Observability"
+aliases:
+  - "request-observability"
+tags:
+  - http2client
+  - design
+  - observability
+status: done
+up: "[http2components](../../README.md)"
+related:
+  - "[testing-observability](testing-observability.md)"
+  - "[client-api](client-api.md)"
+  - "[messages](messages.md)"
+  - "[errors-redirects](errors-redirects.md)"
+  - "[server-sent-events](server-sent-events.md)"
+  - "[websocket](websocket.md)"
+updated: 2026-10-24
+notes:
+  - Imported from http2client/doc/design/request-observability.md at the source commit recorded in the source inventory.
+  - API and architecture details await final merged-source review.
+---
+
+# Request Observability
+
+A generic seam for a consumer to **inject** trace context into outgoing
+requests and to **observe** each request for tracing, metrics and logging.
+The core knows nothing of OpenTelemetry (or any other system): it exposes
+neutral hooks and the facts an adapter needs, and an adapter outside the core
+turns them into spans, instruments and log lines.
+
+[`IHttp2Observer`](testing-observability.md) stays as it is. It is the
+transport-level seam (connections, streams, frames) and has no request
+context. This note adds the request-level seam above it.
+
+## Status
+
+Built: the monotonic clock (`Http2.Client.Clock`), the observer vocabulary
+(`Http2.Client.RequestObserver`), `WithContext`, header injection, the factory and
+logger surface, the attempt lifecycle for plain requests over HTTP/2, h2c and
+HTTP/1.1 (start, response headers, redirect, retry, end), the pool
+statistics snapshot, wire arrival stamps (`TFrame.ArrivedUs`,
+`IStampedBodyStream`), the timing and message aggregates of `THttpOutcome`,
+Server-Sent Events attempts (`akSse`, the loop's `StreamId` and `Reconnect`,
+per-event aggregates, `IAttemptProgress`) and the per-message observer
+(`IHttpMessageObserver`) for SSE events, WebSocket attempts (`akWebSocket`:
+handshake header injection, one attempt per session, close details, counters,
+wire stamps and the per-message callbacks), and three adapters outside the
+core that prove the seam is enough: tracing, metrics and logging
+([Writing an adapter](#writing-an-adapter)).
+
+## Goals
+
+- Arbitrary headers (`traceparent`, `tracestate`,
+  `baggage`, correlation ids) with a fresh value per attempt.
+- Report the start, the response headers and the end of every attempt, with
+  status, error, byte counts and timings.
+- Cover plain requests, Server-Sent Events streams and WebSockets with one
+  vocabulary.
+- Give enough per-message timing to measure time to first token, inter-event
+  latency and throughput of a streaming endpoint, measured at the wire and
+  not at the consumer.
+- Cost nothing for a client with no observer installed, and little for one
+  that wants aggregates only.
+
+## Non-goals
+
+- No OpenTelemetry (or Prometheus, or logging framework) dependency in the
+  core. An adapter lives in `examples/` or a sibling package.
+- No parsing of response payloads. An adapter that wants token counts from an
+  LLM stream reads them from the event the library hands it.
+- No sampling, batching, export or retention. Those belong to the adapter.
+- No change to the wire behaviour of a client with no observer.
+
+## Vocabulary
+
+**Attempt.** One HTTP exchange on the wire, or one WebSocket session. A
+redirect hop is an attempt. A transparent retry after `REFUSED_STREAM` is an
+attempt. An SSE reconnect is an attempt. This matches the OpenTelemetry
+convention that each HTTP try is its own client span.
+
+**Kind.** `akRequest` (a plain request), `akSse` (a request built by
+`SseRequest`) or `akWebSocket`.
+
+**Context.** An opaque `IInterface` the caller attaches to a request with
+`WithContext`. The library never inspects it; it hands it back in
+`THttpAttempt.Context` so an adapter can find the parent span without a
+thread-local. A thread-local remains the adapter's own choice.
+
+## Public surface
+
+### Request context
+
+```pascal
+THttpRequest.WithContext(const AContext: IInterface): THttpRequest;
+IWebSocketRequest.WithContext(const AContext: IInterface): IWebSocketRequest;
+```
+
+The context survives `Clone`, `WithUrl`, `DropBody` and `WithMethodToken`, so
+it reaches every redirect hop and every SSE reconnect.
+
+### Header injection
+
+```pascal
+IHeaderSink = interface
+  /// replace every value of AName with AValue
+  procedure SetValue(const AName, AValue: string);
+  /// the first value of AName, or '' (a prior observer may have set it)
+  function GetFirst(const AName: string): string;
+end;
+```
+
+The sink writes to the attempt's own copy of the headers. `SetValue` is the
+only mutator: `THttpRequest.WithHeader` appends, so injecting `traceparent`
+with it would duplicate the header when a caller had already set one. The
+same sink serves HTTP and WebSocket handshake headers, so one observer works
+for all three kinds. A WebSocket handshake rejects the headers it owns
+(`sec-websocket-*`, `upgrade`, `connection`, `host`) with
+`EHttpWebSocketError`; the sink applies the same rule.
+
+### Attempt and outcome
+
+```pascal
+TAttemptKind = (akRequest, akSse, akWebSocket);
+
+THttpAttempt = record
+  Kind: TAttemptKind;
+  Method, Url, Host: string;
+  Port: Word;
+  /// 0 for the first request, +1 per redirect followed
+  Hop: Integer;
+  /// transparent retries already made on this hop
+  Retry: Integer;
+  /// SSE: an id the library generates for each `TSseReconnectLoop` and shares
+  /// by every attempt of that loop (0 for any other attempt), and the
+  /// reconnect count (0 for the first connection)
+  StreamId: Int64;
+  Reconnect: Integer;
+  Context: IInterface;
+  Headers: IHeaderSink;
+end;
+
+TCloseInitiator = (ciNone, ciLocal, ciRemote, ciAbort, ciError);
+
+THttpOutcome = record
+  /// 0 when the attempt failed before response headers
+  StatusCode: LongInt;
+  Protocol: TNegotiatedProtocol;
+  ConnectionReused: Boolean;
+  Error: Exception;        // borrowed; nil on success; do not free
+  Cancelled: Boolean;
+  /// the attempt ended because the response or socket was released without
+  /// being read to its end
+  Abandoned: Boolean;
+  BytesOut, BytesIn: Int64;
+  /// microseconds from the start of the attempt (monotonic clock)
+  RequestSentUs: Int64;    // last byte of the request written
+  HeadersUs: Int64;        // response headers received; 0 if never
+  FirstMessageUs: Int64;   // first body chunk / SSE event / WS message; 0 if none
+  LastMessageUs: Int64;
+  EndUs: Int64;
+  MessagesIn, MessagesOut: Int64;
+  /// gaps between consecutive inbound messages
+  MaxGapUs, SumGapUs: Int64;
+  /// akWebSocket only
+  Subprotocol: string;
+  CloseCode: Integer;
+  CloseReason: string;
+  ClosedBy: TCloseInitiator;
+end;
+```
+
+For an SSE stream a "message" is an event; for a plain response it is a body
+chunk; for a WebSocket it is a data message (ping and pong are counted
+separately by the per-message callback and not in `MessagesIn`).
+
+### The request observer
+
+```pascal
+IHttpClientObserver = interface
+  /// before the attempt is sent. May inject headers through A.Headers.
+  /// The returned token is passed to every later callback of this attempt.
+  function OnAttemptStart(const A: THttpAttempt): IInterface;
+  /// response headers received (status 101 for a WebSocket)
+  procedure OnResponseHeaders(const AToken: IInterface;
+    const AResponse: IHttpResponse);
+  /// a redirect is about to be followed (AToken belongs to the finished hop)
+  procedure OnRedirect(const AToken: IInterface; const AFromUrl, AToUrl: string;
+    const AStatus: LongInt);
+  /// a transparent retry is about to be made
+  procedure OnRetry(const AToken: IInterface; const AReason: string);
+  /// the attempt is over; fires exactly once per OnAttemptStart
+  procedure OnAttemptEnd(const AToken: IInterface; const O: THttpOutcome);
+end;
+```
+
+`OnAttemptEnd` fires **exactly once**, after finalization (see
+[Attempt end](#attempt-end)).
+
+### Per-message observation
+
+Aggregates in `THttpOutcome` are always collected. Per-message callbacks are
+opt-in per attempt:
+
+```pascal
+TMessageKind = (mkSseEvent, mkWsText, mkWsBinary, mkWsPing, mkWsPong, mkWsClose);
+TMessageKinds = set of TMessageKind;
+TDirection = (mdIn, mdOut);
+
+TMessageInfo = record
+  Kind: TMessageKind;
+  Direction: TDirection;
+  Index: Int64;          // 0-based, per direction
+  Size: Integer;         // payload bytes
+  ArrivedUs: Int64;      // from the start of the attempt, at the wire
+  SinceLastUs: Int64;    // since the previous message in this direction; 0 for the first
+  EventType, EventId: string;  // mkSseEvent only
+  Sse: PSseEvent;        // mkSseEvent only; valid only during the callback
+end;
+
+IHttpMessageObserver = interface
+  /// asked once per attempt; an empty set costs nothing for that attempt
+  function WantsMessages(const A: THttpAttempt): TMessageKinds;
+  procedure OnMessage(const AToken: IInterface; const M: TMessageInfo);
+end;
+```
+
+An observer implements `IHttpMessageObserver` in addition to
+`IHttpClientObserver`; the library discovers it with `Supports`, so an
+ordinary observer pays nothing. Nothing is on by default: a WebSocket reports
+counters only, and SSE reports per-event callbacks only when the observer's
+`WantsMessages` returns `[mkSseEvent]`.
+
+`OnMessage` runs inline on the thread that finishes reading the message (the
+caller's thread for SSE, the reader thread for WebSocket). It must be fast.
+
+The library asks `WantsMessages` once per attempt, right after
+`OnAttemptStart`. `TCompositeObserver` asks each member that implements
+`IHttpMessageObserver` at that point, keeps the answers in the attempt's token
+and forwards `OnMessage` only to the members whose set holds the message's
+kind. When the combined answer is empty no `TMessageInfo` is built for the
+attempt. `Index` and `SinceLastUs` count every message of a direction, while
+`MessagesIn` and `MessagesOut` count data messages only (an SSE event, a
+WebSocket text or binary message).
+
+### Reporting from a reader
+
+A reader of a response body (the SSE source, later the WebSocket) reports to
+the attempt through an interface the response exposes:
+
+```pascal
+IAttemptProgress = interface
+  function WantedKinds: TMessageKinds;
+  procedure ReportMessage(const AKind: TMessageKind;
+    const ADirection: TDirection; const AArrivedUs: Int64;
+    const ASize: Integer; const ASse: PSseEvent);
+  procedure ReadBegin;
+  procedure ReadEnd;
+  procedure Finish(const ABytesIn: Int64);
+end;
+```
+
+`Supports(Response, IAttemptProgress)` finds it on every response, also behind
+a content-decoding wrapper. A response that is not observed answers with an
+implementation that ignores every call. `ReportMessage` takes the arrival stamp
+the reader read from the wire; the attempt keeps the count, the first and last
+stamp and the gaps, and builds the `TMessageInfo` only for a kind the observers
+asked for. When a reader reported any inbound data message, those aggregates
+replace the per-frame ones the codec gathers, because a message is an event
+there and not a DATA frame.
+
+The codec ends the exchange inside the `Read` that returns the last bytes of
+the body. A reader therefore brackets each read with `ReadBegin` and `ReadEnd`:
+a clean end that happens in between is held until `ReadEnd`, so the messages
+that last read delivered are counted before `OnAttemptEnd`. An end with an
+error or an abandonment is never held. `Finish` ends the attempt at once as a
+deliberate local end (`Abandoned = False`) and is a no-op once the attempt has
+ended.
+
+### Installing observers
+
+```pascal
+THttpClientFactory.WithRequestObserver(const AObserver: IHttpClientObserver): THttpClientFactory;
+TCompositeObserver = class(TInterfacedObject, IHttpClientObserver, IHttpMessageObserver)
+```
+
+`WithRequestObserver` accumulates: each call adds an observer. Start callbacks
+run in registration order and end callbacks in reverse, so the observer
+registered first wraps the rest: its start runs first and its end last. A
+tracing observer registered first therefore sees the headers the later ones
+inject from `OnResponseHeaders` onward, not inside its own `OnAttemptStart`,
+and the later ones see what it injected. `TCompositeObserver` is the same
+behaviour as a reusable class.
+
+### Pull-based pool statistics
+
+```pascal
+TConnectionStats = record
+  Protocol: TNegotiatedProtocol;
+  State: TConnectionState;       // open, going away, closed
+  AgeMs, IdleMs: Int64;
+  ActiveStreams: Integer;
+  /// the peer's settings; 0 for HTTP/1.1
+  PeerMaxConcurrentStreams: LongWord;
+  PeerInitialWindowSize: LongWord;
+  PeerMaxFrameSize: LongWord;
+end;
+
+TOriginStats = record
+  Origin: string;                // includes the proxy route
+  Connections, IdleConnections, ActiveStreams, PendingAcquires: Integer;
+  Details: TArray<TConnectionStats>;
+end;
+
+TPoolStats = record
+  Connections, IdleConnections, ActiveStreams, PendingAcquires: Integer;
+  PerOrigin: TArray<TOriginStats>;
+end;
+
+THttpClient.PoolStats: TPoolStats;
+```
+
+A snapshot taken under the pool lock and copied out, so nothing in it points
+at pool state. Gauges are polled by the adapter (an OpenTelemetry
+asynchronous gauge, a Prometheus collector). The library pushes no gauge
+events. The per-connection detail serves diagnosis: connection age and idle
+time show churn, and the peer settings show why streams queue.
+
+The counts are the values the pool's caps use. `Connections` counts every
+pooled connection (what `MaxTotalConnections` bounds), `IdleConnections` the
+open ones with no active stream, `ActiveStreams` the streams in flight, and
+`PendingAcquires` the `Send` calls parked waiting for a slot. `IdleMs` is the
+time since the pool last handed the connection out and is 0 while a stream is
+active; `AgeMs` is the time since it was pooled. An HTTP/1.1 connection
+reports zero peer settings and one active stream while a response is being
+read. A proxied route is its own entry in `PerOrigin`, as it is its own pool
+key. `PoolStats` on a closed client returns zeros.
+
+Polling guidance: take one snapshot per collection cycle and read every gauge
+from it, rather than calling `PoolStats` once per gauge. The call takes the
+pool lock for the copy, so a scrape interval of seconds costs nothing; the
+per-connection `Details` allocate, so a gauge that needs only totals reads the
+top-level fields and ignores `PerOrigin`.
+
+### Library diagnostics
+
+```pascal
+TLogLevel = (llDebug, llInfo, llWarn, llError);
+IHttpLogger = interface
+  procedure Log(const ALevel: TLogLevel; const AMessage: string);
+end;
+THttpClientFactory.WithLogger(const ALogger: IHttpLogger): THttpClientFactory;
+```
+
+Only for events that are not request events: an observer that raised, a
+cleartext origin (closing the open item in
+[open-questions](open-questions.md)), a protocol fallback. Request logging is
+an adapter built on `IHttpClientObserver`.
+
+## Lifecycle
+
+```mermaid
+sequenceDiagram
+  participant C as caller
+  participant S as THttpClient.Send
+  participant O as observer(s)
+  participant W as wire
+  C->>S: Send(request.WithContext(span))
+  loop each hop / retry
+    S->>S: Clone request
+    S->>O: OnAttemptStart(attempt, Headers sink)
+    O-->>S: token (headers injected on the clone)
+    S->>W: send
+    W-->>S: response headers
+    S->>O: OnResponseHeaders(token, response)
+    alt redirect
+      S->>O: OnRedirect
+      S->>O: OnAttemptEnd(token, outcome)
+    end
+  end
+  S-->>C: IHttpResponse
+  C->>C: read body
+  W-->>S: body end / close / release
+  S->>O: OnAttemptEnd(token, outcome)
+```
+
+For a redirect, `OnAttemptEnd` for the finished hop fires before the next
+hop's `OnAttemptStart`. The client discards the body of a redirect response
+without reading it, so a hop whose body was not empty ends with
+`Abandoned = True`; a hop with an empty body ends clean. For the final hop it
+fires when the body ends.
+
+For a transparent retry the order is `OnRetry`, `OnAttemptEnd` for the refused
+attempt (with the stream error), then `OnAttemptStart` for the retry.
+
+### Per hop
+
+`THttpClient.Send` loops over hops and retries and calls `SendOnce` for each.
+The attempt starts and ends around `SendOnce`, so `Hop` and `Retry` are
+known. Each pass starts with `Clone` of the current request so the observer
+injects into a private header map.
+
+### Injection and shared headers
+
+`THttpRequest.FHeaders` is an interface shared by every copy of a request. An
+observer that mutated the request in place would write into the caller's
+request, and the redirect loop would carry hop 0's `traceparent` into hop 1.
+The library therefore clones before each attempt and hands the observer an
+`IHeaderSink` over the clone. This also gives every attempt a fresh span id.
+
+## Attempt end
+
+A response whose body is already complete when `Send` returns (a `HEAD`
+response, `204`, `304`, or an `END_STREAM` on the headers) has nothing left to
+read, so its attempt ends right after `OnResponseHeaders`. `BytesOut` and
+`BytesIn` count request and response body payload bytes, not framing or
+headers.
+
+`OnAttemptEnd` fires after the response is finalized, so `BytesIn`,
+`EndUs`, the message aggregates and any late error are known:
+
+| Attempt | Ends when |
+|---|---|
+| Plain request | the body reaches EOF, the response is released, or the stream fails |
+| SSE | the stream reaches EOF, `Close` is called, the response is released, or the stream fails |
+| WebSocket | the close handshake completes, `Abort` is called, the connection fails, or the connection object is released without any of those |
+
+One rule covers plain responses, SSE and WebSocket. An explicit local end is a
+deliberate end and reports `Abandoned = False`: `Close` on an SSE source,
+`Close` and `Abort` on a WebSocket, and a failure of any kind (a stream error,
+a refused handshake, a dropped connection). Only a response, source or socket
+that is released with none of those having happened, and without being read to
+its end, reports `Abandoned = True`. A response or socket that is never read to
+its end and never released holds its attempt open: a leaked response is a
+leaked span. This is documented behaviour.
+
+A WebSocket is the one object whose reader thread holds a reference to the
+connection until the session ends, so dropping the caller's last reference to
+an open socket does not release it: the session keeps delivering and its
+attempt stays open until a close handshake, an abort or a failure ends it.
+`Abandoned = True` therefore reports only a connection destroyed with no end
+recorded (one that never started its reader).
+
+The codecs report the end through a per-attempt hook carried on the request
+(`IExchangeObserver` in `Http2.Client.Stream`): the HTTP/2 lease and the HTTP/1.1 body
+stream each call it at most once, on body EOF, a failed read, a reset,
+a connection failure or release. The HTTP/2 lease only records an end that
+happens under the pooled connection's lock and delivers it after the lock is
+released. An end that arrives before `Send` has reported the response headers
+is held until it has, so `OnAttemptEnd` never precedes `OnResponseHeaders`.
+
+A once-latch guards `OnAttemptEnd`. The latch is taken under the owning
+object's lock; the callback itself runs outside every lock, as the
+`IHttp2Observer` contract already requires. A failed start (the observer
+raised, or the request failed before it could be sent) still pairs
+`OnAttemptStart` with one `OnAttemptEnd`.
+
+## Arrival stamping
+
+Latency metrics for a streaming endpoint must measure the endpoint, not the
+consumer. The stamp is taken where the library first sees the data.
+
+### HTTP/2
+
+1. `Http2.Client.Clock` provides a monotonic microsecond clock (`NowUs`).
+2. `TConnectionThread` stamps `TFrame.ArrivedUs` for each frame it reads,
+   immediately after `ReadFrame` returns. The field is meaningful only on
+   received frames.
+3. `TStreamLease` keeps the stamp of the DATA frame it is draining. Frames sit
+   in the lease's inbound queue until the consumer calls `ReadBody`;
+   `HandleDataFrame` runs on the consumer's thread, so the stamp must come
+   from the frame, not from the time it is processed.
+4. `ReadBody` returns bytes from one pending frame at a time, so each `Read`
+   maps to exactly one frame and one stamp. A body stream that can report it
+   implements:
+
+```pascal
+IStampedBodyStream = interface
+  /// the arrival stamp, in microseconds on the clock, of the frame that
+  /// supplied the bytes returned by the last Read
+  function LastReadArrivedUs: Int64;
+end;
+```
+
+   The lease's body stream and the pooled response's body implement it; a
+   body behind a decoding stream (a content-encoding) does not report
+   stamps.
+5. `TSseSource` queries `Supports(Body, IStampedBodyStream)` after each `Read`.
+   An event takes the stamp of the chunk that completed it (the chunk holding
+   its terminating blank line), which is when the endpoint finished sending
+   it.
+
+### HTTP/1.1
+
+There are no frames. `TBufferedReader` stamps each transport read and keeps a
+short list of `(buffer offset, stamp)` so bytes are attributed to the read
+that delivered them even when the buffer holds bytes from more than one read.
+`ReadBytes` never returns bytes of two transport reads, and the body stream
+returns what has arrived rather than waiting to fill the caller's buffer, so
+one `Read` maps to one stamp here too. Chunked decoding does not change this:
+chunk framing is consumed without a stamp and the payload bytes keep the stamp
+of the read that carried them. A response head and the first body bytes that
+arrive in one read share that read's stamp.
+
+### Aggregates for plain responses
+
+Each `Read` that returns bytes of a frame (HTTP/2) or of a transport read
+(HTTP/1.1) that has not been counted yet is one message. The codec keeps a
+`TArrivalStats` (first and last stamp, count, largest and summed gap between
+consecutive stamps) and reports it in `TExchangeEnd.Arrivals`. The attempt
+tracker turns it into `FirstMessageUs`, `LastMessageUs` (relative to the
+attempt start, like the other times), `MessagesIn`, `MaxGapUs` and
+`SumGapUs`. Several `Read` calls inside one frame are one message. A response
+that is released unread, or one whose body is empty, reports no messages.
+
+### Testing
+
+`SetNowUsHook` makes `NowUs` answer from a function the caller supplies, and
+`ResetNowUsHook` restores the system clock. The hook is process-wide and is
+called from the reader thread, so it must be thread-safe.
+
+### WebSocket
+
+The reader thread stamps each socket read (`TBufferedReader.LastReadUs`, so
+bytes that arrived with the `101` head keep that read's stamp). A message takes
+the stamp of the read that completed its final frame, and is reported to the
+attempt when that frame has been parsed, before the listener is asked for it.
+Reads are demand-driven: with no outstanding `Request(n)` the reader thread
+does not read the socket, so the stamp includes the consumer's wait, and the
+next message is stamped when the consumer finally asks for the one before it.
+`WithAutoRequest` removes the effect, because the reader then keeps reading
+while the listener runs. This is documented as a limitation and the delivery
+rule is not changed: a consumer that wants wire-accurate timing uses
+`WithAutoRequest` and does its own queueing.
+
+### Limits
+
+- **Frame granularity.** Events packed into one DATA frame (by the server, a
+  proxy or TCP coalescing) share a stamp, and the later ones report
+  `SinceLastUs = 0`. Counts, bytes, first, last and throughput stay correct;
+  a per-event gap histogram is quantised to frames.
+- **A stalled consumer.** Window credit is returned to the peer when DATA
+  *arrives* (`TrackReceivedData`), so flow control never throttles the peer on
+  the consumer's account. A lease's inbound queue is bounded
+  (`cDefaultQueueCapacity`, 128 frames), though, and `Push` blocks the
+  connection's reader thread when it is full. A consumer that stops reading
+  for 128 frames therefore delays arrival stamps for that stream and for every
+  other stream on the same connection. This is existing behaviour and is left
+  as it is: a slow consumer produces slow measurements, and the library does
+  not flag or compensate for it.
+- **Multiplexing.** Frames of several streams are read by one thread. A burst
+  on one stream delays the stamps of the others by the time it takes to read
+  it. This is microseconds for typical frames.
+- **Cost.** One clock read per frame (tens of nanoseconds), always on.
+
+## Metrics an adapter derives
+
+| Metric | From |
+|---|---|
+| Time to first byte | `HeadersUs - RequestSentUs` |
+| Time to first token | `FirstMessageUs - RequestSentUs` |
+| Mean inter-event latency | `SumGapUs / (MessagesIn - 1)` |
+| Stall | `MaxGapUs` |
+| Stream duration | `LastMessageUs - FirstMessageUs` |
+| Event rate | `(MessagesIn - 1) / (LastMessageUs - FirstMessageUs)` |
+| Byte rate | `BytesIn / (EndUs - HeadersUs)` |
+| Total latency | `EndUs` |
+| Inter-event latency distribution | `TMessageInfo.SinceLastUs` through `IHttpMessageObserver` |
+| Request size | `BytesOut` |
+
+Response headers (request ids, rate-limit counters) are read by the adapter
+from `OnResponseHeaders`. `Protocol` and `ConnectionReused` explain
+time-to-first-byte variance from cold connections.
+
+## Server-Sent Events
+
+- `SseRequest` marks the request, so `Kind = akSse`.
+- Each connection is its own attempt, because `TSseReconnectLoop` calls
+  `Send` for every (re)connect. The loop assigns one `StreamId` to the whole
+  loop and stamps `Reconnect` on each request it sends, so an adapter can
+  parent the attempts under one span or link them.
+- `WithContext` set on the request given to the loop reaches every
+  reconnect, because the loop clones that request and `Clone` keeps the
+  context.
+- An attempt ends when the stream ends, so a six-hour stream is a six-hour
+  attempt. `Kind` lets an adapter keep it out of a request-latency histogram.
+- `TSseSource` counts events and reports them, with the arrival stamps, to the
+  attempt through `IAttemptProgress`, which the response exposes
+  (`Supports(Response, IAttemptProgress)`). It does not own the lease, so it
+  cannot end the attempt itself.
+- `IHttpMessageObserver.OnMessage` receives each event with `EventType`,
+  `EventId`, `Size` and a pointer to the parsed event. That is how an adapter
+  reads a terminal usage event; the library does not interpret it.
+
+This replaces the earlier decision that SSE emits no observer event per
+message, for observers that opt in: the transport observer is unchanged, and
+per-event callbacks exist only on the request-level seam and only when
+requested.
+
+## WebSocket
+
+- `IWebSocketRequest.WithContext` attaches the context, and the request stays
+  immutable: every `With*` returns a new request that keeps it.
+- `Send(IWebSocketRequest)` starts an attempt with `Kind = akWebSocket` before
+  dialling (`Method = 'GET'`, `Url`, `Host`, `Port`, `Context`, `Headers`). The
+  observer injects handshake headers through `Headers`. The sink starts as the
+  request's own headers, `SetValue` replaces every value of a name, and a name
+  the handshake owns (`sec-websocket-*`, `upgrade`, `connection`, `host`, and
+  the framing headers `WithHeader` also refuses) raises `EHttpWebSocketError`.
+  An observer that raises there is swallowed like any other.
+- `OnResponseHeaders` fires at the `101`, before the reader thread starts, with
+  the response headers and `Outcome.Subprotocol` set at the end. The request is
+  reported as written once the handshake bytes are out (`RequestSentUs`).
+- A handshake that fails produces `OnAttemptStart` and `OnAttemptEnd` with the
+  error and no `OnResponseHeaders`. A refusal carries the status the server
+  answered in `StatusCode` (403, say) and `ClosedBy = ciError`; a dial or
+  proxy failure has `StatusCode = 0`.
+- The attempt ends once, however the session ends. The reader thread and
+  callers both drive the connection, so the end is taken under an atomic latch
+  and the callback runs outside every lock. `OnAttemptEnd` follows the end of
+  the close handshake (before the listener has asked for `OnClose`, which waits
+  for demand and may never come), not the listener's callback.
+- `ClosedBy`, `CloseCode` and `CloseReason`:
+
+| The session ends with | `ClosedBy` | `CloseCode`, `CloseReason` | `Error` |
+|---|---|---|---|
+| `Close` and the server's reply | `ciLocal` | the server's close frame | nil |
+| a close frame from the server | `ciRemote` | the server's close frame | nil |
+| `Abort` | `ciAbort` | 1006, empty | nil |
+| a failed handshake | `ciError` | 0, empty | the failure |
+| a protocol violation | `ciError` | the code this side closed with | the violation |
+| EOF without a close frame, a failed write, a timeout (close or ping) | `ciError` | 1006, empty | the failure |
+| a listener callback that raises | `ciError` | 1006, empty | the exception |
+| a connection destroyed with none of the above | `ciNone` | 0, empty | nil (`Abandoned`) |
+
+  A close frame with no payload reports 1005. `Error` is borrowed for the
+  callback, as everywhere.
+- A WebSocket uses a dedicated unpooled connection, so
+  `ConnectionReused = False` and `Protocol` is HTTP/1.1 (`npHttp1Cleartext`
+  for `ws`, `npHttp1Tls` for `wss`); a proxy route is not an outcome field.
+- Counters are always collected and are atomic. `MessagesIn` and `MessagesOut`
+  count data messages (a fragmented message counts once, when its last
+  fragment is read or written); ping, pong and close are not counted.
+  `BytesIn` and `BytesOut` are the payload bytes of those data messages, not
+  frame headers, control frames or the handshake. The first, last and gap
+  aggregates come from the inbound data messages' wire stamps.
+- Per-message callbacks are off unless `WantsMessages` includes `mkWs*` kinds.
+  Every frame this side reads or writes is reported to the attempt, which
+  builds a `TMessageInfo` only for a kind an observer asked for: inbound text,
+  binary, ping, pong and close, and outbound text, binary, ping, pong (the
+  automatic answer to a ping included) and close (the echo included).
+  `Size` is the payload bytes of the whole message (code plus reason for
+  close). `Index` and `SinceLastUs` count every kind per direction, so a ping
+  between two texts takes an index and shortens the next gap. Outbound stamps
+  are taken when the write completes; senders on several threads may report
+  them out of order, and a negative `SinceLastUs` is reported as 0.
+  `OnMessage` for inbound messages runs on the reader thread, and for outbound
+  ones on the thread that sent.
+- A message reported after the attempt has ended is not delivered, so
+  `OnMessage` never follows `OnAttemptEnd`.
+
+## Threading and failure
+
+- Observer callbacks must be fast and must not block.
+- Start, headers, redirect, retry and end for a plain request run on the
+  caller's thread, except `OnAttemptEnd`, which runs on whichever thread
+  completes the body (usually the reader's own) or releases the response.
+- Every call is guarded: an observer that raises is swallowed and reported to
+  `IHttpLogger`, as `IHttp2Observer` already does. A raising
+  `OnAttemptStart` yields no token and later callbacks for that observer are
+  skipped; other observers are unaffected.
+- Callbacks run outside every library lock.
+
+## Compatibility
+
+- A factory with no request observer pays one nil check per `Send`; no clock
+  read, no clone, no allocation beyond today's. The arrival stamp itself costs
+  one clock read per received frame whether or not an observer is installed;
+  it is cheap enough not to be gated.
+- `IHttp2Observer`, `WithObserver` and every existing signature are unchanged.
+- `TFrame` gains one field. It is a record that is built in many places, so
+  `Create` leaves it zero and only the connection thread sets it.
+
+## Writing an adapter
+
+Three working adapters live in `examples/`, outside the library and its
+package. They use small in-memory stand-ins for the tracer and the metric
+registry, so they show the shape of an adapter without pulling in
+OpenTelemetry, Prometheus or a logging framework. A consumer replaces the
+stand-in with its own library and keeps the observer.
+
+| Unit | Adapter | Shows |
+|---|---|---|
+| `examples/observer_tracing.pas` | `TTracingObserver` over `TTracer` | the parent span from `A.Context`, one `traceparent` per attempt through `A.Headers.SetValue`, status and error, the span ended in `OnAttemptEnd` |
+| `examples/observer_metrics.pas` | `TMetricsObserver` over `TMetricRegistry` | the table in [Metrics an adapter derives](#metrics-an-adapter-derives) computed in `OnAttemptEnd`, an in-flight gauge, a pull gauge over `PoolStats` (`TPoolStatsCollector`), and an `IHttpMessageObserver` that feeds an inter-event histogram from `SinceLastUs` |
+| `examples/observer_logging.pas` | `TLoggingObserver` | one `key=value` line from every callback, with the redirect, retry, abandoned and error cases, written to an `IHttpLogger` |
+| `examples/observer_all.pas` | all three installed together | a plain request, an SSE stream with a reconnect and a WebSocket session; it prints one trace, the metrics and the log lines |
+| `examples/observer_overhead.pas` | none | what the observers cost on loopback; as described in [observer-overhead](../../verification/source/client/observer-overhead.md) |
+
+An adapter for a tracer implements `IHttpClientObserver`:
+
+- `OnAttemptStart` reads `A.Context` for the parent span, starts a client
+  span, and calls `A.Headers.SetValue('traceparent', ...)`. It returns an
+  `IInterface` holding the span. Every attempt (a redirect hop, a retry, an SSE
+  reconnect) shares the request's context, so the spans are siblings under the
+  caller's span; a stream-level span for a whole reconnect loop is the
+  caller's own, and `StreamId` and `Reconnect` link the attempts to it.
+- `OnResponseHeaders` sets the status attribute.
+- `OnAttemptEnd` records the outcome attributes, sets the error status from
+  `O.Error`, and ends the span.
+
+A metrics adapter derives the table above in `OnAttemptEnd`, reads
+`PoolStats` from its gauge callbacks, and implements `IHttpMessageObserver`
+to feed an inter-event histogram. A logging adapter writes a line from each
+callback. The three can be installed side by side through
+`WithRequestObserver`.
+
+Points an adapter author meets:
+
+- The outcome does not carry the attempt's `Kind`. An adapter that needs it at
+  the end (to keep a stream out of a request-latency histogram) keeps it in
+  its token, as `TMetricsObserver` does.
+- The `IHeaderSink` an adapter receives stays readable for the life of the
+  attempt, but only what is set during `OnAttemptStart` reaches the wire. An
+  adapter that registered first and wants to record the headers later
+  observers injected reads them after the start callbacks, for example in
+  `OnResponseHeaders`; `TTracingObserver.RecordRequestHeader` does this.
+- The token is the adapter's own object; the composite never shares it with
+  another member. An adapter with nothing to carry may return `nil`.
+- `O.Error` is borrowed: take its class name and message inside the callback.
+- A callback that raises is swallowed and logged at `llWarn`, so an adapter bug
+  cannot fail a request; test the adapter on its own.
+- `PoolStats` is on `THttpClient`, not on `IHttpClient`: the adapter casts the
+  client it was given.
+- Per-event work is opt-in. An adapter that has no use for events answers an
+  empty set from `WantsMessages`, and then the library builds no per-message
+  record for the attempt.
+
+## Settled decisions
+
+- The SSE `StreamId` is generated by the library, one per `TSseReconnectLoop`.
+  A caller correlates it with an application id through the request context.
+- `PoolStats` carries per-connection detail (age, idle time, state, active
+  streams, peer settings) as well as the per-origin totals.
+- The lease's bounded inbound queue is not changed and a stalled consumer is
+  not flagged; its effect on measurements is documented under
+  [Limits](#limits).
