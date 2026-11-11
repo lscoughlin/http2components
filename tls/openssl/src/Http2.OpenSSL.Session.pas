@@ -293,7 +293,10 @@ end;
 
 function TOpenSSLSession.State: TTlsSessionState; begin Result := FState; end;
 function TOpenSSLSession.PendingOutput: SizeInt;
-begin Result := BIO_ctrl(FWbio, _BIO_CTRL_PENDING, 0, nil); end;
+begin
+  if FWbio = nil then Exit(0);
+  Result := BIO_ctrl(FWbio, _BIO_CTRL_PENDING, 0, nil);
+end;
 procedure TOpenSSLSession.Fail(const AMessage: string; const ACategory: TTlsErrorCategory);
 begin
   FState := tssFailed;
@@ -552,9 +555,13 @@ begin
   FPlain := nil;
   FPendingWrite := nil;
   FInFlightWrite := nil;
-  if FRbio <> nil then BIO_ctrl(FRbio, BIO_CTRL_RESET, 0, nil);
-  if FWbio <> nil then BIO_ctrl(FWbio, BIO_CTRL_RESET, 0, nil);
   FState := tssClosed;
+  // SSL owns both BIOs and any partially decoded native records. Releasing
+  // it clears those buffers even when the caller retains this interface.
+  if FSsl <> nil then SSL_free(FSsl);
+  FSsl := nil;
+  FRbio := nil;
+  FWbio := nil;
 end;
 function TOpenSSLSession.NegotiatedInfo: TTlsNegotiatedInfo;
 begin

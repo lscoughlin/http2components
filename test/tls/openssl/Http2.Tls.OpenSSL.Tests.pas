@@ -614,6 +614,27 @@ begin
   Client.Abort;
 end;
 
+procedure CheckAbortReleasesNativeBuffers;
+var
+  Session: ITLSSession;
+  Options: TTlsClientSessionOptions;
+  BaseSsl: Integer;
+  Buffer: TBytes;
+begin
+  BaseSsl := LiveSSLCount;
+  Options := Default(TTlsClientSessionOptions);
+  Options.HostName := 'localhost';
+  Session := Context.CreateClientSession(Options);
+  Session.Advance(0);
+  Session.Abort;
+  Session.Abort;
+  SetLength(Buffer, 64);
+  Check((LiveSSLCount = BaseSsl) and (Session.State = tssClosed) and
+    (Session.DrainEncrypted(Buffer, 0, Length(Buffer)) = 0) and
+    not Session.Advance(0).MadeProgress,
+    'Abort retained native TLS buffers while its interface remained alive');
+end;
+
 procedure CheckRepeatedLifecycle;
 var I: Integer; Ctx: ITLSContext; C: ITLSSession; S: ITLSSession;
   CP: TTlsClientPolicy; SP: TTlsServerPolicy;
@@ -757,6 +778,7 @@ begin
   CheckVersionsAndNames;
   CheckRequestWithoutIdentity;
   CheckTrustDepthAndDeadline;
+  CheckAbortReleasesNativeBuffers;
   CheckRepeatedLifecycle;
   CheckHandshakeMaterialBounds;
   CheckConcurrentCreation;

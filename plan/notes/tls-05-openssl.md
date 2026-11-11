@@ -125,3 +125,15 @@ were checked and were already correct.
 The merge kept the newer main-branch build targets when older, identical
 build changes from worker prerequisite cherry-picks caused conflicts. The
 provider package inventory was then regenerated for its six source units.
+
+## Abort buffer release review
+
+The coordinator found that resetting the BIOs did not release native record
+buffers held inside SSL while a caller retained the aborted session. Abort
+now frees SSL and both owned BIOs, then clears their pointers. Empty output
+and repeated Abort/Advance remain safe. A native-count assertion holds the
+interface alive and checks that SSL returns to baseline immediately.
+
+`make test-tls-openssl` passed 87 checks in 0.500 seconds after this correction.
+The log is `bin/tls-coordinator/tls05-abort-release.log`. The context and
+copied peer metadata retain their normal interface lifetimes.
