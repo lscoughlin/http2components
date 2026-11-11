@@ -172,8 +172,8 @@ at `cWindowUpdateBatchSize = 32768`) and is documented in
 
 ```sh
 # the whole sweep (reference verifier + our probe for every id). Needs
-# Docker/Rancher Desktop; ~30 minutes. Writes bin/validation-results.md.
-tools/validate/harness.sh                 # or: make validate-harness
+# Docker/Rancher Desktop; ~30 minutes. Writes a target/profile results table and run-scoped evidence under bin/<target>/<profile>/validation/.
+tools/client/validate/harness.sh                 # or: make validate-harness
 
 # one id by hand
 docker run --rm h2-test-harness --list                 # enumerate 146 ids
@@ -200,8 +200,17 @@ probe; the two are compared.
 
 Acceptance: a results table with counts and the failing id list
 (empty = green) at the pinned harness revision. The generated table lives in
-`bin/validation-results.md`; this file records the
-interpretation and the justification for every non-MATCH row.
+the target/profile validation directory; this file records the interpretation
+and the justification for every non-MATCH row.
+
+Current runner evidence is stored in a unique
+`bin/<target>/<profile>/validation/harness-<run>/` directory. It contains full
+reference and client outputs, peer container logs, the build log, id
+manifests, `results.tsv`, and the generated summary. The image id list is
+checked against the declared 146-id set, and the produced rows are checked
+against the selected ids. A `HARNESS_IDS` subset is diagnostic; it reports
+`PARTIAL` and exits with status 2. A not-ready server or killed probe without
+a `RESULT` is counted as an infrastructure failure and fails a full sweep.
 
 Verdicts: **MATCH** = our outcome class equals the reference's; **BETTER** =
 the reference's verifier timed out/errored while we produced a clean
@@ -315,11 +324,11 @@ draft-09 suite.
 
 ### B results: full sweep (146 ids)
 
-Command: `make validate-harness` (or `bash tools/validate/harness.sh`), run
+Command: `make validate-harness` (or `bash tools/client/validate/harness.sh`), run
 detached because 146 x (~3.1 s reference verifier + ~8 s probe) is ~30 min.
 Positive control `6.5/1`: **pass** (when it does not, every row is scored
-`fail invalid`). Results table: `bin/validation-results.md`; raw log:
-`doc/verification/harness-run-full.log`.
+`fail invalid`). Historical results table: `bin/validation-results.md`; raw
+log: `doc/verification/harness-run-full.log`.
 
 | Verdict | Count |
 |---|---|
@@ -347,7 +356,7 @@ sweep active. Several ids (`5.4.1/2`, `6.5/2`, `6.1/3`, `5.1/13`, `4.1/1`,
 container build, or another sweep) the declared detection can arrive after the
 4 s probe deadline and be recorded as `timeout`. They pass 40+ consecutive
 isolated runs. Re-run a suspect id alone with
-`HARNESS_IDS="<id>" bash tools/validate/harness.sh` before treating a `WORSE`
+`HARNESS_IDS="<id>" bash tools/client/validate/harness.sh` before treating a `WORSE`
 as a client defect.
 
 **Runs are not bit-for-bit reproducible.** Consecutive sweeps disagree on
@@ -397,7 +406,7 @@ the PING, and reporting `connection closed while reading frame header`
 (`conn-error`) when the harness closes. Checked individually:
 
 ```sh
-HARNESS_IDS="4.1/1" bash tools/validate/harness.sh
+HARNESS_IDS="4.1/1" bash tools/client/validate/harness.sh
 ```
 
 **Dead connection during a body read.** The sweep records `6.9/2` as
