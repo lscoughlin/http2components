@@ -629,3 +629,14 @@ exit normally with the full log retained. Separate controls check statistics
 queries, startup failure, and cleanup failure. Root reviews the code and
 controlled results before running the unchanged workload on Linux. The
 runner uses its own worktree and does not run remote jobs during acceptance.
+
+## LV-35: Evidence export checks its own guard text
+
+The prepared evidence collector includes top-level Python tools in the
+archive. Its private-key guard contains the literal key delimiter that it
+rejects, so collection would reject the collector's own source. The runner
+owner repairs that guard without reducing protection for actual private
+keys. A small temporary input set checks ordinary logs, collector source,
+and a deliberate private-key fixture. The clean set produces an archive
+and verified hashes; the key fixture causes a clear failure. The tool stays
+in run artifacts. No remote collection runs until acceptance finishes.
