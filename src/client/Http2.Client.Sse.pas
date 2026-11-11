@@ -34,7 +34,7 @@ interface
 uses
   SysUtils, Classes, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Stream, Http2.Client.Messages, Http2.Client.Clock,
-  Http2.Client.RequestObserver, Http2.Client;
+  Http2.Client.RequestObserver, Http2.Client.Api, Http2.Client.Request, Http2.Client.BodyReader;
 
 const
   /// the media type of an event stream (WHATWG / RFC 9110)
