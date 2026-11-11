@@ -29,3 +29,11 @@ The runner's `--list` output is `bin/baseline-server-test-inventory.xml`. The mT
 ## Reading notes
 
 The source README and toolchain document describe the FPC 3.2.4 build and the fpcunit runner. The validation document distinguishes unit tests from external protocol checks and load tools. The protocol design document states that the peer's `SETTINGS_HEADER_TABLE_SIZE` sizes the response encoder, while the server's advertised setting limits the request decoder. Its flow-control section sets the maximum window to 2^31-1 octets and describes separate connection and stream windows. These records agree with the M00 test and build setup.
+
+## Review and cleanup
+
+The parent reviewed and merged this evidence. The temporary worktree and
+branch were removed after review. The disposable checkout no longer exists.
+The raw log and registration files named above are retained by basename under
+`bin/baseline-evidence/` in the target repository. No source repository file
+was changed.

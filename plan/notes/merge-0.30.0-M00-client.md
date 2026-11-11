@@ -85,3 +85,11 @@ outputs to its configured `bin/` directory and could use the shared mORMot2
 unit paths. The source mORMot2 working tree remained clean after the run.
 This is a tooling limitation for a repeated build, not a source change.
 The baseline outputs are ignored and are not part of this commit.
+
+## Review and cleanup
+
+The parent reviewed and merged this evidence. The temporary worktree and
+branch were removed after review. The disposable checkout no longer exists.
+The raw log and registration files named above are retained by basename under
+`bin/baseline-evidence/` in the target repository. No source repository file
+was changed.
