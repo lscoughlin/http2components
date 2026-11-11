@@ -146,22 +146,22 @@ The stale factory source paths found during that run are corrected; its
 part of the comparison record and require classification if they recur.
 
 
-## Execution status at 2026-11-11 22:30 UTC
+## Execution status at 2026-11-11 23:22 UTC
 
 | IDs | Status |
 | --- | --- |
-| V00 | Each candidate has a Git archive and command/result records. Candidate 5ecf0fc is in full acceptance after the reviewed client wake repair. The absent 610a86b nested artifacts are an explicit evidence gap; source and top-level logs remain. |
+| V00 | Each candidate has a Git archive and command/result records. Candidate a3298bd is in affected acceptance after the reviewed admission repair. The absent 610a86b nested artifacts are an explicit evidence gap; source and top-level logs remain. |
 | V01 | All 146 expected harness rows are present: MATCH 30, BETTER 39, WORSE 0, CLASS-DIFF 15, UNKNOWN 62. Non-matching outcomes have source and trace classifications. |
-| V02, V12 | Full server conformance passed 94 HTTP/2 and eight HPACK cases with no skips on 475db3d. Required gates run again after the remaining repair. |
+| V02, V12 | Full server conformance passed 94 HTTP/2 and eight HPACK cases with no skips on 97aca1d. Required gates run again after the admission repair. |
 | V03 | Client Autobahn, independent server HTTP/2 WebSocket, HTTP/1 WebSocket, and SSE checks passed. |
-| V04, V13 | Real mTLS passed 54 rows; real proxy passed 65 rows with three explicit Squid build limitations. |
-| V05, V07, V11 | Abuse passed all required cases on 475db3d. Performance, long-lived connections, and concurrent incomplete handshakes remain pending. The reviewed performance logging fix passed controlled local checks. |
-| V06 | Candidate 5ecf0fc passed five builds, seven idle/header cases, two general integration runs, and the complete 777-case client suite. Final examples, packages, and complete server acceptance continue. The earlier server and integration failures remain in the record. |
-| V09, V10 | Bounded provider/security matrices, independent client checks, and 32 independent server identity rows passed. The affected server checks run again. |
-| V14 | The 13 adapter and 13 listener cases, 40 live mTLS cases, and 20 repeated shutdown cases passed after the EOF repair. |
+| V04, V13 | Real mTLS passed 54 rows; real proxy passed 65 rows with three explicit Squid build limitations. Client interoperation passed all 13 required cases with its existing A8 limitation. |
+| V05, V07, V11 | Abuse passed all required cases on 97aca1d. The first performance stage exposed excess pending-handshake admission. A strict old-code control fails all four cases. The repaired listener passes all four, including prompt rejection, timeout, recovery, and descriptor cleanup. Other performance stages remain pending. |
+| V06 | Candidate 5ecf0fc passed five builds, 25 examples, seven idle/header cases, two integration runs, and all 777 client tests. Package-only update 97aca1d passed all six packages and all 721 server tests. The admission repair has three new unit cases; affected server acceptance runs on a3298bd. |
+| V09, V10 | Bounded provider/security matrices, independent client checks, and 32 independent server identity rows passed. Affected server checks run again. |
+| V14 | The 13 adapter and 13 listener cases, 40 live mTLS cases, and 20 repeated shutdown cases passed on 97aca1d. They run again after the admission repair. |
 | V08 | Release review remains incomplete. No release is published. |
 
 The evidence record is `doc/verification/linux-tls-2026-11-11.md`. Initial
-failures remain in the artifacts. Focused passes do not replace the complete
-Linux server run. The original TLS replacement input remains unchanged and
-outside the tested source archives.
+failures remain in the artifacts. Focused passes do not replace complete
+affected acceptance. The original TLS replacement input remains unchanged
+and outside the tested source archives.
