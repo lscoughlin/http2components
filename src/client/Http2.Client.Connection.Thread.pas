@@ -134,7 +134,8 @@ begin
   raise EStreamError.Create('TSocketStream is not seekable');
 end;
 
-constructor TConnectionWorker.Create(AThread: TConnectionThread; AConn: TConnection);
+constructor TConnectionWorker.Create(AThread: TConnectionThread;
+  AConn: TConnection);
 begin
   inherited Create;
   FThread := AThread;
@@ -163,6 +164,8 @@ var
   Frame: TFrame;
 begin
   try
+    if FThread.WorkerTerminated then
+      Exit;
     DoPreface;
     FConn.SetState(csOpen);
     FConn.Notifications.EmitConnectionOpen;

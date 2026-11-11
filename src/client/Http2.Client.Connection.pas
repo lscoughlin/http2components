@@ -8,14 +8,6 @@ notes:
   - Unit references use the common and client namespaces.
 ---
 }
-/// Connection, blocking queue, and connection thread (plan S06/S07)
-// - this unit is part of the http2client project (see doc/design/transport.md,
-//   sections "Threading and queues" and "Connection lifecycle").
-// - FPC 3.2.4 has no TThreadedQueue<T> and no TMonitor; TEvent/TSimpleEvent
-//   raise ESyncObjectException on macOS. The bounded queue is therefore built
-//   from TQueue<T> + TCriticalSection + two RTLEvents (see probe12.pas).
-// - one TConnectionThread owns BOTH directions of one socket: callers only
-//   enqueue frames onto the outbound queue, the thread is the sole writer.
 unit Http2.Client.Connection;
 
 {$mode delphi}{$H+}
@@ -85,6 +77,15 @@ type
     FWorker: Pointer;
   protected
     procedure Execute; override;
+    procedure DoPreface;
+    procedure ApplyPeerSettings(const ASettings: TConnectionSettings);
+    procedure RouteInbound(const AFrame: TFrame);
+    procedure DrainOutbound;
+    procedure WriteTracked(const AFrame: TFrame);
+    procedure CheckPingKeepAlive;
+    procedure HandlePingAck(const APayload: TBytes);
+    procedure Fail(const AMessage: string; const ACode: THttp2ErrorCode;
+      const AClientAuthAlert: string = '');
   public
     constructor Create(AConn: TConnection);
     destructor Destroy; override;
@@ -110,8 +111,6 @@ type
     FLock: TCriticalSection;
 
     FStreams: TDictionary<LongWord, IConnectionStream>;
-    /// RFC 7540 section 3.2: an h2c upgrade request is served as stream 1 by
-    /// the peer and MUST NOT be re-sent; this guards the one-time adoption
     FStreamOneReserved: Boolean;
     FStateEvent: PRTLEvent;
     FSocket: IHttp2Socket;
@@ -127,11 +126,6 @@ type
     FLocalSettings: TConnectionSettings;
     FPeerSettings: TConnectionSettings;
     FSettingsAcked: Boolean;
-    /// True once the peer's own SETTINGS frame has been applied, so that
-    /// InitialWindowSize is known. DATA may not be emitted before that
-    /// (RFC 9113 section 6.5.3: a peer may lower the initial window below the
-    /// 65535 default, and overrunning it is a FLOW_CONTROL_ERROR). HEADERS
-    /// are not flow-controlled and may still be sent immediately.
     FPeerSettingsReceived: Boolean;
     FGoAwayLastStreamId: LongWord;
     FHighestStreamId: LongWord;
@@ -145,26 +139,15 @@ type
     FLastActivity: QWord;
     FNotifications: TConnectionObserver;
     FFlowControl: TFlowControl;
-    /// per-stream bytes received since the last stream WINDOW_UPDATE
     FPendingStreamCredit: TDictionary<LongWord, LongWord>;
-    /// connection bytes received since the last connection WINDOW_UPDATE
     FPendingConnCredit: LongWord;
-    /// set whenever send credit may have become available (an inbound
-    /// WINDOW_UPDATE, a SETTINGS_INITIAL_WINDOW_SIZE change) or the
-    /// connection ended, so a sender parked on a starved window wakes at
-    /// once instead of sleeping out its poll interval
     FSendCreditEvent: PRTLEvent;
-    /// senders currently parked on FSendCreditEvent; RTLEventSetEvent wakes
-    /// exactly one waiter, so the waker must signal once per parked sender
     FSendCreditWaiters: Integer;
     function GetState: TConnectionState;
     function GetPeerSettings: TConnectionSettings;
     function GetObserver: IHttp2Observer;
     procedure SetObserver(const AValue: IHttp2Observer);
     procedure SetHeaderDecoder(const AValue: THpackCodec);
-    // observer fan-out helpers: each snapshots the observer reference under
-    // FLock, then invokes the callback OUTSIDE the lock (it may re-enter) and
-    // inside a try/except (a raising observer must not break the loop)
     /// account for received DATA and return window credit to the peer when
     /// enough has accrued (RFC 7540 section 6.9). Called for every inbound
     /// DATA frame, stream-scoped or not.
@@ -407,6 +390,8 @@ begin
   if not Finished then
   begin
     Terminate;
+    if Suspended then
+      Start;
     WaitFor;
   end;
   Http2.Client.Connection.Thread.TConnectionWorker(FWorker).Free;
@@ -414,13 +399,51 @@ begin
 end;
 
 procedure TConnectionThread.Execute;
-begin
-  Http2.Client.Connection.Thread.TConnectionWorker(FWorker).Run;
-end;
+begin Http2.Client.Connection.Thread.TConnectionWorker(FWorker).Run; end;
 
 function TConnectionThread.WorkerTerminated: Boolean;
 begin
   Result := Terminated;
+end;
+
+procedure TConnectionThread.DoPreface;
+begin Http2.Client.Connection.Thread.TConnectionWorker(FWorker).DoPreface; end;
+
+procedure TConnectionThread.ApplyPeerSettings(
+  const ASettings: TConnectionSettings);
+begin
+  Http2.Client.Connection.Thread.TConnectionWorker(FWorker).ApplyPeerSettings(
+    ASettings);
+end;
+
+procedure TConnectionThread.RouteInbound(const AFrame: TFrame);
+begin
+  Http2.Client.Connection.Thread.TConnectionWorker(FWorker).RouteInbound(
+    AFrame);
+end;
+
+procedure TConnectionThread.DrainOutbound;
+begin Http2.Client.Connection.Thread.TConnectionWorker(FWorker).DrainOutbound; end;
+
+procedure TConnectionThread.WriteTracked(const AFrame: TFrame);
+begin
+  Http2.Client.Connection.Thread.TConnectionWorker(FWorker).WriteTracked(AFrame);
+end;
+
+procedure TConnectionThread.CheckPingKeepAlive;
+begin Http2.Client.Connection.Thread.TConnectionWorker(FWorker).CheckPingKeepAlive; end;
+
+procedure TConnectionThread.HandlePingAck(const APayload: TBytes);
+begin
+  Http2.Client.Connection.Thread.TConnectionWorker(FWorker).HandlePingAck(
+    APayload);
+end;
+
+procedure TConnectionThread.Fail(const AMessage: string;
+  const ACode: THttp2ErrorCode; const AClientAuthAlert: string);
+begin
+  Http2.Client.Connection.Thread.TConnectionWorker(FWorker).Fail(AMessage,
+    ACode, AClientAuthAlert);
 end;
 
 procedure TConnection.Start;
@@ -607,8 +630,6 @@ begin
   RTLEventSetEvent(FStateEvent);
   WakeSendCredit;
   FNotifications.EmitGoAway(ALastStreamId, ecNoError);
-  // notify OUTSIDE the lock: a lease must never call back into TConnection
-  // (RegisterStream/UnregisterStream) while we hold FLock, or it deadlocks
   for S in Snapshot do
     S.OnConnectionGoAway(ALastStreamId);
 end;
@@ -631,16 +652,12 @@ begin
     FLock.Release;
   end;
   FNotifications.EmitStreamOpen(AStreamId);
-  // a connection that failed before this stream registered missed the
-  // fan-out in FailWith and would never answer it: fail the stream now
-  // instead of leaving it to the header timeout
   if Failed then
     AStream.OnConnectionFailed(Msg, Code);
 end;
 
 procedure TConnection.UnregisterStream(const AStreamId: LongWord);
 begin
-  // return the stream's outstanding receive credit before it disappears
   SendWindowUpdate(AStreamId);
   FLock.Acquire;
   try
@@ -667,8 +684,6 @@ begin
   finally
     FLock.Release;
   end;
-  // mirror RegisterStream: notify outside the lock so a lease callback never
-  // re-enters FLock
   FNotifications.EmitStreamOpen(1);
   Result := True;
 end;
@@ -725,7 +740,6 @@ begin
   finally
     FLock.Release;
   end;
-  // deliver OUTSIDE the lock: a lease callback must never re-enter FLock
   if Result then
     S.OnStreamFrame(Routed);
 end;
@@ -762,8 +776,6 @@ end;
 function TConnection.FailureError(const AMessage: string;
   const ACode: THttp2ErrorCode): EHttpError;
 begin
-  // FClientAuthAlert is written once, by FailWith, before the state becomes
-  // csClosed, so a caller that has seen the failure may read it without FLock
   if FClientAuthAlert <> '' then
     Result := EHttpTlsClientAuthError.Create(AMessage, FClientAuthAlert)
   else
@@ -860,10 +872,6 @@ end;
 procedure TConnection.ApplyWindowUpdate(const AStreamId,
   AIncrement: LongWord);
 begin
-  // ParseWindowUpdate has already rejected a zero increment (ValidateFrame
-  // runs first), so the only failure left is a window that overflows past
-  // 2^31-1. A stream-scoped overflow is a stream error (RST_STREAM); a
-  // connection-scoped one is a connection error (RFC 9113 section 6.9.1).
   FLock.Acquire;
   try
     if AStreamId = 0 then
@@ -887,8 +895,6 @@ begin
   finally
     FLock.Release;
   end;
-  // wake senders starved on the window this update just grew. Done outside
-  // the lock: the parked sender only reads the window after re-acquiring it.
   WakeSendCredit;
 end;
 
@@ -928,8 +934,6 @@ begin
   begin
     FLock.Acquire;
     try
-      // an ended connection can never grant credit again; surface the real
-      // reason rather than sleeping out the deadline
       if FClosed or (FState = csClosed) then
         if FError <> '' then
           raise FailureError(FError, FErrorCode)

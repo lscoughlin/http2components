@@ -22,13 +22,6 @@ const
   cDefaultQueueCapacity = 128;
 
 type
-  IBlockingQueue<T> = interface
-    procedure Push(const AItem: T);
-    function Pop(out AItem: T): Boolean;
-    function TryPop(out AItem: T): Boolean;
-    procedure Shutdown;
-  end;
-
   TBlockingQueueState<T> = class
   private
     FLock: TCriticalSection;

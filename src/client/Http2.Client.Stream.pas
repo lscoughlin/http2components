@@ -49,6 +49,14 @@ const
   hmOptions = Http2.Client.Stream.Types.hmOptions;
   hmTrace = Http2.Client.Stream.Types.hmTrace;
   hmPatch = Http2.Client.Stream.Types.hmPatch;
+  lsIdle = Http2.Client.Stream.Types.lsIdle;
+  lsHeadersSent = Http2.Client.Stream.Types.lsHeadersSent;
+  lsLocalHalfClosed = Http2.Client.Stream.Types.lsLocalHalfClosed;
+  lsClosed = Http2.Client.Stream.Types.lsClosed;
+  edNone = Http2.Client.Stream.Types.edNone;
+  edEof = Http2.Client.Stream.Types.edEof;
+  edFailed = Http2.Client.Stream.Types.edFailed;
+  edCancelled = Http2.Client.Stream.Types.edCancelled;
 
 type
   THttpMethod = Http2.Client.Stream.Types.THttpMethod;
@@ -64,14 +72,13 @@ type
   IHttpBodyStream = Http2.Client.Stream.Types.IHttpBodyStream;
   TStreamIdAllocator = Http2.Client.Stream.Types.TStreamIdAllocator;
 
-  /// the local (send) side of the RFC 7540 section 5.1 state machine
-  TLeaseLocalState = (lsIdle, lsHeadersSent, lsLocalHalfClosed, lsClosed);
+  TLeaseLocalState = Http2.Client.Stream.Types.TLeaseLocalState;
+  TLeaseEndDue = Http2.Client.Stream.Types.TLeaseEndDue;
 
   /// the response (receive) side assembly state
   TResponseState = (rsIdle, rsBodyOpen, rsBodyComplete, rsFailed);
 
   /// why a lease's exchange is due to be reported (first reason wins)
-  TLeaseEndDue = (edNone, edEof, edFailed, edCancelled);
 
   TStreamLease = class;
 
@@ -175,15 +182,10 @@ type
     procedure FireExchange(const AReason: TLeaseEndDue;
       const AAbandoned: Boolean);
 
-    function MaxFrameSize: LongWord;
     /// reserve up to AWant bytes of the peer's SEND window for this stream,
     /// blocking until credit arrives or the lease deadline expires. Raises
     /// EHttpTimeout on expiry so a stalled send fails instead of hanging.
-    function AcquireCredit(const AWant: LongWord): LongWord;
     function MakeStreamError: EHttpError;
-    procedure BuildRequestHeaderBlock(out ABlock: THeaderBlock);
-    procedure EmitHeaderBlock(const ABlock: TBytes; const AEndStream: Boolean);
-    procedure EmitData(const AData: TBytes; const AEndStream: Boolean);
     function PopInbound(out AFrame: TFrame; const ATimeoutMs: Integer): Boolean;
     function WaitForInbound(const ATimeoutMs: Integer): Boolean;
     /// wait for an inbound frame on the body read path, honouring the
@@ -198,7 +200,6 @@ type
     procedure ApplyDecodedBlock(const Fields: THeaderBlock;
       const AEndStream: Boolean);
     procedure MarkResponseComplete;
-    function RequestIsBodyless: Boolean;
   public
     /// Production callers hold this lock while processing lease frames.
     /// Inbound queue waits release it and reacquire it before processing.
@@ -282,18 +283,8 @@ type
 
 implementation
 
-function ConcatBytes(const A, B: TBytes): TBytes;
-var
-  N, I: Integer;
-begin
-  Result := nil;
-  N := Length(A);
-  SetLength(Result, N + Length(B));
-  for I := 0 to N - 1 do
-    Result[I] := A[I];
-  for I := 0 to High(B) do
-    Result[N + I] := B[I];
-end;
+uses
+  Http2.Client.Stream.Send, Http2.Client.Stream.Exchange;
 
 { TIStreamBody }
 
@@ -373,171 +364,10 @@ begin
   inherited Destroy;
 end;
 
-function TStreamLease.MaxFrameSize: LongWord;
-begin
-  Result := FConnection.PeerSettings.MaxFrameSize;
-  if Result = 0 then
-    Result := DefaultMaxFrameSize;
-end;
-
-function TStreamLease.AcquireCredit(const AWant: LongWord): LongWord;
-begin
-  // The caller can hold the client lock while starting an exchange. Release it
-  // while waiting for SETTINGS or WINDOW_UPDATE, so the reader can apply them.
-  if FWaitLock <> nil then FWaitLock.Release;
-  try
-    Result := FConnection.AcquireSendCredit(FStreamId, AWant, FTimeoutMs,
-      @FPeerDone);
-  finally
-    if FWaitLock <> nil then FWaitLock.Acquire;
-  end;
-  if (Result = 0) and (InterlockedExchangeAdd(FPeerDone, 0) <> 0) then
-    Exit(0);   // the caller stops the upload; the response is already queued
-  if Result = 0 then
-    raise EHttpTimeout.CreateFmt(
-      'timed out after %d ms waiting for flow-control credit on stream %d',
-      [FTimeoutMs, FStreamId]);
-end;
-
 function TStreamLease.MakeStreamError: EHttpError;
-var
-  Msg: string;
 begin
-  Msg := FErrorMessage;
-  if Msg = '' then
-    Msg := 'stream failed';
-  if FConnectionError then
-    Result := FConnection.FailureError(Msg, FErrorCode)
-  else
-    Result := EHttpStreamError.Create(Msg, FStreamId, FErrorCode);
-end;
-
-function TStreamLease.RequestIsBodyless: Boolean;
-begin
-  Result := SameText(FRequest.Method, 'HEAD');
-end;
-
-procedure TStreamLease.BuildRequestHeaderBlock(out ABlock: THeaderBlock);
-var
-  Fields: TList<THttpHeaderField>;
-  Names: TArray<string>;
-  Vals: TArray<string>;
-  Name, V: string;
-  I, J: Integer;
-  F: THttpHeaderField;
-begin
-  ABlock := nil;
-  Fields := TList<THttpHeaderField>.Create;
-  try
-    F.Name := HeaderMethod; F.Value := FRequest.Method; F.Sensitive := False;
-    Fields.Add(F);
-    F.Name := HeaderScheme; F.Value := FRequest.Scheme; F.Sensitive := False;
-    Fields.Add(F);
-    F.Name := HeaderPath;
-    if FRequest.Path = '' then F.Value := '/' else F.Value := FRequest.Path;
-    F.Sensitive := False;
-    Fields.Add(F);
-    F.Name := HeaderAuthority; F.Value := FRequest.Authority;
-    F.Sensitive := False;
-    Fields.Add(F);
-
-    if FRequest.Headers <> nil then
-    begin
-      Names := FRequest.Headers.Names;
-      for I := 0 to High(Names) do
-      begin
-        Name := Names[I];
-        Vals := FRequest.Headers.GetValues(Name);
-        for J := 0 to High(Vals) do
-        begin
-          V := Vals[J];
-          F.Name := Name;
-          F.Value := V;
-          F.Sensitive := (Name = 'authorization') or (Name = 'cookie');
-          Fields.Add(F);
-        end;
-      end;
-    end;
-
-    SetLength(ABlock, Fields.Count);
-    for I := 0 to Fields.Count - 1 do
-      ABlock[I] := Fields[I];
-  finally
-    Fields.Free;
-  end;
-end;
-
-procedure TStreamLease.EmitHeaderBlock(const ABlock: TBytes;
-  const AEndStream: Boolean);
-var
-  Max, Ofs, N: Integer;
-  Chunk: TBytes;
-begin
-  Max := Integer(MaxFrameSize);
-  if Length(ABlock) <= Max then
-  begin
-    FOutbound.Push(BuildHeadersFrame(FStreamId, ABlock, True, AEndStream));
-    Exit;
-  end;
-  Chunk := Copy(ABlock, 0, Max);
-  FOutbound.Push(BuildHeadersFrame(FStreamId, Chunk, False, AEndStream));
-  Ofs := Max;
-  while Ofs < Length(ABlock) do
-  begin
-    N := Length(ABlock) - Ofs;
-    if N > Max then
-      N := Max;
-    Chunk := Copy(ABlock, Ofs, N);
-    Inc(Ofs, N);
-    FOutbound.Push(BuildContinuationFrame(FStreamId, Chunk,
-      Ofs >= Length(ABlock)));
-  end;
-end;
-
-procedure TStreamLease.EmitData(const AData: TBytes;
-  const AEndStream: Boolean);
-var
-  Ofs, N: Integer;
-  Want: LongWord;
-  Chunk: TBytes;
-begin
-  if Length(AData) = 0 then
-  begin
-    // a zero-length DATA frame carries no flow-controlled bytes, so it must
-    // NOT consume credit: this is how EndSend half-closes a stream whose
-    // window the peer has pinned at zero
-    FOutbound.Push(BuildDataFrame(FStreamId, nil, AEndStream));
-    Exit;
-  end;
-  if FUploadStopped then
-    Exit;
-  Inc(FBytesSent, Length(AData));
-  Ofs := 0;
-  while Ofs < Length(AData) do
-  begin
-    // RFC 9113 section 6.9: never send more than the peer's window permits.
-    // Split on whichever is smaller, the frame size or the credit now
-    // available, and block here until the peer grants more.
-    Want := MaxFrameSize;
-    N := Length(AData) - Ofs;
-    if LongWord(N) < Want then
-      Want := LongWord(N);
-    N := Integer(AcquireCredit(Want));
-    if N = 0 then
-    begin
-      // the peer answered (or reset the stream) before the body was in: send
-      // no more, and tell it so unless it reset the stream itself.  The
-      // response it already sent is read as usual.
-      FUploadStopped := True;
-      if InterlockedExchangeAdd(FPeerReset, 0) = 0 then
-        FConnection.PostFrame(BuildRstStreamFrame(FStreamId, ecCancel));
-      Exit;
-    end;
-    Chunk := Copy(AData, Ofs, N);
-    Inc(Ofs, N);
-    FOutbound.Push(BuildDataFrame(FStreamId, Chunk,
-      AEndStream and (Ofs >= Length(AData))));
-  end;
+  Result := CreateStreamError(FConnection, FErrorMessage, FConnectionError,
+    FErrorCode, FStreamId);
 end;
 
 procedure TStreamLease.Start;
@@ -596,87 +426,30 @@ begin
 end;
 
 procedure TStreamLease.SendHeaders;
-var
-  Block: THeaderBlock;
-  Encoded: TBytes;
-  Bodyless: Boolean;
 begin
-  if FLocalState <> lsIdle then
-    raise EHttpProtocolError.Create(
-      'HEADERS already sent or stream closed', ecProtocolError);
-  BuildRequestHeaderBlock(Block);
-  Encoded := FEncoder.Encode(Block);
-  Bodyless := (not FRequest.Body.IsSet) and (FRequest.BodyWriter = nil);
-  EmitHeaderBlock(Encoded, Bodyless);
-  if Bodyless then
-    FLocalState := lsLocalHalfClosed
-  else
-    FLocalState := lsHeadersSent;
+  LeaseSendHeaders(FRequest, FEncoder, FOutbound, FStreamId,
+    LeaseMaxFrameSize(FConnection), FLocalState);
 end;
 
 procedure TStreamLease.SendData(const AData: TBytes;
   const AEndStream: Boolean);
 begin
-  if FLocalState = lsIdle then
-    raise EHttpProtocolError.Create('cannot send DATA before HEADERS',
-      ecProtocolError);
-  if FLocalState <> lsHeadersSent then
-    raise EHttpProtocolError.Create(
-      'cannot send DATA on a half-closed or closed stream', ecStreamClosed);
-  EmitData(AData, AEndStream);
-  if AEndStream then
-    FLocalState := lsLocalHalfClosed;
+  LeaseSendData(FConnection, FOutbound, FWaitLock, FStreamId, FTimeoutMs,
+    @FPeerDone, @FPeerReset, FUploadStopped, FBytesSent, FLocalState, AData,
+    AEndStream);
 end;
 
 procedure TStreamLease.SendBody;
-var
-  Chunk, Pending: TBytes;
-  PendingSet: Boolean;
 begin
-  Pending := nil;
-  if FLocalState = lsIdle then
-    raise EHttpProtocolError.Create('cannot send a body before HEADERS',
-      ecProtocolError);
-  if FLocalState <> lsHeadersSent then
-    raise EHttpProtocolError.Create(
-      'cannot send a body on a half-closed or closed stream', ecStreamClosed);
-
-  if FRequest.Body.IsSet then
-  begin
-    EmitData(FRequest.Body.Data, True);
-  end
-  else if FRequest.BodyWriter <> nil then
-  begin
-    PendingSet := False;
-    while (not FUploadStopped) and FRequest.BodyWriter.NextChunk(Chunk) do
-    begin
-      if PendingSet then
-        EmitData(Pending, False);
-      Pending := Chunk;
-      PendingSet := True;
-    end;
-    if PendingSet then
-      EmitData(Pending, True)
-    else
-      EmitData(nil, True);
-  end
-  else
-    raise EHttpProtocolError.Create('SendBody called with no body',
-      ecInternalError);
-
-  FLocalState := lsLocalHalfClosed;
+  LeaseSendBody(FConnection, FRequest, FOutbound, FWaitLock, FStreamId,
+    FTimeoutMs, @FPeerDone, @FPeerReset, FUploadStopped, FBytesSent,
+    FLocalState);
 end;
 
 procedure TStreamLease.EndSend;
 begin
-  if FLocalState = lsIdle then
-    raise EHttpProtocolError.Create('cannot end before HEADERS',
-      ecProtocolError);
-  if FLocalState = lsLocalHalfClosed then
-    raise EHttpProtocolError.Create('local side already half-closed',
-      ecStreamClosed);
-  EmitData(nil, True);
-  FLocalState := lsLocalHalfClosed;
+  LeaseEndSend(FConnection, FOutbound, FWaitLock, FStreamId, FTimeoutMs,
+    @FPeerDone, @FPeerReset, FUploadStopped, FBytesSent, FLocalState);
 end;
 
 function TStreamLease.WaitForInbound(const ATimeoutMs: Integer): Boolean;
@@ -820,7 +593,8 @@ begin
     // append the continuation block
     if Length(ExtractHeaderBlock(AFrame)) > 0 then
     begin
-      FPendingBlock := ConcatBytes(FPendingBlock, ExtractHeaderBlock(AFrame));
+      FPendingBlock := ConcatStreamBytes(FPendingBlock,
+        ExtractHeaderBlock(AFrame));
     end;
     if AFrame.IsEndStream then
       FPendingEndStream := True;
@@ -911,7 +685,8 @@ begin
     //  * 204/304: no body is sent, but a non-zero declared content-length is
     //    still malformed (RFC 7540 section 8.1.2.6); keep the value so
     //    MarkResponseComplete can compare it against the zero bytes received.
-    if RequestIsBodyless or ((FStatusCode >= 100) and (FStatusCode < 200)) then
+    if RequestIsBodyless(FRequest.Method) or
+       ((FStatusCode >= 100) and (FStatusCode < 200)) then
     begin
       FExpectedLength := -1;
       MarkResponseComplete;
@@ -1167,41 +942,24 @@ end;
 
 procedure TStreamLease.NoteEnd(const AReason: TLeaseEndDue);
 begin
-  if (FExchange <> nil) and (FEndDue = edNone) then
-    FEndDue := AReason;
+  RecordExchangeEnd(FExchange, FEndDue, AReason);
 end;
 
 procedure TStreamLease.FireExchange(const AReason: TLeaseEndDue;
   const AAbandoned: Boolean);
 var
-  Info: TExchangeEnd;
   E: Exception;
 begin
   if FExchange = nil then
     Exit;
-  if InterlockedCompareExchange(FEndFired, 1, 0) <> 0 then
-    Exit;
-  Info.Abandoned := AAbandoned;
-  Info.BytesIn := FBodyReceived;
-  Info.BytesOut := FBytesSent;
-  Info.Arrivals := FArrivals;
-  Info.Error := nil;
   E := nil;
   case AReason of
     edFailed:    E := MakeStreamError;
     edCancelled: E := EHttpStreamError.Create('body read cancelled',
                    FStreamId, ecCancel);
   end;
-  Info.Error := E;
-  try
-    try
-      FExchange.ExchangeEnded(Info);
-    except
-      // the hook is the attempt tracker, which already guards its observers
-    end;
-  finally
-    E.Free;
-  end;
+  FireExchangeEnd(FExchange, FEndFired, AReason, AAbandoned,
+    FBodyReceived, FBytesSent, FArrivals, E);
 end;
 
 procedure TStreamLease.DeliverEnd;
