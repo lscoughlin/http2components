@@ -11,7 +11,7 @@
     <CompilerOptions>
       <Version Value="11" />
       <Other>
-        <CustomOptions Value="-dUSE_OPENSSL" />
+        <CustomOptions Value="-dUSE_OPENSSL -Fl../../third_party/mORMot2/static/$(TargetCPU)-$(TargetOS)" />
       </Other>
       <SearchPaths>
         <IncludeFiles Value="../../common/src;src" />

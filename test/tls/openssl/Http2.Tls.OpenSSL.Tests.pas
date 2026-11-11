@@ -267,7 +267,7 @@ begin
   ExpiredServerKey := FixtureDir + '/expired-server.key';
   EncryptedClientKey := FixtureDir + '/client-encrypted.key';
   ClientP12 := FixtureDir + '/client.p12';
-  RunOpenSsl(['req','-quiet','-x509','-newkey','rsa:2048','-nodes','-days','2',
+  RunOpenSsl(['req','-x509','-newkey','rsa:2048','-nodes','-days','2',
     '-subj','/CN=TLS05-root','-addext','basicConstraints=critical,CA:TRUE',
     '-addext','keyUsage=critical,keyCertSign,cRLSign','-keyout',RootKey,'-out',RootCert]);
   AssignFile(F, FixtureDir + '/server.ext'); Rewrite(F);
@@ -280,12 +280,12 @@ begin
   WriteLn(F, 'keyUsage=critical,digitalSignature,keyEncipherment');
   WriteLn(F, 'extendedKeyUsage=clientAuth');
   WriteLn(F, 'subjectAltName=DNS:client.local'); CloseFile(F);
-  RunOpenSsl(['req','-quiet','-new','-newkey','rsa:2048','-nodes','-subj','/CN=localhost',
+  RunOpenSsl(['req','-new','-newkey','rsa:2048','-nodes','-subj','/CN=localhost',
     '-keyout',ServerKey,'-out',FixtureDir + '/server.csr']);
   RunOpenSsl(['x509','-req','-in',FixtureDir + '/server.csr','-CA',RootCert,
     '-CAkey',RootKey,'-CAcreateserial','-days','2','-sha256','-extfile',FixtureDir + '/server.ext',
     '-out',ServerCert]);
-  RunOpenSsl(['req','-quiet','-new','-newkey','rsa:2048','-nodes','-subj','/CN=client.local',
+  RunOpenSsl(['req','-new','-newkey','rsa:2048','-nodes','-subj','/CN=client.local',
     '-keyout',ClientKey,'-out',FixtureDir + '/client.csr']);
   RunOpenSsl(['x509','-req','-in',FixtureDir + '/client.csr','-CA',RootCert,
     '-CAkey',RootKey,'-CAserial',FixtureDir + '/root.srl','-days','2','-sha256','-extfile',FixtureDir + '/client.ext',
@@ -295,7 +295,7 @@ begin
   RunOpenSsl(['pkcs12','-export','-in',ClientCert,'-inkey',ClientKey,'-certfile',RootCert,
     '-out',ClientP12,'-passout','pass:fixturepass']);
   ExpiredServerKey := ServerKey;
-  RunOpenSsl(['req','-quiet','-new','-key',ServerKey,'-subj','/CN=localhost',
+  RunOpenSsl(['req','-new','-key',ServerKey,'-subj','/CN=localhost',
     '-out',FixtureDir + '/expired-server.csr']);
   CaDir := FixtureDir + '/newcerts'; ForceDirectories(CaDir);
   CaIndex := FixtureDir + '/index.txt'; AssignFile(F, CaIndex); Rewrite(F); CloseFile(F);

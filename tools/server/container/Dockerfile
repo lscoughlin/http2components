@@ -116,6 +116,8 @@ RUN set -e; \
     export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)"; \
     echo "unit directory: ${FPC_UNITS}"; \
     make setup-deps setup-harness all examples test test-api test-integration \
-      packages-check source-check docs-check version-check
+      test-tls-contract test-tls-openssl test-tls-tlslib test-tls-client \
+      test-tls-server test-tls-integration packages-check source-check \
+      docs-check version-check
 
 CMD ["/bin/sh", "-c", "ls -l /src/bin"]

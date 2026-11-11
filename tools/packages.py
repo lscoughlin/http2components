@@ -66,8 +66,14 @@ def render(name: str, sources: list[Path]) -> dict[Path, str]:
     value(pkg, 'License', LICENSE)
     opts = ET.SubElement(pkg, 'CompilerOptions')
     value(opts, 'Version', '11')
+    custom_options = []
     if component == 'openssl':
-        value(ET.SubElement(opts, 'Other'), 'CustomOptions', '-dUSE_OPENSSL')
+        custom_options.append('-dUSE_OPENSSL')
+    if component in ('client', 'server', 'openssl'):
+        static_root = ROOT / 'third_party' / 'mORMot2' / 'static' / '$(TargetCPU)-$(TargetOS)'
+        custom_options.append('-Fl' + Path(os.path.relpath(static_root, package_dir)).as_posix())
+    if custom_options:
+        value(ET.SubElement(opts, 'Other'), 'CustomOptions', ' '.join(custom_options))
     paths = ET.SubElement(opts, 'SearchPaths')
     def relative(path: Path) -> str:
         return Path(os.path.relpath(path, package_dir)).as_posix()

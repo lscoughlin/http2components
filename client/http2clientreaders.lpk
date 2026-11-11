@@ -10,6 +10,9 @@
     <License Value="Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)" />
     <CompilerOptions>
       <Version Value="11" />
+      <Other>
+        <CustomOptions Value="-Fl../third_party/mORMot2/static/$(TargetCPU)-$(TargetOS)" />
+      </Other>
       <SearchPaths>
         <IncludeFiles Value="../common/src;src" />
         <UnitOutputDirectory Value="../bin/$(TargetCPU)-$(TargetOS)/default/package-http2clientreaders/units" />

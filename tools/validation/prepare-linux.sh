@@ -1,4 +1,6 @@
 #!/bin/sh
+# Copyright 2026 Liam Seamus Coughlin
+# SPDX-License-Identifier: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 # Prepare the pinned mORMot2 Linux static objects for a native Linux build.
 set -eu
 

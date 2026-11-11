@@ -117,6 +117,7 @@ def base_flags(component: str, *, tests: bool = False,
         verify_mormot()
         mormot = dependency_root("mORMot2") / "src"
         flags.extend(("-dUSE_OPENSSL", *(f"-Fu{mormot / part}" for part in ("core", "lib", "net", "crypt"))))
+        flags.append(f"-Fl{mormot.parent / 'static' / target_name()}")
     if role == "tlslib":
         for name in ("HashLib4Pascal", "SimpleBaseLib4Pascal", "CryptoLib4Pascal", "TlsLib4Pascal"):
             verify_dependency(name)
@@ -134,6 +135,7 @@ def base_flags(component: str, *, tests: bool = False,
         mormot = dependency_root("mORMot2") / "src"
         for part in ("core", "lib", "net", "crypt"):
             flags.append(f"-Fu{mormot / part}")
+        flags.append(f"-Fl{mormot.parent / 'static' / target_name()}")
         flags.append(f"-Fu{ROOT / 'bin' / target_name() / profile() / 'common' / 'units'}")
     if tls_integration:
         for provider in ("openssl", "tlslib"):
@@ -394,6 +396,7 @@ def build(component: str) -> None:
             flags = ["-O2", "-vw", "-Mdelphi", "-dUSE_OPENSSL",
                      f"-Fu{COMPONENTS['common']['source']}", f"-Fu{COMPONENTS['openssl']['source']}"]
             flags.extend(f"-Fu{mormot / part}" for part in ("core", "lib", "net", "crypt"))
+            flags.append(f"-Fl{mormot.parent / 'static' / target_name()}")
             flags.extend(shlex.split(os.environ.get("FPCFLAGS", "")))
             run([compiler(), *flags, f"-FU{units}", f"-FE{programs}",
                  str(source.relative_to(ROOT))], env=open_ssl_env(), timeout=300)
@@ -568,7 +571,8 @@ def compile_server_program(source: Path) -> Path:
     for provider in providers:
         build(provider)
     provider_flags = example_provider_flags(providers)
-    return compile_file(source, "examples-server", extra_flags=provider_flags)
+    return compile_file(source, "integration-test", tests=True,
+                        extra_flags=provider_flags)
 
 
 def compile_server_examples() -> None:
@@ -871,6 +875,8 @@ def main() -> int:
     if len(sys.argv) not in (2, 3):
         raise SystemExit("Usage: python3 tools/build.py <target> [source]")
     target = sys.argv[1].replace("-", ":").replace("_", ":")
+    if (len(sys.argv) == 3) != (target == "compile:server:probe"):
+        raise SystemExit("Only compile:server-probe accepts a source path")
     if target == "setup:deps":
         setup_deps()
     elif target == "setup:harness":

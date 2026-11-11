@@ -154,14 +154,14 @@ def main() -> None:
     fixture_env = {**os.environ, "OPENSSL_CONF": "/dev/null"}
     for subject, cert, key in (("/CN=study-root", root_cert, root_key),
                                ("/CN=bad-root", bad_root_cert, bad_root_key)):
-        run(["openssl", "req", "-quiet", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
+        run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
              "-subj", subject, "-addext", "basicConstraints=critical,CA:TRUE",
              "-addext", "keyUsage=critical,keyCertSign,cRLSign", "-keyout", str(key),
              "-out", str(cert)], timeout=30, env=fixture_env)
     for subject, key, csr in (("/CN=study-intermediate", intermediate_key, intermediate_csr),
                               ("/CN=localhost", server_key, server_csr),
                               ("/CN=client.local", client_key, client_csr)):
-        run(["openssl", "req", "-quiet", "-new", "-newkey", "rsa:2048", "-nodes",
+        run(["openssl", "req", "-new", "-newkey", "rsa:2048", "-nodes",
              "-subj", subject, "-keyout", str(key), "-out", str(csr)],
             timeout=30, env=fixture_env)
     for csr, issuer_cert, issuer_key, serial_file, ext, cert in (
