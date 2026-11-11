@@ -72,6 +72,10 @@ array getters `DnsNames`, `IpAddresses`, `UriNames`, and `EmailAddresses`.
 options have `WithAlpns` and `AlpnValues`; server options have the same
 methods. Session signatures are shown below in full.
 
+`WithVerificationDepth` preserves an explicit depth of zero. A negative
+depth raises `ETlsContextError` with `tecConfiguration`. A provider without
+depth support rejects every policy with `HasVerificationDepth = True`.
+
 `Info` contains enabled roles, `TTlsClientAuthMode`, and the context handshake
 timeout in milliseconds. It contains no credentials, trust anchors, or other
 secret values. A timeout of zero means no context limit. Client and server
