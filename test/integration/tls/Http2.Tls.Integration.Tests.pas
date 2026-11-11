@@ -11,7 +11,7 @@ program Http2TlsIntegrationTests;
 {$mode delphi}{$H+}{$interfaces com}{$modeswitch advancedrecords}
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Http2.Common.Tls.Types, Http2.Common.Tls.Policy,
+  SysUtils, Classes, Http2.Common.Tls.Types, Http2.Common.Tls.Policy,
   Http2.Common.Tls.Context, Http2.Common.Tls.Identity,
   Http2.Common.Tls.Session, Http2.Common, Http2.Client, Http2.Server,
   Http2.OpenSSL, Http2.TlsLib;
@@ -27,6 +27,17 @@ const
 
 type
   TProvider = (prOpenSSL, prTlsLib);
+  TRequestThread = class(TThread)
+  private
+    FClient: IHttpClient;
+    FPort: Integer;
+    FErrorText: string;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AClient: IHttpClient; const APort: Integer);
+    property ErrorText: string read FErrorText;
+  end;
   TEchoHandler = class(TInterfacedObject, IHttp2Handler)
     procedure Handle(const ARequest: IServerRequest;
       const AResponse: IServerResponse);
@@ -34,6 +45,30 @@ type
 
 var
   CaseCount: Integer;
+  V: TTlsVersion;
+
+procedure Check(const AValue: Boolean; const AMessage: string); forward;
+
+constructor TRequestThread.Create(const AClient: IHttpClient; const APort: Integer);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FClient := AClient;
+  FPort := APort;
+end;
+
+procedure TRequestThread.Execute;
+var Response: IHttpResponse; Url: string;
+begin
+  try
+    Url := 'https://localhost:' + IntToStr(FPort) + '/parallel';
+    Response := FClient.Send(THttpRequest.Create(hmGet, Url));
+    Check(Response.StatusCode = 200, 'concurrent request returned non-200');
+    Check(ReadText(Response) = cBody, 'concurrent request body differs');
+  except
+    on E: Exception do FErrorText := E.ClassName + ': ' + E.Message;
+  end;
+end;
 
 procedure Check(const AValue: Boolean; const AMessage: string);
 begin
@@ -352,12 +387,17 @@ var
   OpenSslClient, TlsLibClient: IHttpClient;
   OpenSslServerTls, TlsLibServerTls: ITLSContext;
   OpenSslClientTls, TlsLibClientTls: ITLSContext;
+  TlsLibSecondClient: IHttpClient;
+  TlsLibContextRef: ITLSContext;
 begin
   OpenSslServer := nil; TlsLibServer := nil;
   OpenSslClient := nil; TlsLibClient := nil;
+  TlsLibSecondClient := nil;
+  TlsLibContextRef := nil;
   try
     OpenSslServer := NewServer(prOpenSSL, tls13, OpenSslServerTls);
     TlsLibServer := NewServer(prTlsLib, tls13, TlsLibServerTls);
+    TlsLibContextRef := TlsLibServerTls;
     OpenSslClient := NewClient(prOpenSSL, tls13, OpenSslClientTls);
     TlsLibClient := NewClient(prTlsLib, tls13, TlsLibClientTls);
     OpenSslServerTls := nil; TlsLibServerTls := nil;
@@ -370,11 +410,54 @@ begin
     CheckResponse(TlsLibClient, TlsLibServer.Port,
       'TlsLib listener after OpenSSL listener stop');
     Inc(CaseCount, 4);
+    TlsLibSecondClient := NewClientWithContext(TlsLibContextRef);
+    TlsLibContextRef := nil;
+    CheckResponse(TlsLibSecondClient, TlsLibServer.Port,
+      'TlsLib listener accepts a new connection after OpenSSL listener stop');
+    Inc(CaseCount);
   finally
     if OpenSslClient <> nil then OpenSslClient.Close;
     if TlsLibClient <> nil then TlsLibClient.Close;
+    if TlsLibSecondClient <> nil then TlsLibSecondClient.Close;
     if OpenSslServer <> nil then OpenSslServer.Stop;
     if TlsLibServer <> nil then TlsLibServer.Stop;
+    TlsLibContextRef := nil;
+  end;
+end;
+
+procedure RunConcurrentSharedContext(const AProvider: TProvider;
+  const AVersion: TTlsVersion);
+var
+  Context: ITLSContext;
+  Server: IHttp2Server;
+  ClientA, ClientB: IHttpClient;
+  ThreadA, ThreadB: TRequestThread;
+begin
+  Context := DualRoleContext(AProvider, AVersion);
+  Server := nil; ClientA := nil; ClientB := nil;
+  ThreadA := nil; ThreadB := nil;
+  try
+    Server := NewServerWithContext(Context);
+    ClientA := NewClientWithContext(Context);
+    ClientB := NewClientWithContext(Context);
+    Context := nil;
+    ThreadA := TRequestThread.Create(ClientA, Server.Port);
+    ThreadB := TRequestThread.Create(ClientB, Server.Port);
+    ThreadA.Start;
+    ThreadB.Start;
+    ThreadA.WaitFor;
+    ThreadB.WaitFor;
+    Check(ThreadA.ErrorText = '', 'first concurrent request: ' + ThreadA.ErrorText);
+    Inc(CaseCount);
+    Check(ThreadB.ErrorText = '', 'second concurrent request: ' + ThreadB.ErrorText);
+    Inc(CaseCount);
+  finally
+    if ThreadA <> nil then ThreadA.Free;
+    if ThreadB <> nil then ThreadB.Free;
+    if ClientA <> nil then ClientA.Close;
+    if ClientB <> nil then ClientB.Close;
+    if Server <> nil then Server.Stop;
+    Context := nil;
   end;
 end;
 
@@ -391,7 +474,13 @@ begin
   try
     RunMatrix;
     RunInterleavedListeners;
-    WriteLn('PASS ', CaseCount, ' provider-pair TLS metadata and HTTP/2 cases');
+    for V := Low(TTlsVersion) to High(TTlsVersion) do
+    begin
+      RunConcurrentSharedContext(prOpenSSL, V);
+      RunConcurrentSharedContext(prTlsLib, V);
+    end;
+    WriteLn('PASS ', CaseCount, ' cases');
+    WriteLn('TLS metadata, provider-pair HTTP/2, shared-context concurrency, listener interleave');
   except
     on E: Exception do
     begin

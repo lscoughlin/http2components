@@ -37,12 +37,15 @@ repetitions, and only a few simultaneous sessions. Test timeouts need cleanup.
 RFC reading is protocol context, not test evidence. The standalone integration
 program is `test/integration/tls/Http2.Tls.Integration.Tests.pas`. It has eight
 provider-pair TLS metadata cases, eight provider-pair HTTP/2 request/response
-cases, and four listener interleave cases. Each pair is tested at TLS 1.2 and
-TLS 1.3. It records negotiated version, ALPN, cipher, verified client and
-server peer identities, copied metadata after session teardown, HTTP status,
-and response content. Same-provider cases use one context reference in both
-roles. Two listener cases use OpenSSL and TlsLib in one process, interleave
-requests, stop one listener, and request from the other. The run limit is 30
-seconds. The worker compiled this program at base `f52bdf7` with the pinned
-providers; it did not execute the program. Runtime results remain pending the
-coordinator's bounded run.
+cases, five listener cases, and eight concurrent request cases. Each pair is
+tested at TLS 1.2 and TLS 1.3. It records negotiated version, ALPN, cipher,
+verified client and server peer identities, distinct client and server
+identity summaries, copied metadata after session teardown, HTTP status, and
+response content. Same-provider cases pass one context reference to both role
+factories. Concurrent request cases use two clients and one listener, all
+using that context. The listener cases use OpenSSL and TlsLib in one process,
+interleave requests, stop one listener, and verify a fresh connection to the
+other. The expected count is 29 cases. The run limit is 30 seconds. The worker
+compiled this program at base `f52bdf7` with the pinned providers; it did not
+execute the program. Runtime results remain pending the coordinator's bounded
+run.
