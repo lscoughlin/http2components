@@ -379,3 +379,17 @@ certificates. Positive requests require the fixed HTTP/2 response and ALPN h2.
 Negative requests must fail before an HTTP response. The peer verifies the
 server certificate and hostname. Result rows and peer output are retained;
 generated private keys are removed. No provider policy is weakened.
+
+## LV-22: Long-lived TLS connection evidence and run cleanup
+
+The performance driver checks one million successful HTTP/2 responses, but
+one concurrent h2load client does not prove one connection over the full run.
+The provider probe records accepted connections with its server observer and
+returns a counter snapshot on a `stats` input line. The existing stop input
+and EOF shutdown remain valid. The performance driver takes snapshots before
+and after the measured request run and requires exactly one new connection.
+The driver records complete timeout results and terminates its process groups
+on failure. Each compile has a retained log, initial samples follow a settle
+period, and generated private keys are removed. Process socket file-descriptor
+counts are named as such; they are not reported as accepted-connection totals.
+The requests use the unchanged count of one million and one concurrent stream.
