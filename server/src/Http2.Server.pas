@@ -38,7 +38,6 @@ uses
   Http2.Server.Mtls.Types,
   Http2.Server.ClientCert,
   Http2.Server.Config,
-  Http2.Server.Config.Tls,
   Http2.Server.Config.Limits,
   Http2.Server.Config.Socket,
   Http2.Server.Encoding,
@@ -59,16 +58,13 @@ type
 
   /// the server factory and its option records
   THttp2ServerFactory = Http2.Server.Config.THttp2ServerFactory;
-  TTlsServerOptions = Http2.Server.Config.TTlsServerOptions;
   TQueueOptions = Http2.Server.Config.TQueueOptions;
   TQueueRefusalMode = Http2.Server.Config.TQueueRefusalMode;
-  TTlsVersion = Http2.Server.Config.Tls.TTlsVersion;
   TServerLimits = Http2.Server.Config.Limits.TServerLimits;
   TSocketOptions = Http2.Server.Config.Socket.TSocketOptions;
   TTokenBucketOptions = Http2.Server.Limits.TTokenBucketOptions;
 
   /// mutual TLS: the modes, the principal setting and the client identity
-  TClientCertMode = Http2.Server.Mtls.Types.TClientCertMode;
   TClientCertPrincipal = Http2.Server.Mtls.Types.TClientCertPrincipal;
   IClientCertificate = Http2.Server.ClientCert.IClientCertificate;
 
@@ -182,17 +178,10 @@ const
   ecInadequateSecurity = Http2.Server.Errors.ecInadequateSecurity;
   ecHttp11Required = Http2.Server.Errors.ecHttp11Required;
 
-  // the values of TClientCertMode and TClientCertPrincipal
-  ccmNone = Http2.Server.Mtls.Types.ccmNone;
-  ccmOptional = Http2.Server.Mtls.Types.ccmOptional;
-  ccmRequired = Http2.Server.Mtls.Types.ccmRequired;
+  // the values of TClientCertPrincipal
   ccpNone = Http2.Server.Mtls.Types.ccpNone;
   ccpSubjectDn = Http2.Server.Mtls.Types.ccpSubjectDn;
   ccpCommonName = Http2.Server.Mtls.Types.ccpCommonName;
-
-  // the values of TTlsVersion
-  tvTls12 = Http2.Server.Config.Tls.tvTls12;
-  tvTls13 = Http2.Server.Config.Tls.tvTls13;
 
   // an enum type alias does not carry the enum values, so every value of
   // TServerEventKind appears here as a constant

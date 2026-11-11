@@ -44,7 +44,9 @@ uses
   Http2.Server.Http1.Limits,
   Http2.Server.WebSocket.Options,
   Http2.Server.Mtls.Types,
-  Http2.Server.Config.Tls, Http2.Server.Config.Limits, Http2.Server.Config.Socket,
+  Http2.Common.Tls.Context,
+  Http2.Common.Tls.Types,
+  Http2.Server.Config.Limits, Http2.Server.Config.Socket,
   Http2.Server.Seam;
 
 const
@@ -59,9 +61,6 @@ type
     rmRefuseStream,
     /// answer HTTP 503
     rmHttp503);
-
-  /// the TLS settings of the listener (see Http2.Server.Config.Tls)
-  TTlsServerOptions = Http2.Server.Config.Tls.TTlsServerOptions;
 
   /// the request queue settings
   ///
@@ -100,7 +99,8 @@ type
     FPort: Integer;
     FBacklog: Integer;
     FClearTextAllowed: Boolean;
-    FTls: TTlsServerOptions;
+    FTlsContext: ITLSContext;
+    FClientCertPrincipal: TClientCertPrincipal;
     FIOThreads: Integer;
     FHandlerThreads: Integer;
     FStreamPoolSize: Integer;
@@ -155,9 +155,12 @@ type
 
     // ---- TLS ----
 
-    /// the TLS settings of the listener
-    function WithTls(
-      const AOptions: TTlsServerOptions): THttp2ServerFactory;
+    /// the immutable provider-neutral TLS context of the listener
+    function WithTlsContext(
+      const AContext: ITLSContext): THttp2ServerFactory;
+    /// select the request principal from verified client certificate data
+    function WithClientCertPrincipal(
+      const AValue: TClientCertPrincipal): THttp2ServerFactory;
 
     // ---- IO pool ----
 
@@ -291,7 +294,8 @@ type
 
     // ---- TLS ----
 
-    property Tls: TTlsServerOptions read FTls;
+    property TlsContext: ITLSContext read FTlsContext;
+    property ClientCertPrincipal: TClientCertPrincipal read FClientCertPrincipal;
 
     // ---- IO pool ----
 
@@ -405,7 +409,8 @@ begin
   Result.FPort := 8443;
   Result.FBacklog := 128;
   Result.FClearTextAllowed := False;
-  Result.FTls := TTlsServerOptions.Create;
+  Result.FTlsContext := nil;
+  Result.FClientCertPrincipal := ccpNone;
   Result.FIOThreads := 4;
   Result.FHandlerThreads := 8;
   Result.FStreamPoolSize := 1;
@@ -492,11 +497,18 @@ begin
   Result.FClearTextAllowed := AValue;
 end;
 
-function THttp2ServerFactory.WithTls(
-  const AOptions: TTlsServerOptions): THttp2ServerFactory;
+function THttp2ServerFactory.WithTlsContext(
+  const AContext: ITLSContext): THttp2ServerFactory;
 begin
   Result := Self;
-  Result.FTls := AOptions;
+  Result.FTlsContext := AContext;
+end;
+
+function THttp2ServerFactory.WithClientCertPrincipal(
+  const AValue: TClientCertPrincipal): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FClientCertPrincipal := AValue;
 end;
 
 function THttp2ServerFactory.WithIOThreads(
@@ -793,32 +805,17 @@ begin
   FHttp11.Problems(Problems);
   FWs.Problems(Problems);
   FServerLimits.Validate(Problems); FSocket.Validate(Problems);
-  if FTls.MinTlsVersion > FTls.MaxTlsVersion then
-    Add('the minimum TLS version is above the maximum');
   if FQueue.Depth < 0 then
     Add('the queue depth is below 0');
   if FQueue.MaxWaitMs < 0 then
     Add('the maximum queue wait is below 0');
-  if not FClearTextAllowed then
+  if not FClearTextAllowed and (FTlsContext = nil) then
+    Add('the TLS context is not assigned while cleartext is off');
+  if FTlsContext <> nil then
   begin
-    // the key file is optional: ApplyTls accepts a certificate file that
-    // holds the key too
-    if FTls.CertificateFile = '' then
-      Add('the TLS certificate file is empty while cleartext is off');
-  end;
-  if FTls.ClientCertMode <> ccmNone then
-  begin
-    if (FTls.ClientCaFile = '') and not FTls.ClientTrustSystemStore then
-      Add('the client certificate mode has no trust anchor');
-    if (FTls.ClientCaFile <> '') and not FileExists(FTls.ClientCaFile) then
-      Add('the client CA file is not present');
-    if (FTls.ClientVerifyDepth < 1) or
-       (FTls.ClientVerifyDepth > cMaxClientVerifyDepth) then
-      Add('the client verify depth is outside 1 to ' +
-        IntToStr(cMaxClientVerifyDepth));
-    if FTls.CertificateFile = '' then
-      Add('the client certificate mode needs a TLS certificate file');
-    if (FTls.ClientCertMode = ccmRequired) and FClearTextAllowed then
+    if not (trServer in FTlsContext.Info.Roles) then
+      Add('the TLS context has no server role');
+    if FTlsContext.Info.RequiresClientCertificate and FClearTextAllowed then
       Add('the required client certificate mode needs cleartext off');
   end;
   if (FMaxFrameSize < MinAllowedFrameSize) or

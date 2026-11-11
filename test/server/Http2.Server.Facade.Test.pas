@@ -19,7 +19,7 @@ interface
 
 uses
   SysUtils, fpcunit, testregistry,
-  Http2.Server;
+  Http2.Server, Http2.Test.Tls.Fake, Http2.Common.Tls.Types;
 
 type
   TFacadeClock = class(TInterfacedObject, IMonotonicClock)
@@ -56,12 +56,10 @@ var
   Limits: THttp11Limits;
   Clock: IMonotonicClock;
   F: THttp2ServerFactory;
-  V: TTlsVersion;
   Problems: TArray<string>;
 begin
   Limits := THttp11Limits.Create;
   Clock := TFacadeClock.Create;
-  V := tvTls12;
   F := THttp2ServerFactory.Create
     .WithHandler(TFacadeHandler.Create)
     .WithClearTextAllowed(True)
@@ -70,9 +68,8 @@ begin
     .WithQueue(TQueueOptions.Create.WithRefusalMode(rmHttp503))
     .WithServerLimits(TServerLimits.Create)
     .WithSocketOptions(TSocketOptions.Create)
-    .WithTls(TTlsServerOptions.Create
-      .WithMinTlsVersion(V)
-      .WithMaxTlsVersion(tvTls13));
+    .WithTlsContext(TTlsFakeContext.Create([trServer], tlsAuthNone, 2500))
+    .WithClientCertPrincipal(ccpSubjectDn);
   AssertTrue('SRV-14: the factory validates: ' + F.ProblemText, F.Validate(Problems));
 end;
 

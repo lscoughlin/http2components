@@ -4,7 +4,7 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: http2, server, config, factory, options, test, fpcunit
 notes:
-  - This unit tests the server factory, the option records and Validate.
+  - This unit tests the server factory records and Validate.
   - A WithX test shows that the original record keeps its value.
   - A Validate test shows that several problems arrive in one call.
   - A source test shows that a numeric default lives only in a Create body.
@@ -40,7 +40,7 @@ type
       const AResponse: IServerResponse);
   end;
 
-  /// tests of THttp2ServerFactory, TTlsServerOptions and TQueueOptions
+  /// tests of THttp2ServerFactory and TQueueOptions
   TFactoryTest = class(TTestCase)
   private
     FHandler: IHttp2Handler;
@@ -63,7 +63,6 @@ type
     procedure TestDefaultTimeouts;
     procedure TestConnectionLifetimeSettings;
     procedure TestDefaultWiring;
-    procedure TestDefaultTls;
     procedure TestWithDoesNotChangeOriginal;
     procedure TestNestedRecordDoesNotChangeOriginal;
     procedure TestValidateGoodFactory;
@@ -72,7 +71,6 @@ type
     procedure TestValidatePortZeroAllowed;
     procedure TestValidatePoolSizes;
     procedure TestValidateQueueDepth;
-    procedure TestValidateCertificateAndKey;
     procedure TestValidateFrameSize;
     procedure TestValidateWindows;
     procedure TestValidateHandlerRequired;
@@ -86,8 +84,8 @@ implementation
 
 const
   /// the source files that hold the factory; the test reads this text
-  cConfigSources: array[0..3] of string = (
-    'server/src/Http2.Server.Config.pas', 'server/src/Http2.Server.Config.Tls.pas',
+  cConfigSources: array[0..2] of string = (
+    'server/src/Http2.Server.Config.pas',
     'server/src/Http2.Server.Config.Limits.pas', 'server/src/Http2.Server.Config.Socket.pas');
 
 { TFakeHandler }
@@ -289,23 +287,9 @@ begin
   AssertTrue('the default clock is assigned', F.Clock <> nil);
 end;
 
-procedure TFactoryTest.TestDefaultTls;
-var
-  F: THttp2ServerFactory;
-begin
-  F := THttp2ServerFactory.Create;
-  AssertEquals('the default certificate file is empty', '',
-    F.Tls.CertificateFile);
-  AssertEquals('the default key file is empty', '', F.Tls.KeyFile);
-  AssertEquals('the default key password is empty', '', F.Tls.KeyPassword);
-  AssertEquals('the default handshake timeout', 10000,
-    F.Tls.HandshakeTimeoutMs);
-end;
-
 procedure TFactoryTest.TestWithDoesNotChangeOriginal;
 var
   Base, Forked: THttp2ServerFactory;
-  Tls: TTlsServerOptions;
   Queue: TQueueOptions;
   Bucket: TTokenBucketOptions;
 begin
@@ -355,17 +339,6 @@ begin
   AssertEquals('the forked frame size', 32768, Integer(Forked.MaxFrameSize));
   AssertEquals('the forked idle timeout', 1000, Forked.IdleTimeoutMs);
 
-  // a nested record is a value: an edited copy leaves the original alone
-  Tls := TTlsServerOptions.Create
-    .WithCertificateFile('a.pem')
-    .WithKeyFile('a.key');
-  Base := THttp2ServerFactory.Create.WithTls(Tls);
-  Forked := Base.WithTls(Tls.WithKeyPassword('secret'));
-  AssertEquals('the original key password is unchanged', '',
-    Base.Tls.KeyPassword);
-  AssertEquals('the forked key password', 'secret',
-    Forked.Tls.KeyPassword);
-
   // the same rule holds for the queue record
   Queue := TQueueOptions.Create.WithDepth(8);
   Base := THttp2ServerFactory.Create.WithQueue(Queue);
@@ -386,23 +359,8 @@ end;
 
 procedure TFactoryTest.TestNestedRecordDoesNotChangeOriginal;
 var
-  Original, Edited: TTlsServerOptions;
   Q0, Q1: TQueueOptions;
 begin
-  Original := TTlsServerOptions.Create
-    .WithCertificateFile('cert.pem')
-    .WithKeyFile('key.pem')
-    .WithKeyPassword('pw')
-    .WithHandshakeTimeoutMs(2000);
-  Edited := Original.WithCertificateFile('other.pem');
-  AssertEquals('the original certificate is unchanged', 'cert.pem',
-    Original.CertificateFile);
-  AssertEquals('the edited certificate', 'other.pem', Edited.CertificateFile);
-  AssertEquals('the original key file survives the fork', 'key.pem',
-    Edited.KeyFile);
-  AssertEquals('the handshake timeout survives the fork', 2000,
-    Edited.HandshakeTimeoutMs);
-
   Q0 := TQueueOptions.Create;
   Q1 := Q0.WithDepth(1).WithMaxWaitMs(2).WithRefusalMode(rmHttp503);
   AssertEquals('the original queue depth is unchanged', 64, Q0.Depth);
@@ -422,9 +380,7 @@ var
 begin
   F := THttp2ServerFactory.Create
     .WithHandler(FHandler)
-    .WithTls(TTlsServerOptions.Create
-      .WithCertificateFile('cert.pem')
-      .WithKeyFile('key.pem'));
+    .WithClearTextAllowed(True);
   Problems := nil;
   Ok := F.Validate(Problems);
   AssertEquals('the good factory has no problem: ' + ProblemText(Problems),
@@ -542,29 +498,6 @@ begin
     .WithClearTextAllowed(True)
     .WithQueue(TQueueOptions.Create.WithDepth(0))
     .Validate(Problems));
-end;
-
-procedure TFactoryTest.TestValidateCertificateAndKey;
-var
-  F: THttp2ServerFactory;
-  Problems: TArray<string>;
-begin
-  F := THttp2ServerFactory.Create.WithHandler(FHandler);
-  Problems := nil;
-  AssertFalse('an empty certificate and key fail validation',
-    F.Validate(Problems));
-  AssertTrue('the certificate problem is named: ' + ProblemText(Problems),
-    HasProblem(Problems, 'certificate file is empty'));
-  AssertFalse('an empty key file is no problem: ' + ProblemText(Problems),
-    HasProblem(Problems, 'key file is empty'));
-
-  // a certificate alone is enough: the file can hold the key too
-  F := THttp2ServerFactory.Create
-    .WithHandler(FHandler)
-    .WithTls(TTlsServerOptions.Create.WithCertificateFile('cert.pem'));
-  Problems := nil;
-  AssertTrue('a certificate without a key file validates: ' +
-    ProblemText(Problems), F.Validate(Problems));
 end;
 
 procedure TFactoryTest.TestValidateFrameSize;
