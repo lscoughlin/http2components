@@ -92,8 +92,7 @@ type
 // followed by its bytes; ['h2'] encodes as 0x02,0x68,0x32
 function AlpnProtocolList(const AProtocols: array of string): TBytes;
 
-/// decode the protocol name returned by SSL_get0_alpn_selected (raw bytes,
-// without a length prefix); returns '' when nothing was selected
+/// decode a selected ALPN protocol name from raw bytes; returns empty when none was selected
 function AlpnSelectedName(const AData: PByte; const ALen: Cardinal): string;
 
 /// verify the negotiated ALPN protocol is exactly "h2", else raise
@@ -105,29 +104,22 @@ procedure RequireH2Alpn(const AData: PByte; const ALen: Cardinal);
 // is off (the strict default), "h2" then "http/1.1" when it is on
 // (doc/design/fallback.md "Negotiation")
 function AlpnOfferFor(const AHttp1Fallback: Boolean): TBytes;
-function ClientAuthAlertName(const AReason: Cardinal): string;
 function SecureRandomCardinal: Cardinal;
-
-/// the TLS alert name ('certificate required', 'unknown ca', ...) for the
-// OpenSSL reason code of a client-certificate rejection, or '' when the
-// reason is anything else (doc/design/mtls.md "Rejection")
-
-/// a 32-bit value from the OpenSSL CSPRNG.  A failing generator raises
-/// EHttpConnectionError; there is no fallback to a non-secure source.
 
 /// normalise a selected ALPN name to one of "h2", "http/1.1" or "" (nothing
 // selected, or a protocol this client does not know) so the caller can choose
 // a codec (doc/design/fallback.md "Negotiation")
 function AlpnNegotiatedName(const AName: string): string;
 
-/// map the insecure toggle to the OpenSSL verify mode (NONE when insecure)
-function SslVerifyModeFor(const AInsecure: Boolean): Integer;
+/// Map a client ALPN result to the selected HTTP codec. Empty ALPN is
+/// HTTP/1.1 only when fallback is enabled.
+function ProtocolForTlsAlpn(const AName: string;
+  const AHttp1Fallback: Boolean): TNegotiatedProtocol;
 
 /// read exactly ACount bytes, or up to EOF; returns the byte count (0 only at
 // immediate EOF) and raises EHttpTimeout when the deadline expires
 procedure SetSocketTimeout(AFd, ALevel, AOption, ATimeoutMs: Integer);
 function SocketTimedOut: Boolean;
-function SslTimedOut(const AErr: Integer): Boolean;
 
 function SocketReadFully(AFd, ACount, ATimeoutMs: Integer;
   var ABuffer): Integer;
@@ -183,27 +175,24 @@ type
       const AScheme: string; const AHttp1Fallback: Boolean;
       const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
       const AProxy: IProxy; const AIdentity: IClientIdentity;
+      const AIdentityExplicit: Boolean;
       out AProtocol: TNegotiatedProtocol): IHttp2Socket;
     function DialHttp1As(const AHost: string; const APort: Word;
       const AScheme: string; const ATimeoutMs: Integer;
-      const AProxy: IProxy; const AIdentity: IClientIdentity): IHttp2Socket;
+      const AProxy: IProxy; const AIdentity: IClientIdentity;
+      const AIdentityExplicit: Boolean): IHttp2Socket;
+  end;
+
+  /// Supplies a stable TLS-context discriminator for client connection keys.
+  ITlsContextPoolKey = interface
+    ['{9A918EE5-9355-48F1-A86A-0933FD078708}']
+    function TlsContextPoolKey: string;
   end;
 
 implementation
 
 uses
-  mormot.core.base, mormot.lib.openssl11, Http2.Client.SigPipe;
-
-const
-  SSL_R_SSLV3_ALERT_NO_CERTIFICATE = 1041;
-  SSL_R_SSLV3_ALERT_BAD_CERTIFICATE = 1042;
-  SSL_R_SSLV3_ALERT_UNSUPPORTED_CERTIFICATE = 1043;
-  SSL_R_SSLV3_ALERT_CERTIFICATE_REVOKED = 1044;
-  SSL_R_SSLV3_ALERT_CERTIFICATE_EXPIRED = 1045;
-  SSL_R_SSLV3_ALERT_CERTIFICATE_UNKNOWN = 1046;
-  SSL_R_TLSV1_ALERT_UNKNOWN_CA = 1048;
-  SSL_R_TLSV1_ALERT_ACCESS_DENIED = 1049;
-  SSL_R_TLSV13_ALERT_CERTIFICATE_REQUIRED = 1116;
+  Http2.Client.SigPipe;
 
 function AlpnProtocolList(const AProtocols: array of string): TBytes;
 var
@@ -276,13 +265,19 @@ begin
     Result := '';
 end;
 
-function SslVerifyModeFor(const AInsecure: Boolean): Integer;
+function ProtocolForTlsAlpn(const AName: string;
+  const AHttp1Fallback: Boolean): TNegotiatedProtocol;
 begin
-  if AInsecure then
-    Result := SSL_VERIFY_NONE
-  else
-    Result := SSL_VERIFY_PEER;
+  if AName = cHttp2AlpnProtocol then
+    Exit(npHttp2Tls);
+  if AHttp1Fallback and
+     ((AName = cHttp11AlpnProtocol) or (AName = '')) then
+    Exit(npHttp1Tls);
+  raise EHttpProtocolError.CreateFmt(
+    'peer did not negotiate an allowed TLS ALPN protocol (selected "%s")',
+    [AName]);
 end;
+
 
 procedure SetSocketTimeout(AFd, ALevel, AOption, ATimeoutMs: Integer);
 var
@@ -301,14 +296,6 @@ begin
   Result := (e = ESysEAGAIN) or (e = ESysEWOULDBLOCK);
 end;
 
-/// a blocking socket with SO_RCVTIMEO/SO_SNDTIMEO reports an expired deadline
-// as SSL_ERROR_WANT_READ/WANT_WRITE; errno is not a reliable witness on its
-// own (Linux), so the SSL error counts as well
-function SslTimedOut(const AErr: Integer): Boolean;
-begin
-  Result := SocketTimedOut or (AErr = SSL_ERROR_WANT_READ) or
-    (AErr = SSL_ERROR_WANT_WRITE);
-end;
 
 function SocketReadFully(AFd, ACount, ATimeoutMs: Integer;
   var ABuffer): Integer;
@@ -364,29 +351,31 @@ begin
   end;
 end;
 
-function ClientAuthAlertName(const AReason: Cardinal): string;
-begin
-  case AReason of
-    SSL_R_TLSV13_ALERT_CERTIFICATE_REQUIRED:   Result := 'certificate required';
-    SSL_R_SSLV3_ALERT_NO_CERTIFICATE:          Result := 'no certificate';
-    SSL_R_SSLV3_ALERT_BAD_CERTIFICATE:         Result := 'bad certificate';
-    SSL_R_SSLV3_ALERT_UNSUPPORTED_CERTIFICATE: Result := 'unsupported certificate';
-    SSL_R_SSLV3_ALERT_CERTIFICATE_REVOKED:     Result := 'certificate revoked';
-    SSL_R_SSLV3_ALERT_CERTIFICATE_EXPIRED:     Result := 'certificate expired';
-    SSL_R_SSLV3_ALERT_CERTIFICATE_UNKNOWN:     Result := 'unknown certificate';
-    SSL_R_TLSV1_ALERT_UNKNOWN_CA:              Result := 'unknown ca';
-    SSL_R_TLSV1_ALERT_ACCESS_DENIED:           Result := 'access denied';
-  else
-    Result := '';
-  end;
-end;
-
 function SecureRandomCardinal: Cardinal;
+var
+  H: THandle;
+  Done, N: Integer;
 begin
-  if not OpenSslIsAvailable then
-    raise EHttpConnectionError.Create('OpenSSL is not available');
-  if RAND_bytes(@Result, SizeOf(Result)) <> 1 then
-    raise EHttpConnectionError.Create('the secure random generator failed');
+  H := FileOpen('/dev/urandom', fmOpenRead or fmShareDenyNone);
+  if H < 0 then
+    raise EHttpConnectionError.Create('the operating system random source is unavailable');
+  try
+    Done := 0;
+    while Done < SizeOf(Result) do
+    begin
+      N := FileRead(H, PByte(@Result)[Done], SizeOf(Result) - Done);
+      if N < 0 then
+      begin
+        if fpGetErrno = ESysEINTR then Continue;
+        raise EHttpConnectionError.Create('the operating system random source failed');
+      end;
+      if N = 0 then
+        raise EHttpConnectionError.Create('the operating system random source returned incomplete data');
+      Inc(Done, N);
+    end;
+  finally
+    FileClose(H);
+  end;
 end;
 
 end.

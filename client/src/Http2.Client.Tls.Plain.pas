@@ -35,7 +35,7 @@ type
       const AConnectTimeoutMs: Integer = cDefaultSocketTimeoutMs;
       const AProxyHost: string = ''; const AProxyPort: Word = 0);
     destructor Destroy; override;
-    /// the underlying OS socket handle (needed to hand the socket to OpenSSL)
+    /// the underlying OS socket handle (used for proxy handshakes)
     property Handle: Integer read FHandle;
     function Read(var ABuffer; ACount: Integer): Integer;
     function ReadSome(var ABuffer; ACount: Integer): Integer;
@@ -197,26 +197,5 @@ procedure TPlainSocket.SetWriteTimeoutMs(const AValue: Integer);
 begin
   FWriteTimeoutMs := AValue;
 end;
-
-{ client-certificate rejection }
-
-const
-  // OpenSSL reason codes of the alerts a server sends when it refuses the
-  // client's certificate (openssl/sslerr.h: SSL_AD_REASON_OFFSET + alert number)
-  SSL_R_SSLV3_ALERT_NO_CERTIFICATE = 1041;
-  SSL_R_SSLV3_ALERT_BAD_CERTIFICATE = 1042;
-  SSL_R_SSLV3_ALERT_UNSUPPORTED_CERTIFICATE = 1043;
-  SSL_R_SSLV3_ALERT_CERTIFICATE_REVOKED = 1044;
-  SSL_R_SSLV3_ALERT_CERTIFICATE_EXPIRED = 1045;
-  SSL_R_SSLV3_ALERT_CERTIFICATE_UNKNOWN = 1046;
-  SSL_R_TLSV1_ALERT_UNKNOWN_CA = 1048;
-  SSL_R_TLSV1_ALERT_ACCESS_DENIED = 1049;
-  SSL_R_TLSV13_ALERT_CERTIFICATE_REQUIRED = 1116;
-  // a TLS 1.2 server that gets no certificate answers handshake_failure; it
-  // counts as a client-certificate rejection only after a CertificateRequest
-  SSL_R_SSLV3_ALERT_HANDSHAKE_FAILURE = 1040;
-  cSslReasonMask = $7FFFFF;   // ERR_REASON_MASK
-  cHandshakeContentType = 22; // SSL3_RT_HANDSHAKE
-  cMsgCertificateRequest = 13;
 
 end.

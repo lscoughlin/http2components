@@ -27,7 +27,7 @@ function OpenWebSocket(const AFactory: IHttp1SocketFactory;
 implementation
 
 uses
-  SysUtils, Classes, Http2.Client.Errors, Http2.Client.Tls,
+  SysUtils, Classes, Http2.Client.Errors, Http2.Client.Tls, Http2.Client.Tls.Socket,
   Http2.Client.WebSocket.Connection, Http2.Client.Messages,
   Http2.Common.Headers;
 
@@ -48,7 +48,7 @@ var
   Parsed: TArray<THttp1HeaderField>;
   Fields: TArray<TWsHeaderField>;
   HeaderLines, Body: string;
-  TlsObj: TObject;
+  TlsInfo: IHttp2TlsSocketInfo;
   Conn: TWebSocketConnection;
   Want: Integer;
 begin
@@ -132,7 +132,7 @@ begin
         'WebSocket handshake failed: ' + Why, Status, HeaderLines, Body);
     end;
     Conn := TWebSocketConnection.Create(Sock, Reader, ARequest, Chosen, Mask,
-      Supports(Sock, TTlsSocket, TlsObj), AAttempt);
+      Supports(Sock, IHttp2TlsSocketInfo, TlsInfo), AAttempt);
     Reader := nil;                    // owned by the connection now
   except
     Sock.Close;
