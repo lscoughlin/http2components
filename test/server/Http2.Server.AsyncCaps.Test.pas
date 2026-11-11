@@ -451,12 +451,25 @@ begin
   AssertEquals('the dependency connection gate is disabled', MaxInt,
     MaxConnections);
   AssertEquals('the dependency pending gate is disabled', MaxInt, MaxPending);
+  ReadAdmissionLimits(1, Configured, MaxConnections, MaxPending);
+  AssertEquals('a limit of one is retained by custom admission', 1,
+    Configured);
+  AssertEquals('a limit of one disables the dependency connection gate',
+    MaxInt, MaxConnections);
+  AssertEquals('a limit of one disables the dependency pending gate', MaxInt,
+    MaxPending);
   ReadAdmissionLimits(0, Configured, MaxConnections, MaxPending);
   AssertEquals('zero keeps unlimited admission', 0, Configured);
   AssertEquals('unlimited admission still disables the dependency gate',
     MaxInt, MaxConnections);
   AssertEquals('unlimited admission still disables pending gate', MaxInt,
     MaxPending);
+  ReadAdmissionLimits(10000, Configured, MaxConnections, MaxPending);
+  AssertEquals('the default limit value is retained', 10000, Configured);
+  AssertEquals('the default limit disables the dependency connection gate',
+    MaxInt, MaxConnections);
+  AssertEquals('the default limit disables the dependency pending gate',
+    MaxInt, MaxPending);
 end;
 
 procedure TAsyncCapsTest.TestConnectionCapServesExactlyTwo;
