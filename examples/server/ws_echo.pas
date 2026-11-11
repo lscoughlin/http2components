@@ -168,6 +168,8 @@ begin
   Server := THttp2ServerFactory.Create
     .WithMaxConcurrentStreams(256)
     .WithMaxDetachedStreams(IfThen((ParamCount >= 3) and (ParamStr(3) = 'load'), 30000, 10000))
+    .WithServerLimits(TServerLimits.Create.WithMaxConnections(
+      IfThen((ParamCount >= 3) and (ParamStr(3) = 'load'), 30000, 10000)))
     .WithHost(Host)
     .WithPort(Port)
     .WithClearTextAllowed(True)

@@ -90,6 +90,7 @@ begin
     .WithPort(Port)
     .WithClearTextAllowed(True)
     .WithMaxDetachedStreams(30000)
+    .WithServerLimits(TServerLimits.Create.WithMaxConnections(30000))
     .WithHandler(TReplayHandler.Create)
     .Build;
   Server.Start;
