@@ -233,6 +233,7 @@ def check(kind: str) -> None:
 
 
 def packages_check() -> None:
+    run([sys.executable, "tools/packages.py", "--check"])
     check("packages")
     packages = sorted(ROOT.glob("*.lpk"))
     if not packages:
@@ -269,7 +270,12 @@ def packages_check() -> None:
                 f"--os={os_name}", f"--compiler={compiler_id}"]
         args.extend(f"--opt={flag}" for flag in options)
         args.append(str(package.relative_to(ROOT)))
-        run(args, env=open_ssl_env() if component != "common" else None)
+        try:
+            run(args, env=open_ssl_env() if component != "common" else None)
+        finally:
+            # Lazarus regenerates package sources without the required header.
+            # Restore the canonical equivalent sources after each build.
+            run([sys.executable, "tools/packages.py"])
 
 
 def examples() -> None:

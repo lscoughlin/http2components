@@ -1,0 +1,115 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <Package Version="5">
+    <PathDelim Value="/" />
+    <Name Value="http2client" />
+    <Type Value="RunTimeOnly" />
+    <Author Value="Liam Seamus Coughlin" />
+    <Description Value="HTTP/2 client library for Free Pascal" />
+    <Version Major="0" Minor="30" Release="0" Build="0" />
+    <License Value="Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)" />
+    <CompilerOptions>
+      <Version Value="11" />
+      <SearchPaths>
+        <IncludeFiles Value="src" />
+        <UnitOutputDirectory Value="bin/$(TargetCPU)-$(TargetOS)/default/package-http2client/units" />
+        <OtherUnitFiles Value="src;third_party/mORMot2/src/core;third_party/mORMot2/src/lib;third_party/mORMot2/src/net;third_party/mORMot2/src/crypt" />
+      </SearchPaths>
+      <Parsing>
+        <SyntaxOptions>
+          <SyntaxMode Value="Delphi" />
+          <IncludeAssertionCode Value="True" />
+        </SyntaxOptions>
+      </Parsing>
+    </CompilerOptions>
+    <Files Count="19">
+      <Item1>
+        <Filename Value="src/Http2.Client.ClientCert.pas" />
+        <UnitName Value="Http2.Client.ClientCert" />
+      </Item1>
+      <Item2>
+        <Filename Value="src/Http2.Client.Clock.pas" />
+        <UnitName Value="Http2.Client.Clock" />
+      </Item2>
+      <Item3>
+        <Filename Value="src/Http2.Client.Connection.pas" />
+        <UnitName Value="Http2.Client.Connection" />
+      </Item3>
+      <Item4>
+        <Filename Value="src/Http2.Client.Encoding.pas" />
+        <UnitName Value="Http2.Client.Encoding" />
+      </Item4>
+      <Item5>
+        <Filename Value="src/Http2.Client.Errors.pas" />
+        <UnitName Value="Http2.Client.Errors" />
+      </Item5>
+      <Item6>
+        <Filename Value="src/Http2.Client.Http1.pas" />
+        <UnitName Value="Http2.Client.Http1" />
+      </Item6>
+      <Item7>
+        <Filename Value="src/Http2.Client.IdentityHandle.pas" />
+        <UnitName Value="Http2.Client.IdentityHandle" />
+      </Item7>
+      <Item8>
+        <Filename Value="src/Http2.Client.Messages.pas" />
+        <UnitName Value="Http2.Client.Messages" />
+      </Item8>
+      <Item9>
+        <Filename Value="src/Http2.Client.Observer.pas" />
+        <UnitName Value="Http2.Client.Observer" />
+      </Item9>
+      <Item10>
+        <Filename Value="src/Http2.Client.Proxy.pas" />
+        <UnitName Value="Http2.Client.Proxy" />
+      </Item10>
+      <Item11>
+        <Filename Value="src/Http2.Client.RequestObserver.pas" />
+        <UnitName Value="Http2.Client.RequestObserver" />
+      </Item11>
+      <Item12>
+        <Filename Value="src/Http2.Client.SigPipe.pas" />
+        <UnitName Value="Http2.Client.SigPipe" />
+      </Item12>
+      <Item13>
+        <Filename Value="src/Http2.Client.Socks.pas" />
+        <UnitName Value="Http2.Client.Socks" />
+      </Item13>
+      <Item14>
+        <Filename Value="src/Http2.Client.Sse.pas" />
+        <UnitName Value="Http2.Client.Sse" />
+      </Item14>
+      <Item15>
+        <Filename Value="src/Http2.Client.Stream.pas" />
+        <UnitName Value="Http2.Client.Stream" />
+      </Item15>
+      <Item16>
+        <Filename Value="src/Http2.Client.Tls.pas" />
+        <UnitName Value="Http2.Client.Tls" />
+      </Item16>
+      <Item17>
+        <Filename Value="src/Http2.Client.WebSocket.Connection.pas" />
+        <UnitName Value="Http2.Client.WebSocket.Connection" />
+      </Item17>
+      <Item18>
+        <Filename Value="src/Http2.Client.WebSocket.pas" />
+        <UnitName Value="Http2.Client.WebSocket" />
+      </Item18>
+      <Item19>
+        <Filename Value="src/Http2.Client.pas" />
+        <UnitName Value="Http2.Client" />
+      </Item19>
+    </Files>
+    <RequiredPkgs Count="2">
+      <Item1>
+        <PackageName Value="FCL" />
+      </Item1>
+      <Item2>
+        <PackageName Value="http2common" />
+      </Item2>
+    </RequiredPkgs>
+    <UsageOptions>
+      <UnitPath Value="$(PkgOutDir)" />
+    </UsageOptions>
+  </Package>
+</CONFIG>
