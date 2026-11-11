@@ -61,6 +61,7 @@ type
     procedure Pump(const AReadInput: Boolean);
     function AdvanceSession: TTlsProgress;
     procedure MapSessionError(const AError: ETlsSessionError);
+    procedure ReadPeerAlertAfterWriteFailure;
     procedure NotifyTransportEof;
     function FlushEncrypted: Boolean;
     function ReadEncrypted: Boolean;
@@ -252,8 +253,13 @@ begin
         raise EHttpConnectionClosed.Create('TLS transport closed during write');
       FSessionLock.Release;
       try
-        N := FTransport.Write(FEncryptedOutput[FEncryptedOutputOffset],
-          Length(FEncryptedOutput) - FEncryptedOutputOffset);
+        try
+          N := FTransport.Write(FEncryptedOutput[FEncryptedOutputOffset],
+            Length(FEncryptedOutput) - FEncryptedOutputOffset);
+        except
+          ReadPeerAlertAfterWriteFailure;
+          raise;
+        end;
       finally
         FSessionLock.Acquire;
       end;
@@ -320,6 +326,46 @@ begin
     tecConfiguration: raise EHttpTlsConfigError.Create(AError.Message);
     tecVerification, tecProtocol, tecAlert, tecInternal:
       raise EHttpConnectionError.Create(AError.Message);
+  end;
+end;
+
+procedure TTlsSocket.ReadPeerAlertAfterWriteFailure;
+var
+  PreviousTimeout: Integer;
+begin
+  // Some TLS 1.3 servers reject a client certificate only after they receive
+  // application data.  With HTTP/2, the connection preface is the first data;
+  // a server can send its TLS alert and reset the socket before the preface
+  // write completes.  Read once with a short bound so the provider can retain
+  // a pending peer alert.  A timeout or EOF leaves the original write error
+  // as the connection failure.
+  FSessionLock.Acquire;
+  try
+    // Do not invert the ordinary reader -> session lock order.
+    if not FReadLock.TryEnter then
+      Exit;
+    try
+      PreviousTimeout := FTransport.ReadTimeoutMs;
+      try
+        FTransport.ReadTimeoutMs := 100;
+        try
+          if ReadEncrypted then
+            AdvanceSession;
+        except
+          on E: EHttpTlsClientAuthError do
+            raise;
+          on Exception do
+            ; // keep the transport write error when no client-auth alert arrived
+        end;
+      finally
+        FTransport.ReadTimeoutMs := PreviousTimeout;
+      end;
+    finally
+      FReadLock.Release;
+      RTLEventSetEvent(FInputProgress);
+    end;
+  finally
+    FSessionLock.Release;
   end;
 end;
 
