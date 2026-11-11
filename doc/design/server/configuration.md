@@ -7,7 +7,6 @@ notes:
   - Every server setting passes through the factory. Create holds the only
     block of defaults.
   - Imported from http2server/doc/design/server/configuration.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The factory record, the option records it carries, and the validation rules.
 primary_types:
   - THttp2ServerFactory
@@ -34,22 +33,22 @@ invariants:
 # Configuration
 
 Every setting of the HTTP/2 server passes through one object: the server
-factory. The factory is a record with a fluent interface, in the same form as
-the client factory of the sibling project. A `WithX` method returns a new
+factory. The factory is a record with a fluent interface, like the client
+factory API. A `WithX` method returns a new
 record with one field changed. The record that the method was called on keeps
 its value, so a stored factory is safe to copy and to fork.
 
 ## The factory record
 
-`THttp2ServerFactory` is a record (`src/Http2.Server.Config.pas`). Its
+`THttp2ServerFactory` is a record (`src/server/Http2.Server.Config.pas`). Its
 fields are private and its properties are read-only, so a caller changes a
 setting only through a `WithX` method.
 
 `Create` is a static class function that returns the record with the defaults
-(`src/Http2.Server.Config.pas`). The defaults appear once, in that body.
+(`src/server/Http2.Server.Config.pas`). The defaults appear once, in that body.
 The four option records hold their own defaults in their own `Create` bodies
-(`src/Http2.Server.Config.Tls.pas`, `src/Http2.Server.Config.Limits.pas`,
-`src/Http2.Server.Config.Socket.pas`, `src/Http2.Server.Config.pas`). The
+(`src/server/Http2.Server.Config.Tls.pas`, `src/server/Http2.Server.Config.Limits.pas`,
+`src/server/Http2.Server.Config.Socket.pas`, `src/server/Http2.Server.Config.pas`). The
 figure below shows the five records and their relation.
 
 ```mermaid
@@ -69,19 +68,19 @@ flowchart TD
 
 The factory is the home of every server setting. The protocol units hold the
 protocol bounds instead: `MinAllowedFrameSize` and `MaxAllowedFrameSize`
-(`src/Http2.Common.Frames.pas`, `src/Http2.Common.Frames.pas`), and
-`MaxWindowSize` (`src/Http2.Common.FlowControl.pas`). A connection reads the
+(`src/common/Http2.Common.Frames.pas`, `src/common/Http2.Common.Frames.pas`), and
+`MaxWindowSize` (`src/common/Http2.Common.FlowControl.pas`). A connection reads the
 remaining values from a settings record that the factory fills, as the
 connection core states for `TConnectionCoreOptions`
-(`src/Http2.Server.Connection.Core.pas`).
+(`src/server/Http2.Server.Connection.Core.pas`).
 
 The test `TestDefaultsOnlyInCreate` reads the sources of the factory units
 and fails on a numeric literal above 1 outside a `Create` body
-(`test/Http2.Server.Config.Test.pas`). The test covers the four factory
+(`test/server/Http2.Server.Config.Test.pas`). The test covers the four factory
 units: `Config`, `Config.Tls`, `Config.Limits` and `Config.Socket`.
 `Http2.Server.Stream.pas` holds its own constants (`DefaultReadTimeoutMs`,
 `DefaultWriteTimeoutMs` and `DefaultUpdateThreshold` in
-`src/Http2.Server.Stream.pas`), which a stream uses until the factory
+`src/server/Http2.Server.Stream.pas`), which a stream uses until the factory
 sets a value.
 
 ### The listener settings
@@ -96,12 +95,12 @@ sets a value.
 | `Http11` | `WithHttp11Limits` | the record `THttp11Limits`: the limits of the HTTP/1.1 parser (as described in [http1](http1.md)) |
 | `ClearTextAllowed` | `WithClearTextAllowed` | allows cleartext connections (HTTP/2 with prior knowledge, and HTTP/1.1 when the fallback is on); off by default |
 
-The listener fields are at `src/Http2.Server.Config.pas` (host, port, backlog, cleartext) and at `src/Http2.Server.Config.pas` (fallback, HTTP/1.1 limits, WebSocket).
+The listener fields are at `src/server/Http2.Server.Config.pas` (host, port, backlog, cleartext) and at `src/server/Http2.Server.Config.pas` (fallback, HTTP/1.1 limits, WebSocket).
 
 ### The TLS settings
 
 `TTlsServerOptions` is a record with its own fluent methods
-(`TTlsServerOptions` in `src/Http2.Server.Config.Tls.pas`). `THttp2ServerFactory.WithTls`
+(`TTlsServerOptions` in `src/server/Http2.Server.Config.Tls.pas`). `THttp2ServerFactory.WithTls`
 accepts the record whole.
 
 | Setting | `WithX` | Meaning |
@@ -113,7 +112,7 @@ accepts the record whole.
 | `MinTlsVersion` | `WithMinTlsVersion` | the lowest TLS version that the listener accepts |
 | `MaxTlsVersion` | `WithMaxTlsVersion` | the highest TLS version that the listener accepts |
 
-`TTlsVersion` has two values (`src/Http2.Server.Config.Tls.pas`). The value
+`TTlsVersion` has two values (`src/server/Http2.Server.Config.Tls.pas`). The value
 `tvTls12` is TLS 1.2 and the default minimum. The value `tvTls13` is TLS 1.3
 and the default maximum. No value below TLS 1.2 exists by design, because
 HTTP/2 forbids older versions (RFC 9113, section 9.2, checked 2026-11-06 at
@@ -151,14 +150,14 @@ reaches OpenSSL.
 | `SseStallTimeoutMs` | `WithSseStallTimeout` | the time that a full event stream may stay full before the server closes it, in milliseconds; 0 turns the check off; the default is 30000 |
 
 A cancel hook runs at most once, never on the thread that called `Cancel`
-(`src/Http2.Server.Seam.pas`). The count of cancel workers decides how many
+(`src/server/Http2.Server.Seam.pas`). The count of cancel workers decides how many
 hooks run at the same time.
 
 ### The queue settings
 
 `TQueueOptions` is a record with its own fluent methods
-(`src/Http2.Server.Config.pas`). `THttp2ServerFactory.WithQueue` accepts the
-record whole (`src/Http2.Server.Config.pas`).
+(`src/server/Http2.Server.Config.pas`). `THttp2ServerFactory.WithQueue` accepts the
+record whole (`src/server/Http2.Server.Config.pas`).
 
 | Setting | `WithX` | Meaning |
 |---|---|---|
@@ -166,7 +165,7 @@ record whole (`src/Http2.Server.Config.pas`).
 | `MaxWaitMs` | `WithMaxWaitMs` | the greatest wait of a queued request |
 | `RefusalMode` | `WithRefusalMode` | the action when the queue is full |
 
-`TQueueRefusalMode` has two values (`src/Http2.Server.Config.pas`). The
+`TQueueRefusalMode` has two values (`src/server/Http2.Server.Config.pas`). The
 value `rmRefuseStream` resets the stream with `REFUSED_STREAM`. The value
 `rmHttp503` answers HTTP 503. The two answers differ in the retry rule. RFC
 9113 §5.1.2 states that the error code decides whether automatic retry is
@@ -178,8 +177,8 @@ the free handlers is refused at once.
 ### The server limits
 
 `TServerLimits` is a record with its own fluent methods
-(`src/Http2.Server.Config.Limits.pas`). `THttp2ServerFactory.WithServerLimits`
-accepts the record whole (`src/Http2.Server.Config.pas`).
+(`src/server/Http2.Server.Config.Limits.pas`). `THttp2ServerFactory.WithServerLimits`
+accepts the record whole (`src/server/Http2.Server.Config.pas`).
 
 | Setting | `WithX` | Meaning |
 |---|---|---|
@@ -207,8 +206,8 @@ sets a separate bound for outbound DATA frames. The value 0 keeps the
 ### The socket options
 
 `TSocketOptions` is a record with its own fluent methods
-(`src/Http2.Server.Config.Socket.pas`). `THttp2ServerFactory.WithSocketOptions`
-accepts the record whole (`src/Http2.Server.Config.pas`).
+(`src/server/Http2.Server.Config.Socket.pas`). `THttp2ServerFactory.WithSocketOptions`
+accepts the record whole (`src/server/Http2.Server.Config.pas`).
 
 | Setting | `WithX` | Meaning |
 |---|---|---|
@@ -236,20 +235,20 @@ then unused.
 | `MaxContinuationFrames` | `WithMaxContinuationFrames` | the greatest count of `CONTINUATION` frames in one header block |
 | `HeaderTableSize` | `WithHeaderTableSize` | `SETTINGS_HEADER_TABLE_SIZE` of the HPACK codecs |
 
-The stream settings are declared at `src/Http2.Server.Config.pas`. The
+The stream settings are declared at `src/server/Http2.Server.Config.pas`. The
 protocol limits come from the protocol units, not from the factory:
 `MinAllowedFrameSize` and `MaxAllowedFrameSize`
-(`src/Http2.Common.Frames.pas`, `src/Http2.Common.Frames.pas`), and
-`MaxWindowSize` (`src/Http2.Common.FlowControl.pas`). A connection uses the
-settings in `TConnectionSettings` (`src/Http2.Common.Frames.pas`).
+(`src/common/Http2.Common.Frames.pas`, `src/common/Http2.Common.Frames.pas`), and
+`MaxWindowSize` (`src/common/Http2.Common.FlowControl.pas`). A connection uses the
+settings in `TConnectionSettings` (`src/common/Http2.Common.Frames.pas`).
 
 ### The bucket limits
 
 The factory holds one `TTokenBucketOptions` per limited client action: the
 reset bucket and one bucket per control frame kind
-(`src/Http2.Server.Config.pas`). Each bucket has its own `WithX`
-method (`src/Http2.Server.Config.pas`). `TTokenBucketOptions` is the
-fluent record of `src/Http2.Server.Limits.pas`; [limits](limits.md)
+(`src/server/Http2.Server.Config.pas`). Each bucket has its own `WithX`
+method (`src/server/Http2.Server.Config.pas`). `TTokenBucketOptions` is the
+fluent record of `src/server/Http2.Server.Limits.pas`; [limits](limits.md)
 describes the bucket itself.
 
 | Bucket | `WithX` | The client action it bounds |
@@ -263,7 +262,7 @@ describes the bucket itself.
 
 The reset bucket has two costs. `CostBeforeDispatch` applies to a reset before
 a handler runs, and `CostAfterDispatch` applies to a reset after a handler
-runs (`src/Http2.Server.Limits.pas`). The other buckets take their cost
+runs (`src/server/Http2.Server.Limits.pas`). The other buckets take their cost
 from the caller of `TryTake`.
 
 ### The timeout settings
@@ -274,7 +273,7 @@ from the caller of `TryTake`.
 | `HeaderTimeoutMs` | `WithHeaderTimeout` | the time the header block of a request may take |
 | `GracefulStopTimeoutMs` | `WithGracefulStopTimeout` | the time a graceful stop waits for the open streams |
 
-The timeout settings are declared at `src/Http2.Server.Config.pas`.
+The timeout settings are declared at `src/server/Http2.Server.Config.pas`.
 
 ### The connection lifetime settings
 
@@ -283,7 +282,7 @@ The timeout settings are declared at `src/Http2.Server.Config.pas`.
 | `MaxConnectionAgeMs` | `WithMaxConnectionAge` | the time from accept after which the server retires the connection; 0 (the default) turns the limit off |
 | `MaxStreamsPerConnection` | `WithMaxStreamsPerConnection` | the number of requests one connection serves before the server retires it; 0 (the default) turns the limit off |
 
-The lifetime fields are at `src/Http2.Server.Config.pas`. Both defaults are 0, set in `Create` (`src/Http2.Server.Config.pas`). `Validate` rejects a negative value of either one (`src/Http2.Server.Config.pas`). [lifecycle](lifecycle.md) describes the retire.
+The lifetime fields are at `src/server/Http2.Server.Config.pas`. Both defaults are 0, set in `Create` (`src/server/Http2.Server.Config.pas`). `Validate` rejects a negative value of either one (`src/server/Http2.Server.Config.pas`). [lifecycle](lifecycle.md) describes the retire.
 
 ### The wiring
 
@@ -293,16 +292,16 @@ The lifetime fields are at `src/Http2.Server.Config.pas`. Both defaults are 0, s
 | `AccessLogWriter` | `WithAccessLogWriter` | the receiver of the access log records; nil (the default) writes no log, as described in [access-log](access-log.md) |
 | `Clock` | `WithClock` | the clock of the token buckets and of the timeouts |
 
-The wiring is declared at `src/Http2.Server.Config.pas`. `IHttp2Handler`
-is the handler contract (`src/Http2.Server.Seam.pas`). `IMonotonicClock` is the
+The wiring is declared at `src/server/Http2.Server.Config.pas`. `IHttp2Handler`
+is the handler contract (`src/server/Http2.Server.Seam.pas`). `IMonotonicClock` is the
 clock interface, and `TMonotonicClock` is its real implementation
-(`src/Http2.Server.Limits.pas`, `src/Http2.Server.Limits.pas`). `Create`
+(`src/server/Http2.Server.Limits.pas`, `src/server/Http2.Server.Limits.pas`). `Create`
 builds the default clock, so a caller sets no clock for a normal server.
 
 ## Validation
 
 `Validate(out AProblems: TArray<string>): Boolean` collects every problem of
-the settings into one list (`src/Http2.Server.Config.pas`). The answer is
+the settings into one list (`src/server/Http2.Server.Config.pas`). The answer is
 `True` and the list is empty when every setting is correct. The answer is
 `False` and the list holds one message per problem when a setting is wrong.
 The method does not stop at the first problem.
@@ -351,10 +350,10 @@ of 0 is legal too: it refuses every request that finds no free handler. The key
 file is optional, because a PEM certificate file can hold the key (the TLS layer
 accepts an empty key file). The certificate and the key are not required when `ClearTextAllowed` is set, as
 `TestValidateCleartextNeedsNoCertificate` shows
-(`test/Http2.Server.Config.Test.pas`).
+(`test/server/Http2.Server.Config.Test.pas`).
 
 A caller that builds a server raises `EServerConfigError` when `Validate`
-answers `False` (`src/Http2.Common.Errors.pas`). The message holds the whole
+answers `False` (`src/common/Http2.Common.Errors.pas`). The message holds the whole
 problem list, so one exception names every problem.
 
 ## Default values
@@ -380,7 +379,7 @@ The values are:
 ## What the factory does not hold
 
 The factory holds no `Build` method. The helper `THttp2ServerFactoryHelper`
-in `src/Http2.Server.pas` adds `Build`, which reads the settings of the factory
+in `src/server/Http2.Server.pas` adds `Build`, which reads the settings of the factory
 and returns an `IHttp2Server`.
 
 The factory holds no observer. A caller passes an `IHttp2ServerObserver` to
@@ -388,8 +387,8 @@ The factory holds no observer. A caller passes an `IHttp2ServerObserver` to
 
 ## Verification
 
-The unit tests are in `test/Http2.Server.Config.Test.pas` and
-`test/Http2.Server.MoreConfig.Test.pas` and run in the normal suite. They cover
+The unit tests are in `test/server/Http2.Server.Config.Test.pas` and
+`test/server/Http2.Server.MoreConfig.Test.pas` and run in the normal suite. They cover
 the defaults, the immutability rule of every `WithX`, the validation rules one
 by one, a validation call that reports several problems, and the source rule
 that keeps a numeric default inside a `Create` body.

@@ -17,22 +17,21 @@ related:
 updated: 2026-10-13
 notes:
   - Imported from http2client/doc/design/messages.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 ---
 
 # Messages
 
 ## HttpResponse
 
-`IHttpResponse` and `IResponseReader<T>` live in `src/Http2.Client.Messages.pas`;
-`IHttpBodyStream` lives in `src/Http2.Client.Stream.pas` (it is wired to the
+`IHttpResponse` and `IResponseReader<T>` live in `src/client/Http2.Client.Messages.pas`;
+`IHttpBodyStream` lives in `src/client/Http2.Client.Stream.pas` (it is wired to the
 HTTP/2 lease). `Http2.Client.Messages` exists as a separate, transport-neutral unit
-so a second codec (the HTTP/1.1 fallback in `src/Http2.Client.Http1.pas`) can
+so a second codec (the HTTP/1.1 fallback in `src/client/Http2.Client.Http1.pas`) can
 implement `IHttpResponse` without depending on `Http2.Client` — which would
 be circular, since the client uses the codec to send.
 
 ```pascal
-// src/Http2.Client.Messages.pas
+// src/client/Http2.Client.Messages.pas
 type
   IHttpResponse = interface
     ['{8B1C2D3E-4F50-4A61-9C72-0123456789AB}']
@@ -44,7 +43,7 @@ type
     property Body: IHttpBodyStream read GetBody;
   end;
 
-// src/Http2.Client.Stream.pas
+// src/client/Http2.Client.Stream.pas
 type
   IHttpBodyStream = interface
     /// block until bytes are available or END_STREAM. The first Read that
@@ -65,14 +64,14 @@ The generic read helper (as described in the syntax note below) maps a response 
 a `T`:
 
 ```pascal
-// src/Http2.Client.Messages.pas
+// src/client/Http2.Client.Messages.pas
 {$mode delphi}
 type
   IResponseReader<T> = interface
     function Read(const AResponse: IHttpResponse): T;
   end;
 
-// src/Http2.Client.pas
+// src/client/Http2.Client.pas
 type
   TResponseReader<T> = class(TInterfacedObject, IResponseReader<T>)
   public
@@ -82,11 +81,17 @@ type
   end;
 ```
 
+`THttpResponse` owns the stream lease and the connection references that keep
+the body usable. `TGuardedBody` holds weak references to that state. The caller
+retains the `IHttpResponse` while it reads `IHttpResponse.Body`. A body
+interface alone does not keep the lease or connection alive.
+
 The implementation pulls from `AResponse.Body` until Eof or enough bytes
-for `T`, then decodes: a `tkAString` type (which includes `UTF8String` on
-FPC 3.2.4) is decoded as an `AnsiString` **without conversion**, a
-dynamic-array type is read as `TBytes`, and any other type is `memcpy`'d
-from `SizeOf(T)` bytes. A malformed or short body raises
+for `T`, then decodes supported values. Byte-string types, including
+`UTF8String`, are read as `AnsiString` without conversion. `TBytes` is read as
+a byte array. An unmanaged fixed-size value is copied from `SizeOf(T)` bytes.
+Other managed values and dynamic-array types are not supported. A malformed
+or short body raises
 `EHttpProtocolError` here, not in `Send`.
 
 Usage — both forms exist, so pick the one that fits:
@@ -96,6 +101,7 @@ var
   Dto: TMyDto;
 begin
   Response := Client.Send(Request);
+  // Keep Response alive while reading its body.
   // instance form (interface-compatible, dependency-injectable):
   Dto := TResponseReader<TMyDto>.Create.Read(Response);
   // static form (no temporary object):
@@ -205,7 +211,7 @@ type
 `IHttpHeaders` is a map of `string` → list of `string`:
 
 ```pascal
-// src/Http2.Common.Headers.pas
+// src/common/Http2.Common.Headers.pas
 type
   IHttpHeaders = interface
     procedure Add(const AName, AValue: string);
@@ -232,7 +238,7 @@ connection-specific header is rejected: `ForbiddenHeaders` is
 permits (RFC 9113 section 8.2.2); a **response** may carry it only with the
 value `trailers`, and any other value raises `EHttpStreamError` with
 `ecProtocolError` while the response headers are decoded
-(`TStreamLease.HandleInboundFrame` in `src/Http2.Client.Stream.pas`).
+(`TStreamLease.HandleInboundFrame` in `src/client/Http2.Client.Stream.pas`).
 
 Header names are a set of constants of common HTTP header names:
 
@@ -297,7 +303,7 @@ flowchart TB
 
 ## Content coding
 
-`src/Http2.Client.Encoding.pas` holds the content codings the client understands:
+`src/client/Http2.Client.Encoding.pas` holds the content codings the client understands:
 gzip (RFC 1952) and deflate (RFC 1950, or a bare deflate stream). The codecs
 rely on the zlib bindings that Free Pascal ships with the compiler
 (`paszlib`/`zstream`), so the unit adds no dependency.
@@ -346,11 +352,10 @@ hand-rolled loop.
 - `ReadText(AResponse): string` drains the response body to EOF and copies
   the bytes **verbatim** — no charset sniffing, no transcoding. It is the
   string counterpart of reading the raw `TBytes`.
-- `TResponseReader<T>` (as described in above) keeps its raw-passthrough semantics: a
-  `tkAString` type (which includes `UTF8String` on FPC 3.2.4) is decoded as
-  an `AnsiString` without conversion, a `tkDynArray` is read as `TBytes`, and
-  anything else is `memcpy`'d as `SizeOf(T)`. A reader that wants
-  interpretation must do it itself.
+- `TResponseReader<T>` keeps its raw-passthrough semantics for byte strings,
+  `TBytes`, and unmanaged fixed-size values. It does not support other managed
+  types or dynamic arrays. A reader that wants interpretation must do it
+  itself.
 
 **Optional readers (`Http2.Client.Readers`).**
 

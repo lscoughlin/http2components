@@ -6,7 +6,6 @@ notes:
   - This document describes the event stream of the server, the encoder rules, the thread model, the keep-alive, the back-pressure and the close rules.
   - The format is the one of the WHATWG HTML Living Standard section 9.2, checked on 2026-10-22. The plain-text copy is doc/references/whatwg-html-server-sent-events.txt.
   - Imported from http2server/doc/design/server/sse.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The format rules that the encoder enforces, the stream interface, the threads, the keep-alive, the stall rule and the close rules.
 primary_types:
   - ISseStream
@@ -21,7 +20,7 @@ related_docs:
 # Server-sent events
 
 A handler turns a response into an event stream with `StartSse`
-(`src/Http2.Server.Sse.pas`). The handler returns at once. Any thread then sends
+(`src/server/Http2.Server.Sse.pas`). The handler returns at once. Any thread then sends
 events to the `ISseStream`. An event stream holds no handler thread and no
 thread of its own.
 
@@ -49,7 +48,7 @@ is one write to the channel, so two events never interleave.
 
 ## The encoder
 
-The encoder (`src/Http2.Server.Sse.Encoder.pas`) holds no socket and no thread.
+The encoder (`src/server/Http2.Server.Sse.Encoder.pas`) holds no socket and no thread.
 The format has no escape for a line break, so the encoder splits or rejects.
 
 | Value | Rule |

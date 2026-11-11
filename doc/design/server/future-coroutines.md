@@ -8,7 +8,6 @@ notes:
   - The measurements come from one development host and one Linux host. The
     document names each one.
   - Imported from http2server/doc/design/server/future-coroutines.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The deferred coroutine option for handler code, the FPC facts it rests on, the research result and the open items.
 primary_types:
   - IStreamWaiter
@@ -45,7 +44,7 @@ document records the research.
 ## The interface that keeps the option open
 
 Every wait of a stream goes through `IStreamWaiter`
-(`src/Http2.Server.Seam.pas`). The interface has four members.
+(`src/server/Http2.Server.Seam.pas`). The interface has four members.
 
 ```pascal
 IStreamWaiter = interface
@@ -56,7 +55,7 @@ IStreamWaiter = interface
 end;
 ```
 
-`TBlockingWaiter` (`src/Http2.Server.Waiter.pas`) implements the interface with
+`TBlockingWaiter` (`src/server/Http2.Server.Waiter.pas`) implements the interface with
 an `RTLEvent`. A coroutine scheduler implements the same interface with a
 resume of another coroutine. The surface is small on purpose: the waiter is
 the only place where a stream sleeps, so it is the only place a coroutine

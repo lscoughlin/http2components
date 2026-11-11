@@ -22,7 +22,6 @@ related:
 updated: 2026-10-24
 notes:
   - Imported from http2client/doc/design/mtls.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 ---
 
 # Mutual TLS (client certificates)

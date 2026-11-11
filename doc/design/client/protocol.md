@@ -17,7 +17,6 @@ related:
 updated: 2026-10-13
 notes:
   - Imported from http2client/doc/design/protocol.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 ---
 
 # Protocol Layer
@@ -161,7 +160,7 @@ A malformed block raises `EHttpProtocolError` (`ecCompressionError`).
 
 ## Flow control
 
-`src/Http2.Common.FlowControl.pas` holds two types: `TWindow` (one window's
+`src/common/Http2.Common.FlowControl.pas` holds two types: `TWindow` (one window's
 arithmetic) and `TFlowControl` (the connection-level aggregate — the shared
 connection window plus one `TWindow` per open stream), plus the pure
 batching predicate `ShouldEmitWindowUpdate`:

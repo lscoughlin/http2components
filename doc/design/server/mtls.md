@@ -8,10 +8,8 @@ notes:
   - The identity reaches every request path. The paths are HTTP/2 streams,
     HTTP/1.1 requests, the HTTP/1.1 WebSocket upgrade and the HTTP/2 WebSocket
     handshake (extended CONNECT).
-  - The feature is built. The live validation drives every mode against the
-    sibling client at ../http2client.
+  - The feature is built. The live validation uses the merged client and server.
   - Imported from http2server/doc/design/server/mtls.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The factory settings for client certificates, the verification mode, the identity record, the way the identity reaches a handler, and the HTTP/2 and WebSocket rules.
 primary_types:
   - TClientCertMode
@@ -123,7 +121,7 @@ needs the CA file and the system store together, and it needs the optional mode,
 which mORMot2 lacks. Its `ClientCertificateAuthentication` flag always adds
 `SSL_VERIFY_FAIL_IF_NO_PEER_CERT`. The server therefore applies both modes
 itself after `AfterBind`, in the same hook that installs the ALPN callback
-(`ApplyTls` in `src/Http2.Server.Tls.pas`). The hook runs these calls on the
+(`ApplyTls` in `src/server/Http2.Server.Tls.pas`). The hook runs these calls on the
 `AcceptCert` context, in this order:
 
 1. `SSL_CTX_load_verify_locations` loads `ClientCaFile`, when the file is set.
@@ -142,14 +140,14 @@ itself after `AfterBind`, in the same hook that installs the ALPN callback
 
 mORMot2 declares these entry points in `mormot.lib.openssl11`, except
 `SSL_CTX_set_verify_depth`, `SSL_CTX_get_verify_depth` and
-`SSL_CTX_get_verify_mode`. The unit `src/Http2.Server.Tls.Client.pas` resolves those
+`SSL_CTX_get_verify_mode`. The unit `src/server/Http2.Server.Tls.Client.pas` resolves those
 three from libssl with the path rules of the ALPN binding. A second `dlopen` of an
 already loaded library returns the same handle.
 
 The server leaves `ClientCertificateAuthentication` off on the `TNetTlsContext`,
 so `SetupCtx` does not set a verify mode of its own that the hook must undo. The
 server today sets `IgnoreCertificateErrors` to True for the listener
-(`BuildTlsPolicy` in `src/Http2.Server.Async.Options.pas`), and that makes `SetupCtx` choose
+(`BuildTlsPolicy` in `src/server/Http2.Server.Async.Options.pas`), and that makes `SetupCtx` choose
 `SSL_VERIFY_NONE`. The hook overrides the mode after `AfterBind`. A test reads
 the verify mode back with `SSL_CTX_get_verify_mode` for each of the three modes,
 so a later mORMot2 change cannot weaken the setting without a test failure.
@@ -232,16 +230,16 @@ of the context, and mORMot2 comments that the main context is shared
 connections run in parallel on one context, so the identity of one connection
 never comes from the shared record. The server reads the peer certificate from
 the `PSSL` that `INetTls.GetRawTls` returns for that connection, the same way
-`NegotiatedAlpnName` reads the ALPN name (`NegotiatedAlpnName` in `src/Http2.Server.Tls.pas`).
+`NegotiatedAlpnName` reads the ALPN name (`NegotiatedAlpnName` in `src/server/Http2.Server.Tls.pas`).
 
 ### Where the read happens
 
 `TAsyncConnection.OnFirstRead` finishes the handshake through `inherited
-OnFirstRead` and then checks the ALPN name (`THttp2AsyncConnection.OnFirstRead` in `src/Http2.Server.Async.pas`).
+OnFirstRead` and then checks the ALPN name (`THttp2AsyncConnection.OnFirstRead` in `src/server/Http2.Server.Async.pas`).
 The identity read follows the handshake in the same method, before
 `StartHttp2` or `StartHttp1`. The connection object then holds the reference.
 The connection object keeps the reference. It passes it to the connection-events
-object of the protocol (`src/Http2.Server.Async.Events.pas`). The HTTP/2 events set
+object of the protocol (`src/server/Http2.Server.Async.Events.pas`). The HTTP/2 events set
 it on each `TServerStream` in `RequestReady`, and the HTTP/1.1 events give it to
 the exchange through `IClientCertificateSink`. A stream or an exchange reads it
 with no lock, because the value never changes.
@@ -269,11 +267,11 @@ of the two new properties, `Principal` and `ClientCertificate`.
 
 The three request implementations carry the property:
 
-- `TServerStreamRequest` (`src/Http2.Server.StreamAdapters.pas`) for HTTP/2.
-- `TH1Exchange` (`src/Http2.Server.Http1.Exchange.pas`) for HTTP/1.1.
-- `TWsRequestSnapshot` (`src/Http2.Server.WebSocket.SessionCore.pas`) for the session.
+- `TServerStreamRequest` (`src/server/Http2.Server.StreamAdapters.pas`) for HTTP/2.
+- `TH1Exchange` (`src/server/Http2.Server.Http1.Exchange.pas`) for HTTP/1.1.
+- `TWsRequestSnapshot` (`src/server/Http2.Server.WebSocket.SessionCore.pas`) for the session.
   The snapshot constructor copies the reference from the source request, as it
-  copies the principal today (`src/Http2.Server.WebSocket.SessionCore.pas`).
+  copies the principal today (`src/server/Http2.Server.WebSocket.SessionCore.pas`).
 
 ### The principal
 
@@ -329,15 +327,15 @@ and resumes each with a client certificate.
 
 ## Verification
 
-The unit tests (`test/Http2.Server.Mtls.Test.pas`) cover the pure parts: the
+The unit tests (`test/server/Http2.Server.Mtls.Test.pas`) cover the pure parts: the
 validation rules, the map from a mode to an OpenSSL flag, the principal text,
 the identity record of a generated certificate, and the trust setup on a bare
 server context. The context test reads the verify mode and the depth back with
 `SSL_CTX_get_verify_mode` and `SSL_CTX_get_verify_depth`.
 
-The live validation (`make mtls-live`) starts the server on loopback with a PKI
-that `tools/certs/make_mtls_pki.sh` makes, and drives it with the sibling
-client at `../http2client`. A raw TLS client built on the TLS socket of that
+The live validation (`task validate:server:mtls-live`) starts the server on
+loopback with a PKI from `tools/server/certs/make_mtls_pki.sh`, and drives it
+with the merged client. A raw TLS client built on the TLS socket of that
 client covers the cases that the client library lacks: an expired certificate,
 HTTP/1.1 over TLS and WebSocket over HTTP/2. The run holds 40 checks:
 
@@ -355,8 +353,8 @@ Open gaps:
 - A client of a public CA that the system store trusts is not tested, because
   mORMot2 gives no way to redirect the system store and the run never changes
   the store of the host.
-- The sibling client keeps one `X509` object alive for each client that it
-  builds with an identity. This is outside the server; as described in the leak check above.
+- The client retains one `X509` object for each client that it builds with an
+  identity. This client-side ownership behavior is outside the server.
 - The run is on macOS aarch64 only. The Linux amd64 run is open, as for the rest
   of the library.
 - No load or stress run is part of this feature.

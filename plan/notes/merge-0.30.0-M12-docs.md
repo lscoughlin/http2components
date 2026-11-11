@@ -1,64 +1,69 @@
-# M12 documentation preparation
+# M12 final documentation and source provenance
 
-## Reading and inputs
+## Inputs
 
-The M12 scope in `plan/merge-0.30.0.md` and
-`plan/notes/merge-0.30.0-scope.md` was read. The client documentation index,
-client design notes, server documentation index, server design notes,
-verification records, and server reference index were reviewed. The target
-front-matter rules and the dual-license authorization were also reviewed.
+The M12 scope, documentation rules, reference index, client and server design
+records, and current merged build files were reviewed. The two source
+repositories were read at the pinned commits:
 
-The source revisions are client
-`709336f542cbedf9ce1ab67d83bddcfd560eb1c0` and server
-`16e2003a9f31648005c5565d118bbd42acf935a8`. Both source trees were clean at
-those revisions and remain unchanged.
+- Client: `709336f542cbedf9ce1ab67d83bddcfd560eb1c0`.
+- Server: `16e2003a9f31648005c5565d118bbd42acf935a8`.
 
-## Prepared documentation
+Both original repositories remain unchanged. Their pinned source hashes match
+all 440 rows in `LICENSES/source-provenance.tsv`: 196 client rows and 244
+server rows. Twenty-five rows have `not-retained` targets with explicit
+dispositions. These rows record compiled probe outputs, agent workflow files,
+a duplicate obsolete source unit, a source plan pointer, and an unused static
+analysis config. The remaining paths resolve to files in the merged tree or
+the retained server container context.
 
-The client and server topic documents are in `doc/design/client/` and
-`doc/design/server/`. Their unit references use the target unit map. The
-`doc/design/common/` pages record the approved target architecture and
-protocol responsibilities. They mark final source review as pending.
+The inventory keeps both original source license names and source notices.
+The project license choice is `Apache-2.0 OR (LGPL-2.1-only WITH
+Independent-modules-exception)`. The user authorized dual licensing for all
+project code and confirmed copyright ownership. RFC and other specification
+copies keep their source terms.
 
-`doc/migration-0.30.0.md` has one row for each of the 102 production source
-units. It records splits, merges, moves, and the renamed WebSocket units. It
-also describes the removed client umbrella, type qualification cases,
-planned package layout, and the planned 0.30.0 version. Package details and
-API compatibility remain pending final source and build review.
+## Documentation state
 
-The root README describes the three entry units and optional Readers package.
-It lists the expected build command contract as unverified. It makes no
-claim that a command exists or passes. The changelog starts with an
-integration-preparation entry. Historical source changelogs are stored
-separately and label 0.23.0 and 0.29.0 as source package versions, not
-asserted releases.
+The root README and changelog describe the merged 0.30.0 tree. The README
+lists the three public entry units, optional Readers package, build commands,
+verification results, and deferred checks. The migration table maps all 102
+source production units. It includes client API, pool, connection, stream,
+transport, and WebSocket helper splits. The documentation index links the
+design, history, references, and verification records.
 
-All 20 server reference files were copied byte for byte. The target
-`doc/references/README.md` records their source URLs, actual source retrieval
-dates, and SHA-256 hashes. RFC 1928 and RFC 1929 were already present in the
-target tree; their RFC Editor URLs, 2026-11-11 retrieval dates, and hashes
-are in the index. Hash comparison found no mismatch. The server references
-were retrieved on 2026-10-22, except RFC 4514, 5280, 7301, and 8446, which
-were retrieved on 2026-10-25. The IANA registry and WHATWG copy retain the
-2026-10-22 dates in the source index.
+The design pages use the merged `src/common`, `src/client`, and `src/server`
+paths and the target unit namespaces. The common protocol page cites RFC 7541
+and RFC 9113 with rfc-editor URLs and check dates. The reference index lists
+RFC 1928 and RFC 1929 with their rfc-editor URLs, retrieval dates, and hashes.
+The server Dockerfile and both ignore files are under
+`tools/server/container/`. Its documented root-context command is:
 
-Twelve client compiler probe source files are in
-`doc/verification/client-probes/`. The duplicate source library unit and
-compiled probe binaries are excluded. The original probe description is
-retained as a historical source note. Client and server verification
-documents and client verification data files are grouped under
-`doc/verification/source/`; they are marked as source history, not merged
-validation.
+```sh
+docker build --progress=plain -f tools/server/container/Dockerfile \
+  -t http2components-amd64 .
+```
 
-## Review status
+The container build was not run. Linux validation remains deferred.
 
-Reference byte comparisons, the 22-entry reference hash table, YAML header
-shape, local Markdown links, and the 102-row unit table were checked. No test,
-build, documentation task, Linux check, or resource-intensive validation was
-run. The root command contract is not yet verified against the final build
-files.
+## Current evidence
 
-M12 acceptance remains pending final review of every API and architecture
-statement against the merged source, build commands against the actual root
-build files, and the documentation check command. Linux and resource-heavy
-validation remain deferred by user direction.
+The parent reports these final checks:
+
+- Common suite: 229 passed.
+- API suite: 16 passed; six compile probes passed.
+- In-process integration: nine cases passed; separate-process HTTP and TLS
+  checks passed.
+- Default client runner: 805 registered cases passed with no errors or
+  failures. Thirty-three environment-gated proxy, WebSocket, SSE, TLS, and
+  lifecycle cases did not run.
+- Server TLS live gate: 21 passed; server mTLS live gate: 40 passed.
+- Source check: 353 Pascal header and size checks, 337 active Pascal files,
+  135 production units, 53 docs, and 1,780 exact source test records passed.
+- Four Lazarus package checks passed.
+
+The full server suite reached its 60-second command deadline and has no
+completed result. A progress sample showed normal test progress; it does not
+prove a hang or a pass. Linux, load, abuse, and external conformance runs are
+deferred. Parent validation logs are in `bin/review-*` in the final
+integration checkout.

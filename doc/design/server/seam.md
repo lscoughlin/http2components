@@ -8,7 +8,6 @@ notes:
     the handler pool, and so that the protocol units never need to know how a
     handler blocks.
   - Imported from http2server/doc/design/server/seam.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The handler-facing interfaces, the blocking waiter, the cancel workers and the per-stream buffers.
 primary_types:
   - TWaitResult
@@ -130,9 +129,9 @@ server cannot interrupt arbitrary handler code.
 
 A synchronous handler owns a thread from the dispatch to the return of `Handle`.
 A stream that lives for minutes, such as an event stream or a WebSocket, cannot
-afford that thread. `IServerResponse.Detach` (`src/Http2.Server.Seam.pas`) ends the
+afford that thread. `IServerResponse.Detach` (`src/server/Http2.Server.Seam.pas`) ends the
 synchronous life of the handler and gives the stream to an `IDuplexChannel`
-(`src/Http2.Server.Duplex.pas`). The handler returns. The server keeps the stream
+(`src/server/Http2.Server.Duplex.pas`). The handler returns. The server keeps the stream
 open and moves bytes in both directions without a thread for the stream.
 
 A handler that never calls `Detach` keeps the synchronous contract, with one change
@@ -166,7 +165,7 @@ end;
 ```
 
 The HTTP/2 implementation is `THttp2StreamChannel`
-(`src/Http2.Server.StreamChannel.pas`). It wraps one `TServerStream` and holds
+(`src/server/Http2.Server.StreamChannel.pas`). It wraps one `TServerStream` and holds
 one reference to the stream until the channel is destroyed.
 
 **Sending.** `Send` appends to the outbound buffer of the stream and wakes the IO
@@ -215,13 +214,13 @@ the limit is reached. The slot returns when the channel ends. `CloseAll` closes
 every registered channel, which the stop of the server uses.
 
 **Connection loss.** When the socket closes, the connection core cancels every
-open stream (`ConnectionLost`, `src/Http2.Server.Connection.Core.pas`). A handler
+open stream (`ConnectionLost`, `src/server/Http2.Server.Connection.Core.pas`). A handler
 that waits on a stream wakes with `EStreamCancelled`, the cancel hooks run, and
 the sink of a detached stream hears `PeerClosed(False)`.
 
 **Lifetime.** A detached stream can outlive its connection. The stream and the
 core therefore share the connection lock through a reference count
-(`TConnectionLock`, `src/Http2.Server.StreamHost.pas`), and the core cuts the
+(`TConnectionLock`, `src/server/Http2.Server.StreamHost.pas`), and the core cuts the
 stream callbacks (`ReleaseHost`) before it frees anything they reach. A call on a
 channel after the connection ended finds a live lock, a callback that does
 nothing, and a channel that reports itself closed. The
@@ -231,7 +230,7 @@ lock held across the call would invert the lock order, because a call takes the
 connection lock and the connection lock is taken first.
 
 **HTTP/1.1.** An HTTP/1.1 response detaches into a `TH1ChunkedChannel`
-(`src/Http2.Server.Http1.Channel.pas`). The channel has the same contract: `Send`
+(`src/server/Http2.Server.Http1.Channel.pas`). The channel has the same contract: `Send`
 returns `srQueued`, `srFull` or `srClosed`, a pending channel holds bytes until
 `Activate`, `Close` ends the response, and the sink hears of the end of the
 connection. The read side has no data. The document [http1](http1.md) describes
@@ -287,7 +286,7 @@ consumed count is cleared by `ClearConsumed` after the frame goes out.
 ## Content coding
 
 The seam carries bytes and never inspects them, so a content coding is the
-affair of the handler. `src/Http2.Server.Encoding.pas` gives the handler the
+affair of the handler. `src/server/Http2.Server.Encoding.pas` gives the handler the
 codecs to do that work:
 
 - `NegotiateEncoding(AcceptEncoding)` reads a request's `accept-encoding`

@@ -19,7 +19,6 @@ related:
 updated: 2026-10-13
 notes:
   - Imported from http2client/doc/design/client-api.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 ---
 
 # Client API
@@ -239,8 +238,10 @@ connection lock. The shared HPACK decoder runs only on the connection
 reader thread, in wire order, before dispatch to stream queues. Header
 blocks for an unregistered stream still update that decoder. The lease
 releases the lock only for the inbound queue wait and acquires it again
-before it processes a frame. The response keeps the connection alive for
-the full body lifetime. Automatic content decoding starts after the header
+before it processes a frame. The `IHttpResponse` object keeps the connection
+alive for the full body lifetime. Callers retain that response interface while
+they read its `Body`; the body interface alone does not own the lease or
+connection. Automatic content decoding starts after the header
 acquisition lock is released, so a decoded body has the same wait rule.
 
 A cancellation token applies to its request. Cancellation of a blocked

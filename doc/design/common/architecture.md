@@ -3,7 +3,7 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: architecture, common, client, server
 notes:
-  - This is the approved target design; final source review is pending.
+  - The unit boundaries describe the merged source tree.
 ---
 
 # Common architecture
@@ -51,8 +51,7 @@ distinct. A consumer that uses both roles names the role-qualified type.
 The client Readers helpers remain optional. The core client package does not
 load JSON or XML reader dependencies.
 
-## Review status
+## Build and verification
 
-This document records the approved target design. The final unit interfaces,
-package membership, and dependency edges need review against the merged source.
-No build result is stated here.
+The package list is in the root README. Current bounded results and deferred
+checks are in the [verification record](../../verification/current-status.md).

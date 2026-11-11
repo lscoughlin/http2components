@@ -8,7 +8,6 @@ notes:
   - The counts in this document are the factory defaults. The factory holds
     every default, and the server code holds no limit literal.
   - Imported from http2server/doc/design/server/threading.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The thread roles, the work each role does, and the rules that keep the roles apart.
 primary_types:
   - THttp2ServerFactory
@@ -112,7 +111,7 @@ hook behaviour of the unit.
 
 ## The streaming pool
 
-`src/Http2.Server.StreamPool.pas` holds a pool for work that outlives one
+`src/server/Http2.Server.StreamPool.pas` holds a pool for work that outlives one
 request, such as the callbacks of a long-lived stream. The pool is separate from
 the handler pool. It uses no admission queue and no handler thread, so a burst
 of streaming work cannot delay or refuse an ordinary request. The unit depends

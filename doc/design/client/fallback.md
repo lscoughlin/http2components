@@ -20,7 +20,6 @@ related:
 updated: 2026-10-13
 notes:
   - Imported from http2client/doc/design/fallback.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 ---
 
 # Cleartext h2c and HTTP/1.1 Fallback
@@ -291,15 +290,15 @@ The table maps each area to its code and acceptance check:
 
 | Area | Where | Acceptance |
 | --- | --- | --- |
-| `TClearTextPolicy` + factory methods | `src/Http2.Client.Tls.pas`, `src/Http2.Client.pas` | defaults stay strict (`ctReject`, `Http1Fallback=False`) |
-| h2c prior knowledge | `src/Http2.Client.pas` (`TConnectionPool.TryH2cUpgrade` path, preface at once) | a GET against `nghttpd --no-tls` succeeds (A.10) |
-| h2c upgrade | `src/Http2.Client.pas` (`AcquireUpgraded`, `BuildH2cUpgradeRequest`, `Http2SettingsBase64Url`) | a GET returns `101` then uses HTTP/2 (A.11) |
-| declined upgrade | `src/Http2.Client.pas` (`TConnectionPool.OpenForTxn`, `THttp1PooledConnection.Resume`), `src/Http2.Client.Http1.pas` (`ResumeResponse`) | the request reaches the server once and the connection serves the next request (`Http2.Client.ClearText.Test`, `make validate-cleartext`) |
-| HTTP/1.1 without a probe | `src/Http2.Client.Tls.pas` (`ctHttp1`), `src/Http2.Client.pas` | no `Upgrade` or `HTTP2-Settings` byte on the wire (`Http2.Client.ClearText.Test`, `make validate-cleartext`) |
-| HTTP/1.1 codec | `src/Http2.Client.Http1.pas` (`THttp1Connection`) | GET and POST against a plain HTTP/1.1 server succeed (A.12) |
-| ALPN fallback | `src/Http2.Client.Http1.pas` + transport selection in `Http2.Client` | an `http/1.1`-only TLS server responds when fallback is on |
+| `TClearTextPolicy` + factory methods | `src/client/Http2.Client.Tls.pas`, `src/client/Http2.Client.pas` | defaults stay strict (`ctReject`, `Http1Fallback=False`) |
+| h2c prior knowledge | `src/client/Http2.Client.pas` (`TConnectionPool.TryH2cUpgrade` path, preface at once) | a GET against `nghttpd --no-tls` succeeds (A.10) |
+| h2c upgrade | `src/client/Http2.Client.pas` (`AcquireUpgraded`, `BuildH2cUpgradeRequest`, `Http2SettingsBase64Url`) | a GET returns `101` then uses HTTP/2 (A.11) |
+| declined upgrade | `src/client/Http2.Client.pas` (`TConnectionPool.OpenForTxn`, `THttp1PooledConnection.Resume`), `src/client/Http2.Client.Http1.pas` (`ResumeResponse`) | the request reaches the server once and the connection serves the next request (`Http2.Client.ClearText.Test`, `make validate-cleartext`) |
+| HTTP/1.1 without a probe | `src/client/Http2.Client.Tls.pas` (`ctHttp1`), `src/client/Http2.Client.pas` | no `Upgrade` or `HTTP2-Settings` byte on the wire (`Http2.Client.ClearText.Test`, `make validate-cleartext`) |
+| HTTP/1.1 codec | `src/client/Http2.Client.Http1.pas` (`THttp1Connection`) | GET and POST against a plain HTTP/1.1 server succeed (A.12) |
+| ALPN fallback | `src/client/Http2.Client.Http1.pas` + transport selection in `Http2.Client` | an `http/1.1`-only TLS server responds when fallback is on |
 | pool keys and limits | `TConnectionPool` selection | stream limit is 1 for HTTP/1.1; origins keep scheme apart |
-| interop A.10–A.13 | `test/h2probe.pas`, `tools/validate/interop.sh` | part of the green interop gate |
+| interop A.10–A.13 | `test/h2probe.pas`, `tools/client/interop.sh` | part of the green interop gate |
 
 The `http2/http2-test` suite speaks draft-09 plaintext `h2c`; the prior
 knowledge path gives that suite a code path to exercise.
@@ -307,7 +306,7 @@ knowledge path gives that suite a code path to exercise.
 ## Validation
 
 Four interop cases live in the probe (`test/h2probe.pas`) and
-`tools/validate/interop.sh`:
+`tools/client/interop.sh`:
 
 | ID | Case | Pass condition |
 | --- | --- | --- |
@@ -318,7 +317,7 @@ Four interop cases live in the probe (`test/h2probe.pas`) and
 
 The live cleartext gate (`make validate-cleartext`) is separate from the
 interop table. It runs `GET`, `POST`, `DELETE` and `HEAD` without a body under
-`ctUpgrade` and `ctHttp1` against `tools/validate/h1_counter_server.py`, an
+`ctUpgrade` and `ctHttp1` against `tools/client/h1_counter_server.py`, an
 HTTP/1.1-only server that logs each request it receives. Every request appears
 in the log once. Under `ctHttp1` none carries an `Upgrade` header; under
 `ctUpgrade` each carries the probe once.
