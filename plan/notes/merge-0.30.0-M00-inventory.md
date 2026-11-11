@@ -5,13 +5,16 @@
 The inspected client commit is `709336f542cbedf9ce1ab67d83bddcfd560eb1c0`.
 The inspected server commit is `16e2003a9f31648005c5565d118bbd42acf935a8`.
 Both source working trees were clean when inspected on 2026-11-11. The
-inventory has one row for each tracked regular file: 195 client files and
-244 server files. It records the source commit, path, SHA-256 hash, target
-path, source license, action, and story. The unit map remains in
+inventory has one row for each tracked client and server input: 196 client
+entries and 244 server files, for 440 entries. The client count includes a
+tracked symbolic link. It records the source commit, path, SHA-256 hash,
+target path, source-project declared license, action, disposition, and story.
+The license field records project metadata; it does not determine the license
+of each file. The unit map remains in
 `plan/merge-0.30.0-units.tsv`.
 
-The client project carries the Apache License, Version 2.0. The server
-project carries the GNU Lesser General Public License, version 2.1, with the
+The client project declares the Apache License, Version 2.0. The server
+project declares the GNU Lesser General Public License, version 2.1, with the
 Free Pascal linking exception. The full texts are preserved in `LICENSES/`.
 The source NOTICE files are also preserved. Common implementation inputs
 have separate rows for each source so that both origins remain visible.
@@ -33,6 +36,8 @@ retrieved from the RFC Editor on 2026-11-11:
 - RFC 1929: https://www.rfc-editor.org/rfc/rfc1929.txt
 
 `doc/references/README.md` lists both copies and retrieval dates.
+RFC 1928 states that distribution of the memo is unlimited. These reference
+records do not make a broader copyright or licensing determination.
 
 ## Evidence limits
 

@@ -10,7 +10,8 @@ The client and server NOTICE files are preserved as
 LICENSES/NOTICE-http2client.txt and LICENSES/NOTICE-http2server.txt. Their
 attribution and third-party statements apply to the source project named in
 each file. File-level provenance is recorded in
-plan/merge-0.30.0-inventory.tsv.
+LICENSES/source-provenance.tsv. The working inventory and target mapping are
+also recorded in plan/merge-0.30.0-inventory.tsv.
 
 The combined distribution license and the legal effect of combining source
 under these terms have not been resolved. This notice does not grant new
