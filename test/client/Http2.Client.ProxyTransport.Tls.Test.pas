@@ -27,7 +27,8 @@ uses
   SysUtils, Classes, Sockets, BaseUnix, fpcunit, testregistry,
   mormot.core.base, mormot.lib.openssl11,
   Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Socks, Http2.Client.Tls,
-  Http2.Client, Http2.Client.Test.TlsContext;
+  Http2.Client, Http2.Client.Test.TlsContext,
+  Http2.Client.Test.OpenSSL.SigPipe;
 
 type
   TProxyMode = (pmHttp, pmHttps, pmSocks5);
@@ -204,7 +205,7 @@ begin
     SSL_FILETYPE_PEM);
   FSsl := SSL_new(FCtx);
   SSL_set_fd(FSsl, AFd);
-  if SSL_accept(FSsl) <> 1 then
+  if TestSslAccept(FSsl) <> 1 then
     raise Exception.Create('server TLS accept failed (proxy leg)');
 end;
 
@@ -212,7 +213,7 @@ destructor TSslFdSrv.Destroy;
 begin
   if FSsl <> nil then
   begin
-    SSL_shutdown(FSsl);
+    TestSslShutdown(FSsl);
     SSL_free(FSsl);
   end;
   if FCtx <> nil then
@@ -234,7 +235,7 @@ begin
   Sent := 0;
   while Sent < N do
   begin
-    R := SSL_write(FSsl, PByte(@ABuf) + Sent, N - Sent);
+    R := TestSslWrite(FSsl, PByte(@ABuf) + Sent, N - Sent);
     if R <= 0 then
       Exit;
     Inc(Sent, R);
@@ -258,7 +259,7 @@ begin
   FWbio := BIO_new(BIO_s_mem());
   SSL_set_bio(FSsl, FRbio, FWbio);
   repeat
-    R := SSL_accept(FSsl);
+    R := TestSslAccept(FSsl);
     Flush;
     if R = 1 then
       Break;
@@ -277,7 +278,7 @@ destructor TSslBioSrv.Destroy;
 begin
   if FSsl <> nil then
   begin
-    SSL_shutdown(FSsl);
+    TestSslShutdown(FSsl);
     try
       Flush;
     except
@@ -348,7 +349,7 @@ begin
   Sent := 0;
   while Sent < N do
   begin
-    R := SSL_write(FSsl, PByte(@ABuf) + Sent, N - Sent);
+    R := TestSslWrite(FSsl, PByte(@ABuf) + Sent, N - Sent);
     if R <= 0 then
       Exit;
     Inc(Sent, R);

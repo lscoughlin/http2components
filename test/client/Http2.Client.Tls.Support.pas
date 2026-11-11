@@ -21,7 +21,8 @@ interface
 uses
   SysUtils, Classes, fpcunit, testregistry, sockets, baseunix,
   mormot.lib.openssl11, Http2.Client.Errors, Http2.Client.Tls,
-  Http2.Common.Tls.Context, Http2.Common.Tls.Policy, Http2.OpenSSL;
+  Http2.Common.Tls.Context, Http2.Common.Tls.Policy, Http2.OpenSSL,
+  Http2.Client.Test.OpenSSL.SigPipe;
 
 type
   /// a trivial mock byte stream; proves at compile time that a small class can
@@ -228,7 +229,7 @@ begin
       SSL_FILETYPE_PEM);
     ssl := SSL_new(ctx);
     SSL_set_fd(ssl, FAcceptedFd);
-    FHandshakeResult := SSL_accept(ssl);
+    FHandshakeResult := TestSslAccept(ssl);
     Sleep(100);
     SSL_free(ssl);
   finally

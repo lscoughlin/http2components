@@ -12,7 +12,7 @@
 # HTTP/1.1 + TLS 1.3 (the server offers no h2, so the client's HTTP/1.1
 # fallback carries the request).  Per listener:
 #
-#   accepted   the fixed identity (WithClientCertificateFiles): 200 and the
+#   accepted   the fixed identity loaded as an OpenSSL identity: 200 and the
 #              echoed subject is "mtls client", over the expected protocol and
 #              TLS version
 #   request    no fixed identity, the identity attached to the request: the
@@ -72,9 +72,10 @@ IMAGE="${HTTP2_IMAGE:-http2client-dev}"
 NGINX_IMAGE="${NGINX_IMAGE:-nginx:1.28-alpine}"
 HTTPD_IMAGE="${HTTPD_IMAGE:-httpd:2.4}"
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2}"
-WORK="$(mktemp -d)"
 TAG="mtls-real-$$"
 RUN_DIR="$VALIDATION_BIN/$TAG"
+mkdir -p "$VALIDATION_BIN"
+WORK="$(mktemp -d "$VALIDATION_BIN/$TAG-work.XXXXXX")"
 CERTS="$RUN_DIR/certs"
 RUN_TIMEOUT=20
 POST_BYTES="${MTLS_POST_BYTES:-8388608}"
@@ -102,15 +103,14 @@ mkdir -p "$RUN_DIR/client"
 if [ "$NATIVE" = 1 ]; then
   CD="$CERTS"
   M="${MORMOT:-$ROOT/third_party/mORMot2/src}"
-  export OPENSSL_LIBPATH="${OPENSSL_LIBPATH:-/opt/homebrew/opt/openssl@3/lib}"
-  ${FPC:-fpc} -O2 -vw -Mdelphi -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
+  ${FPC:-fpc} -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$ROOT/tls/openssl/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" -Fl"$M/../static/$TARGET" \
     -FE"$RUN_DIR/client" -FU"$WORK" "$ROOT/examples/client/mtls_get.pas" >"$WORK/fpc.log" 2>&1 \
     || { cat "$WORK/fpc.log"; echo "mtls-real: could not build examples/client/mtls_get.pas" >&2; exit 2; }
 else
   CD="/src/bin/$TARGET/$PROFILE/validation/$TAG/certs"
   M=/src/third_party/mORMot2/src
   docker run --rm --user "$ID" -e HOME=/tmp -v "$ROOT:/src" -w /src "$IMAGE" \
-    fpc -O2 -vw -Mdelphi -Fu/common/src -Fu/client/src -Fu/server/src -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
+    fpc -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu/src/common/src -Fu/src/client/src -Fu/src/server/src -Fu/src/tls/openssl/src -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" -Fl"$M/../static/$TARGET" \
     -FE"/src/bin/$TARGET/$PROFILE/validation/$TAG/client" -FU/tmp examples/client/mtls_get.pas >"$WORK/fpc.log" 2>&1 \
     || { cat "$WORK/fpc.log"; echo "mtls-real: could not build examples/client/mtls_get.pas" >&2; exit 2; }
   docker run -d --rm --name "$TAG-client" --network host --user "$ID" -e HOME=/tmp \

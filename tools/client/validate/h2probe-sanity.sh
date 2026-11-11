@@ -29,8 +29,6 @@ BUILD="$(mktemp -d /tmp/h2sanity-build.XXXXXX)"
 PROBE="$BUILD/h2probe"
 FPC="${FPC:-fpc}"
 MORMOT="${MORMOT:-third_party/mORMot2/src}"
-export OPENSSL_LIBPATH="${OPENSSL_LIBPATH:-/opt/homebrew/opt/openssl@3/lib}"
-export PATH="/Users/liamcoughlin/.rd/bin:$PATH"
 
 PASS=0; FAIL=0
 cleanup() {
@@ -93,8 +91,9 @@ wait_log_line() { # file pattern [tenths]
   return 1
 }
 
-"$FPC" -O2 -Mdelphi -Fu./common/src -Fu./client/src -Fu./server/src -Fu./test/client -Fu"$BUILD" \
+"$FPC" -O2 -Mdelphi -dUSE_OPENSSL -Fu./common/src -Fu./client/src -Fu./server/src -Fu./test/client -Fu./tls/openssl/src -Fu"$BUILD" \
   -Fu"$MORMOT/core" -Fu"$MORMOT/lib" -Fu"$MORMOT/net" -Fu"$MORMOT/crypt" \
+  -Fl"$MORMOT/../static/$("$FPC" -iTP)-$("$FPC" -iTO)" \
   -FU"$BUILD" -FE"$BUILD" tools/client/h2probe.pas >"$BUILD/build.log" 2>&1 || {
     echo "ERROR: h2probe failed to compile" >&2; tail -20 "$BUILD/build.log" >&2
     exit 1; }
@@ -158,7 +157,7 @@ if command -v nghttpd >/dev/null 2>&1; then
   fi
   kill "$NGHTTPD_PID" 2>/dev/null; NGHTTPD_PID=""
 else
-  echo "SKIP  live nghttpd GET (nghttpd not installed)"
+  infra_fail "live nghttpd GET -> success" "nghttpd not installed"
 fi
 
 echo

@@ -14,16 +14,17 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 //                      through WithProxyEnvironmentLookup (repeatable) and
 //                      switched on with WithProxyEnvironmentVars
 //     noproxy=LIST     WithNoProxy(LIST)
-//     ca=FILE          WithCACertFile
-//     cert=F key=F     the origin identity (WithClientCertificateFiles)
-//     pcert=F pkey=F   the proxy identity (WithProxyClientIdentity)
+//     ca=FILE          trust anchor for separate origin and proxy contexts
+//     cert=F key=F     the origin identity (TOpenSSLIdentity)
+//     pcert=F pkey=F   the proxy identity (TOpenSSLIdentity)
 //     repeat=N         N sequential requests on one client (get only)
 //     events=N         stop an event stream after N events (sse only)
 //     timeout=MS       connect and header timeout (default 8000)
 // - prints: `req I status=S bytes=B`, `ws text=T`, `sse EVENT`, then
 //   `pool conns=N idle=I proto=P1,P2` and `RESULT ok` or
 //   `RESULT error <class>: <message>`; exit code 0 or 1.
-// - shows: WithAllProxy, WithProxyEnvironmentLookup, WithProxyClientIdentity,
+// - shows: WithAllProxy, WithProxyEnvironmentLookup, separate TLS contexts,
+//   WithProxyClientIdentity,
 //   PoolStats, the proxy error class, a WebSocket and an event stream
 //   through a proxy.  See doc/verification/proxy-real.md.
 program proxy_real_client;
@@ -34,6 +35,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, Http2.Client.Errors, Http2.Client.Stream, Http2.Client.Messages,
   Http2.Client.ClientCert, Http2.Client.Proxy, Http2.Client.Tls, Http2.Client, Http2.Client.WebSocket,
+  Http2.Common, Http2.OpenSSL,
   Http2.Client.Sse;
 
 type
@@ -137,6 +139,10 @@ var
   Loop: TSseReconnectLoop;
   Event: TSseEvent;
   I, N, Timeout: Integer;
+  TlsContext, ProxyTlsContext: ITLSContext;
+  TlsPolicy: TTlsClientPolicy;
+  OriginIdentity, ProxyIdentity: IClientIdentity;
+  CaFile: string;
 begin
   if ParamCount < 2 then
   begin
@@ -166,18 +172,32 @@ begin
   V := Opt('noproxy', '');
   if V <> '' then
     Factory := Factory.WithNoProxy(V);
-  V := Opt('ca', '');
-  if V <> '' then
-    Factory := Factory.WithCACertFile(V);
+  CaFile := Opt('ca', '');
+  if CaFile = '' then
+    TlsPolicy := TTlsClientPolicy.SecureDefault.WithSystemTrust(True)
+  else
+    TlsPolicy := TTlsClientPolicy.SecureDefault.WithSystemTrust(False)
+      .WithTrustAnchors([CaFile]);
+  TlsContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TlsPolicy).Build;
+  ProxyTlsContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TlsPolicy).Build;
+  Factory := Factory.WithTlsContext(TlsContext)
+    .WithProxyTlsContext(ProxyTlsContext);
   V := Opt('cert', '');
   if V <> '' then
-    Factory := Factory.WithClientCertificateFiles(V, Opt('key', ''));
+  begin
+    OriginIdentity := TOpenSSLIdentity.FromPemFiles(V, Opt('key', ''));
+    Factory := Factory.WithClientIdentity(OriginIdentity);
+  end;
   Client := nil;
   try
     V := Opt('pcert', '');
     if V <> '' then
-      Factory := Factory.WithProxyClientIdentity(
-        TClientIdentity.FromPemFiles(V, Opt('pkey', '')));
+    begin
+      ProxyIdentity := TOpenSSLIdentity.FromPemFiles(V, Opt('pkey', ''));
+      Factory := Factory.WithProxyClientIdentity(ProxyIdentity);
+    end;
     Client := Factory.Build;
     if Mode = 'get' then
     begin

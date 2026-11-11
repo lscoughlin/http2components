@@ -71,7 +71,7 @@ start "$AUTH_BASE" "$LOG_AUTH" --user bob --password pw || exit 2
 
 # HTTP/2 through each proxy kind needs a real h2 origin: nghttpd presents the
 # other.example certificate, and a third proxy instance maps other.example:443
-# to it.  The case is skipped when nghttpd is not installed.
+# to it. nghttpd is required because the gate includes HTTP/2 through each proxy.
 H2_BASE=$((BASE + 30))
 H2_PORT=$((BASE + 20))
 LOG_H2="$WORK/h2.log"
@@ -96,7 +96,8 @@ if [ -n "$NGHTTPD" ]; then
     || exit 2
   H2_ENV="$H2_BASE"
 else
-  echo "proxy-live: nghttpd not found; HTTP/2-through-proxy cases skipped"
+  echo "proxy-live: nghttpd is required for HTTP/2-through-proxy cases" >&2
+  exit 2
 fi
 
 echo "proxy-live: open servers at $BASE.., auth servers at $AUTH_BASE.."

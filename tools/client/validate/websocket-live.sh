@@ -40,6 +40,7 @@ cleanup() {
     [ -n "$p" ] && kill "$p" 2>/dev/null && wait "$p" 2>/dev/null
   done
   docker rm -f "$CONTAINER" >/dev/null 2>&1
+  if [ -n "${AUTOB_WORK:-}" ]; then rm -rf "$AUTOB_WORK"; fi
   rm -rf "$WORK"
 }
 trap cleanup EXIT INT TERM
@@ -134,12 +135,15 @@ live() {
 
 autobahn() {
   if ! docker info >/dev/null 2>&1; then
-    echo "websocket-live: SKIP autobahn (the Docker daemon is not running)"
-    exit 0
+    echo "websocket-live: Docker is required for the Autobahn gate" >&2
+    exit 2
   fi
   local PORT="${AUTOBAHN_PORT:-9001}"
-  mkdir -p "$WORK/config" "$WORK/reports"
-  cat > "$WORK/config/fuzzingserver.json" <<JSON
+  local VALIDATION_DIR="$ROOT/bin/$TARGET/$PROFILE/validation"
+  mkdir -p "$VALIDATION_DIR"
+  AUTOB_WORK="$(mktemp -d "$VALIDATION_DIR/autobahn-$CONTAINER.XXXXXX")"
+  mkdir -p "$AUTOB_WORK/config" "$AUTOB_WORK/reports"
+  cat > "$AUTOB_WORK/config/fuzzingserver.json" <<JSON
 {
   "url": "ws://127.0.0.1:9001",
   "outdir": "/reports/clients",
@@ -148,9 +152,9 @@ autobahn() {
   "exclude-agent-cases": {}
 }
 JSON
-  chmod -R a+rwx "$WORK/reports"
+  chmod -R a+rwx "$AUTOB_WORK/reports"
   docker run -d --rm --name "$CONTAINER" -p "$PORT:9001" \
-    -v "$WORK/config:/config" -v "$WORK/reports:/reports" \
+    -v "$AUTOB_WORK/config:/config" -v "$AUTOB_WORK/reports:/reports" \
     crossbario/autobahn-testsuite wstest -m fuzzingserver -s /config/fuzzingserver.json \
     >/dev/null || { echo "websocket-live: could not start the Autobahn container" >&2; exit 2; }
   for _ in $(seq 1 100); do
@@ -162,16 +166,16 @@ JSON
     exit 2
   fi
   local M="${MORMOT:-$ROOT/third_party/mORMot2/src}"
-  fpc -O2 -vw -Mdelphi -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
+  fpc -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$ROOT/tls/openssl/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" -Fl"$M/../static/$(fpc -iTP)-$(fpc -iTO)" \
     -FE"$WORK" -FU"$WORK" "$HERE/autobahn_client.pas" >"$WORK/fpc.log" 2>&1 \
     || { cat "$WORK/fpc.log"; echo "websocket-live: could not build the Autobahn client" >&2; exit 2; }
   "$WORK/autobahn_client" "127.0.0.1:$PORT"
   RC=$?
-  python3 "$HERE/autobahn_report.py" "$WORK/reports/clients/index.json" "http2client" \
+  python3 "$HERE/autobahn_report.py" "$AUTOB_WORK/reports/clients/index.json" "http2client" \
     "$HERE/autobahn-expected.txt"
   RC2=$?
   mkdir -p "$ROOT/bin/$TARGET/$PROFILE/validation/autobahn-$CONTAINER" \
-    && cp -R "$WORK/reports/clients" "$ROOT/bin/$TARGET/$PROFILE/validation/autobahn-$CONTAINER/" 2>/dev/null
+    && cp -R "$AUTOB_WORK/reports/clients" "$VALIDATION_DIR/autobahn-$CONTAINER/" 2>/dev/null
   if [ "$RC" -ne 0 ] || [ "$RC2" -ne 0 ]; then
     echo "websocket-live: autobahn FAILED (client rc=$RC, report rc=$RC2)"
     exit 1
