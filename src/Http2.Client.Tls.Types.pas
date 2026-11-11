@@ -1,0 +1,392 @@
+{**
+---
+license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+copyright: Copyright 2026 Liam Seamus Coughlin
+keywords: http2, client, tls
+notes:
+  - This unit is part of the imported client transport.
+---
+}
+unit Http2.Client.Tls.Types;
+
+{$mode delphi}{$H+}
+{$interfaces com}
+
+interface
+
+uses
+  SysUtils, Classes, BaseUnix, Sockets, Http2.Client.Errors,
+  Http2.Client.Proxy.Types, Http2.Client.IdentityHandle,
+  Http2.Client.ClientCert;
+
+const
+  /// the single ALPN protocol this client offers in strict mode (RFC 7540
+  /// section 3.3)
+  cHttp2AlpnProtocol = 'h2';
+  /// HTTP/1.1's ALPN name, offered only when the caller enables fallback
+  cHttp11AlpnProtocol = 'http/1.1';
+  /// the ALPN offer in strict mode (fallback off): "h2" only
+  cHttp2AlpnOffer: array[0..0] of string = (cHttp2AlpnProtocol);
+  /// the ALPN offer when HTTP/1.1 fallback is on (doc/design/fallback.md
+  /// "Negotiation", step 2)
+  cHttp2Http1AlpnOffer: array[0..1] of string =
+    (cHttp2AlpnProtocol, cHttp11AlpnProtocol);
+  /// default connect/read/write deadline when none is set explicitly
+  cDefaultSocketTimeoutMs = 30000;
+
+type
+  /// how the client treats a cleartext ("http") origin (doc/design/
+  /// fallback.md "Factory surface").  ctReject is the default: a cleartext
+  /// request raises instead of silently sending bytes in the clear.
+  /// ctHttp1 speaks cleartext HTTP/1.1 from the first byte, with no Upgrade
+  /// probe.
+  // Declared here, not in Http2.Client.Messages.pas: the transport layer acts on the
+  // policy, and Http2.Client.Messages already uses this unit for IHttp2Socket, so a
+  // declaration there would be a circular unit reference.  Http2.Client.Messages
+  // re-exports these as aliases for callers that only use that unit.
+  TClearTextPolicy = (ctReject, ctPriorKnowledge, ctUpgrade, ctHttp1);
+
+  /// the transport selected for one origin (doc/design/fallback.md)
+  TNegotiatedProtocol = (npHttp2Tls, npHttp2Cleartext, npHttp1Tls,
+    npHttp1Cleartext);
+
+  IHttp2Socket = interface;   // forward: declared in full just below
+
+  /// implemented by a socket factory that also understands cleartext and the
+  /// HTTP/1.1 fallback.  The base IHttp2SocketFactory (declared in
+  /// Http2.Client) predates S13 and only knows "dial TLS, speak h2"; the
+  /// client checks for this extended contract with Supports() so an injected
+  /// test factory keeps working unchanged.
+  ICleartextSocketFactory = interface
+    ['{C13A0001-0000-4000-8000-000000000001}']
+    /// dial AHost:APort for AScheme and return the socket plus the protocol
+    /// the transport is committed to.  For TLS the protocol follows the ALPN
+    /// result; for cleartext it follows APolicy.
+    function DialProtocol(const AHost: string; const APort: Word;
+      const AScheme: string; const AHttp1Fallback: Boolean;
+      const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
+      out AProtocol: TNegotiatedProtocol): IHttp2Socket;
+  end;
+
+  /// a blocking, connected byte stream carrying HTTP/2 frames
+  // - Read returns the number of bytes read and returns 0 only at end of
+  //   stream; it never assumes one transport read yields the whole request
+  IHttp2Socket = interface
+    function Read(var ABuffer; ACount: Integer): Integer;
+    function Write(const ABuffer; ACount: Integer): Integer;
+    procedure Close;
+    function GetConnected: Boolean;
+    function GetConnectTimeoutMs: Integer;
+    procedure SetConnectTimeoutMs(const AValue: Integer);
+    function GetReadTimeoutMs: Integer;
+    procedure SetReadTimeoutMs(const AValue: Integer);
+    function GetWriteTimeoutMs: Integer;
+    procedure SetWriteTimeoutMs(const AValue: Integer);
+    property Connected: Boolean read GetConnected;
+    property ConnectTimeoutMs: Integer read GetConnectTimeoutMs write SetConnectTimeoutMs;
+    property ReadTimeoutMs: Integer read GetReadTimeoutMs write SetReadTimeoutMs;
+    property WriteTimeoutMs: Integer read GetWriteTimeoutMs write SetWriteTimeoutMs;
+  end;
+
+/// encode an ALPN protocol list in wire form: each entry is one length byte
+// followed by its bytes; ['h2'] encodes as 0x02,0x68,0x32
+function AlpnProtocolList(const AProtocols: array of string): TBytes;
+
+/// decode the protocol name returned by SSL_get0_alpn_selected (raw bytes,
+// without a length prefix); returns '' when nothing was selected
+function AlpnSelectedName(const AData: PByte; const ALen: Cardinal): string;
+
+/// verify the negotiated ALPN protocol is exactly "h2", else raise
+// EHttpProtocolError; a peer that selected nothing or "http/1.1" must fail
+// here rather than silently continue on HTTP/1.1
+procedure RequireH2Alpn(const AData: PByte; const ALen: Cardinal);
+
+/// encode the ALPN offer for the caller's fallback policy: "h2" when fallback
+// is off (the strict default), "h2" then "http/1.1" when it is on
+// (doc/design/fallback.md "Negotiation")
+function AlpnOfferFor(const AHttp1Fallback: Boolean): TBytes;
+function ClientAuthAlertName(const AReason: Cardinal): string;
+function SecureRandomCardinal: Cardinal;
+
+/// the TLS alert name ('certificate required', 'unknown ca', ...) for the
+// OpenSSL reason code of a client-certificate rejection, or '' when the
+// reason is anything else (doc/design/mtls.md "Rejection")
+
+/// a 32-bit value from the OpenSSL CSPRNG.  A failing generator raises
+/// EHttpConnectionError; there is no fallback to a non-secure source.
+
+/// normalise a selected ALPN name to one of "h2", "http/1.1" or "" (nothing
+// selected, or a protocol this client does not know) so the caller can choose
+// a codec (doc/design/fallback.md "Negotiation")
+function AlpnNegotiatedName(const AName: string): string;
+
+/// map the insecure toggle to the OpenSSL verify mode (NONE when insecure)
+function SslVerifyModeFor(const AInsecure: Boolean): Integer;
+
+/// read exactly ACount bytes, or up to EOF; returns the byte count (0 only at
+// immediate EOF) and raises EHttpTimeout when the deadline expires
+procedure SetSocketTimeout(AFd, ALevel, AOption, ATimeoutMs: Integer);
+function SocketTimedOut: Boolean;
+function SslTimedOut(const AErr: Integer): Boolean;
+
+function SocketReadFully(AFd, ACount, ATimeoutMs: Integer;
+  var ABuffer): Integer;
+
+/// write all ACount bytes, raising EHttpTimeout when the deadline expires
+function SocketWriteFully(AFd, ACount, ATimeoutMs: Integer;
+  const ABuffer): Integer;
+
+type
+  /// a socket that can return whatever is available instead of insisting on
+  /// the full count (IHttp2Socket.Read reads exactly ACount bytes or up to
+  /// EOF).  A TLS layer carried over another stream needs this: records arrive
+  /// in arbitrary sizes and waiting for a full buffer would stall the
+  /// handshake.
+  IPartialReader = interface
+    ['{7B1D5E02-9F6A-4C57-8A31-5D2E0C4A9B21}']
+    /// block until at least one byte is available, then return between 1 and
+    /// ACount bytes; 0 means end of stream
+    function ReadSome(var ABuffer; ACount: Integer): Integer;
+  end;
+
+  /// implemented by a socket factory that dials through a per-request proxy
+  /// (doc/design/proxy.md).  A factory that lacks it is dialled without a
+  /// proxy, as before.
+  IProxySocketFactory = interface
+    ['{7B1D5E02-9F6A-4C57-8A31-5D2E0C4A9B22}']
+    /// like ICleartextSocketFactory.DialProtocol; AProxy nil dials directly
+    function DialProtocolVia(const AHost: string; const APort: Word;
+      const AScheme: string; const AHttp1Fallback: Boolean;
+      const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
+      const AProxy: IProxy;
+      out AProtocol: TNegotiatedProtocol): IHttp2Socket;
+  end;
+
+  /// implemented by a socket factory that can dial a connection which will
+  /// speak HTTP/1.1 only, as a WebSocket needs (doc/design/websocket.md).  TLS
+  /// offers "http/1.1" alone in ALPN; a peer answering "h2" is refused, a peer
+  /// without ALPN support is accepted.  AProxy nil dials directly.
+  IHttp1SocketFactory = interface
+    ['{7B1D5E02-9F6A-4C57-8A31-5D2E0C4A9B23}']
+    function DialHttp1(const AHost: string; const APort: Word;
+      const AScheme: string; const ATimeoutMs: Integer;
+      const AProxy: IProxy): IHttp2Socket;
+  end;
+
+  /// implemented by a socket factory that takes the origin identity per dial
+  /// (doc/design/mtls.md "Selector and proxy identity"): the pool asks the
+  /// selector outside its lock and hands the answer down.  AIdentity nil
+  /// presents no certificate; the factory's own identity is not used.
+  IIdentitySocketFactory = interface
+    ['{7B1D5E02-9F6A-4C57-8A31-5D2E0C4A9B24}']
+    function DialProtocolViaAs(const AHost: string; const APort: Word;
+      const AScheme: string; const AHttp1Fallback: Boolean;
+      const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
+      const AProxy: IProxy; const AIdentity: IClientIdentity;
+      out AProtocol: TNegotiatedProtocol): IHttp2Socket;
+    function DialHttp1As(const AHost: string; const APort: Word;
+      const AScheme: string; const ATimeoutMs: Integer;
+      const AProxy: IProxy; const AIdentity: IClientIdentity): IHttp2Socket;
+  end;
+
+implementation
+
+uses
+  mormot.core.base, mormot.lib.openssl11, Http2.Client.SigPipe;
+
+const
+  SSL_R_SSLV3_ALERT_NO_CERTIFICATE = 1041;
+  SSL_R_SSLV3_ALERT_BAD_CERTIFICATE = 1042;
+  SSL_R_SSLV3_ALERT_UNSUPPORTED_CERTIFICATE = 1043;
+  SSL_R_SSLV3_ALERT_CERTIFICATE_REVOKED = 1044;
+  SSL_R_SSLV3_ALERT_CERTIFICATE_EXPIRED = 1045;
+  SSL_R_SSLV3_ALERT_CERTIFICATE_UNKNOWN = 1046;
+  SSL_R_TLSV1_ALERT_UNKNOWN_CA = 1048;
+  SSL_R_TLSV1_ALERT_ACCESS_DENIED = 1049;
+  SSL_R_TLSV13_ALERT_CERTIFICATE_REQUIRED = 1116;
+
+function AlpnProtocolList(const AProtocols: array of string): TBytes;
+var
+  i, n, p: Integer;
+  s: UTF8String;
+begin
+  Result := nil;
+  n := 0;
+  for i := 0 to High(AProtocols) do
+  begin
+    if Length(AProtocols[i]) > 255 then
+      raise EHttpProtocolError.Create('ALPN protocol name longer than 255 bytes');
+    Inc(n, 1 + Length(AProtocols[i]));
+  end;
+  SetLength(Result, n);
+  p := 0;
+  for i := 0 to High(AProtocols) do
+  begin
+    s := UTF8String(AProtocols[i]);
+    Result[p] := Byte(Length(s));
+    Inc(p);
+    if Length(s) > 0 then
+    begin
+      Move(s[1], Result[p], Length(s));
+      Inc(p, Length(s));
+    end;
+  end;
+end;
+
+function AlpnSelectedName(const AData: PByte; const ALen: Cardinal): string;
+var
+  i: Cardinal;
+  s: AnsiString;
+begin
+  if (AData = nil) or (ALen = 0) then
+  begin
+    Result := '';
+    Exit;
+  end;
+  SetLength(s, ALen);
+  for i := 0 to ALen - 1 do
+    s[i + 1] := AnsiChar(AData[i]);
+  Result := string(s);
+end;
+
+procedure RequireH2Alpn(const AData: PByte; const ALen: Cardinal);
+var
+  Selected: string;
+begin
+  Selected := AlpnSelectedName(AData, ALen);
+  if Selected <> cHttp2AlpnProtocol then
+    raise EHttpProtocolError.CreateFmt(
+      'peer did not negotiate ALPN "%s" (selected "%s")',
+      [cHttp2AlpnProtocol, Selected]);
+end;
+
+function AlpnOfferFor(const AHttp1Fallback: Boolean): TBytes;
+begin
+  if AHttp1Fallback then
+    Result := AlpnProtocolList(cHttp2Http1AlpnOffer)
+  else
+    Result := AlpnProtocolList(cHttp2AlpnOffer);
+end;
+
+function AlpnNegotiatedName(const AName: string): string;
+begin
+  if (AName = cHttp2AlpnProtocol) or (AName = cHttp11AlpnProtocol) then
+    Result := AName
+  else
+    Result := '';
+end;
+
+function SslVerifyModeFor(const AInsecure: Boolean): Integer;
+begin
+  if AInsecure then
+    Result := SSL_VERIFY_NONE
+  else
+    Result := SSL_VERIFY_PEER;
+end;
+
+procedure SetSocketTimeout(AFd, ALevel, AOption, ATimeoutMs: Integer);
+var
+  tv: TTimeVal;
+begin
+  tv.tv_sec := ATimeoutMs div 1000;
+  tv.tv_usec := (ATimeoutMs mod 1000) * 1000;
+  fpSetSockOpt(AFd, ALevel, AOption, @tv, SizeOf(tv));
+end;
+
+function SocketTimedOut: Boolean;
+var
+  e: Integer;
+begin
+  e := fpGetErrno;
+  Result := (e = ESysEAGAIN) or (e = ESysEWOULDBLOCK);
+end;
+
+/// a blocking socket with SO_RCVTIMEO/SO_SNDTIMEO reports an expired deadline
+// as SSL_ERROR_WANT_READ/WANT_WRITE; errno is not a reliable witness on its
+// own (Linux), so the SSL error counts as well
+function SslTimedOut(const AErr: Integer): Boolean;
+begin
+  Result := SocketTimedOut or (AErr = SSL_ERROR_WANT_READ) or
+    (AErr = SSL_ERROR_WANT_WRITE);
+end;
+
+function SocketReadFully(AFd, ACount, ATimeoutMs: Integer;
+  var ABuffer): Integer;
+var
+  n: ssize_t;
+  base: PByte;
+begin
+  if ACount <= 0 then
+    Exit(0);
+  SetSocketTimeout(AFd, SOL_SOCKET, SO_RCVTIMEO, ATimeoutMs);
+  base := PByte(@ABuffer);
+  Result := 0;
+  while Result < ACount do
+  begin
+    n := fpRecv(AFd, base + Result, ACount - Result, 0);
+    if n > 0 then
+      Inc(Result, n)
+    else if n = 0 then
+      Exit // EOF: return whatever was read so far
+    else if SocketTimedOut then
+      raise EHttpTimeout.CreateFmt('read timed out after %d ms', [ATimeoutMs])
+    else if fpGetErrno = ESysEINTR then
+      Continue
+    else
+      raise EHttpConnectionClosed.CreateFmt('socket read failed (errno %d)',
+        [fpGetErrno]);
+  end;
+end;
+
+function SocketWriteFully(AFd, ACount, ATimeoutMs: Integer;
+  const ABuffer): Integer;
+var
+  n: ssize_t;
+  base: PByte;
+begin
+  if ACount <= 0 then
+    Exit(0);
+  SetSocketTimeout(AFd, SOL_SOCKET, SO_SNDTIMEO, ATimeoutMs);
+  base := PByte(@ABuffer);
+  Result := 0;
+  while Result < ACount do
+  begin
+    n := fpSend(AFd, base + Result, ACount - Result, cMsgNoSignal);
+    if n > 0 then
+      Inc(Result, n)
+    else if SocketTimedOut then
+      raise EHttpTimeout.CreateFmt('write timed out after %d ms', [ATimeoutMs])
+    else if fpGetErrno = ESysEINTR then
+      Continue
+    else
+      raise EHttpConnectionClosed.CreateFmt('socket write failed (errno %d)',
+        [fpGetErrno]);
+  end;
+end;
+
+function ClientAuthAlertName(const AReason: Cardinal): string;
+begin
+  case AReason of
+    SSL_R_TLSV13_ALERT_CERTIFICATE_REQUIRED:   Result := 'certificate required';
+    SSL_R_SSLV3_ALERT_NO_CERTIFICATE:          Result := 'no certificate';
+    SSL_R_SSLV3_ALERT_BAD_CERTIFICATE:         Result := 'bad certificate';
+    SSL_R_SSLV3_ALERT_UNSUPPORTED_CERTIFICATE: Result := 'unsupported certificate';
+    SSL_R_SSLV3_ALERT_CERTIFICATE_REVOKED:     Result := 'certificate revoked';
+    SSL_R_SSLV3_ALERT_CERTIFICATE_EXPIRED:     Result := 'certificate expired';
+    SSL_R_SSLV3_ALERT_CERTIFICATE_UNKNOWN:     Result := 'unknown certificate';
+    SSL_R_TLSV1_ALERT_UNKNOWN_CA:              Result := 'unknown ca';
+    SSL_R_TLSV1_ALERT_ACCESS_DENIED:           Result := 'access denied';
+  else
+    Result := '';
+  end;
+end;
+
+function SecureRandomCardinal: Cardinal;
+begin
+  if not OpenSslIsAvailable then
+    raise EHttpConnectionError.Create('OpenSSL is not available');
+  if RAND_bytes(@Result, SizeOf(Result)) <> 1 then
+    raise EHttpConnectionError.Create('the secure random generator failed');
+end;
+
+end.
