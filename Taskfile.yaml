@@ -91,6 +91,11 @@ tasks:
     cmds:
       - make test-tls-client
 
+  test:tls-server:
+    desc: Run the bounded server TLS transport tests
+    cmds:
+      - make test-tls-server
+
   packages:check:
     desc: Check package files, source inventory, and versions
     cmds:

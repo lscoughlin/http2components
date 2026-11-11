@@ -100,8 +100,8 @@ def fpc_unit_root() -> str:
 
 def base_flags(component: str, *, tests: bool = False) -> list[str]:
     role = component.removesuffix("-test")
-    if role == "tls-client":
-        role = "client"
+    if role in ("tls-client", "tls-server"):
+        role = role.removeprefix("tls-")
     tls_integration = role == "tls-integration"
     if tls_integration:
         role = "integration"
@@ -678,19 +678,21 @@ def main() -> int:
     elif target == "test:integration":
         run_integration_tests()
     elif target in ("test:tls:contract", "test:tls:openssl", "test:tls:tlslib",
-                    "test:tls:client", "test:tls:integration"):
+                    "test:tls:client", "test:tls:server", "test:tls:integration"):
         suite = target.removeprefix("test:tls:")
         runners = {
             "contract": ROOT / "test/common/Http2.Common.Tls.Contract.Run.pas",
             "openssl": ROOT / "test/tls/openssl/Http2.Tls.OpenSSL.Tests.pas",
             "tlslib": ROOT / "test/tls/tlslib/Http2.Tls.TlsLib.Tests.pas",
             "client": ROOT / "test/client/Http2.Client.Tls.Session.Runner.pas",
+            "server": ROOT / "test/server/Http2.Server.Tls.Session.Runner.pas",
             "integration": ROOT / "test/integration/tls/Http2.Tls.Integration.Tests.pas",
         }
         source = runners[suite]
-        required(source, f"bounded TLS {suite} runner (owned by TLS-03/05/06/09)")
+        required(source, f"bounded TLS {suite} runner (owned by TLS-03/05/06/07/08/09)")
         owners = {"contract": "common-test", "openssl": "openssl-test", "tlslib": "tlslib-test",
-                  "client": "tls-client-test", "integration": "tls-integration-test"}
+                  "client": "tls-client-test", "server": "tls-server-test",
+                  "integration": "tls-integration-test"}
         if suite == "contract":
             build("common")
         elif suite == "openssl":
@@ -699,9 +701,9 @@ def main() -> int:
         elif suite == "tlslib":
             build("common")
             build("tlslib")
-        elif suite == "client":
+        elif suite in ("client", "server"):
             build("common")
-            build("client")
+            build(suite)
         else:
             build("common")
             build("openssl")
@@ -728,7 +730,7 @@ def main() -> int:
             "common": ("common", "common-test", "package-http2common"),
             "client": ("client", "readers", "tls-client-test", "package-http2client", "package-http2clientreaders"),
             "readers": ("readers", "package-http2clientreaders"),
-            "server": ("server", "package-http2server"),
+            "server": ("server", "tls-server-test", "package-http2server"),
             "openssl": ("openssl", "openssl-test", "package-http2openssl"),
             "tlslib": ("tlslib", "tlslib-test", "package-http2tlslib"),
         }[component]
