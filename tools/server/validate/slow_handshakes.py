@@ -43,6 +43,7 @@ class Peer:
     sock: socket.socket | None
     started: float
     admission: str = "pending"
+    admission_observed_ms: int = -1
     close_kind: str = "open"
     close_ms: int = -1
     first_data_hex: str = ""
@@ -151,8 +152,9 @@ def make_peer(port: int, index: int, kind: str) -> Peer:
     try:
         peer = socket.create_connection(("127.0.0.1", port), timeout=1.0)
     except OSError as error:
-        return Peer(index, kind, None, started, admission="connect_refused",
-                    close_kind=f"connect_error:{type(error).__name__}")
+        return Peer(index, kind, None, started, admission="tcp_connection_refused",
+                    close_kind=f"connect_error:{type(error).__name__}",
+                    close_ms=round((time.monotonic() - started) * 1000))
     peer.setblocking(False)
     item = Peer(index, kind, peer, started, tcp_connected=True)
     if kind == "partial_client_hello":
@@ -160,7 +162,7 @@ def make_peer(port: int, index: int, kind: str) -> Peer:
             peer.sendall(client_hello_prefix())
         except OSError as error:
             item.close_kind = f"write_error:{type(error).__name__}"
-            item.admission = "refused_on_clienthello_write"
+            item.admission = "client_write_error"
             item.close_ms = round((time.monotonic() - started) * 1000)
             peer.close()
             item.sock = None
@@ -232,32 +234,41 @@ def observe_window(process: subprocess.Popen[str], peers: list[Peer], samples,
     return peak
 
 
+def settle_fds(process: subprocess.Popen[str], peers: list[Peer], samples,
+               target: int | None, timeout_seconds: float = 5.0
+               ) -> tuple[tuple[int, float, int], float]:
+    started = time.monotonic()
+    deadline = started + timeout_seconds
+    previous = None
+    stable = 0
+    latest = (0, 0.0, 0)
+    while time.monotonic() < deadline:
+        latest = sample(process, peers, samples)
+        if target is None:
+            stable = stable + 1 if latest[2] == previous else 0
+        else:
+            stable = stable + 1 if latest[2] == target else 0
+        if stable >= 3:
+            return latest, time.monotonic() - started
+        previous = latest[2]
+        time.sleep(SAMPLE_INTERVAL_SECONDS)
+    expected = "three stable samples" if target is None else f"FD count {target}"
+    raise TimeoutError(f"process FD count did not settle to {expected} in {timeout_seconds}s")
+
+
 def hold_and_measure(process: subprocess.Popen[str], peers: list[Peer], samples,
                      prior_peak: tuple[int, float, int]
-                     ) -> tuple[int, int, tuple[int, float, int], tuple[int, float, int]]:
+                     ) -> tuple[tuple[int, float, int], tuple[int, float, int]]:
     peak = prior_peak
     last_sample = 0.0
-    observed_admitted = 0
-    observed_refused = 0
     final_deadline = max(peer.started for peer in peers) + (
         HANDSHAKE_TIMEOUT_MS + SCHEDULER_MARGIN_MS
     ) / 1000
     while time.monotonic() < final_deadline:
         now = time.monotonic()
         for peer in peers:
-            if peer.sock is not None and peer.admission == "pending":
-                elapsed_ms = (now - peer.started) * 1000
-                if elapsed_ms >= ADMISSION_OBSERVE_MS:
-                    peer.admission = "admitted"
             if peer.sock is not None:
                 poll_peer(peer, now)
-                if peer.close_kind != "open" and peer.admission == "pending":
-                    peer.admission = "refused_or_closed_before_admission_window"
-        admitted = sum(peer.admission == "admitted" for peer in peers)
-        refused = sum(peer.admission.startswith("refused") or
-                      peer.admission == "connect_refused" for peer in peers)
-        if admitted != observed_admitted or refused != observed_refused:
-            observed_admitted, observed_refused = admitted, refused
         if now - last_sample >= SAMPLE_INTERVAL_SECONDS:
             rss, cpu, fds = sample(process, peers, samples)
             peak = (max(peak[0], rss), max(peak[1], cpu), max(peak[2], fds))
@@ -269,7 +280,7 @@ def hold_and_measure(process: subprocess.Popen[str], peers: list[Peer], samples,
         if peer.sock is not None:
             poll_peer(peer, time.monotonic())
     final_stats = sample(process, peers, samples)
-    return observed_admitted, observed_refused, peak, final_stats
+    return peak, final_stats
 
 
 def during_load_request(port: int, version: str, ca_file: str,
@@ -304,7 +315,7 @@ def during_load_request(port: int, version: str, ca_file: str,
             f"load-time request failed before measured admission cap: {result.returncode}; "
             f"admitted={admitted} cap={EFFECTIVE_CONNECTION_LIMIT} elapsed_ms={elapsed_ms:.0f}"
         )
-    return f"capacity_refusal_at_limit_exit_{result.returncode}", elapsed_ms
+    return f"request_not_accepted_at_measured_cap_exit_{result.returncode}", elapsed_ms
 
 
 def stop_server(process: subprocess.Popen[str], reader: threading.Thread) -> int:
@@ -329,10 +340,14 @@ def stop_server(process: subprocess.Popen[str], reader: threading.Thread) -> int
 
 def peer_rows(path: Path, peers: list[Peer]) -> None:
     with path.open("w", encoding="utf-8") as output:
-        output.write("index\ttype\tadmission\tclose_kind\tclose_ms\tfirst_data_hex\n")
+        output.write(
+            "index\ttype\tadmission\tadmission_observed_ms\tclose_kind\t"
+            "close_ms\tfirst_data_hex\n"
+        )
         for peer in peers:
             output.write(
-                f"{peer.index}\t{peer.kind}\t{peer.admission}\t{peer.close_kind}\t"
+                f"{peer.index}\t{peer.kind}\t{peer.admission}\t"
+                f"{peer.admission_observed_ms}\t{peer.close_kind}\t"
                 f"{peer.close_ms}\t{peer.first_data_hex}\n"
             )
 
@@ -348,6 +363,7 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
         f"scheduler_margin_ms={SCHEDULER_MARGIN_MS}\n"
         f"listener_max_connections={MAX_CONNECTIONS}\n"
         f"source_effective_admission_limit={EFFECTIVE_CONNECTION_LIMIT}\n"
+        "limit_source=server/src/Http2.Server.Async.pas:804 (MaxConnections = configured limit - 1)\n"
         f"silent_peers={SILENT_PEERS}\npartial_client_hello_peers={PARTIAL_PEERS}\n",
         encoding="utf-8",
     )
@@ -362,8 +378,22 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
         result["port"] = port
         with (raw_dir / "samples.tsv").open("w", encoding="utf-8") as samples:
             samples.write("monotonic_s\trss_kib\tcpu_seconds\tfd_count\tactive_peers\n")
-            baseline = sample(process, peers, samples)
-            baseline_accepted = server_accepted_count(process, events)
+            accepted_before_warmup = server_accepted_count(process, events)
+            warmup_ms = http2_get(port, version, ca_file) * 1000
+            accepted_after_warmup = server_accepted_count(process, events)
+            if accepted_after_warmup != accepted_before_warmup + 1:
+                raise RuntimeError(
+                    "warmup HTTP/2 request did not add one accepted connection: "
+                    f"before={accepted_before_warmup} after={accepted_after_warmup}"
+                )
+            baseline, warm_settle_seconds = settle_fds(
+                process, peers, samples, target=None
+            )
+            baseline_accepted = accepted_after_warmup
+            result["warmup_http2_ms"] = warmup_ms
+            result["accepted_before_warmup"] = accepted_before_warmup
+            result["accepted_after_warmup"] = accepted_after_warmup
+            result["warm_settle_seconds"] = warm_settle_seconds
             peak_sample = baseline
             initial_peers = EFFECTIVE_CONNECTION_LIMIT
             for index in range(initial_peers):
@@ -372,6 +402,7 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
             peak_sample = observe_window(process, peers, samples, peak_sample,
                                          ADMISSION_OBSERVE_MS)
             accepted_at_limit = server_accepted_count(process, events)
+            admission_snapshot = time.monotonic()
             admitted = accepted_at_limit - baseline_accepted
             if admitted != initial_peers:
                 raise RuntimeError(
@@ -383,6 +414,9 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                         f"first wave peer {peer.index} closed before timeout: {peer.close_kind}"
                     )
                 peer.admission = "admitted"
+                peer.admission_observed_ms = round(
+                    (admission_snapshot - peer.started) * 1000
+                )
             excess_start = len(peers)
             for index in range(excess_start, excess_start + SILENT_PEERS):
                 kind = "silent_tcp" if (index - excess_start) % 2 == 0 else "partial_client_hello"
@@ -392,27 +426,56 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                 ADMISSION_OBSERVE_MS,
             )
             accepted_after_excess = server_accepted_count(process, events)
+            excess_snapshot = time.monotonic()
             if accepted_after_excess != accepted_at_limit:
                 raise RuntimeError(
                     f"listener admitted excess peers at its cap: before={accepted_at_limit} "
                     f"after={accepted_after_excess}"
                 )
             for peer in peers[excess_start:]:
-                peer.admission = "not_admitted_at_capacity"
+                peer.admission_observed_ms = round(
+                    (excess_snapshot - peer.started) * 1000
+                )
+                if not peer.tcp_connected:
+                    peer.admission = "tcp_connection_refused"
+                elif peer.close_kind == "eof" or peer.close_kind.startswith("socket_error:"):
+                    peer.admission = "server_closed_during_capacity_observation"
+                elif peer.sock is None:
+                    peer.admission = "peer_error_before_capacity_observation"
+                else:
+                    peer.admission = "not_admitted_during_observation"
                 if peer.sock is not None:
                     peer.close_kind = "client_closed_after_capacity_observation"
                     peer.close_ms = round((time.monotonic() - peer.started) * 1000)
                     peer.sock.close()
                     peer.sock = None
             tcp_connected = sum(peer.tcp_connected for peer in peers)
-            refused = len(peers) - admitted
+            not_admitted = len(peers) - admitted
             early_client_refusals = sum(
-                peer.admission.startswith("refused") or
-                peer.admission == "connect_refused" for peer in peers
+                peer.admission == "tcp_connection_refused" for peer in peers
             )
+            server_closed_excess = sum(
+                peer.admission == "server_closed_during_capacity_observation"
+                for peer in peers[excess_start:]
+            )
+            client_closed_excess = sum(
+                peer.admission == "not_admitted_during_observation"
+                for peer in peers[excess_start:]
+            )
+            peer_error_excess = sum(
+                peer.admission == "peer_error_before_capacity_observation"
+                for peer in peers[excess_start:]
+            )
+            if peer_error_excess:
+                raise RuntimeError(
+                    f"{peer_error_excess} excess peers failed before capacity classification"
+                )
             open_at_load = sum(peer.sock is not None for peer in peers)
             result["admitted"] = admitted
-            result["refused"] = refused
+            result["not_admitted"] = not_admitted
+            result["server_closed_excess"] = server_closed_excess
+            result["client_closed_excess"] = client_closed_excess
+            result["peer_error_excess"] = peer_error_excess
             result["tcp_connected"] = tcp_connected
             result["early_client_refusals"] = early_client_refusals
             result["open_during_load"] = open_at_load
@@ -423,9 +486,10 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                 )
             if admitted != EFFECTIVE_CONNECTION_LIMIT:
                 raise RuntimeError(
-                    f"load did not show expected admission and refusal: "
+                    f"load did not show expected admission accounting: "
                     f"server_admitted={admitted}/{EFFECTIVE_CONNECTION_LIMIT} "
-                    f"tcp_connected={tcp_connected} listener_refused={refused} "
+                    f"tcp_connected={tcp_connected} not_admitted={not_admitted} "
+                    f"server_closed_excess={server_closed_excess} "
                     f"early_client_refusals={early_client_refusals}"
                 )
             before_load_request = server_accepted_count(process, events)
@@ -440,14 +504,14 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                 raise RuntimeError(
                     f"successful load request accepted-count delta is {load_request_delta}, expected 1"
                 )
-            if load_outcome.startswith("capacity_refusal") and load_request_delta != 0:
+            if load_outcome.startswith("request_not_accepted") and load_request_delta != 0:
                 raise RuntimeError(
-                    f"capacity refusal accepted-count delta is {load_request_delta}, expected 0"
+                    f"non-acceptance response changed accepted count by {load_request_delta}, expected 0"
                 )
             result["request_during_load_accepted_delta"] = load_request_delta
             with (raw_dir / "load-request.txt").open("w", encoding="utf-8") as output:
                 output.write(load_outcome + "\n")
-            _, _, peak_sample, _ = hold_and_measure(
+            peak_sample, _ = hold_and_measure(
                 process, peers, samples, peak_sample
             )
             result["peak_rss_kib"] = peak_sample[0]
@@ -481,8 +545,15 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                     f"recovery request did not add one accepted connection: "
                     f"before={accepted_after_load_request} after={recovery_accepted}"
                 )
-            time.sleep(1)
-            settled = sample(process, peers, samples)
+            settled, settle_seconds = settle_fds(
+                process, peers, samples, target=baseline[2]
+            )
+            result["settle_seconds"] = settle_seconds
+            if settled[2] != baseline[2]:
+                raise RuntimeError(
+                    f"file descriptor count did not return to warmed baseline: "
+                    f"baseline={baseline[2]} settled={settled[2]}"
+                )
             result["baseline_rss_kib"] = baseline[0]
             result["settled_rss_kib"] = settled[0]
             result["baseline_cpu_seconds"] = baseline[1]
@@ -495,12 +566,29 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
             close_times = [peer.close_ms for peer in timed_out]
             summary = (
                 f"provider={provider}\ntls_version={version}\n"
-                f"admitted={admitted}\ncapacity_refused={refused}\n"
+                f"admitted={admitted}\nnot_admitted_during_observation={not_admitted}\n"
+                f"server_closed_excess={server_closed_excess}\n"
+                f"client_closed_excess={client_closed_excess}\n"
+                f"peer_error_excess={peer_error_excess}\n"
                 f"tcp_connected={tcp_connected}\nearly_client_refusals={early_client_refusals}\n"
                 f"timeout_close_count={len(timed_out)}\n"
                 f"timeout_close_min_ms={min(close_times)}\n"
                 f"timeout_close_max_ms={max(close_times)}\n"
                 f"request_during_load={load_outcome}\n"
+                f"accepted_before_warmup={accepted_before_warmup}\n"
+                f"accepted_after_warmup={accepted_after_warmup}\n"
+                f"accepted_at_limit={accepted_at_limit}\n"
+                f"first_wave_admitted={admitted}\n"
+                f"accepted_after_excess={accepted_after_excess}\n"
+                f"excess_wave_accepted_delta={accepted_after_excess - accepted_at_limit}\n"
+                f"accepted_before_load_request={before_load_request}\n"
+                f"accepted_after_load_request={accepted_after_load_request}\n"
+                f"load_request_accepted_delta={load_request_delta}\n"
+                f"accepted_after_recovery={recovery_accepted}\n"
+                f"recovery_request_accepted_delta={recovery_accepted - accepted_after_load_request}\n"
+                f"warm_settle_seconds={warm_settle_seconds:.3f}\n"
+                f"postload_settle_seconds={settle_seconds:.3f}\n"
+                f"warmup_http2_ms={warmup_ms:.2f}\n"
                 f"request_during_load_ms={load_request_ms:.2f}\n"
                 f"recovery_http2_ms={request_ms * 1000:.2f}\n"
                 f"rss_kib_baseline_peak_settled={baseline[0]}/{peak_sample[0]}/{settled[0]}\n"
@@ -559,7 +647,8 @@ def main() -> int:
                 result = one_case(binary, provider, version, cert, key, ca_file, log_root)
                 print(
                     f"PASS {provider} TLS {version}: admitted={result['admitted']} "
-                    f"refused={result['refused']} during-load={result['request_during_load']} "
+                    f"not-admitted={result['not_admitted']} "
+                    f"during-load={result['request_during_load']} "
                     f"recovery-h2={result['recovery_http2_ms']:.2f}ms "
                     f"RSS KiB baseline/peak/settled="
                     f"{result['baseline_rss_kib']}/{result['peak_rss_kib']}/"

@@ -115,8 +115,6 @@ begin
     MaxConnections := PositiveEnvironmentValue(
       'HTTP2_TEST_MAX_CONNECTIONS', 10000);
     Limits := TServerLimits.Create.WithMaxConnections(MaxConnections);
-    WriteLn('CONFIG handshake_timeout_ms=', HandshakeTimeoutMs,
-      ' max_connections=', MaxConnections);
     Provider := ParamStr(1);
     if Provider = 'tlslib' then
       Identity := TTlsLibIdentity.FromPemFiles(ParamStr(2), ParamStr(3))
