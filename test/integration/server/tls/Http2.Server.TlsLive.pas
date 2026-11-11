@@ -2,21 +2,21 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: tls, alpn, live, validation, http2client, fallback
+keywords: tls, alpn, live, validation, http2components, fallback
 notes:
   - This program starts two servers with TLS on loopback in one process, one
     with the HTTP/1.1 fallback and one without it. It drives both with the TLS
-    socket of the sibling client at ../http2client, which offers any ALPN list.
+    socket in the merged client facade, which offers any ALPN list.
   - It checks the select rule of RFC 7301 in a real handshake. The server picks
     h2 wherever the client lists it. It serves http/1.1 only when the fallback
     is on. It refuses an unknown protocol with a fatal alert. A client without
     an ALPN extension gets HTTP/1.1 when the fallback is on.
   - The program is a validation run and puts no load on the server.
   - The first argument is the directory of the test PKI, made by
-    tools/certs/make_mtls_pki.sh. The exit code is 0 when every check passed.
+    tools/server/certs/make_mtls_pki.sh. The exit code is 0 when every check passed.
 ---
 }
-/// Live validation of the ALPN policy against the sibling client
+/// Live validation of the server ALPN policy with the merged client facade
 program Http2.Server.TlsLive;
 
 {$mode delphi}{$H+}

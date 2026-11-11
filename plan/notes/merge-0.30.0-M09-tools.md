@@ -61,11 +61,14 @@ specific server gate produces a failure.
 
 The shared build driver maps each client and server validation target to its
 role script. Server script runs receive `SERVER_BIN` for the server example
-output directory. The TLS and mTLS server targets compile and run their
-dedicated integration programs with a private PKI directory. `validate:fast`
-runs the bounded unit, API, and local integration suites, then the source,
-documentation, version, and package checks. `validate` adds every explicit
-client and server validation gate after the fast checks.
+output directory. Before a server script runs, the driver compiles the server
+example programs. Before the client SSE, proxy, or WebSocket live suite runs,
+the driver compiles the client test runner. The TLS and mTLS server targets
+compile and run their dedicated integration programs with a private PKI
+directory. `validate:fast` runs the bounded unit, API, and local integration
+suites, then the source, documentation, version, and package checks.
+`validate` adds every explicit client and server validation gate after the
+fast checks.
 
 ## Checks
 
