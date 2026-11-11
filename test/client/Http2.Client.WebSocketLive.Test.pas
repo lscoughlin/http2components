@@ -24,7 +24,7 @@ interface
 
 uses
   SysUtils, Classes, fpcunit, testregistry, Http2.Client.Errors, Http2.Client,
-  Http2.Client.Tls, Http2.Client.RequestObserver, Http2.Client.WebSocket, Http2.Client.WebSocketClient.Test,
+  Http2.Client.Tls, Http2.Client.RequestObserver, Http2.Client.WebSocket, Http2.Client.WebSocketClient.Support,
   Http2.Client.RequestObserver.Test;
 
 type

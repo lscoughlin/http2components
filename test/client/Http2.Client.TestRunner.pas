@@ -34,6 +34,7 @@ uses
   Http2.Client.Socks.Test, Http2.Client.Sse.Test, Http2.Client.Stream.Test,
   Http2.Client.Timeouts.Test, Http2.Client.Tls.Test,
   Http2.Client.WebSocket.Codec.Test, Http2.Client.WebSocket.Handshake.Test, Http2.Client.WebSocketClient.Test,
-  Http2.Client.WebSocketLive.Test, Http2.Client.WebSocketObservability.Test;
+  Http2.Client.WebSocketLive.Test, Http2.Client.WebSocketObservability.Core.Test,
+  Http2.Client.WebSocketObservability.Lifecycle.Test;
 
 end.
