@@ -514,3 +514,11 @@ send path. This third result is part of the same investigation. The peer
 must verify the intended GOAWAY result; an abort that discards a required
 protocol notice is not accepted as a passing flood response. Existing
 independent abuse coverage remains required after the repair.
+
+The work is split between two existing Luna worktrees. The server owner
+handles async write progress and the reset-flood result. The client owner
+handles HTTP/1 WebSocket shutdown accounting in the runtime and channel
+lifecycle. The latter work checks whether the server stops waiting before
+the queued close frame drains. A repair has bounded completion and no fixed
+sleep used as proof. The server owner retains the single remote diagnostic
+slot; the owners coordinate affected files and hand off focused candidates.
