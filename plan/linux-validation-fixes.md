@@ -365,3 +365,17 @@ requests with zero failed or errored requests. The independent h2spec HTTP/2
 and HPACK packages both run, with counts and original output preserved. Each
 required failure remains a failure. Tools and load parameters stay fixed.
 A controlled incomplete h2load summary confirms failure detection.
+
+## LV-21: Independent TLS server identity checks for both providers
+
+The independent provider server probe currently covers server identity and
+TLS version selection but has no client identity mode. The client owner adds
+optional client-authentication mode and trust-anchor arguments to that probe,
+with the current four-argument use preserved. A Python or OpenSSL peer then
+checks both providers with TLS 1.2 and 1.3: a valid client certificate succeeds;
+missing, expired, and unrelated-CA certificates fail when required; requested
+client authentication accepts a missing certificate but rejects invalid
+certificates. Positive requests require the fixed HTTP/2 response and ALPN h2.
+Negative requests must fail before an HTTP response. The peer verifies the
+server certificate and hostname. Result rows and peer output are retained;
+generated private keys are removed. No provider policy is weakened.
