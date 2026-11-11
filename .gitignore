@@ -1,0 +1,44 @@
+plan/
+.ai/
+.claude/settings.local.json
+
+# Build artifacts
+bin/
+*.o
+*.ppu
+*.a
+spike/*.o
+
+# Vendored third-party checkouts (kept locally, never committed; the
+# second line also covers a symlink file of the same name, which the
+# trailing-slash form does not match)
+third_party/
+/third_party
+
+# Local-only ast-grep MCP wrapper (run from .mcp.json, never committed)
+tools/ast-grep-mcp/
+
+# Editor / OS noise
+.DS_Store
+*.lps
+*.bak
+*~
+
+# Task runner cache (go-task checksum cache)
+.task
+
+# python bytecode from the measurement tools
+__pycache__/
+*.pyc
+
+# project-local python environments (uv creates tools/ast-grep-mcp/.venv)
+.venv/
+
+# the self-signed certificate that the validation script creates
+test/certs/
+
+# Obsidian vault settings
+.obsidian/
+
+# CodeGraph index (rebuild with: codegraph index)
+.codegraph/
