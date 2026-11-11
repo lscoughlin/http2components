@@ -1,0 +1,410 @@
+---
+license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+copyright: Copyright 2026 Liam Seamus Coughlin
+keywords: websocket, session, frame codec, close handshake, heartbeat, origin policy, init, streaming pool, rfc 6455
+notes:
+  - This document describes the WebSocket part of the server, which serves a WebSocket on any detached channel, over HTTP/1.1 and over HTTP/2.
+  - RFC 6455 (the WebSocket protocol) is the main source. It was checked on 2026-10-22 at https://www.rfc-editor.org/info/rfc6455. The plain-text copy is doc/references/rfc6455.txt. RFC 6454 (the web origin) was checked on the same date at https://www.rfc-editor.org/info/rfc6454.
+  - The IANA registry of close codes was checked on 2026-10-22. The copy is doc/references/iana-websocket-registry.xml.
+  - Imported from http2server/doc/design/server/websocket.md at the source commit recorded in the source inventory.
+  - API and architecture details await final merged-source review.
+scope: The frame codec, the session contract, the receive path, the closing handshake, the heartbeat, the limits, the origin policy, the Init hook and the settings.
+primary_types:
+  - IWsSession
+  - IWsHandler
+  - TWsInitResult
+  - TWsOptions
+  - TWsReader
+related_docs:
+  - seam.md
+  - threading.md
+  - http1.md
+  - sse.md
+  - configuration.md
+  - lifecycle.md
+  - limits.md
+invariants:
+  - A session runs on any IDuplexChannel and does not know the protocol under it.
+  - The handler is called on a thread of the streaming pool, one call at a time for a session, in the order of the events, and never on an IO thread.
+  - Exactly one of Closed or Failed ends the conversation, unless the application calls Abort.
+  - The server never puts the close codes 1005, 1006 or 1015 on the wire.
+  - A message is sent with one write to the channel, so the frames of two messages never mix.
+---
+
+# WebSocket
+
+A WebSocket session is a long-lived pair of byte streams on a detached channel (see
+[seam](seam.md)). The session parses and builds the frames, answers the control
+frames, runs the closing handshake and calls the application. The handshake that
+opens the channel depends on the protocol and is described with each protocol. This
+document describes the parts that do not depend on it.
+
+## The frame codec
+
+Four units hold the codec. They have no socket and no thread.
+
+| Unit | Content |
+| --- | --- |
+| `Ws.Frames` | the opcodes, the close codes, the mask, the frame encoder, the fragmenting message encoder and the Close payload helpers |
+| `Ws.Utf8` | a UTF-8 validator with three bytes of state, so a character split across fragments needs no buffer |
+| `Ws.Parser` | the resumable frame parser; it pushes the unmasked payload of a data frame to a sink and buffers no data frame |
+| `Ws.Reader` | the assembly of frames into messages with the size, fragment and UTF-8 checks |
+
+The parser enforces the rules of RFC 6455 sections 5.2 to 5.5 that one frame and the
+order of the frames allow: reserved bits and opcodes, masking in the right direction,
+the shortest form of the length, control frames of at most 125 octets and with FIN,
+and the order of a fragmented message. The reader checks the message size before it
+buffers a byte, so a peer that declares a large frame and sends nothing costs no
+memory. A text message is checked for UTF-8 while the octets arrive.
+
+The tests of the codec check the frames of RFC 6455 section 5.7, every rule with its
+close code, split delivery (whole, one octet at a time and in random pieces) and a
+fuzz run of 40,000 random and mutated streams.
+
+### Close codes
+
+The set of codes that a peer may put on the wire follows the IANA registry of
+2026-10-22: 1000 to 1003, 1007 to 1014 and 3000 to 4999. The codes 1004, 1005, 1006
+and 1015 never appear in a Close frame. The server sends every code of the set
+except 1010, which is a client code.
+
+| Code | Use in the server |
+| --- | --- |
+| 1000 | a normal close |
+| 1001 | the server stops (`Stop`) |
+| 1002 | a protocol error: a bad frame, a Close payload that RFC 6455 section 5.5.1 forbids, a data frame after a Close frame |
+| 1003 | available to an application |
+| 1007 | a text message or a Close reason that is not UTF-8 |
+| 1008 | a policy limit: a token bucket is empty, or too many messages wait for the application |
+| 1009 | a message or a frame is over its limit |
+| 1011 | a callback raised, or the Pong did not come |
+| 1006 | reported to the application only: the connection ended without a Close frame, or the peer did not answer the Close frame in time |
+| 1005 | reported to the application only: the Close frame had no status |
+
+## The session contract
+
+The application gives the server an `IWsHandler` when it accepts an upgrade. The
+server creates an `IWsSession` for the connection and calls the handler on a thread
+of the streaming pool (as described in [threading](threading.md)). The calls of one session run
+one at a time, in the order of the events. A callback can call `Send`, `Ping`,
+`Close` and `Abort`.
+
+| Call | Meaning |
+| --- | --- |
+| `Init` | the first call; it authorises, chooses the subprotocol and may send a greeting |
+| `Message` | a whole message; a text message is valid UTF-8 |
+| `Pong` | a Pong arrived |
+| `Closed` | the session ended; the code, the reason and whether the closing handshake completed |
+| `Failed` | a callback raised an exception; the session closes with 1011 |
+
+`Send` is legal from any thread at any time. It never blocks. It writes all frames of
+the message with one call of the channel, so a refusal leaves nothing half written
+and the frames of two messages never mix. It answers `srFull` when the outbound queue
+is over `ChannelQueueLimit`, and `srClosed` after the session has ended or the Close
+frame has gone out. The session does not drop a message by itself. The sender
+splits a message into frames of `FrameSize` octets. A Pong and a Close echo are
+separate writes, so they do not wait behind a message that is being built.
+
+**The send lock.** One send lock keeps the frames of two writers apart. A writer
+encodes its message before it takes the lock, then checks under the lock that the
+session is open, and then writes. A Close frame needs the same lock, so no data
+frame follows a Close frame (RFC 6455 section 5.5.1).
+
+**The IO thread never waits for the send lock.** A thread that holds the send lock
+waits for the connection lock when it writes into the stream, and the IO thread holds
+the connection lock while it parses frames. If the IO thread waited for the send
+lock, the two threads would wait for each other. The IO thread therefore tries the
+lock without waiting. When the lock is busy, or when an earlier reply still waits, the
+reply (a Pong, a Close echo or the Close frame of a protocol error) goes to the
+streaming pool as a task. The pool sends the replies in order, and a reply that must
+close the channel closes it after the frame.
+
+**The size of a sent message.** `SendStream` builds the message in memory, so the
+message is limited by `MaxMessageSize`. `MaxMessageSize` is at most 2147483647, and
+`MaxFrameSize` is at most `MaxMessageSize`. A close reason must be UTF-8, and the
+server cuts a reason that it builds itself on the boundary of a character.
+
+`Abort` closes the channel at once, with no Close frame and no later callback.
+`SetContext` and `Context` keep a value of the application for the life of the
+session; the session releases it at the end.
+
+## The Init hook
+
+`Init` is the one hook for authorisation and for the first actions of a session. The
+upgrade code checks the syntax, the version and the origin, detaches the stream at
+once and returns; the handler of the route returns. No response has gone out. `Init`
+is the first task of the session, so it runs on a pool thread, never on an IO thread
+and never in the route handler. The handler receives a read-only copy of the
+whole request, including `Cookie` and `Authorization`, and may access a database.
+
+- **Accept.** The result names a subprotocol, which must be one of those the client
+  offered or empty, and may add header fields. The server sends the handshake
+  response; then the frames that `Init` queued leave, in order. `Init` can send a
+  greeting, and it can call `Close`.
+- **Reject.** The result holds a status (403 when it is 0), header fields and a body.
+  The server answers the upgrade with an ordinary HTTP response. `Message` and
+  `Closed` never run, and the frames that `Init` queued are dropped. The observer
+  gets `seWsRejected` with the status.
+- An exception in `Init`, or a subprotocol that the client did not offer, answers
+  500 and raises `seHandlerException`.
+- A peer that resets the stream, or closes the connection, while `Init` runs ends the
+  session. The result of `Init` is dropped, and `Closed` does not run.
+- A peer that sends WebSocket octets before the response is in error. The session
+  ends and the channel is aborted.
+- `InitTimeoutMs` bounds the wait. `Init` may hold every thread of the pool, so a
+  timer of the pool could not fire. One watchdog thread for the whole server watches
+  the time limits. When the limit passes, the upgrade is answered with 503 and the
+  result of `Init` is dropped when it comes. The timeout frees the stream. It cannot
+  interrupt a thread that is blocked in a call.
+
+## The receive path
+
+The IO thread that delivers octets parses the frames. It answers control frames at
+once, under the rule of the send lock above: a Ping is answered with a Pong that has
+the same payload, and a Close frame is echoed with the same code. It puts each data
+message on the queue of its session.
+
+- **Credit.** Every octet is credited to the channel once, when it is consumed, so a
+  message larger than the HTTP/2 window can arrive and a control frame in pieces cannot
+  raise the window above what the server consumed. When the queue of a session is half
+  full, the credit waits until the application has taken messages.
+- **Delivery at the end.** The messages that arrived before a Close frame are delivered
+  to `Message`, in order, and `Closed` follows the last of them. An abort, a failure of
+  a callback and a protocol error drop the messages that still wait. A lost connection
+  and a close timeout drop none.
+- **The queue cap.** A session holds at most `QueuedMessages` messages for the
+  application. A peer that sends more, because it ignores the window or because the
+  protocol has no window, is closed with 1008.
+- **The buckets.** One token bucket counts the control frames that arrive (Ping and
+  Pong), and one counts the messages. An empty bucket closes the session with 1008
+  and raises `seWsBucketTripped`. A Close frame costs no token.
+
+## The closing handshake
+
+- A Close frame from the peer is echoed at once, with the same code when the server
+  may send it and with 1000 otherwise. A Close frame with no status is echoed with no
+  status. The application hears `Closed` with the code and the reason of the peer and
+  `AClean` true. The channel then closes gracefully.
+- `Close` from the application sends a Close frame, stops later sends, and waits for
+  the Close frame of the peer for `CloseTimeoutMs`. The reply ends the session with
+  `Closed(AClean = true)`. A silent peer ends it with `Closed(1006, AClean = false)`
+  and an aborted channel.
+- A protocol error sends a Close frame with the code of the error and ends the
+  session with `Closed(code, AClean = false)`.
+- The loss of the transport calls `Closed` with 1006 and `AClean` false. A half close
+  of the peer without a Close frame is the same case.
+- A data frame after the Close frame of the peer is a protocol error.
+
+## The heartbeat
+
+When a session has had no inbound traffic for `PingIntervalMs`, the server sends a
+Ping and waits `PongTimeoutMs`. A Pong clears the wait. A missing Pong closes the
+session with 1011 (reason `ping timeout`), and the close wait then ends the session.
+A value of 0 for the interval turns the Ping off. The decision is a pure function
+(`WsTimerStep` in `Ws.Close`) that the tests call with numbers.
+
+## Stop
+
+`Stop` sends Close 1001 to every open session and waits up to the graceful stop
+timeout for the replies. A session that is still open then is aborted, and the
+application hears `Closed(1001, AClean = false)` on the thread that stops the server,
+because the pool is going away. A session that waits for `Init` closes with 1001 as
+soon as `Init` accepts.
+
+## The origin policy
+
+The origin policy decides whether the `Origin` field of an upgrade request passes. RFC
+6454 defines the origin, a triple of scheme, host and port, and the field. It gives a
+server no rule, so these are policy choices.
+
+| Policy | Rule |
+| --- | --- |
+| `opSameOrAbsent` (default) | the field is absent, or every origin in it equals the origin of the server |
+| `opAllowList` | as above, and an origin in `AllowedOrigins` passes too |
+| `opAllowListOnly` | the field is absent, or every origin is in `AllowedOrigins` |
+| `opAny` | every origin passes |
+| `opNone` | the server makes no check; the application checks in `Init` |
+
+- The origin of the server is built from the scheme of the transport and from the
+  `Host` field or the `:authority` value, lowered and with the default port filled
+  in. The scheme is never taken from a header. A server that has no usable host
+  refuses a request that carries an `Origin` field.
+- A request without an `Origin` field passes every policy, because a client that is
+  not a browser sends none. The check protects against a browser of another origin.
+  It does not identify a client.
+- A value is accepted only if it is `null` alone or a list of `scheme "://" host
+  [":" port]` separated by single spaces. A path, a query, a fragment, userinfo, a
+  comma, an empty member, a port with a leading zero or above 65535, and a host with a
+  non-ASCII octet are refused with 400. The literal `null` is refused with 403.
+  Upper case in the scheme and the host is lowered before the compare. An explicit
+  default port equals the same origin without a port. The compare is of the three
+  parts as ASCII text. It does no suffix match, no registered-domain match, no IDNA
+  mapping and no IPv6 normalisation.
+- More than one `Origin` field is refused with 400.
+- A foreign origin is refused with 403. The 81 vectors of the research notes are the
+  test list.
+
+## The HTTP/1.1 handshake
+
+An application accepts an upgrade inside an ordinary handler:
+`AcceptWebSocket(ARequest, AResponse, AHandler)`. The function answers True when the
+session started and False after an error response; the handler then returns. Routing,
+cookies and authentication by header stay in the handler (RFC 6455 section 4.2.2,
+steps 2 and 3). The checks run in this order, and a failed check answers an HTTP
+error and leaves the connection for the next request:
+
+| Check | Failure |
+| --- | --- |
+| the method is `GET` | 405 with `Allow: GET` |
+| the version is HTTP/1.1 and `Upgrade` and `Connection` hold the tokens `websocket` and `Upgrade`, in any case | 400 |
+| exactly one `Sec-WebSocket-Key` that decodes from base64 to 16 octets | 400 |
+| exactly one `Sec-WebSocket-Version` with the value 13 | 400 with `Sec-WebSocket-Version: 13` (RFC 6455 section 4.4) |
+| the origin policy | 403, or 400 for a value that is not an origin |
+| the request has no body and no octets follow the head | 400 |
+| the server holds fewer than `MaxDetachedStreams` channels | 503 with `Retry-After` |
+
+After the checks the function detaches the response into a pending channel of raw
+bytes, starts the session and returns. The session's first task is `Init`. From that
+moment the HTTP/1.1 core sends the octets that arrive on the connection to the
+channel, so a client that sends WebSocket octets before the response cancels the
+session. No `101` goes out before `Init` accepts.
+
+- **Accept.** The server sends `101 Switching Protocols` with `Upgrade: websocket`,
+  `Connection: Upgrade`, `Sec-WebSocket-Accept` (the base64 of the SHA-1 of the key and
+  the GUID of RFC 6455 section 1.3) and `Sec-WebSocket-Protocol` when `Init` chose a
+  subprotocol. It sends no `Sec-WebSocket-Extensions` field, because it supports no
+  extension. The frames that `Init` queued follow the response. The core then
+  parses the connection no more: the channel carries raw bytes both ways.
+- **Reject.** The channel answers with an ordinary HTTP response, and the core
+  resumes HTTP/1.1 on the connection when the response allows keep-alive.
+- **The subprotocol.** The client offers tokens in `Sec-WebSocket-Protocol`. The
+  names that reach `Init` are those that the server list holds, compared as
+  case-sensitive tokens (RFC 7936); an empty server list passes every offer on.
+- **The idle time.** An upgraded connection is not closed by the idle timeout of
+  HTTP/1.1. The heartbeat of the session keeps it, and a session with the ping
+  interval 0 holds its connection until a peer or the server ends it. The
+maximum connection age never closes such a connection: the age sweep skips an
+upgraded connection (as described in [lifecycle](lifecycle.md)).
+- **The close.** The server closes the TCP connection after the closing handshake
+  (RFC 6455 section 7.1.1) and does not wait for the client to close first. The write
+  side closes first, then the connection, as for any close of HTTP/1.1.
+- **No flow control.** HTTP/1.1 has no window. A client that sends a burst of
+  messages faster than the application takes them fills the queue of the session,
+  and the session closes with 1008 when the queue passes `QueuedMessages`. An
+  application that expects bursts sets a larger queue.
+
+
+## The HTTP/2 handshake
+
+A client opens a WebSocket on one HTTP/2 stream with the extended CONNECT method of
+RFC 8441 (checked on 2026-10-22 at https://www.rfc-editor.org/info/rfc8441). The
+handler code is the same: `AcceptWebSocket(ARequest, AResponse, AHandler)` picks the
+handshake from the response it receives.
+
+- **The setting.** The server sends `SETTINGS_ENABLE_CONNECT_PROTOCOL` (code 8) with the
+  value 1 in its first `SETTINGS` frame when the factory ran `WithWebSockets`. Without
+  the call the frame holds no such entry, and a request with `:protocol` is a stream
+  error of the type `PROTOCOL_ERROR` (RFC 8441 section 4). The server never sends the
+  value 0 after the value 1. The server reads the setting of a client and ignores it
+  (RFC 8441 section 3).
+- **The request.** The method is `CONNECT`, `:protocol` is `websocket`, and `:scheme`,
+  `:path` and `:authority` are present. The pseudo-header `:protocol` is legal once, with
+  a value that is not empty, and only on `CONNECT`. The request holds neither a key nor
+  `Upgrade` and `Connection` fields, because the stream carries the semantics (RFC 8441
+  section 5). A `CONNECT` without `:protocol` keeps the behaviour it had.
+- **The checks.** After the request validation the function checks, in this order: the
+  method (405, `Allow: CONNECT`), the protocol value (501 for a value other than
+  `websocket`), the version (400 with `sec-websocket-version: 13`), the origin policy
+  (403 or 400) and the detach limit (503 with `Retry-After`). An answer is an ordinary
+  response with `END_STREAM`, and the HTTP/2 connection stays open.
+- **Accept.** The response is `:status 200` with `sec-websocket-protocol` when `Init`
+  chose a subprotocol, and without `END_STREAM`. The stream is detached before `Init`
+  runs, so no `200` goes out before `Init` accepts. A reject from `Init` is an
+  ordinary response with `END_STREAM`.
+- **After the head.** The stream accepts `DATA`, `RST_STREAM`, `WINDOW_UPDATE` and
+  `PRIORITY`. A second `HEADERS` block, a trailer for example, is a stream error.
+
+### The close mapping
+
+| Event | Action on the stream |
+| --- | --- |
+| both Close frames are done | the server ends its half with `END_STREAM` |
+| the client ends its half with no Close frame | `Closed(1006, clean = False)`, then `END_STREAM` from the server |
+| the parser finds a protocol error | Close 1002, then the server ends the stream |
+| `RST_STREAM` from the client | `Closed(1006)`, and no frame goes out |
+| `GOAWAY` or the loss of the connection | `Closed(1006)` |
+| `Stop` | Close 1001, then `END_STREAM` after the close timeout |
+
+The HTTP/2 connection stays open in each row except the last two.
+
+### Flow control
+
+The `DATA` frames of a WebSocket stream use the usual windows of the stream and of the
+connection. The session returns credit to the stream when the parser takes the octets,
+and it holds the credit back while its queue is full. An outbound message waits in the
+channel queue, and `Send` answers `srFull` when the queue is full.
+
+### The maximum age
+
+The maximum connection age never closes a WebSocket. The age sweep skips an
+HTTP/2 connection while a WebSocket stream is open on it, and the forced close
+never cuts such a stream. When the last WebSocket stream ends, the next sweep
+checks the age again (as described in [lifecycle](lifecycle.md)). A WebSocket stream counts
+as one stream toward the stream cap (as described in [limits](limits.md)).
+
+### The client certificate
+
+When the listener asks for client certificates ([mtls](mtls.md)), the identity of the
+TLS client belongs to the connection. The extended `CONNECT` request reads it through
+`IServerRequest.ClientCertificate`, as every other stream does. The session snapshot
+of the request holds the same reference, so `IWsSession.Request.ClientCertificate`
+answers the identity after the handler call of the handshake has returned. The same
+rule holds for the HTTP/1.1 upgrade. In the optional mode a client without a
+certificate still opens a session, the identity is nil, and `Init` can refuse with a
+status such as 401.
+
+### The cost of a refusal
+
+A refused handshake is an ordinary response on a live stream. It is not a reset, and
+no abuse bucket counts it. A request that the validator finds malformed, a `:protocol`
+without the setting for example, is a stream error and counts as the other resets
+of the connection do (as described in [limits](limits.md)).
+
+
+## Settings
+
+The record `TWsOptions` belongs to the server builder (`WithWebSockets`). The
+defaults live in `Create`.
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `MaxMessageSize` | 1048576 | the greatest message, in octets, over all fragments |
+| `MaxFrameSize` | 65536 | the greatest payload of one frame that the server accepts |
+| `MaxFragments` | 1024 | the greatest number of frames of one message |
+| `QueuedMessages` | 16 | the greatest number of messages that wait for the application |
+| `FrameSize` | 16384 | the payload size of the frames the server sends |
+| `PingIntervalMs` | 30000 | the idle time before a Ping; 0 turns the Ping off |
+| `PongTimeoutMs` | 10000 | the wait for the Pong |
+| `CloseTimeoutMs` | 5000 | the wait for the Close frame of the peer |
+| `InitTimeoutMs` | 10000 | the wait for `Init` |
+| `ControlBucket` | 100 tokens, 10 a second | Ping and Pong frames that arrive |
+| `MessageBucket` | 10000 tokens, 10000 a second | data messages that arrive |
+| `OriginPolicy` | `opSameOrAbsent` | as described in above |
+| `AllowedOrigins` | none | the allow-list, each entry `scheme://host[:port]` |
+| `Subprotocols` | none | the subprotocols the server picks from, in order of preference |
+
+The factory validates each value and the entries of both lists.
+
+## Counters and events
+
+The statistics hold the open sessions, the messages and the payload octets in each
+direction, the sessions closed for a protocol error and the sessions closed for a
+missing Pong. The observer gets `seWsOpened`, `seWsRejected` (with the status),
+`seWsClosed` (with the code), `seWsFailed` and `seWsBucketTripped`.
+
+## RFC references
+
+- [RFC 6454](https://www.rfc-editor.org/rfc/rfc6454.html), checked 2026-11-11.
+- [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html), checked 2026-11-11.
+- [RFC 7936](https://www.rfc-editor.org/rfc/rfc7936.html), checked 2026-11-11.
+- [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441.html), checked 2026-11-11.

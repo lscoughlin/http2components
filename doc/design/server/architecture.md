@@ -1,0 +1,238 @@
+---
+license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+copyright: Copyright 2026 Liam Seamus Coughlin
+keywords: http2, server, architecture, threading, seam, units, mormot
+notes:
+  - This document holds the shape of the whole library and the growth of the
+    code. It points at the documents that hold each part in full.
+  - Imported from http2server/doc/design/server/architecture.md at the source commit recorded in the source inventory.
+  - API and architecture details await final merged-source review.
+scope: The layers of the library, the two thread pools with the cancel workers, the seam between the sides, the unit layout and the growth of the code.
+primary_types:
+  - THttp2ServerFactory
+  - IHttp2Server
+  - IHttp2Handler
+  - TServerConnectionCore
+  - IStreamWaiter
+db_tables: []
+related_docs:
+  - doc/design/server/threading.md
+  - doc/design/server/seam.md
+  - doc/design/server/connection.md
+  - doc/design/server/io-pool.md
+  - doc/design/server/public-api.md
+  - doc/design/server/future-coroutines.md
+  - doc/README.md
+invariants:
+  - An IO thread never runs a handler.
+  - A handler thread never holds the connection lock across a wait.
+  - The seam carries bytes and no text encoding.
+  - The HPACK codec runs on an IO thread only.
+  - Every layer below the facade is usable without a socket, except the IO pool and the TLS units.
+---
+
+# Architecture
+
+The library is an HTTP/2 server for Free Pascal and mORMot2. It speaks HTTP/2
+over clear text with prior knowledge (`h2c`) and over TLS with the ALPN name
+`h2` (RFC 9113 section 3). The unit `src/Http2.Server.pas` is the facade.
+
+The design rests on one separation. A few IO threads run the protocol of many
+connections and never block. A larger set of handler threads runs the code of
+the caller and may block. The seam between the two sides is narrow, and the
+document [seam](seam.md) holds it.
+
+## The layers
+
+```mermaid
+flowchart TD
+    F["facade: Http2.Server"]
+    SRV["server: Http2.Server.Runtime, Observer"]
+    IO["IO pool: Http2.Server.Async"]
+    TLS["TLS: Http2.Server.Tls, Alpn"]
+    ADM["admission: Http2.Server.Admission"]
+    CORE["connection: Http2.Server.Connection, Connection.Core, HpackConnection"]
+    OUT["output: Http2.Server.Output"]
+    STREAM["streams: Http2.Server.Stream, Waiter"]
+    CFG["configuration: Config, Limits, Seam"]
+    PROTO["protocol: Frames, Hpack, Headers, FlowControl, RequestValidation"]
+    ERR["foundation: Errors"]
+
+    F --> SRV
+    SRV --> IO
+    SRV --> ADM
+    IO --> TLS
+    IO --> CORE
+    IO --> OUT
+    ADM --> STREAM
+    CORE --> OUT
+    CORE --> STREAM
+    CORE --> PROTO
+    OUT --> STREAM
+    STREAM --> CFG
+    CFG --> PROTO
+    PROTO --> ERR
+```
+
+A caller builds a `THttp2ServerFactory`, adds a handler, and calls `Build`.
+The result is an `IHttp2Server` that binds a port and answers requests. The
+document [public-api](public-api.md) holds the surface, and
+[configuration](configuration.md) holds every setting.
+
+## The thread model
+
+The server runs three kinds of thread.
+
+| Kind | Count | Work |
+| --- | --- | --- |
+| IO thread | one per IO pool thread | sweeps connections with a non-blocking lock, reads and writes frames, runs HPACK |
+| handler thread | one per handler pool thread | runs one synchronous handler per request |
+| cancel worker | one per cancel pool thread | runs the cancel hooks of cancelled streams |
+
+The IO pool is the async server of mORMot2. It owns the poller of the
+platform, `epoll` on Linux and `poll` on macOS, and it calls the connection
+callback from an IO thread when a socket becomes ready. The server builds no
+poller of its own. The document [io-pool](io-pool.md) holds the integration.
+
+The handler side is a fixed pool with one bounded admission queue in front of
+it. The document [admission](admission.md) holds the queue, the refusal modes
+and the counters.
+
+The two sides meet at the seam. A handler reads and writes bytes through
+`IServerRequest` and `IServerResponse`, and it waits through `IStreamWaiter`.
+The seam carries no HTTP structure across, so the handler never touches the
+HPACK encoder and never builds a frame. The document [threading](threading.md)
+holds the rules that keep the kinds apart.
+
+## The path of one request
+
+The path shows how the layers cooperate.
+
+1. An IO thread accepts the socket and the connection core consumes the
+   preface. The core sends the server SETTINGS frame
+   (`src/Http2.Server.Connection.pas`).
+2. A `HEADERS` frame starts a header block and `CONTINUATION` frames extend
+   it. The HPACK decoder runs on the IO thread under the connection lock.
+3. The core validates the request fields against RFC 9113 section 8.1. An
+   invalid block sends `RST_STREAM` with `PROTOCOL_ERROR` and the stream ends.
+4. A valid request enters the admission queue. A full queue refuses the
+   request with `REFUSED_STREAM` or a 503 response.
+5. A handler thread takes the request and runs the handler. A read that finds
+   no buffered bytes parks on the stream waiter and releases every lock first.
+6. The handler builds a plain header list and writes the body. The IO thread
+   encodes the header list and drains the body into `DATA` frames that obey
+   the flow-control windows and the peer frame size.
+7. The handler returns. The core closes the stream once the last holder
+   releases it. The document [connection](connection.md) holds the whole path.
+
+## The unit layout
+
+Every unit uses the prefix `Http2.Server.`. The copied client units keep the
+same prefix, so a program links the client library and the server library
+together with no name clash.
+
+| Unit | Lines | Layer | Responsibility |
+| --- | --- | --- | --- |
+| `Http2.Server.pas` | 408 | facade | the public surface, re-exported from the units below |
+| `Http2.Server.Runtime.pas` | 182 | server | `THttp2Server`, the start and stop path |
+| `Http2.Server.Observer.pas` | 121 | server | the events, the observer and the statistics |
+| `Http2.Server.Async.pas` | 998 | IO | the mORMot2 async subclasses and the core bridge |
+| `Http2.Server.Async.Options.pas` | 463 | IO | the TLS policy, the core options, the control bucket and the handshake deadline, built from the factory |
+| `Http2.Server.Async.Counters.pas` | 84 | IO | the connection, reset, trip and handshake counters |
+| `Http2.Server.Async.Waker.pas` | 64 | IO | the write waker of one connection |
+| `Http2.Server.Async.Sweep.pas` | 154 | IO | the sweep over the live connections: age, drain, GOAWAY and stream count |
+| `Http2.Server.Async.Socket.pas` | 128 | IO | the socket options of each accepted connection: no-delay, keep-alive, buffers |
+| `Http2.Server.Stream.Meta.pas` | 324 | seam | the base of the server stream: locks, reference count, request head and pending response head |
+| `Http2.Server.ClientCert.pas` | 275 | TLS | the identity of a verified client certificate |
+| `Http2.Server.Mtls.Types.pas` | 101 | TLS | the client certificate modes and their pure maps |
+| `Http2.Server.Tls.Client.pas` | 163 | TLS | the client certificate trust and verify mode of the server context |
+| `Http2.Server.Tls.pas` | 209 | TLS | the `INetTls` plug-in of a connection |
+| `Http2.Server.Alpn.pas` | 276 | TLS | the `SSL_CTX_set_alpn_select_cb` binding and callback |
+| `Http2.Server.Admission.pas` | 709 | admission | the bounded queue and the handler pool |
+| `Http2.Server.StreamAdapters.pas` | 226 | admission | the handler-side request and response of one stream |
+| `Http2.Server.Duplex.pas` | 334 | seam | the interfaces of a detached stream and the registry of channels |
+| `Http2.Server.StreamChannel.pas` | 444 | seam | the channel of a detached HTTP/2 stream |
+| `Http2.Server.HandlerJob.pas` | 47 | seam | the job that the handler pool runs besides an HTTP/2 stream |
+| `Http2.Server.Http1.Limits.pas` | 198 | http1 | the limits of the HTTP/1.1 parser as a record of the server builder |
+| `Http2.Server.Http1.Guard.pas` | 707 | http1 | the strict rules that sit on the mORMot2 parser |
+| `Http2.Server.Http1.Parser.pas` | 506 | http1 | the adapter that drives the mORMot2 parser one state at a time |
+| `Http2.Server.Http1.Select.pas` | 58 | http1 | the clear-text choice between HTTP/2 and HTTP/1.1 |
+| `Http2.Server.Http1.Status.pas` | 87 | http1 | the reason phrases of the status line |
+| `Http2.Server.Http1.ResponseHead.pas` | 159 | http1 | the response head and its framing |
+| `Http2.Server.Http1.Host.pas` | 213 | http1 | the cut-able link between an exchange and its core |
+| `Http2.Server.Http1.Exchange.pas` | 722 | http1 | one HTTP/1.1 request with its response and its pool job |
+| `Http2.Server.Http1.Channel.pas` | 356 | http1 | the chunked channel of a detached HTTP/1.1 response |
+| `Http2.Server.Http1.Core.pas` | 467 | http1 | the HTTP/1.1 connection core |
+| `Http2.Server.Http1.Driver.pas` | 128 | http1 | the staged close, the deadlines and the idle decision |
+| `Http2.Server.Async.Events.pas` | 122 | io | the event receivers of an async connection |
+| `Http2.Server.ResponseWriter.pas` | 144 | seam | the `Date` field and the header checks that both protocols share |
+| `Http2.Server.Sse.Encoder.pas` | 190 | streaming | the encoder of server-sent events: field rules, line splitting and the injection checks |
+| `Http2.Server.Sse.pas` | 347 | streaming | `StartSse` and the event stream: serialised sends, the keep-alive timer and the stall rule |
+| `Http2.Server.WebSocket.Origin.pas` | 341 | websocket | the origin policy of an upgrade request |
+| `Http2.Server.WebSocket.Options.pas` | 257 | websocket | the record `TWsOptions` of the server builder |
+| `Http2.Server.WebSocket.Types.pas` | 162 | websocket | `IWsSession`, `IWsHandler`, `TWsInitResult` and the interfaces to the server |
+| `Http2.Server.WebSocket.Close.pas` | 116 | websocket | the timer rules of ping, pong and close |
+| `Http2.Server.WebSocket.SessionCore.pas` | 631 | websocket | the state, the sender, the closing handshake and the timers of a session |
+| `Http2.Server.WebSocket.Session.pas` | 653 | websocket | the session: task queue, Init, receive path and stop |
+| `Http2.Server.WebSocket.Environment.pas` | 297 | websocket | the options, counters, report and watchdog that the sessions share |
+| `Http2.Server.WebSocket.Handshake.pas` | 187 | websocket | the accept key, the token lists, the subprotocol choice and the origin check of an upgrade |
+| `Http2.Server.WebSocket.Http2.pas` | 150 | websocket | the checks and the 200 response of the HTTP/2 extended CONNECT |
+| `Http2.Server.WebSocket.Accept.pas` | 50 | websocket | `AcceptWebSocket`, which picks the handshake of the protocol |
+| `Http2.Server.Http1.SocketChannel.pas` | 340 | http1 | the raw-byte channel of an upgraded HTTP/1.1 connection |
+| `Http2.Server.Http1.Upgrade.pas` | 190 | http1 | the checks and the 101 response of the HTTP/1.1 upgrade |
+| `Http2.Server.WebSocket.Frames.pas` | 334 | codec | WebSocket opcodes, close codes, the mask, the frame encoder and the Close payload helpers (RFC 6455) |
+| `Http2.Server.WebSocket.Utf8.pas` | 116 | codec | a resumable UTF-8 validator that holds three bytes of state |
+| `Http2.Server.WebSocket.Parser.pas` | 291 | codec | the resumable frame parser; it pushes the unmasked payload of a data frame to a sink and buffers no data frame |
+| `Http2.Server.WebSocket.Reader.pas` | 265 | codec | the assembly of frames into messages with the size, fragment and UTF-8 checks; the codec holds no socket and no thread |
+| `Http2.Server.StreamHost.pas` | 60 | seam | the callbacks that a stream uses to reach its connection |
+| `Http2.Server.StreamPool.pas` | 773 | streaming | the streaming pool: ordered task queues, timers and fair scheduling |
+| `Http2.Server.Connection.Core.pas` | 989 | connection | the base of the connection core: fields, locks, output queue, write wake-up and stream table |
+| `Http2.Server.Connection.Flush.pas` | 154 | connection | the flush helpers of the core: pending headers, stream and connection credit, drained output |
+| `Http2.Server.OutboundBudget.pas` | 186 | connection | the count of queued outbound frames with the batch release rule |
+| `Http2.Server.Connection.pas` | 617 | connection | the connection core: `Feed` and the frame handlers |
+| `Http2.Server.HpackConnection.pas` | 229 | connection | the HPACK encoder and decoder of one connection |
+| `Http2.Server.Output.pas` | 318 | output | the response path and the drain |
+| `Http2.Server.Stream.pas` | 993 | streams | the stream state, the buffers and the reference count |
+| `Http2.Server.Waiter.pas` | 408 | streams | the blocking waiter and the cancel worker pool |
+| `Http2.Server.Config.pas` | 863 | configuration | the factory record and the option records |
+| `Http2.Server.Config.Tls.pas` | 214 | configuration | the TLS settings of the listener: `TTlsServerOptions` and its fluent methods |
+| `Http2.Server.Config.Limits.pas` | 176 | configuration | the server limits: `TServerLimits` and its fluent methods |
+| `Http2.Server.Config.Socket.pas` | 155 | configuration | the socket options of the listener: `TSocketOptions` and its fluent methods |
+| `Http2.Server.Limits.pas` | 383 | configuration | the token buckets and the clock |
+| `Http2.Server.Seam.pas` | 201 | configuration | the interfaces the handler sees |
+| `Http2.Common.Frames.pas` | 886 | protocol | the frames, the settings and the error codes |
+| `Http2.Common.Hpack.pas` | 800 | protocol | the HPACK codec |
+| `Http2.Common.Headers.pas` | 254 | protocol | the header names and the header list |
+| `Http2.Common.FlowControl.pas` | 300 | protocol | the connection and stream windows |
+| `Http2.Server.RequestValidation.pas` | 204 | protocol | the RFC 9113 section 8.1 field rules |
+| `Http2.Common.Errors.pas` | 135 | foundation | the error codes and the exception classes |
+
+The five units `Errors`, `Frames`, `Hpack`, `Headers` and `FlowControl` derive
+from the sibling client. The server adds to them at the edges only, and the
+document [protocol](protocol.md) records the server-specific parts.
+
+The core of the library holds no socket. `TServerConnectionCore`,
+`TServerStream`, `TOutputDrain`, `TFlowControl` and the protocol units run in
+a test with no network, and the per-connection HPACK state has its own unit
+`Http2.Server.HpackConnection.pas` for that reason.
+
+## The waiter
+
+The blocking waiter can give way to a coroutine scheduler without a change to
+the seam. The document
+[future-coroutines](future-coroutines.md) holds the deferred option and the
+research result.
+
+## Where a reader continues
+
+| Reader | Next document |
+| --- | --- |
+| a caller of the library | [public-api](public-api.md), then [configuration](configuration.md) |
+| a maintainer of a layer | [threading](threading.md), then the document of the layer |
+| a reader of the conformance record | [validation](../../verification/source/server/validation.md) |
+| a reader of the build and the platform | [toolchain](../../verification/source/server/toolchain.md) |
+
+## RFC references
+
+- [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html), checked 2026-11-11.
+- [RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html), checked 2026-11-11.

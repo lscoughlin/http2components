@@ -1,0 +1,154 @@
+---
+license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+copyright: Copyright 2026 Liam Seamus Coughlin
+title: "FPC Runtime & Memory Model"
+aliases:
+  - "fpc-runtime"
+tags:
+  - http2client
+  - design
+  - fpc
+status: done
+up: "[http2components](../../README.md)"
+related:
+  - "[architecture](architecture.md)"
+  - "[transport](transport.md)"
+updated: 2026-10-13
+notes:
+  - Imported from http2client/doc/design/fpc-runtime.md at the source commit recorded in the source inventory.
+  - API and architecture details await final merged-source review.
+---
+
+# FPC Runtime & Memory Model
+
+Everything is using advanced records and ARC.
+
+## General Guidelines
+
+In Free Pascal specifically:
+
+- **Records are not ARC.** FPC has no automatic reference counting for
+  records or `TObject`-derived classes. "ARC" in this design means
+  **reference-counted interfaces** (`{$interfaces com}`, the default):
+  an interface variable is released automatically when the last reference
+  goes out of scope.
+- **Shared, long-lived state is exposed as interfaces** (`IHttpClient`,
+  `IConnection`, `IHttpResponse`, `IHttpHeaders`). A record that must share
+  state holds one of these interfaces, so copying the record shares the
+  reference and does not deep-copy the object.
+- **Value types stay as records** (`THttpMethod`, `TFrameHeader`,
+  `TWindow`, `TConnectionSettings`) — copied by value, no lifetime concerns.
+- **Everything is `FunctionResult`-safe**: no global mutable state; the
+  factory is an immutable record built fluently.
+- `TInterfacedObject` (or `TInterfacedPersistent`) is the base for
+  interface implementations. `TComponent` is *not* used (no streaming/VCL
+  dependency).
+
+Required compiler directives, once, at the top of the main unit:
+
+```pascal
+{$mode delphi}{$H+}
+{$modeswitch advancedrecords}
+{$modeswitch typehelpers}
+{$interfaces com}
+```
+
+and on Unix the program must pull in the thread manager **before** any unit
+that uses threads:
+
+```pascal
+uses
+  {$IFDEF UNIX}cthreads,{$ENDIF}
+  SysUtils, Classes, SyncObjs, Generics.Collections, Http2.Client;
+```
+
+Without `cthreads` the binary aborts at runtime with
+`This binary has no thread support compiled in ... Runtime error 232`.
+
+## Verified Free Pascal facts
+
+These facts are compiled and run against the actual toolchain
+(`fpc 3.2.4`, `ppca64`, macOS/aarch64). They drive the choices in this design.
+
+| Design assumption | FPC 3.2.4 result | Consequence |
+|---|---|---|
+| `{$mode objfpc}` records for the API | works, but **generic methods do not parse** under `objfpc` — even with `{$modeswitch genericmethods}`: `Syntax error, ";" expected but "<" found` | use `{$mode delphi}` for generic code |
+| `TThreadedQueue<T>` for frame queues | **does not exist** in 3.2.4 (`Identifier not found "TThreadedQueue"`) | build `TBlockingQueue<T>` from `TQueue<T>` + `TCriticalSection` + `RTLEvent` (probe verified, thread sum 5050) |
+| `TMonitor` for stream-id allocation | **not present** (`Identifier not found "TMonitor"`) | use a `TCriticalSection` per connection |
+| `TEvent` / `TSimpleEvent` for slot signalling | constructs but raises `ESyncObjectException: Failed to create OS basic event` on macOS | use `RTLEvent` (`RTLEventCreate`/`RTLEventSetEvent`/`RTLEventWaitFor`/`RTLEventDestroy`) |
+| `TStringList.Remove` | **absent**: `identifier idents no member "Remove"` | use `IndexOf` + `Delete` |
+| interface ARC | verified: `TInterfacedObject.Destroy` runs when the last interface ref is set to `nil` | the memory model below is sound |
+| `generic TBox<T>` + `specialize TBox<Integer>.Echo` | works | generic classes are fine |
+| generic `class procedure Foo<T>` | **only under `{$mode delphi}`** (`TUtil.Foo<Integer>` compiles; `specialize TUtil.Foo<Integer>` under `objfpc` does not) | generic methods are allowed, but pin the mode |
+| `specialize TDictionary<K,V>` under `objfpc` | requires the `specialize` keyword in `uses`-visible code | handled by the `delphi` mode |
+| `UTF8String` as a distinct `TypeInfo` kind | on FPC 3.2.4 `UTF8String` is **`tkAString`** — the same branch as `AnsiString` | `TResponseReader<string>`, `TResponseReader<UTF8String>`, and `ReadText` all take the byte-preserving path; no transcoding is attempted |
+| `fpjson.GetJSON` in a unit that does not name `jsonparser` | raises `EJSON: No JSON parser handler installed` | `Http2.Client.Readers` names `jsonparser` explicitly |
+| FPC output name for a program | the binary is named after the **source file** (`examples/basic_get.pas` → `basic_get`), not the unit | `make examples`/`task examples` write `bin/<source-stem>` |
+
+Probe sources are preserved in
+[`reference/fpc-verified/`](../../verification/client-probes/README.md) (see its
+README for the exact reproduce commands and expected pass/fail behavior),
+and are compiled with `fpc -O2`. The document's own API surface
+(`Http2.Client.pas` + `testclient.pas`) also compiles and runs there.
+
+## Memory model and ARC in FPC
+
+The rule for every type in this design:
+
+| Kind | Lifetime | Example |
+|---|---|---|
+| Value record | copied, no heap | `THttpMethod`, `TFrameHeader`, `TWindow` |
+| Interface | refcounted (ARC) | `IHttpClient`, `IHttpResponse`, `IHttpHeaders` |
+| Class behind an interface | owned by its interface refs | `TConnection`, `THttpResponse` |
+| Background thread | explicitly started/stopped | `TConnectionThread` |
+
+```pascal
+type
+  THttpClient = class(TInterfacedObject, IHttpClient)
+  private
+    FPool: TConnectionPool;
+    FConfig: TClientConfig;
+  public
+    constructor Create(const AConfig: TClientConfig);
+    destructor Destroy; override;
+    function Send(const ARequest: THttpRequest): IHttpResponse;
+    procedure Close;
+  end;
+```
+
+```mermaid
+flowchart TB
+  IF["interface ref (ARC)"] -->|"AddRef / Release"| OBJ["object owned by its interface refs"]
+  OBJ -->|"field"| IF2["nested interface field<br/>shared by refcount"]
+  REC["value record<br/>copied, no heap"] -->|"may hold"| IF2
+  TH["background thread"] -->|"weak reference (no AddRef)"| OBJ
+  OBJ -->|"Terminate + WaitFor before release"| TH
+```
+
+Rules that follow from it:
+
+- Never hold a raw pointer to a class that is kept alive only by an
+  interface.
+- Never `Free` an object that an interface already owns.
+- Break thread/owner cycles explicitly — a thread holding an interface to its
+  owner is a cycle ARC cannot collect.
+
+- `TInterfacedObject` provides `_AddRef`/`_Release`; `_Release` frees the
+  object when the count reaches zero. Never hold a raw pointer to a class
+  that is only kept alive by an interface.
+- A record that needs to share heap state wraps it in an interface field,
+  never a raw class field, e.g.:
+  ```pascal
+  THttpRequest = record
+  private
+    FHeaders: IHttpHeaders;   // shared by refcount, not copied
+    ...
+  end;
+  ```
+- **Do not mix object lifetime with interface lifetime.** A `TConnection`
+  referenced by `IConnection` must *not* also be `Free`d by its creator.
+- **Threads and cycles**: a thread that holds an interface to its owning
+  connection creates a reference cycle that ARC cannot break. The
+  `TConnectionThread` therefore holds a **weak reference** to its
+  `TConnection` (as described in [transport](transport.md)), or the connection explicitly
+  `Terminate`+`WaitFor`s the thread before releasing state.
