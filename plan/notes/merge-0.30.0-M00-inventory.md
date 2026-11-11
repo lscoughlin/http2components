@@ -37,6 +37,8 @@ retrieved from the RFC Editor on 2026-11-11:
 ## Evidence limits
 
 The inventory is evidence of tracked input coverage and source provenance.
-It does not record a test result. Baseline test runs are recorded by the
-test owner. Binary or ignored files are not tracked inputs and are not in the
-inventory.
+It does not record a test result. The user deferred resource-intensive tests
+and Linux validation during implementation. Separate final validation and
+platform planning owns these gates. No test or Linux validation result is
+claimed here. Binary or ignored files are not tracked inputs and are not in
+the inventory.
