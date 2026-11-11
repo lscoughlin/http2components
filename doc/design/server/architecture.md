@@ -2,10 +2,11 @@
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: http2, server, architecture, threading, seam, units, mormot
+updated: 2026-11-11
 notes:
   - This document holds the shape of the whole library and the growth of the
     code. It points at the documents that hold each part in full.
-  - Imported from http2server/doc/design/server/architecture.md at the source commit recorded in the source inventory.
+  - The unit map reflects the combined source layout.
 scope: The layers of the library, the two thread pools with the cancel workers, the seam between the sides, the unit layout and the growth of the code.
 primary_types:
   - THttp2ServerFactory
@@ -32,9 +33,12 @@ invariants:
 
 # Architecture
 
-The library is an HTTP/2 server for Free Pascal and mORMot2. It speaks HTTP/2
-over clear text with prior knowledge (`h2c`) and over TLS with the ALPN name
-`h2` (RFC 9113 section 3). The unit `server/src/Http2.Server.pas` is the facade.
+The library is an HTTP/2 server for Free Pascal and mORMot2. Production units
+are in `server/src` and `common/src`; provider units are in
+`tls/openssl/src` and `tls/tlslib/src`. It speaks HTTP/2 over clear text with
+prior knowledge (`h2c`) and over TLS with ALPN `h2` (RFC 9113 section 3).
+The facade is `Http2.Server`; the common TLS contract is in
+`Http2.Common.Tls.*`.
 
 The design rests on one separation. A few IO threads run the protocol of many
 connections and never block. A larger set of handler threads runs the code of
@@ -48,7 +52,7 @@ flowchart TD
     F["facade: Http2.Server"]
     SRV["server: Http2.Server.Runtime, Observer"]
     IO["IO pool: Http2.Server.Async"]
-    TLS["TLS: Http2.Server.Tls, Alpn"]
+    TLS["TLS: common ITLSContext and ITLSSession"]
     ADM["admission: Http2.Server.Admission"]
     CORE["connection: Http2.Server.Connection, Connection.Core, HpackConnection"]
     OUT["output: Http2.Server.Output"]
@@ -144,9 +148,6 @@ together with no name clash.
 | `Http2.Server.Stream.Meta.pas` | 324 | seam | the base of the server stream: locks, reference count, request head and pending response head |
 | `Http2.Server.ClientCert.pas` | 275 | TLS | the identity of a verified client certificate |
 | `Http2.Server.Mtls.Types.pas` | 101 | TLS | the client certificate modes and their pure maps |
-| `Http2.Server.Tls.Client.pas` | 163 | TLS | the client certificate trust and verify mode of the server context |
-| `Http2.Server.Tls.pas` | 209 | TLS | the `INetTls` plug-in of a connection |
-| `Http2.Server.Alpn.pas` | 276 | TLS | the `SSL_CTX_set_alpn_select_cb` binding and callback |
 | `Http2.Server.Admission.pas` | 709 | admission | the bounded queue and the handler pool |
 | `Http2.Server.StreamAdapters.pas` | 226 | admission | the handler-side request and response of one stream |
 | `Http2.Server.Duplex.pas` | 334 | seam | the interfaces of a detached stream and the registry of channels |
@@ -194,7 +195,6 @@ together with no name clash.
 | `Http2.Server.Stream.pas` | 993 | streams | the stream state, the buffers and the reference count |
 | `Http2.Server.Waiter.pas` | 408 | streams | the blocking waiter and the cancel worker pool |
 | `Http2.Server.Config.pas` | 863 | configuration | the factory record and the option records |
-| `Http2.Server.Config.Tls.pas` | 214 | configuration | the TLS settings of the listener: `TTlsServerOptions` and its fluent methods |
 | `Http2.Server.Config.Limits.pas` | 176 | configuration | the server limits: `TServerLimits` and its fluent methods |
 | `Http2.Server.Config.Socket.pas` | 155 | configuration | the socket options of the listener: `TSocketOptions` and its fluent methods |
 | `Http2.Server.Limits.pas` | 383 | configuration | the token buckets and the clock |
@@ -235,3 +235,11 @@ research result.
 
 - [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html), checked 2026-11-11.
 - [RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html), checked 2026-11-11.
+
+## TLS provider boundary
+
+`Http2.Server.*` creates per-connection `ITLSSession` instances from the
+context set by `WithTlsContext`. The provider packages own native TLS work.
+The server role uses common policy and peer metadata and has no direct
+OpenSSL or TlsLib imports. TLS and mTLS behavior is described in [TLS](tls.md)
+and [mutual TLS](mtls.md).

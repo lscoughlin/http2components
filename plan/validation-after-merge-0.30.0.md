@@ -8,16 +8,22 @@
 | V03 | WebSocket conformance | V00 | Isolated Autobahn host and RFC 8441 peer | Expected cases pass; exclusions have reasons |
 | V04 | Proxy and mutual TLS container matrix | V00 | Container host | Routes, identities, verification, and cleanup pass |
 | V05 | Server load, abuse, and long connection runs | V02, V03 | Dedicated host | Existing limits and resource assertions pass |
-| V06 | Linux amd64 build and validation | V00 | Dedicated Linux amd64 host | Builds, packages, bounded tests, and local integration pass |
-| V07 | Linux amd64 load and independent peers | V01–V06 | Dedicated Linux amd64 host | Applicable protocol and resource checks pass |
-| V08 | Final release review | V01–V07 | Review environment | No unresolved required failure or hidden skip |
+| V06 | Linux amd64 build and validation across five production components | V00 | Dedicated Linux amd64 host | Common, client, server, OpenSSL, and TlsLib builds and all six packages pass; Readers is optional; bounded tests and local integration pass |
+| V07 | Linux amd64 load and independent peers | V01–V06, V09–V12 | Dedicated Linux amd64 host | Applicable protocol and resource checks pass |
+| V08 | Final release review | V00–V07, V09–V14 | Review environment | No unresolved required failure or hidden skip |
+| V09 | TLS provider matrix on Linux | V06 | Dedicated Linux amd64 host | Both providers pass TLS 1.2/1.3, client/server, mTLS, identity, trust, and ALPN cases |
+| V10 | Independent TLS peer interoperability | V00, V06 | Isolated peer host | OpenSSL CLI and independent peers interoperate for required provider and role pairs |
+| V11 | TLS load, churn, and long-lived sessions | V06, V09 | Dedicated test host | Handshake rate, tail latency, memory, cleanup, and failure limits are recorded against reviewed bounds |
+| V12 | Full HTTP/2 and TLS conformance | V01, V02, V06 | Isolated conformance hosts | Required HTTP/2/TLS cases pass; exclusions and regressions are classified |
+| V13 | HTTPS proxy and mTLS route matrix | V04, V06, V09 | Container host | Separate origin/proxy contexts and identities pass all configured routes |
+| V14 | Timed TLS server lifecycle suite | V06, V09 | Dedicated test host | Full lifecycle runner completes without timeout, leak, or unexplained skip |
 
 ## Scope
 
 The user deferred resource-intensive tests and all Linux validation on
-2026-11-11. This plan records that separate work. None of these checks is
-claimed as passed by the implementation session. This plan does not start
-containers, remote jobs, or load generators.
+2026-11-11. This plan records that separate work. Rows V00 through V14 remain
+deferred until a separate validation run records their results. This plan
+does not start containers, remote jobs, or load generators.
 
 The first version is 0.30.0. Release publication follows the final review;
 a prepared source tree is not evidence that the deferred checks passed.
@@ -108,10 +114,11 @@ checkout and output directory. The source build instructions identify the
 Free Pascal 3.2.4 toolchain source and mORMot2 pin. A compiler or container
 build is explicit work with its own log; it is not hidden inside a test.
 
-V06 runs the three component builds, optional Readers, public API probes,
-Lazarus packages, examples, bounded unit suites, and local integration. It
-checks that no absolute macOS or sibling-repository path is required. V07
-then applies the independent peer, proxy/TLS, and resource checks to Linux.
+V06 runs all five production component builds, all six packages, optional
+Readers, public API probes, examples, bounded unit suites, and local
+integration. It checks that no absolute macOS or sibling-repository path is
+required. V07 then applies the independent peer, proxy/TLS, and resource
+checks to Linux.
 An emulated target is identified as emulated and is not reported as native.
 
 ## V08 — Release decision

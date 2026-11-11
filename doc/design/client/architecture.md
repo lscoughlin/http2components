@@ -14,7 +14,7 @@ related:
   - "[client-api](client-api.md)"
   - "[transport](transport.md)"
   - "[fpc-runtime](fpc-runtime.md)"
-updated: 2026-10-13
+updated: 2026-11-11
 notes:
   - Imported from http2client/doc/design/architecture.md at the source commit recorded in the source inventory.
 ---
@@ -66,7 +66,7 @@ flowchart TB
   C -.->|"lease acquisition"| L["TStreamLease · one stream"]
   L -->|"attached to"| N["IConnection · TConnection"]
   P --> N
-  N -->|"owns"| S["IHttp2Socket · TSSLSocket · ALPN h2"]
+  N -->|"owns"| S["IHttp2Socket · common TLS session · ALPN h2"]
   N -->|"owns"| T["TConnectionThread · 1 per connection"]
   N -->|"owns"| H["THpackCodec · encoder + decoder, stateful"]
 ```
@@ -123,3 +123,14 @@ Conventions:
 ## RFC references
 
 - [RFC 1928](https://www.rfc-editor.org/rfc/rfc1928.html), checked 2026-11-11.
+
+## TLS provider boundary
+
+The client role accepts `ITLSContext` through `WithTlsContext`. The context
+creates a separate session for every connection. It can be shared across
+threads because policy is immutable; a session remains serialized by its
+transport owner. The OpenSSL and TlsLib providers live in separate packages.
+The client core has no provider imports. HTTPS proxy TLS uses
+`WithProxyTlsContext`, which selects a separate trust policy from the origin.
+The [common TLS contract](../common/tls-context.md) describes lifetime and
+trust separation.

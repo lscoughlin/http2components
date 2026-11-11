@@ -2,16 +2,17 @@
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: http2, server, config, factory, options, tls, queue
+updated: 2026-11-11
 notes:
-  - The factory and the option records of the server.
+  - The factory, its common TLS context, and the option records of the server.
   - Every server setting passes through the factory. Create holds the only
     block of defaults.
-  - Imported from http2server/doc/design/server/configuration.md at the source commit recorded in the source inventory.
+  - TLS configuration uses the common provider context.
 scope: The factory record, the option records it carries, and the validation rules.
 primary_types:
   - THttp2ServerFactory
-  - TTlsServerOptions
-  - TTlsVersion
+  - ITLSContext
+  - TTlsClientAuthMode
   - TQueueOptions
   - TQueueRefusalMode
   - TServerLimits
@@ -46,15 +47,15 @@ setting only through a `WithX` method.
 
 `Create` is a static class function that returns the record with the defaults
 (`server/src/Http2.Server.Config.pas`). The defaults appear once, in that body.
-The four option records hold their own defaults in their own `Create` bodies
-(`server/src/Http2.Server.Config.Tls.pas`, `server/src/Http2.Server.Config.Limits.pas`,
-`server/src/Http2.Server.Config.Socket.pas`, `server/src/Http2.Server.Config.pas`). The
-figure below shows the five records and their relation.
+The queue, limits, and socket option records hold their own defaults in
+their `Create` bodies. TLS policy is held by the selected common context, not
+by a server-specific TLS option record. The diagram shows the factory and its
+related policy values.
 
 ```mermaid
 flowchart TD
     F["THttp2ServerFactory"]
-    T["TTlsServerOptions"]
+    T["ITLSContext"]
     Q["TQueueOptions"]
     L["TServerLimits"]
     S["TSocketOptions"]
@@ -66,8 +67,8 @@ flowchart TD
     F --> B
 ```
 
-The factory is the home of every server setting. The protocol units hold the
-protocol bounds instead: `MinAllowedFrameSize` and `MaxAllowedFrameSize`
+The factory contains listener and server-operation settings. The protocol
+units contain protocol bounds: `MinAllowedFrameSize` and `MaxAllowedFrameSize`
 (`common/src/Http2.Common.Frames.pas`, `common/src/Http2.Common.Frames.pas`), and
 `MaxWindowSize` (`common/src/Http2.Common.FlowControl.pas`). A connection reads the
 remaining values from a settings record that the factory fills, as the
@@ -75,9 +76,8 @@ connection core states for `TConnectionCoreOptions`
 (`server/src/Http2.Server.Connection.Core.pas`).
 
 The test `TestDefaultsOnlyInCreate` reads the sources of the factory units
-and fails on a numeric literal above 1 outside a `Create` body
-(`test/server/Http2.Server.Config.Test.pas`). The test covers the four factory
-units: `Config`, `Config.Tls`, `Config.Limits` and `Config.Socket`.
+and checks defaults in their `Create` bodies
+(`test/server/Http2.Server.Config.Test.pas`).
 `Http2.Server.Stream.pas` holds its own constants (`DefaultReadTimeoutMs`,
 `DefaultWriteTimeoutMs` and `DefaultUpdateThreshold` in
 `server/src/Http2.Server.Stream.pas`), which a stream uses until the factory
@@ -97,43 +97,18 @@ sets a value.
 
 The listener fields are at `server/src/Http2.Server.Config.pas` (host, port, backlog, cleartext) and at `server/src/Http2.Server.Config.pas` (fallback, HTTP/1.1 limits, WebSocket).
 
-### The TLS settings
+### TLS context selection
 
-`TTlsServerOptions` is a record with its own fluent methods
-(`TTlsServerOptions` in `server/src/Http2.Server.Config.Tls.pas`). `THttp2ServerFactory.WithTls`
-accepts the record whole.
+The factory setting is `WithTlsContext(const AContext: ITLSContext)`. The
+context carries server identity, client trust anchors, TLS version bounds,
+and client-auth mode. The server factory does not create a provider or load
+OpenSSL. A provider context is built explicitly by the application and is
+checked for server-role support before a connection is accepted.
 
-| Setting | `WithX` | Meaning |
-|---|---|---|
-| `CertificateFile` | `WithCertificateFile` | the path of the PEM certificate file |
-| `KeyFile` | `WithKeyFile` | the path of the PEM private key file |
-| `KeyPassword` | `WithKeyPassword` | the password of an encrypted key, or an empty string |
-| `HandshakeTimeoutMs` | `WithHandshakeTimeoutMs` | the time a handshake may take |
-| `MinTlsVersion` | `WithMinTlsVersion` | the lowest TLS version that the listener accepts |
-| `MaxTlsVersion` | `WithMaxTlsVersion` | the highest TLS version that the listener accepts |
-
-`TTlsVersion` has two values (`server/src/Http2.Server.Config.Tls.pas`). The value
-`tvTls12` is TLS 1.2 and the default minimum. The value `tvTls13` is TLS 1.3
-and the default maximum. No value below TLS 1.2 exists by design, because
-HTTP/2 forbids older versions (RFC 9113, section 9.2, checked 2026-11-06 at
-https://www.rfc-editor.org/info/rfc9113; the plain-text copy is
-doc/references/rfc9113.txt).
-
-The client certificate settings follow in the same record. They default to no
-client certificate. [mtls](mtls.md) describes them.
-
-| Setting | `WithX` | Default | Meaning |
-|---|---|---|---|
-| `ClientCertMode` | `WithClientCertMode` | `ccmNone` | whether the server asks for a client certificate: `ccmNone`, `ccmOptional` or `ccmRequired` |
-| `ClientCaFile` | `WithClientCaFile` | empty | the PEM file with the trust anchors for client certificates |
-| `ClientTrustSystemStore` | `WithClientTrustSystemStore` | False | the operating system store adds trust anchors |
-| `ClientPartialChain` | `WithClientPartialChain` | False | a leaf or intermediate trust anchor is enough |
-| `ClientVerifyDepth` | `WithClientVerifyDepth` | 4 | the longest accepted chain, 1 to 16 |
-| `ClientCertPrincipal` | `WithClientCertPrincipal` | `ccpNone` | what the server writes to `Principal` for a verified client |
-
-The ALPN protocols are not a setting. The server offers `h2`, and it adds
-`http/1.1` when `Http11Fallback` is on. [tls](tls.md) describes how the ALPN name
-reaches OpenSSL.
+`WithClearTextAllowed` and `WithHttp11Fallback` remain separate listener
+settings. Required client authentication cannot be combined with cleartext.
+The listener offers `h2`; it also offers `http/1.1` when fallback is enabled.
+See [TLS](tls.md), [mutual TLS](mtls.md), and the [common context contract](../common/tls-context.md).
 
 ### The pool settings
 
@@ -236,7 +211,7 @@ then unused.
 | `HeaderTableSize` | `WithHeaderTableSize` | `SETTINGS_HEADER_TABLE_SIZE` of the HPACK codecs |
 
 The stream settings are declared at `server/src/Http2.Server.Config.pas`. The
-protocol limits come from the protocol units, not from the factory:
+protocol units contain these limits, not the factory:
 `MinAllowedFrameSize` and `MaxAllowedFrameSize`
 (`common/src/Http2.Common.Frames.pas`, `common/src/Http2.Common.Frames.pas`), and
 `MaxWindowSize` (`common/src/Http2.Common.FlowControl.pas`). A connection uses the
@@ -326,13 +301,6 @@ The rules are:
 | the outbound data frame size is 0, or 1024 to 16777215 | the outbound data frame size is outside the range |
 | the keep-alive values are at least 0, and all three are above 0 when the idle value is above 0 | the keep-alive values are not valid |
 | the buffer sizes are at least 0 | the socket buffer size is below 0 |
-| the minimum TLS version is not above the maximum | the minimum TLS version is above the maximum |
-| the certificate file is present when cleartext is off | the certificate file is empty |
-| a client certificate mode has a trust anchor | the mode is not `ccmNone`, the CA file is empty and the system store is off |
-| the client CA file exists | the CA file is named and absent |
-| the client verify depth is 1 to 16 | the depth is outside the range |
-| a client certificate mode has a server certificate | the mode is not `ccmNone` and the certificate file is empty |
-| the required mode runs with cleartext off | the mode is `ccmRequired` and cleartext is allowed |
 | the frame size is 16384 to 16777215 | the frame size is outside the range |
 | the initial stream window is at most 2^31-1 | the stream window is above the limit |
 | the initial connection window is at most 2^31-1 | the connection window is above the limit |
@@ -346,11 +314,11 @@ The rules are:
 | the handler is assigned | the handler is not assigned |
 
 Port 0 is legal, and it asks the operating system for a free port. A queue depth
-of 0 is legal too: it refuses every request that finds no free handler. The key
-file is optional, because a PEM certificate file can hold the key (the TLS layer
-accepts an empty key file). The certificate and the key are not required when `ClearTextAllowed` is set, as
-`TestValidateCleartextNeedsNoCertificate` shows
-(`test/server/Http2.Server.Config.Test.pas`).
+of 0 is legal too: it refuses every request that finds no free handler. TLS
+identity, trust, version, and client-auth checks happen when the provider
+context is built. The server factory checks that a selected context supports
+the server role and rejects a required client certificate policy when
+cleartext is allowed.
 
 A caller that builds a server raises `EServerConfigError` when `Validate`
 answers `False` (`common/src/Http2.Common.Errors.pas`). The message holds the whole
@@ -366,7 +334,7 @@ The values are:
 | Group | Defaults |
 |---|---|
 | Listener | host `0.0.0.0`, port 8443, backlog 128, cleartext off |
-| TLS | no certificate, no key, no password, ALPN `h2`, handshake timeout 10000 ms, TLS 1.2 to TLS 1.3, no client certificate (`ccmNone`), verify depth 4, principal `ccpNone` |
+| TLS | no context selected; a context is required unless cleartext is enabled; ALPN offers `h2`; TLS policy comes from the provider context |
 | Pools | 4 IO threads, 8 handler threads, 2 cancel workers |
 | Queue | depth 64, maximum wait 5000 ms, refusal by `REFUSED_STREAM` |
 | Server limits | 10000 connections, stream timeouts 30000 ms, write timeout 60000 ms, outbound caps 10000 frames and 1000 control frames, no separate DATA cap |

@@ -2,9 +2,10 @@
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: http2, server, public-api, factory, handler, observer, statistics
+updated: 2026-11-11
 notes:
   - This document describes the public surface of the library.
-  - Imported from http2server/doc/design/server/public-api.md at the source commit recorded in the source inventory.
+  - Client certificate metadata contains copied verified peer values.
 scope: The public surface of the library — the factory, the server, the handler contract and the observation events.
 primary_types:
   - THttp2ServerFactory
@@ -90,15 +91,13 @@ facade also exports `TAccessLogRecord`, `TStdOutAccessLogWriter`,
 `FormatCommonLog` and `BasicAuthUser`. [access-log](access-log.md) describes the
 record and the format.
 
-The request also carries a read-only `ClientCertificate` property. It answers the
-`IClientCertificate` of the TLS client when the listener asks for client
-certificates, and nil otherwise. The facade exports `IClientCertificate`,
-`TClientCertMode` with the values `ccmNone`, `ccmOptional` and `ccmRequired`, and
-`TClientCertPrincipal` with the values `ccpNone`, `ccpSubjectDn` and
-`ccpCommonName`. `IServerRequest` has a new GUID because of the two new
-properties. The observer receives `seTlsHandshakeFailed` when a handshake fails
-while a client certificate mode is on, and `TServerStats.TlsHandshakeFailedTotal`
-counts those failures. [mtls](mtls.md) describes the feature.
+The request also carries a read-only `ClientCertificate` property. It answers
+the copied `IClientCertificate` metadata from a verified TLS peer, or nil when
+no verified certificate is present. `TClientCertPrincipal` selects no text,
+the subject DN, or the common name. The TLS context policy uses common
+`TTlsClientAuthMode` values `tlsAuthNone`, `tlsAuthRequest`, and
+`tlsAuthRequire`. `IServerRequest` exposes no native certificate handle.
+[mtls](mtls.md) describes the feature.
 
 ## Detached streams
 

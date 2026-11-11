@@ -8,16 +8,15 @@ notes:
 
 # Migration to 0.30.0
 
-This table maps all 102 production units in the client and server source
-projects. A target with several paths records an implemented split. New
-helper units are listed in the target paths. Verification results are in the
+The unit table maps 102 units from the historical client and server source
+projects. A target with several paths records a source split. The table does
+not describe the current TLS API; current provider units and migration calls
+are listed below. Verification results are in the
 [current status record](verification/current-status.md).
 
-The library source directories are `common/src`, `client/src`, and
-`server/src`. Each directory contains the units with its matching namespace.
-No library unit is directly under `src/`. A client build uses the common
-and client search paths; a server build uses the common and server search
-paths. A combined build uses all three directories.
+The five production roots are `common/src`, `client/src`, `server/src`,
+`tls/openssl/src`, and `tls/tlslib/src`. Common owns the TLS contract. Client
+and server depend on common and do not import either provider.
 
 ## Unit names
 
@@ -51,7 +50,7 @@ paths. A combined build uses all three directories.
 | http2server | `Http2Server.AccessLog.Handler` | `Http2.Server.AccessLog.Handler` | move |
 | http2server | `Http2Server.AccessLog` | `Http2.Server.AccessLog` | move |
 | http2server | `Http2Server.Admission` | `Http2.Server.Admission` | move |
-| http2server | `Http2Server.Alpn` | `Http2.Server.Alpn` | move |
+| http2server | `Http2Server.Alpn` | Retired; ALPN metadata crosses the common session interface. | retired |
 | http2server | `Http2Server.Async.Counters` | `Http2.Server.Async.Counters` | move |
 | http2server | `Http2Server.Async.Events` | `Http2.Server.Async.Events` | move |
 | http2server | `Http2Server.Async.Options` | `Http2.Server.Async.Options` | move |
@@ -62,7 +61,7 @@ paths. A combined build uses all three directories.
 | http2server | `Http2Server.ClientCert` | `Http2.Server.ClientCert` | move |
 | http2server | `Http2Server.Config.Limits` | `Http2.Server.Config.Limits` | move |
 | http2server | `Http2Server.Config.Socket` | `Http2.Server.Config.Socket` | move |
-| http2server | `Http2Server.Config.Tls` | `Http2.Server.Config.Tls` | move |
+| http2server | `Http2Server.Config.Tls` | Retired; provider context policies own TLS configuration. | retired |
 | http2server | `Http2Server.Config` | `Http2.Server.Config` | move |
 | http2server | `Http2Server.Connection.Core` | `Http2.Server.Connection.Core` | move |
 | http2server | `Http2Server.Connection.Flush` | `Http2.Server.Connection.Flush` | move |
@@ -107,8 +106,8 @@ paths. A combined build uses all three directories.
 | http2server | `Http2Server.StreamHost` | `Http2.Server.StreamHost` | move |
 | http2server | `Http2Server.StreamIdSet` | `Http2.Server.StreamIdSet` | move |
 | http2server | `Http2Server.StreamPool` | `Http2.Server.StreamPool` | move |
-| http2server | `Http2Server.Tls.Client` | `Http2.Server.Tls.Client` | move |
-| http2server | `Http2Server.Tls` | `Http2.Server.Tls` | move |
+| http2server | `Http2Server.Tls.Client` | Retired; provider contexts own client trust and verification. | retired |
+| http2server | `Http2Server.Tls` | Retired; the server adapter uses common `ITLSSession`. | retired |
 | http2server | `Http2Server.Waiter` | `Http2.Server.Waiter` | move |
 | http2server | `Http2Server.Ws.Accept` | `Http2.Server.WebSocket.Accept` | move |
 | http2server | `Http2Server.Ws.Close` | `Http2.Server.WebSocket.Close` | move |
@@ -152,21 +151,78 @@ the listed client units. The server
 | Facade aliases | Common names use aliases to the common unit. Existing interface GUIDs are retained where the source declares them. `IHttpHeaders` has no explicit GUID in either source. |
 | Legacy client umbrella | The old `Http2` umbrella is removed; callers use `Http2.Client` and explicit feature units. |
 
-## Package and version map
+## Packages and version
 
-| Source package/version | Target | Status |
-| --- | --- | --- |
-| Client package 0.23.0 | `http2client.lpk`, version 0.30.0 | Metadata uses the merged client source layout. |
-| Server package 0.29.0 | `http2server.lpk`, version 0.30.0 | Metadata uses the merged server source layout. |
-| Shared units | `http2common.lpk`, version 0.30.0 | Six shared units use the common package. |
-| Client units | `http2client.lpk`, version 0.30.0 | 55 units use the client package. |
-| Server units | `http2server.lpk`, version 0.30.0 | 73 units use the server package. |
-| JSON/XML readers | Optional `http2clientreaders.lpk`, version 0.30.0 | One optional unit; core client has no reader dependency. |
-| Combined tree | `VERSION` 0.30.0 | Version metadata is 0.30.0; release status is not asserted. |
+| Package | Units | Role |
+| --- | ---: | --- |
+| `http2common` | 11 | Shared HTTP/2 and TLS interfaces. |
+| `http2client` | 55 | Client role, without provider units. |
+| `http2server` | 71 | Server role, without provider units. |
+| `http2openssl` | 6 | OpenSSL provider. |
+| `http2tlslib` | 8 | TlsLib provider. |
+| `http2clientreaders` | 1 | Optional JSON and XML readers. |
 
-The source package numbers identify source metadata. They do not establish
-that versions 0.23.0 or 0.29.0 were published. The combined 0.30.0 version
-is the merged tree version, not a release claim.
+All six Lazarus packages and `VERSION` report 0.30.0. These source values do
+not state that version 0.30.0 is published.
+
+## TLS API migration
+
+The common API owns `ITLSContext`, `ITLSSession`, `ITLSIdentity`, policy
+records, and copied peer metadata. `Http2.Common` aliases the same context
+interface. Role facades do not re-export provider types as role-owned
+interfaces.
+
+| Earlier API | Current API |
+| --- | --- |
+| `THttp2ServerFactory.WithTls(TTlsServerOptions)` | `THttp2ServerFactory.WithTlsContext(ITLSContext)` with identity and policy held by a provider context. |
+| Client TLS selected by the default socket factory | `THttpClientFactory.WithTlsContext(ITLSContext)` with `TOpenSSLTlsContextFactory` or `TTlsLibContextFactory`. |
+| Client `WithCACertFile` | `TTlsClientPolicy.WithTrustAnchors` with PEM file paths; OpenSSL system trust is an explicit `WithSystemTrust(True)` choice. |
+| Client `WithInsecureTls(True)` | `TTlsClientPolicy.WithInsecure(True)` before the provider factory builds the context. The old client method raises a configuration error. |
+| Client certificate file loading through the client factory | `TOpenSSLIdentity.FromPemFiles` or `TTlsLibIdentity.FromPemFiles` returns common `ITLSIdentity`. |
+| Native `PX509`, `PEVP_PKEY`, or peer certificate getters | `ITLSIdentity.Leaf` and verified `ITLSPeerCertificate` copied metadata. The common API has no native-handle accessor. |
+| One TLS policy for proxy and origin | `WithTlsContext` for the origin and `WithProxyTlsContext` for HTTPS proxy TLS. Trust and identity stay separate. |
+
+The client call shape is:
+
+```pascal
+ClientPolicy := TTlsClientPolicy.SecureDefault
+  .WithTrustAnchors(['/etc/ssl/private/example-ca.pem']);
+Context := TOpenSSLTlsContextFactory.Create
+  .WithClientPolicy(ClientPolicy)
+  .Build;
+Client := THttpClientFactory.Create
+  .WithTlsContext(Context)
+  .Build;
+```
+
+The server call shape is:
+
+```pascal
+ServerIdentity := TOpenSSLIdentity.FromPemFiles('server-chain.pem', 'server.key');
+ServerPolicy := TTlsServerPolicy.SecureDefault
+  .WithServerIdentity(ServerIdentity);
+Context := TOpenSSLTlsContextFactory.Create
+  .WithServerPolicy(ServerPolicy)
+  .Build;
+ServerFactory := THttp2ServerFactory.Create
+  .WithTlsContext(Context);
+```
+
+The old client certificate file helper is retired. The new identity comes
+from the selected provider, then enters context policy or a client factory or
+request identity setting. The old server TLS options record is retired; the
+provider context owns its server identity and policy.
+
+One context can contain client and server policies and can be shared between
+roles and threads. Every transport creates a separate session; a nil selected
+identity suppresses the context default. Neither provider enables session
+resumption or early data.
+
+The TlsLib provider does not support system trust, explicit verification
+depth including zero, DER identities, distinct SNI and verification names,
+or peer verification without hostname verification. Its verification depth
+is fixed at four. The OpenSSL provider supports system trust and configurable
+depth. Both support TLS 1.2 and TLS 1.3 with PEM and PKCS#12 identities.
 
 ## Verification status
 

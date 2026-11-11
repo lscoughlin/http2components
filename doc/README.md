@@ -10,13 +10,21 @@ notes:
 
 This directory holds the design documents, reference copies, and source
 verification records. The source verification records describe earlier
-commits. They do not report results for the combined source tree.
+source revisions. They do not report results for the combined TLS implementation.
+
+## TLS design
+
+| Document | Subject |
+| --- | --- |
+| [Common TLS context](design/common/tls-context.md) | Shared context, policy, identity, and session contract. |
+| [OpenSSL provider](design/tls/openssl.md) | OpenSSL capabilities and native dependency boundary. |
+| [TlsLib provider](design/tls/tlslib.md) | TlsLib capabilities and unsupported features. |
 
 ## Common design
 
 | Document | Subject |
 | --- | --- |
-| [Architecture](design/common/architecture.md) | The three public entry units and the separation of common, client, and server units. |
+| [Architecture](design/common/architecture.md) | Common, role, and provider boundaries. |
 | [Protocol](design/common/protocol.md) | The shared HTTP/2 protocol areas and their RFC references. |
 
 ## Client design
@@ -77,8 +85,8 @@ source URLs, retrieval dates, and SHA-256 hashes. The server reference files
 are verbatim copies from its source revision. RFC 1928 and RFC 1929 are the
 additional client references.
 
-The [migration table](migration-0.30.0.md) contains all 102 old-to-new unit
-names. The source histories are [client 0.23.0](history/client-0.23.0.md)
+The [migration table](migration-0.30.0.md) contains the unit map and current
+TLS API migration notes. The source histories are [client 0.23.0](history/client-0.23.0.md)
 and [server 0.29.0](history/server-0.29.0.md). Those numbers identify source
 package versions; they do not assert that either version was released.
 

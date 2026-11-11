@@ -203,31 +203,14 @@ The stream host callback is the bridge between the two sides
 pointer and not as an interface, so the core and the host form no reference
 cycle.
 
-## The TLS handshake
+## TLS session progress
 
-The server uses TLS route A. mORMot2 enables TLS with the `acoEnableTls`
-option and sets the server context after the socket binds; the handshake then
-runs at the first read of each connection
-(`mormot.net.async.pas`, `...:4247-4270`). The server adds the option
-when the factory names a certificate (`THttp2AsyncServer.Create`), and
-it installs the server context and the ALPN callback in `Start`
-(`THttp2AsyncServer.Start`). The route itself is the subject of
-[tls](tls.md).
-
-The handshake blocks the IO thread that runs it. mORMot2 bounds the
-`SSL_accept` loop with a 5000 ms deadline
-(`mormot.lib.openssl11.pas`). The server clamps the factory
-handshake timeout to that bound (`EffectiveHandshakeTimeoutMs` in
-`server/src/Http2.Server.Tls.pas`), and it also sets the socket send and receive
-deadlines to the same value before the handshake starts (`SetHandshakeDeadline`
-in `server/src/Http2.Server.Async.Options.pas`). A client that opens a
-socket and sends nothing therefore holds one IO thread for a bounded time
-only.
-
-A TLS connection must select `h2`. `OnFirstRead` calls the base method, which
-runs the handshake, and then refuses the connection when the negotiated name
-is not `h2` and the HTTP/1.1 fallback is off (`THttp2AsyncConnection.OnFirstRead`). No HTTP/1.1 request ever
-reaches the HTTP/2 state machine.
+The async accept path creates a common TLS session from the listener context.
+The connection moves ciphertext between the socket and the session buffers.
+Session calls do not perform socket I/O or block an IO thread. Each connection
+serializes its own session calls, while the context is immutable and shared.
+The absolute monotonic handshake deadline does not restart when input arrives.
+The TLS design and ALPN routing are described in [TLS](tls.md).
 
 ## The thread rule
 
@@ -301,31 +284,20 @@ relative cost of the two pollers under load is the subject of the load-testing
 work, and this document records no measurement, because this host is macOS
 aarch64 and the comparison needs a Linux host as well.
 
-## Open verification
+## TLS validation boundary
 
-The pure TLS decisions and the h2c loopback run in the normal suite
-(`test/server/Http2.Server.Async.Test.pas`). The loopback test starts the server on a
-loopback port, speaks h2c with the copied frame builders and proves a full
-request and a full response. A handler that blocks for five seconds on one
-connection still leaves a second connection served. The thread rule has its
-own tests. The idle close and the first-header-block close each have a test
-that a raw client drives by sleeping, and both checks fail when the timeout
-wiring is mutated, so they prove the behaviour and not the timing.
-
-**Open gap.** The suite holds no live TLS handshake loopback. It
-needs a self-signed certificate, generated at test time, and a client that
-offers the `h2` ALPN name. The ALPN select rule and the negotiated-name check
-carry unit tests, and the h2c loopback proves the pool, but no test drives
-`h2` through a real OpenSSL handshake on this server. The platform run on
-Linux amd64 is also open: this host is macOS aarch64, so the Linux result is a
-measured gap.
+The current server uses common buffer sessions for TLS. The bounded TLS and
+integration targets cover handshake scheduling, ALPN routing, transport
+backpressure, shutdown, provider pairing, and verified peer metadata. The
+current verification record lists each executed target and its limits. Linux,
+external-peer conformance, load, and long-duration checks remain separate
+validation work. This source design document does not claim those results.
 
 ## Sources
 
 | Claim | Source | Read |
 |---|---|---|
 | The async class set, its virtual methods and the thread roles | `third_party/mORMot2/src/net/mormot.net.async.pas` (pinned revision) | 2026-10-07 |
-| The 5000 ms `SSL_accept` deadline and the TLS setup order | `third_party/mORMot2/src/lib/mormot.lib.openssl11.pas`, `:12146-12167` | 2026-10-07 |
 | The `DefaultListenBacklog` global | `third_party/mORMot2/src/net/mormot.net.sock.pas` | 2026-10-07 |
 | The connection cap test and the refusal without a reply | `third_party/mORMot2/src/net/mormot.net.async.pas` | 2026-11-06 |
 | The socket defaults of the accept path | `third_party/mORMot2/src/net/mormot.net.sock.pas`, `:3669-3684` | 2026-11-06 |

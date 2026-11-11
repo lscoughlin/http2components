@@ -29,11 +29,12 @@ flowchart TD
   Server --> Common
 ```
 
-The library source directories are `common/src`, `client/src`, and
-`server/src`. Each directory contains the units with its matching namespace.
-No library unit is directly under `src/`. A client build uses the common
-and client search paths; a server build uses the common and server search
-paths. A combined build uses all three directories.
+The five production source roots are `common/src`, `client/src`,
+`server/src`, `tls/openssl/src`, and `tls/tlslib/src`. Each root contains units
+with its matching namespace. A common-only build has no role or provider
+dependency. Client and server core builds do not load a TLS provider. Provider
+packages depend on common, and applications select a provider through the
+common context interface.
 
 ## Shared protocol ownership
 
@@ -43,8 +44,13 @@ the header compression codec and records. `Http2.Common.Frames` owns frame
 formats and shared settings operations. `Http2.Common.FlowControl` owns
 connection and stream credit operations.
 
-The client and server retain separate transport, connection, HTTP/1.1, TLS,
-WebSocket, and event-stream behavior. Similar names do not make these role
+The client and server retain separate transport, connection, HTTP/1.1,
+WebSocket, and event-stream behavior. Common owns `ITLSContext`,
+`ITLSSession`, TLS policy, identity metadata, peer metadata, and negotiated
+metadata. OpenSSL and TlsLib implement the same common contract. A context can
+be shared by client and server roles and threads; every connection owns a
+separate serialized session. Client trust of a server is separate from server
+trust of a client. Session resumption and early data are disabled. Similar names do not make these role
 contracts identical. The client and server `IBodyWriter` contracts remain
 distinct. A consumer that uses both roles names the role-qualified type.
 
