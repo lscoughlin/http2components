@@ -537,3 +537,26 @@ separate from timeout progress. The owner checks queue refill and first
 positive backlog behavior and adds a regression that distinguishes a
 continued kernel drain from a stalled peer. The unchanged no-reader close,
 paced full-body, explicit abort, and complete server checks remain required.
+
+## LV-31: Load fixture admission capacity
+
+The combined load check holds 10,000 WebSocket connections and 10,000 SSE
+connections while it sends additional ordinary requests. The examples raise
+the detached-stream limit to 30,000 but retain the default listener limit of
+10,000 connections. The SSE listener therefore has no capacity for those
+ordinary requests after all hold connections open.
+
+The client owner sets an explicit listener limit with capacity for the
+required held connections and concurrent ordinary requests. The WebSocket
+load mode and the SSE hold example describe their effective limits. Normal
+WebSocket example behavior outside load mode remains unchanged. Library
+defaults and the 10,000-session workload are unchanged. Root reviews the
+fixture change and compiles the affected examples before the load run.
+
+The incomplete-handshake tool also needs an exact admission-bound check.
+The public limit maps to mORMot MaxConnections minus one, but mORMot compares
+the current reader count with a strict greater-than test. The owner checks
+that complete path and a small controlled local probe before claiming an
+effective limit of public limit minus one. The tool must use the verified
+public limit and actual accepted counts; it must not call client-closed
+excess sockets server refusals. No remote jobs overlap the acceptance batch.
