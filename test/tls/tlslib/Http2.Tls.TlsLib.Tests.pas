@@ -45,6 +45,7 @@ type
   end;
 
 var TestStartMs: QWord;
+  PassedCheckCount: Integer;
 
 function TForeignTlsIdentity.BackendName: string; begin Result := 'TlsLib'; end;
 function TForeignTlsIdentity.Leaf: TTlsCertificateSummary; begin Result := Default(TTlsCertificateSummary); end;
@@ -92,6 +93,7 @@ end;
 procedure Check(const ACondition: Boolean; const AName: string);
 begin
   if not ACondition then raise Exception.Create('failed: ' + AName);
+  Inc(PassedCheckCount);
   WriteLn('PASS ', AName, ' +', GetTickCount64 - TestStartMs, ' ms');
   Flush(Output);
 end;
@@ -208,6 +210,7 @@ var
   ClientCreateThread, ServerCreateThread: TTlsLibSessionCreateThread;
 begin
   TestStartMs := GetTickCount64;
+  PassedCheckCount := 0;
   Root := ProjectPath('test/fixtures/client/certs/mtls');
   Cert := Root + '/server.crt';
   Key := Root + '/server.key';
@@ -288,7 +291,6 @@ begin
   except on E: ETlsContextError do
     Failed := Pos('certificate bundle', LowerCase(E.Message)) > 0; end;
   Check(Failed, 'malformed partial-chain trust anchor fails during Build');
-  Inc(Count, 2);
 
   LoaderFailed := True;
   try
@@ -331,7 +333,6 @@ begin
   ServerOptions := Default(TTlsServerSessionOptions);
   ServerOptions := ServerOptions.WithAlpns(['h2']);
   Count := RunTlsSessionContract(Context, ClientOptions, ServerOptions);
-  Inc(Count, 10);
 
   FailureSession := Context.CreateServerSession(ServerOptions);
   SetLength(FailureInput, 6);
@@ -351,7 +352,6 @@ begin
   Check(Failed, 'repeat Advance raises a fresh fatal session error');
   FailureSession.Abort;
   FailureSession := nil;
-  Inc(Count, 3);
 
   InvalidClientOptions := ClientOptions;
   InvalidClientOptions.HandshakeStartMs := 0;
@@ -370,7 +370,6 @@ begin
   Check(Failed, 'repeat deadline advancement raises a fresh error');
   FailureSession.Abort;
   FailureSession := nil;
-  Inc(Count, 3);
 
   InvalidClientOptions := ClientOptions.WithAlpns(['']);
   Failed := False;
@@ -390,7 +389,6 @@ begin
   try Context.CreateClientSession(InvalidClientOptions);
   except on E: ETlsContextError do Failed := Pos('16 kib', LowerCase(E.Message)) > 0; end;
   Check(Failed, 'oversized aggregate ALPN rejected');
-  Inc(Count, 3);
 
   BeforeCounts := TlsLibActiveResourceCounts;
   TemporaryIdentity := TTlsLibIdentity.FromPemFiles(Cert, Key);
@@ -400,7 +398,6 @@ begin
   TemporaryIdentity := nil;
   Check(TlsLibActiveResourceCounts.Credentials = BeforeCounts.Credentials,
     'credential lifecycle returns to baseline');
-  Inc(Count, 2);
   BeforeCounts := TlsLibActiveResourceCounts;
   for LifecycleIndex := 1 to 10 do
   begin
@@ -423,7 +420,6 @@ begin
       (LiveCounts.Engines = BeforeCounts.Engines),
       'ten-cycle context and session counts return to baseline');
   end;
-  Inc(Count, 20);
   BeforeCounts := TlsLibActiveResourceCounts;
   StartGate := TEvent.Create(nil, True, False, '');
   ClientCreateThread := TTlsLibSessionCreateThread.Create(Context, StartGate,
@@ -448,7 +444,6 @@ begin
     ServerCreateThread.Free;
     StartGate.Free;
   end;
-  Inc(Count, 2);
 
   Ok := TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName);
   Check(Ok and (Version = tls13), 'TLS 1.3 version and DNS SNI');
@@ -456,7 +451,6 @@ begin
   Check((Peer <> nil) and Peer.Verified and (Length(Peer.Chain) >= 1) and
     (Length(Peer.DnsNames) > 0) and (Peer.DnsNames[0] = 'localhost') and
     (Length(Peer.IpAddresses) >= 1), 'peer SAN and chain metadata');
-  Inc(Count, 3);
 
   ClientPolicy := ClientPolicy.WithVersions(tls12, tls12);
   ServerPolicy := ServerPolicy.WithVersions(tls12, tls12);
@@ -464,7 +458,6 @@ begin
   Ok := TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName);
   Check(Ok and (Version = tls12), 'TLS 1.2 explicit version');
   Check(Pos('TLS_', CipherName) = 1, 'TLS 1.2 negotiated standard cipher name');
-  Inc(Count, 2);
 
   ClientPolicy := TTlsClientPolicy.SecureDefault;
   ClientPolicy.VerifyPeer := False;
@@ -474,7 +467,6 @@ begin
   Ok := TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName);
   Check(Ok and (Peer <> nil) and not Peer.Verified,
     'insecure client keeps presented peer metadata marked unverified');
-  Inc(Count);
 
   ClientPolicy := TTlsClientPolicy.SecureDefault.WithTrustAnchors([Root + '/ca.crt']);
   ServerPolicy := TTlsServerPolicy.SecureDefault.WithServerIdentity(Identity);
@@ -492,16 +484,13 @@ begin
   Context := MakeContext(ClientPolicy, ServerPolicy);
   Check(TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'mTLS none accepts valid configured identity');
-  Inc(Count);
   ClientOptions.Identity := nil;
   Check(TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'mTLS none accepts absent client identity');
-  Inc(Count);
   ServerPolicy := ServerPolicy.WithClientAuth(tlsAuthRequest);
   Context := MakeContext(ClientPolicy, ServerPolicy);
   Check(TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'mTLS request accepts absent client identity');
-  Inc(Count);
   ClientOptions.Identity := ClientIdentity;
   Check(TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'mTLS request accepts trusted client identity');
@@ -509,23 +498,19 @@ begin
   Check(not TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'mTLS request rejects invalid presented client identity');
   ClientOptions.Identity := nil;
-  Inc(Count, 2);
   ServerPolicy := ServerPolicy.WithClientAuth(tlsAuthRequire);
   Context := MakeContext(ClientPolicy, ServerPolicy);
   Check(not TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'mTLS require rejects absent client identity');
-  Inc(Count);
   ClientOptions.Identity := ClientIdentity;
   Check(TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'mTLS require accepts trusted identity');
-  Inc(Count);
   ClientOptions.Identity := nil;
   Check(not TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'explicit nil identity fails required mTLS');
   ClientOptions.Identity := OtherClientIdentity;
   Check(not TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'untrusted client identity fails required mTLS');
-  Inc(Count, 2);
   ClientOptions.Identity := ClientIdentity;
 
   ClientOptions.HostName := 'wrong.example';
@@ -546,7 +531,6 @@ begin
   except on E: ETlsContextError do Ok := Pos('SNI', E.Message) > 0; end;
   Check(Ok, 'unsupported separate SNI and hostname fails before transport');
   ClientOptions.ServerName := '';
-  Inc(Count, 4);
 
   PartialServerIdentity := TTlsLibIdentity.FromPemFiles(
     ProjectPath('test/tls/tlslib/fixtures/server-intermediate.crt'),
@@ -569,7 +553,6 @@ begin
   Check((Length(Peer.DnsNames) > 0) and (Length(Peer.IpAddresses) > 0) and
     (Length(Peer.UriNames) > 0) and (Length(Peer.EmailAddresses) > 0),
     'DNS, IP, URI, and email SAN metadata');
-  Inc(Count, 2);
   ClientPolicy := ClientPolicy.WithTrustAnchors(
     [Root + '/intermediate.crt', Root + '/ca.crt']).WithPartialChain(False);
   ServerPolicy := ServerPolicy.WithTrustAnchors([Root + '/ca.crt'])
@@ -578,7 +561,6 @@ begin
   Context := MakeContext(ClientPolicy, ServerPolicy);
   Check(TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'root trust succeeds with intermediate in strict trust bundle');
-  Inc(Count);
   Ok := False;
   try
     MakeContext(ClientPolicy.WithTrustAnchors([Root + '/intermediate.crt'])
@@ -586,7 +568,6 @@ begin
   except on E: ETlsContextError do
     Ok := Pos('partial-chain', LowerCase(E.Message)) > 0; end;
   Check(Ok, 'intermediate anchor rejected without partial-chain policy');
-  Inc(Count);
 
   OtherRoot := Root + '/other-ca.crt';
   Context := MakeContext(ClientPolicy.WithTrustAnchors([OtherRoot]),
@@ -597,9 +578,8 @@ begin
     .WithClientAuth(tlsAuthNone));
   Check(not TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'expired server certificate fails');
-  Inc(Count, 2);
 
-  WriteLn('PASS ', Count, ' cases');
+  WriteLn('PASS ', Count + PassedCheckCount, ' cases');
 end;
 
 begin
