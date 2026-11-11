@@ -15,13 +15,13 @@ program Http2.Server.RunTests;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, consoletestrunner, Http2.Server.TestRunner;
+  SysUtils, Http2.Server.TraceRunner, Http2.Server.TestRunner;
 
 var
-  App: TTestRunner;
+  App: THttp2ServerTestRunner;
 begin
   RegisterTests;
-  App := TTestRunner.Create(nil);
+  App := THttp2ServerTestRunner.Create(nil);
   try
     App.Initialize;
     App.Title := 'http2server test suite';

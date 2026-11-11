@@ -5,7 +5,9 @@ from __future__ import annotations
 
 import os
 import platform
+import codecs
 import re
+import selectors
 import shlex
 import shutil
 import signal
@@ -687,23 +689,83 @@ def run_suite(binary: Path, needs_openssl: bool = False,
     print(f"Test start (UTC): {datetime.now(timezone.utc).isoformat()}; "
           f"limit: {timeout_seconds}s", flush=True)
     started = time.monotonic()
-    proc = subprocess.Popen(args, cwd=cwd, env=env, text=True,
-                            stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+    proc = subprocess.Popen(args, cwd=cwd, env=env, stdout=subprocess.PIPE,
+                            stderr=subprocess.STDOUT, bufsize=0,
                             start_new_session=True)
-    try:
-        stdout, _ = proc.communicate(timeout=timeout_seconds)
-    except subprocess.TimeoutExpired:
-        os.killpg(proc.pid, signal.SIGTERM)
+    assert proc.stdout is not None
+    selector = selectors.DefaultSelector()
+    selector.register(proc.stdout, selectors.EVENT_READ)
+    decoder = codecs.getincrementaldecoder("utf-8")("replace")
+    output: list[str] = []
+    stdout_open = True
+    timed_out = False
+    killed = False
+    stop_deadline = 0.0
+
+    def emit(data: bytes, *, final: bool = False) -> None:
+        chunk = decoder.decode(data, final=final)
+        if chunk:
+            output.append(chunk)
+            print(chunk, end="", flush=True)
+
+    def signal_group(signum: int) -> None:
         try:
-            stdout, _ = proc.communicate(timeout=3)
+            os.killpg(proc.pid, signum)
+        except ProcessLookupError:
+            pass
+
+    try:
+        while True:
+            now = time.monotonic()
+            if not timed_out and now - started >= timeout_seconds:
+                timed_out = True
+                stop_deadline = now + 3
+                signal_group(signal.SIGTERM)
+            elif timed_out and not killed and now >= stop_deadline:
+                signal_group(signal.SIGKILL)
+                killed = True
+
+            child_done = proc.poll() is not None
+            if child_done and not stdout_open:
+                break
+
+            wait = 0.1
+            if not timed_out:
+                wait = min(wait, max(0.0, started + timeout_seconds - now))
+            elif not killed:
+                wait = min(wait, max(0.0, stop_deadline - now))
+            if stdout_open:
+                events = selector.select(wait)
+            else:
+                time.sleep(wait)
+                events = []
+            for key, _ in events:
+                try:
+                    data = os.read(key.fileobj.fileno(), 65536)
+                except BlockingIOError:
+                    continue
+                if data:
+                    emit(data)
+                else:
+                    selector.unregister(key.fileobj)
+                    stdout_open = False
+                    emit(b"", final=True)
+    except BaseException:
+        signal_group(signal.SIGTERM)
+        try:
+            proc.wait(timeout=3)
         except subprocess.TimeoutExpired:
-            os.killpg(proc.pid, signal.SIGKILL)
-            stdout, _ = proc.communicate()
-        if stdout:
-            print(stdout, end="", flush=True)
+            signal_group(signal.SIGKILL)
+            proc.wait()
+        raise
+    finally:
+        selector.close()
+        proc.stdout.close()
+
+    stdout = "".join(output)
+    if timed_out:
         print(f"Test elapsed: {time.monotonic() - started:.3f}s (timeout)", flush=True)
         raise SystemExit(f"Test run exceeded TEST_TIMEOUT={timeout_seconds}s; process group stopped")
-    print(stdout, end="", flush=True)
     print(f"Test elapsed: {time.monotonic() - started:.3f}s; "
           f"child exit: {proc.returncode}", flush=True)
     if proc.returncode:
