@@ -8,9 +8,6 @@ notes:
   - Unit references use the common and client namespaces.
 ---
 }
-/// The WebSocket connection: opening handshake over an HTTP/1.1-only dial, a
-/// reader thread that delivers listener callbacks under demand, serialised
-/// sends and the closing handshake (doc/design/websocket.md).
 unit Http2.Client.WebSocket.Connection;
 
 {$mode delphi}{$H+}
@@ -22,7 +19,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs, Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Tls,
   Http2.Client.Http1, Http2.Client.WebSocket, Http2.Client.Clock, Http2.Common.Headers, Http2.Client.Messages,
-  Http2.Client.RequestObserver;
+  Http2.Client.RequestObserver, Http2.Client.WebSocket.Connection.Types;
 
 const
   /// the reader wakes this often to notice Abort, timers and demand; on a
@@ -37,40 +34,6 @@ const
 type
   TWebSocketConnection = class;
 
-  /// how a WebSocket session ended, as the connection saw it
-  // - ClosedBy and CloseCode follow doc/design/request-observability.md:
-  //   CloseCode and CloseReason are the peer's close frame when one arrived,
-  //   else the code this side closed a failed session with, else 1006
-  TWsSessionEnd = record
-    ClosedBy: TCloseInitiator;
-    CloseCode: Integer;
-    CloseReason: string;
-    /// borrowed for the call; nil unless the session failed
-    Error: Exception;
-    /// the connection was released with no end of any kind recorded
-    Abandoned: Boolean;
-    /// payload bytes of the data messages received and sent
-    BytesIn, BytesOut: Int64;
-  end;
-
-  /// what the connection reports to the request observer's attempt for one
-  /// WebSocket session; the attempt object also answers IAttemptProgress
-  // - the handshake calls run on the caller's thread before the reader thread
-  //   starts, so OnResponseHeaders always precedes the first message and the
-  //   end
-  IWebSocketAttempt = interface
-    ['{7D1E5A02-3B94-4C6F-8E21-5A0C9B3D6F20}']
-    /// the handshake headers after the observers injected theirs
-    function HandshakeHeaders: TArray<TWsHeaderField>;
-    /// the handshake request has been written
-    procedure HandshakeWritten;
-    /// the server answered 101; ASubprotocol is the one it chose ('' if none)
-    procedure HandshakeAccepted(const AStatus: Integer;
-      const AFields: TArray<TWsHeaderField>; const ASubprotocol: string);
-    /// the session is over; the connection calls it at most once
-    procedure SessionEnded(const AEnd: TWsSessionEnd);
-  end;
-
   TWsReaderThread = class(TThread)
   private
     FConn: TWebSocketConnection;
@@ -80,13 +43,9 @@ type
     constructor Create(const AConn: TWebSocketConnection);
   end;
 
-  /// an open WebSocket.  One reader thread owns every read and runs every
-  /// listener callback; sends from any thread are written whole under a lock.
-  // - the reader thread holds a reference to the connection until it ends, so
-  //   a connection whose last outside reference is dropped stays alive (and
-  //   keeps delivering) until it is closed, aborted or fails
-  // - a connection that the caller does not Abort ends with exactly one of
-  //   OnClose or OnError; Abort ends delivery without a further callback
+  TWsSessionEnd = Http2.Client.WebSocket.Connection.Types.TWsSessionEnd;
+  IWebSocketAttempt = Http2.Client.WebSocket.Connection.Types.IWebSocketAttempt;
+
   TWebSocketConnection = class(TInterfacedObject, IWebSocket)
   private
     FSock: IHttp2Socket;
@@ -117,8 +76,6 @@ type
     FLastPing: QWord;
     FSelfRef: IWebSocket;
     FThread: TWsReaderThread;
-    // observation: FAttempt is nil and FProgress ignores every call when no
-    // request observer is installed
     FAttempt: IWebSocketAttempt;
     FProgress: IAttemptProgress;
     FEnded: LongInt;            // the end latch
@@ -183,12 +140,6 @@ type
     function GetSubprotocol: string;
     function GetUrl: string;
   end;
-
-/// dial AProxy-routed (nil = direct), run the opening handshake for ARequest
-/// and return the open WebSocket.  ADefaultConnectTimeoutMs applies when the
-/// request sets none.  AMask nil selects the secure random source.  AAttempt,
-/// when given, supplies the handshake headers (the request's plus what the
-/// observers injected) and hears of the handshake and of the session.
 function OpenWebSocket(const AFactory: IHttp1SocketFactory;
   const ARequest: IWebSocketRequest; const AProxy: IProxy;
   const ADefaultConnectTimeoutMs: Integer;
@@ -197,20 +148,19 @@ function OpenWebSocket(const AFactory: IHttp1SocketFactory;
 
 implementation
 
+uses Http2.Client.WebSocket.Connection.Open,
+  Http2.Client.WebSocket.Connection.Observer;
+
 function NowMs: QWord;
 begin
   Result := GetTickCount64;
 end;
-
-{ TWsReaderThread }
-
 constructor TWsReaderThread.Create(const AConn: TWebSocketConnection);
 begin
   FConn := AConn;
   FreeOnTerminate := True;
   inherited Create(False);
 end;
-
 procedure TWsReaderThread.Execute;
 var
   Conn: TWebSocketConnection;
@@ -220,12 +170,10 @@ begin
   try
     Conn.ReaderMain;
   finally
-    // the last act: this may release the final reference and free Conn
     Conn.ReleaseSelf;
   end;
 end;
 
-{ TWebSocketConnection }
 
 constructor TWebSocketConnection.Create(const ASock: IHttp2Socket;
   const AReader: TBufferedReader; const ARequest: IWebSocketRequest;
@@ -261,11 +209,8 @@ begin
   FLastRx := NowMs;
   FLastPing := FLastRx;
 end;
-
 destructor TWebSocketConnection.Destroy;
 begin
-  // a connection released with no end recorded (never started, or the reader
-  // could not run) ends its attempt as abandoned; one that ended is a no-op
   EndSession(ciNone, 0, '', nil, True);
   if not FSockClosed then
     try
@@ -282,59 +227,35 @@ begin
   FIo.Free;
   inherited Destroy;
 end;
-
 procedure TWebSocketConnection.Start;
 begin
   FSelfRef := Self;
   FThread := TWsReaderThread.Create(Self);
 end;
-
 procedure TWebSocketConnection.ReleaseSelf;
 begin
   FSelfRef := nil;
 end;
 
-{ observation }
 
 procedure TWebSocketConnection.EndSession(const AClosedBy: TCloseInitiator;
   const ACode: Integer; const AReason: string; const AError: Exception;
   const AAbandoned: Boolean);
-var
-  E: TWsSessionEnd;
 begin
-  // the latch is taken here, so the reader, a caller's Abort and the release
-  // race for it and exactly one reports.  No library lock is held: every
-  // caller leaves its own locks before calling.
-  if InterlockedCompareExchange(FEnded, 1, 0) <> 0 then
-    Exit;
-  if FAttempt = nil then
-    Exit;
-  E.ClosedBy := AClosedBy;
-  E.CloseCode := ACode;
-  E.CloseReason := AReason;
-  E.Error := AError;
-  E.Abandoned := AAbandoned;
-  E.BytesIn := InterlockedExchangeAdd64(FBytesIn, 0);
-  E.BytesOut := InterlockedExchangeAdd64(FBytesOut, 0);
-  try
-    FAttempt.SessionEnded(E);
-  except
-    // the attempt guards its observers; this is the last line of defence
-  end;
+  ReportWebSocketSessionEnd(FAttempt, FEnded, AClosedBy, ACode, AReason,
+    AError, AAbandoned, InterlockedExchangeAdd64(FBytesIn, 0),
+    InterlockedExchangeAdd64(FBytesOut, 0));
 end;
-
 procedure TWebSocketConnection.ReportIn(const AKind: TMessageKind;
   const ASize: Integer);
 begin
   FProgress.ReportMessage(AKind, mdIn, FStampUs, ASize, nil);
 end;
-
 procedure TWebSocketConnection.ReportOut(const AKind: TMessageKind;
   const AStampUs: Int64; const ASize: Integer);
 begin
   FProgress.ReportMessage(AKind, mdOut, AStampUs, ASize, nil);
 end;
-
 procedure TWebSocketConnection.MarkAborted;
 begin
   FStateLock.Enter;
@@ -348,7 +269,6 @@ begin
   FDemandEvent.SetEvent;
 end;
 
-{ sending }
 
 procedure TWebSocketConnection.WriteFrame(const AOpcode: Byte;
   const AFin: Boolean; const APayload: TBytes);
@@ -356,7 +276,6 @@ var
   Wire: TBytes;
   Sent, N: Integer;
 begin
-  // the caller holds FSendLock
   if FSockClosed or FAborted then
     raise EHttpWebSocketClosedError.Create('the WebSocket is closed');
   Wire := WsEncodeFrame(AOpcode, AFin, APayload, True,
@@ -382,8 +301,6 @@ begin
         FIo.Leave;
     end;
   except
-    // a failed or partial write leaves the stream unusable; the reader ends
-    // the attempt when it notices (it holds no lock of the sender's)
     on E: Exception do
     begin
       FFailText := E.Message;
@@ -393,7 +310,6 @@ begin
     end;
   end;
 end;
-
 procedure TWebSocketConnection.SendData(const AKind: Integer;
   const APayload: TBytes; const ALast: Boolean);
 var
@@ -431,14 +347,12 @@ begin
   finally
     FSendLock.Leave;
   end;
-  // a message is reported when its last fragment is written, outside the lock
   if Total >= 0 then
     if AKind = 1 then
       ReportOut(mkWsText, Stamp, Integer(Total))
     else
       ReportOut(mkWsBinary, Stamp, Integer(Total));
 end;
-
 procedure TWebSocketConnection.SendText(const AText: string;
   const ALast: Boolean);
 var
@@ -454,13 +368,11 @@ begin
   end;
   SendData(1, B, ALast);
 end;
-
 procedure TWebSocketConnection.SendBinary(const AData: TBytes;
   const ALast: Boolean);
 begin
   SendData(2, AData, ALast);
 end;
-
 procedure TWebSocketConnection.SendPing(const AData: TBytes);
 var
   Stamp: Int64;
@@ -478,7 +390,6 @@ begin
   end;
   ReportOut(mkWsPing, Stamp, Length(AData));
 end;
-
 procedure TWebSocketConnection.SendPong(const AData: TBytes);
 var
   Stamp: Int64;
@@ -496,7 +407,6 @@ begin
   end;
   ReportOut(mkWsPong, Stamp, Length(AData));
 end;
-
 procedure TWebSocketConnection.Close(const AStatusCode: Integer;
   const AReason: string);
 var
@@ -531,22 +441,17 @@ begin
   if Sent then
     ReportOut(mkWsClose, Stamp, 2 + Length(AReason));
 end;
-
 procedure TWebSocketConnection.Abort;
 begin
   MarkAborted;
-  // a deliberate end, reported here rather than by the reader so a reader
-  // parked in a listener callback cannot delay it
   EndSession(ciAbort, cWsCloseAbnormal, '', nil, False);
 end;
-
 procedure TWebSocketConnection.Request(const AN: Integer);
 begin
   if AN <= 0 then
     raise EHttpWebSocketError.Create('Request needs a positive count');
   AddDemand(AN);
 end;
-
 procedure TWebSocketConnection.AddDemand(const AN: Int64);
 begin
   FStateLock.Enter;
@@ -558,7 +463,6 @@ begin
   end;
   FDemandEvent.SetEvent;
 end;
-
 function TWebSocketConnection.GetInputClosed: Boolean;
 begin
   FStateLock.Enter;
@@ -568,7 +472,6 @@ begin
     FStateLock.Leave;
   end;
 end;
-
 function TWebSocketConnection.GetOutputClosed: Boolean;
 begin
   FStateLock.Enter;
@@ -578,18 +481,15 @@ begin
     FStateLock.Leave;
   end;
 end;
-
 function TWebSocketConnection.GetSubprotocol: string;
 begin
   Result := FSubprotocol;
 end;
-
 function TWebSocketConnection.GetUrl: string;
 begin
   Result := FUrl;
 end;
 
-{ reading }
 
 function TWebSocketConnection.PollRead(var ABuffer;
   const ACount: Integer): Integer;
@@ -597,7 +497,6 @@ begin
   try
     if FLocked then
     begin
-      // senders go first: they announce themselves before taking the lock
       while FWriters > 0 do
         Sleep(1);
       FIo.Enter;
@@ -614,7 +513,6 @@ begin
       Result := -1;
   end;
 end;
-
 function TWebSocketConnection.WaitDemand: Boolean;
 begin
   while True do
@@ -634,7 +532,6 @@ begin
     FDemandEvent.WaitFor(100);
   end;
 end;
-
 procedure TWebSocketConnection.Terminal(const AError: Exception;
   const AOwned: Boolean);
 begin
@@ -644,10 +541,8 @@ begin
     try
       FListener.OnError(FSelfRef, AError);
     except
-      // a failing OnError has nowhere left to go
     end;
   end;
-  // the error is borrowed until here: the attempt sees it, then it is freed
   if AError is EHttpWebSocketProtocolError then
     EndSession(ciError, EHttpWebSocketProtocolError(AError).CloseCode, '',
       AError, False)
@@ -764,7 +659,6 @@ begin
   end;
   Echoed := False;
   Stamp := 0;
-  // answer at once; delivery to the listener waits for demand
   FSendLock.Enter;
   try
     if not FOutputClosed then
@@ -778,7 +672,6 @@ begin
         Stamp := NowUs;
         Echoed := True;
       except
-        // the peer may already be gone; the close is still reported
       end;
       FStateLock.Enter;
       try
@@ -793,12 +686,8 @@ begin
   if Echoed then
     ReportOut(mkWsClose, Stamp, Length(Echo));
   Result := False;                    // the connection ends here
-  // let the server finish and close TCP, then release the socket now: the
-  // report below waits for demand, which may never come
   DrainUntilEof;
   CloseTransport;
-  // the close handshake is complete: the attempt ends here, not when the
-  // listener has asked for the notification, which may never come
   if Local then
     By := ciLocal
   else
@@ -831,8 +720,6 @@ begin
     cWsOpPing:
       begin
         ReportIn(mkWsPing, Length(AFrame.Payload));
-        // the pong goes out before the callback so a slow listener cannot
-        // delay it
         Ponged := False;
         Stamp := 0;
         FSendLock.Enter;
@@ -859,9 +746,6 @@ begin
       Result := HandleClose(AFrame);
   else
     Accepted := FAssembler.Accept(AFrame, Kind, Data, Last);
-    // a message is reported once, when its last frame arrives, with the
-    // stamp of the read that completed it and before the listener has asked
-    // for it, so the attempt sees it at the wire
     InterlockedExchangeAdd64(FBytesIn, Length(AFrame.Payload));
     Inc(FInMsgBytes, Length(AFrame.Payload));
     if AFrame.Fin then
@@ -1105,118 +989,11 @@ end;
 
 function OpenWebSocket(const AFactory: IHttp1SocketFactory;
   const ARequest: IWebSocketRequest; const AProxy: IProxy;
-  const ADefaultConnectTimeoutMs: Integer;
-  const AMask: TMaskKeySource; const AAttempt: IWebSocketAttempt): IWebSocket;
-var
-  Secure: Boolean;
-  Host, Target, Authority, Key, Chosen, Why, Line, Version, Reason: string;
-  Port: Word;
-  Timeout, Status, I, N, Sent: Integer;
-  Mask: TMaskKeySource;
-  Sock: IHttp2Socket;
-  Reader: TBufferedReader;
-  Req, BodyBuf: TBytes;
-  Raw: TArray<string>;
-  Parsed: TArray<THttp1HeaderField>;
-  Fields: TArray<TWsHeaderField>;
-  HeaderLines, Body: string;
-  TlsObj: TObject;
-  Conn: TWebSocketConnection;
-  Want: Integer;
+  const ADefaultConnectTimeoutMs: Integer; const AMask: TMaskKeySource;
+  const AAttempt: IWebSocketAttempt): IWebSocket;
 begin
-  Mask := AMask;
-  if not Assigned(Mask) then
-    Mask := SecureRandomCardinal;
-  WsParseUrl(ARequest.Url, Secure, Host, Port, Target, Authority);
-  Timeout := ARequest.ConnectTimeoutMs;
-  if Timeout <= 0 then
-    Timeout := ADefaultConnectTimeoutMs;
-  Key := WsNewKey(Mask);
-  if AAttempt <> nil then
-    Req := WsBuildHandshake(Target, Authority, Key, ARequest.Subprotocols,
-      AAttempt.HandshakeHeaders)
-  else
-    Req := WsBuildHandshake(Target, Authority, Key, ARequest.Subprotocols,
-      ARequest.Headers);
-  if Secure then
-    Sock := AFactory.DialHttp1(Host, Port, 'https', Timeout, AProxy)
-  else
-    Sock := AFactory.DialHttp1(Host, Port, 'http', Timeout, AProxy);
-  Reader := nil;
-  try
-    Sock.ReadTimeoutMs := Timeout;
-    Sock.WriteTimeoutMs := Timeout;
-    Sent := 0;
-    while Sent < Length(Req) do
-    begin
-      N := Sock.Write(Req[Sent], Length(Req) - Sent);
-      if N <= 0 then
-        raise EHttpConnectionError.Create('WebSocket handshake write failed');
-      Inc(Sent, N);
-    end;
-    if AAttempt <> nil then
-      AAttempt.HandshakeWritten;
-    Reader := TBufferedReader.Create(Sock);
-    if not Reader.ReadLine(Line) then
-      raise EHttpConnectionError.Create(
-        'the connection closed during the WebSocket handshake');
-    ParseStatusLine(Line, Version, Status, Reason);
-    SetLength(Raw, 0);
-    while True do
-    begin
-      if not Reader.ReadLine(Line) then
-        raise EHttpConnectionError.Create(
-          'the connection closed during the WebSocket handshake');
-      if Line = '' then
-        Break;
-      if Length(Raw) >= cWsMaxHandshakeLines then
-        raise EHttpProtocolError.Create(
-          'too many handshake response headers', ecProtocolError);
-      SetLength(Raw, Length(Raw) + 1);
-      Raw[High(Raw)] := Line;
-    end;
-    Parsed := ParseHeaders(Raw);
-    SetLength(Fields, Length(Parsed));
-    HeaderLines := '';
-    for I := 0 to High(Parsed) do
-    begin
-      Fields[I].Name := Parsed[I].Name;
-      Fields[I].Value := Parsed[I].Value;
-      HeaderLines := HeaderLines + Parsed[I].Name + ': ' + Parsed[I].Value + #10;
-    end;
-    Why := WsCheckResponse(Status, Fields, Key, ARequest.Subprotocols, Chosen);
-    if Why <> '' then
-    begin
-      Body := '';
-      Want := StrToIntDef(HeaderFieldValue(Parsed, 'Content-Length'), 0);
-      if Want > cWsMaxHandshakeBody then
-        Want := cWsMaxHandshakeBody;
-      if Want > 0 then
-        try
-          SetLength(BodyBuf, Want);
-          N := Reader.ReadExact(BodyBuf[0], Want);
-          if N > 0 then
-            SetString(Body, PAnsiChar(@BodyBuf[0]), N);
-        except
-          // the status and headers are what matter
-        end;
-      raise EHttpWebSocketHandshakeError.Create(
-        'WebSocket handshake failed: ' + Why, Status, HeaderLines, Body);
-    end;
-    Conn := TWebSocketConnection.Create(Sock, Reader, ARequest, Chosen, Mask,
-      Supports(Sock, TTlsSocket, TlsObj), AAttempt);
-    Reader := nil;                    // owned by the connection now
-  except
-    Sock.Close;
-    Reader.Free;
-    raise;
-  end;
-  Result := Conn;
-  // the headers are reported before the reader thread exists, so no message
-  // or end can precede them
-  if AAttempt <> nil then
-    AAttempt.HandshakeAccepted(Status, Fields, Chosen);
-  Conn.Start;
+  Result := Http2.Client.WebSocket.Connection.Open.OpenWebSocket(AFactory,
+    ARequest, AProxy, ADefaultConnectTimeoutMs, AMask, AAttempt);
 end;
 
 end.
