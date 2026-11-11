@@ -332,6 +332,23 @@ def during_load_request(port: int, version: str, ca_file: str,
                 raise RuntimeError(f"HTTP/2 response arrived after load window: {elapsed_ms:.0f} ms")
             return "verified_http2_200_during_load", elapsed_ms
         raise RuntimeError(f"load-time curl returned unexpected response: {stats!r}")
+    stderr = result.stderr.decode(errors="replace")
+    if (result.returncode == 35 and
+            ("SSL_ERROR_SYSCALL" in stderr or "Connection reset by peer" in stderr)):
+        body, stats = result.stdout.rsplit(b"\n", 1)
+        fields = stats.decode(errors="replace").split()
+        if (body or len(fields) != 4 or fields[0] != "0" or fields[1] != "000" or
+                fields[3] != "0"):
+            raise RuntimeError(
+                f"TLS refusal returned unexpected response data: {stats!r}"
+            )
+        if admitted != EFFECTIVE_CONNECTION_LIMIT or elapsed_ms > 500:
+            raise RuntimeError(
+                f"TLS refusal did not occur promptly at the measured admission cap: "
+                f"admitted={admitted} cap={EFFECTIVE_CONNECTION_LIMIT} "
+                f"elapsed_ms={elapsed_ms:.0f}"
+            )
+        return "request_not_accepted_at_measured_cap_tls_reset_exit_35", elapsed_ms
     if (admitted != EFFECTIVE_CONNECTION_LIMIT or elapsed_ms > 500 or
             result.returncode not in (7, 52, 56)):
         raise RuntimeError(
