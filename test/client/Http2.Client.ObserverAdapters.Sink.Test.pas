@@ -21,7 +21,7 @@ uses
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Client.Tls, Http2.Client.Stream,
   Http2.Client.Messages, Http2.Client, Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.Sse,
   Http2.Client.WebSocket, Http2.Client.WebSocket.Connection,
-  Http2.Client.Redirects.Test, Http2.Client.RequestObserver.Test, Http2.Client.WebSocketClient.Support,
+  Http2.Client.Redirects.Test, Http2.Client.RequestObserver.Support, Http2.Client.WebSocketClient.Support,
   observer_tracing, observer_metrics, observer_logging;
 
 type

@@ -7,7 +7,7 @@ notes:
   - this preserves a client test from the source project
 ---
 }
-/// Structured-format reader/sender tests (src/Http2.Client.Readers.pas).
+/// Structured-format reader/sender tests (src/client/Http2.Client.Readers.pas).
 // - JSON and XML live in Http2.Client.Readers, OUTSIDE the 14-unit core, so this unit
 //   is the gate that the optional unit still compiles and works.
 // - non-vacuous: every Read helper is shown to actually parse (a member value

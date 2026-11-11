@@ -17,7 +17,8 @@ interface
 uses
   SysUtils, SyncObjs, Classes, fpcunit, testregistry,
   Http2.Common.Frames, Http2.Common.Hpack, Http2.Client.Connection,
-  Http2.Client.MockSocket, Http2.Client;
+  Http2.Client.MockSocket.Support, Http2.Client.MockSocket.TestSupport,
+  Http2.Client.MockSocket.Frames, Http2.Client;
 
 type
   TConnectionSettingsRegressionTest = class(TTestCase)
