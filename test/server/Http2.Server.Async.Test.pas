@@ -252,14 +252,19 @@ begin
     try
       AssertFalse('the stopped listener rejects inherited creation',
         Server.TryConnectionNewForTest(Connection));
+      Claim := Admission.TryAcquire;
+      AssertNotNull('false return releases the slot before object cleanup',
+        Pointer(Claim));
+      Connection.Free;
+      Connection := nil;
+      AssertNull('later object cleanup does not release the slot twice',
+        Pointer(Admission.TryAcquire));
     finally
       Connection.Free;
     end;
-    Claim := Admission.TryAcquire;
-    AssertNotNull('a false inherited result releases the slot', Pointer(Claim));
     Claim := nil;
     Claim := Admission.TryAcquire;
-    AssertNotNull('repeated cleanup does not consume another slot',
+    AssertNotNull('the slot is reusable after its claim is released',
       Pointer(Claim));
   except
     Server.Free;
