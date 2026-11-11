@@ -129,3 +129,7 @@ because the role had not restored alert classification; the provider-neutral
 mapping fixed those failures.
 
 No broad client suite or external proxy suite was run.
+
+## Main acceptance
+
+The client task was merged at `1283139`. The merged `make test-tls-client` run passed 17 cases in 0.574 seconds, exit 0, under the 30-second limit (`bin/tls-coordinator/tls07-merged-main.log`). `make -C client check` passed with no failures across 54 documents and 389 Pascal files; the client group contains 56 source units and two packages, with Readers separate. The worker worktree and merged branch were removed after these checks. Full external proxy, container, load, and Linux validation remain deferred.
