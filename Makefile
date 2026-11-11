@@ -26,10 +26,10 @@ build-tlslib: build-common
 	$(MAKE) -C tls/tlslib build BUILD_DEPS=0
 
 test-tls-contract test-tls-openssl test-tls-tlslib test-tls-integration:
-	$(PYTHON) tools/build.py $(subst -, :,$@)
+	$(PYTHON) tools/build.py $(subst -,:,$@)
 
 test test-common test-client test-server test-integration test-api packages-check source-check docs-check version-check examples validate-fast validate:
-	$(PYTHON) tools/build.py $(subst -, :, $@)
+	$(PYTHON) tools/build.py $(subst -,:,$@)
 
 clean:
 	$(PYTHON) tools/build.py clean

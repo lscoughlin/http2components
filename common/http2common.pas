@@ -17,6 +17,11 @@ uses
   Http2.Common.Frames,
   Http2.Common.Headers,
   Http2.Common.Hpack,
+  Http2.Common.Tls.Context,
+  Http2.Common.Tls.Identity,
+  Http2.Common.Tls.Policy,
+  Http2.Common.Tls.Session,
+  Http2.Common.Tls.Types,
   Http2.Common;
 
 implementation

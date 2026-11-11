@@ -22,7 +22,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="6">
+    <Files Count="11">
       <Item1>
         <Filename Value="src/Http2.Common.Errors.pas" />
         <UnitName Value="Http2.Common.Errors" />
@@ -44,9 +44,29 @@
         <UnitName Value="Http2.Common.Hpack" />
       </Item5>
       <Item6>
+        <Filename Value="src/Http2.Common.Tls.Context.pas" />
+        <UnitName Value="Http2.Common.Tls.Context" />
+      </Item6>
+      <Item7>
+        <Filename Value="src/Http2.Common.Tls.Identity.pas" />
+        <UnitName Value="Http2.Common.Tls.Identity" />
+      </Item7>
+      <Item8>
+        <Filename Value="src/Http2.Common.Tls.Policy.pas" />
+        <UnitName Value="Http2.Common.Tls.Policy" />
+      </Item8>
+      <Item9>
+        <Filename Value="src/Http2.Common.Tls.Session.pas" />
+        <UnitName Value="Http2.Common.Tls.Session" />
+      </Item9>
+      <Item10>
+        <Filename Value="src/Http2.Common.Tls.Types.pas" />
+        <UnitName Value="Http2.Common.Tls.Types" />
+      </Item10>
+      <Item11>
         <Filename Value="src/Http2.Common.pas" />
         <UnitName Value="Http2.Common" />
-      </Item6>
+      </Item11>
     </Files>
     <RequiredPkgs Count="1">
       <Item1>
