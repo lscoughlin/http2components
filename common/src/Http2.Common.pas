@@ -19,7 +19,10 @@ interface
 uses
   SysUtils, Classes,
   Http2.Common.Errors, Http2.Common.Headers, Http2.Common.Hpack,
-  Http2.Common.Frames, Http2.Common.FlowControl;
+  Http2.Common.Frames, Http2.Common.FlowControl,
+  Http2.Common.Tls.Types, Http2.Common.Tls.Identity,
+  Http2.Common.Tls.Policy, Http2.Common.Tls.Session,
+  Http2.Common.Tls.Context;
 
 const
   ecNoError = Http2.Common.Errors.ecNoError;
@@ -89,6 +92,31 @@ const
   ffPriority = Http2.Common.Frames.ffPriority;
   MaxWindowSize = Http2.Common.FlowControl.MaxWindowSize;
   DefaultWindowSize = Http2.Common.FlowControl.DefaultWindowSize;
+  tls12 = Http2.Common.Tls.Types.tls12;
+  tls13 = Http2.Common.Tls.Types.tls13;
+  trClient = Http2.Common.Tls.Types.trClient;
+  trServer = Http2.Common.Tls.Types.trServer;
+  tlsAuthNone = Http2.Common.Tls.Types.tlsAuthNone;
+  tlsAuthRequest = Http2.Common.Tls.Types.tlsAuthRequest;
+  tlsAuthRequire = Http2.Common.Tls.Types.tlsAuthRequire;
+  tssNew = Http2.Common.Tls.Types.tssNew;
+  tssHandshaking = Http2.Common.Tls.Types.tssHandshaking;
+  tssOpen = Http2.Common.Tls.Types.tssOpen;
+  tssClosing = Http2.Common.Tls.Types.tssClosing;
+  tssClosed = Http2.Common.Tls.Types.tssClosed;
+  tssFailed = Http2.Common.Tls.Types.tssFailed;
+  tecConfiguration = Http2.Common.Tls.Types.tecConfiguration;
+  tecVerification = Http2.Common.Tls.Types.tecVerification;
+  tecProtocol = Http2.Common.Tls.Types.tecProtocol;
+  tecTransportEof = Http2.Common.Tls.Types.tecTransportEof;
+  tecTimeout = Http2.Common.Tls.Types.tecTimeout;
+  tecAlert = Http2.Common.Tls.Types.tecAlert;
+  tecInternal = Http2.Common.Tls.Types.tecInternal;
+  tisUseDefault = Http2.Common.Tls.Policy.tisUseDefault;
+  tisExplicit = Http2.Common.Tls.Policy.tisExplicit;
+  TlsMaxEncryptedInput = Http2.Common.Tls.Types.TlsMaxEncryptedInput;
+  TlsMaxEncryptedOutput = Http2.Common.Tls.Types.TlsMaxEncryptedOutput;
+  TlsMaxPlaintextBuffer = Http2.Common.Tls.Types.TlsMaxPlaintextBuffer;
 
 type
   THttp2ErrorCode = Http2.Common.Errors.THttp2ErrorCode;
@@ -111,9 +139,33 @@ type
   TConnectionSettings = Http2.Common.Frames.TConnectionSettings;
   TWindow = Http2.Common.FlowControl.TWindow;
   TFlowControl = Http2.Common.FlowControl.TFlowControl;
+  TTlsVersion = Http2.Common.Tls.Types.TTlsVersion;
+  TTlsRole = Http2.Common.Tls.Types.TTlsRole;
+  TTlsRoles = Http2.Common.Tls.Types.TTlsRoles;
+  TTlsClientAuthMode = Http2.Common.Tls.Types.TTlsClientAuthMode;
+  TTlsCapabilities = Http2.Common.Tls.Types.TTlsCapabilities;
+  TTlsClientPolicy = Http2.Common.Tls.Policy.TTlsClientPolicy;
+  TTlsServerPolicy = Http2.Common.Tls.Policy.TTlsServerPolicy;
+  TTlsContextInfo = Http2.Common.Tls.Types.TTlsContextInfo;
+  TTlsCertificateSummary = Http2.Common.Tls.Identity.TTlsCertificateSummary;
+  TTlsClientSessionOptions = Http2.Common.Tls.Policy.TTlsClientSessionOptions;
+  TTlsServerSessionOptions = Http2.Common.Tls.Policy.TTlsServerSessionOptions;
+  TTlsIdentitySelection = Http2.Common.Tls.Policy.TTlsIdentitySelection;
+  TTlsProgress = Http2.Common.Tls.Session.TTlsProgress;
+  TTlsSessionState = Http2.Common.Tls.Types.TTlsSessionState;
+  TTlsNegotiatedInfo = Http2.Common.Tls.Session.TTlsNegotiatedInfo;
+  ITLSIdentity = Http2.Common.Tls.Identity.ITLSIdentity;
+  ITLSPeerCertificate = Http2.Common.Tls.Identity.ITLSPeerCertificate;
+  ITLSSession = Http2.Common.Tls.Session.ITLSSession;
+  ITLSContext = Http2.Common.Tls.Context.ITLSContext;
+  ETlsContextError = Http2.Common.Tls.Types.ETlsContextError;
+  ETlsSessionError = Http2.Common.Tls.Types.ETlsSessionError;
 
 function Http2ErrorCodeName(const ACode: THttp2ErrorCode): string;
 function NewHttpHeaders: IHttpHeaders;
+function NewTlsPeerCertificate(const AVerified: Boolean;
+  const ALeaf: TTlsCertificateSummary; const AChain: array of TTlsCertificateSummary;
+  const ADns, AIp, AUri, AEmail: array of string): ITLSPeerCertificate;
 function FrameFlagsToByte(const AFlags: TFrameFlags): Byte;
 function FrameTypeName(const AFrameType: TFrameType): string;
 function IsKnownFrameType(const AFrameType: TFrameType): Boolean;
@@ -161,6 +213,13 @@ function Http2ErrorCodeName(const ACode: THttp2ErrorCode): string;
 begin Result := Http2.Common.Errors.Http2ErrorCodeName(ACode); end;
 function NewHttpHeaders: IHttpHeaders;
 begin Result := Http2.Common.Headers.NewHttpHeaders; end;
+function NewTlsPeerCertificate(const AVerified: Boolean;
+  const ALeaf: TTlsCertificateSummary; const AChain: array of TTlsCertificateSummary;
+  const ADns, AIp, AUri, AEmail: array of string): ITLSPeerCertificate;
+begin
+  Result := Http2.Common.Tls.Identity.NewTlsPeerCertificate(
+    AVerified, ALeaf, AChain, ADns, AIp, AUri, AEmail);
+end;
 function FrameFlagsToByte(const AFlags: TFrameFlags): Byte;
 begin Result := Http2.Common.Frames.FrameFlagsToByte(AFlags); end;
 function FrameTypeName(const AFrameType: TFrameType): string;
