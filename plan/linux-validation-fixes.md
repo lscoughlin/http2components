@@ -121,3 +121,15 @@ logs. The client owner applies the same rule to required Docker peer cases.
 this scratch directory below the run output in the shared source mount and
 keeps cleanup restricted to its own generated directory. The main test
 container and host use the same absolute source path.
+
+## LV-04: OpenSSL 3.0 fixture compatibility
+
+The first native Linux OpenSSL suite failed before its first case at
+2026-11-11 18:00:27 UTC. Ubuntu OpenSSL 3.0.13 rejects `openssl req -quiet`.
+The macOS fixture CLI was OpenSSL 4.1.0. The setup owner checks all owned
+fixture-generation calls, removes unsupported output-only options or uses a
+version-compatible quiet output capture, and preserves certificate semantics.
+Files: affected test TLS fixture helpers and provider runners. No production
+TLS behavior changes are implied. Acceptance: the OpenSSL provider suite and
+all integration suites using these fixtures run on OpenSSL 3.0 and the
+existing fixture format remains valid. The original failure log is retained.
