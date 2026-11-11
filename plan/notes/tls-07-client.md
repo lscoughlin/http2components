@@ -116,14 +116,16 @@ The final client session fake runner passed 17 cases in 0.473 seconds
 cases in 18.197 seconds (`tls07-legacy-routing-02.log`), and
 `TMutualTlsRejectTest` passed 10 cases in 1.568 seconds
 (`tls07-legacy-reject-01.log`). Earlier, `TMutualTlsAcceptTest` passed 9 cases
-in 1.834 seconds (`tls07-legacy-accept-01.log`). All had zero errors,
-failures, or ignored cases. The TLS 1.2 and TLS 1.3 client-auth rejection
-assertions remain intact. TLS alert strings use provider-neutral wire alert
-codes; ambiguous TLS 1.2 `handshake_failure` maps to client-auth rejection only
-when the provider reports an observed CertificateRequest. The first routing
-run failed three rejection assertions because the role had not restored alert
-classification; the provider-neutral mapping fixed those failures.
+in 1.834 seconds (`tls07-legacy-accept-01.log`). `TMutualTlsOtherTest` passed
+15 cases in 2.797 seconds (`tls07-legacy-other-01.log`), and
+`TMutualTlsRequestTest` passed 16 cases in 20.189 seconds
+(`tls07-legacy-request-01.log`). All five preserved mTLS groups passed 78
+cases total, with zero errors, failures, or ignored cases. The TLS 1.2 and
+TLS 1.3 client-auth rejection assertions remain intact. TLS alert strings use
+provider-neutral wire alert codes; ambiguous TLS 1.2 `handshake_failure` maps
+to client-auth rejection only when the provider reports an observed
+CertificateRequest. The first routing run failed three rejection assertions
+because the role had not restored alert classification; the provider-neutral
+mapping fixed those failures.
 
-The coordinator still holds the full legacy runner while it runs the smaller
-`TMutualTlsOtherTest` and `TMutualTlsRequestTest` groups. No broad client suite
-or external proxy suite was run.
+No broad client suite or external proxy suite was run.
