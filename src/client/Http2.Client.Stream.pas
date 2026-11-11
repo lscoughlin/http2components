@@ -94,8 +94,8 @@ type
     FAllocator: TStreamIdAllocator;
     FRequest: TStreamRequest;
     FStreamId: LongWord;
-    FOutbound: IBlockingQueue<TFrame>;
-    FInbound: TBlockingQueue<TFrame>;
+    FOutbound: IFrameQueue;
+    FInbound: TFrameQueue;
     FEncoder: THpackCodec;
     FDecoder: THpackCodec;
     FOwnsEncoder: Boolean;
@@ -347,7 +347,7 @@ begin
   FAllocator := AAllocator;
   FRequest := ARequest;
   FOutbound := FConnection.Outbound;
-  FInbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
+  FInbound := TFrameQueue.Create(cDefaultQueueCapacity);
   FOwnsEncoder := AEncoder = nil;
   FOwnsDecoder := ADecoder = nil;
   if AEncoder <> nil then FEncoder := AEncoder else FEncoder := THpackCodec.Create;
