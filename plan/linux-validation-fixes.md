@@ -703,3 +703,13 @@ checks whether the dependency's separate count gates and retry backoff
 conflict with the exact reservation; a redundant gate cannot weaken the
 combined active bound or delay refusal. The zero-limit setting retains its
 unlimited-connection meaning.
+
+The repaired Linux listener rejects every excess socket within 8–32 ms in
+all four cases. The next request at full capacity returns curl exit 35 with
+`SSL_ERROR_SYSCALL` before TLS completes. The probe currently permits only
+exit codes 7, 52, and 56 for this expected refusal. The client owner adds a
+separate classification for exit 35 only when stderr proves this connection
+close or an explicit connection reset. The response must have no HTTP
+status or body, the accepted-count delta must remain zero, and the existing
+capacity, recovery, timeout, and descriptor checks still apply. Other TLS
+failures remain failures. The complete four-case matrix validates the change.
