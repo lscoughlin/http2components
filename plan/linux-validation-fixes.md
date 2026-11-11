@@ -654,3 +654,19 @@ keys. A small temporary input set checks ordinary logs, collector source,
 and a deliberate private-key fixture. The clean set produces an archive
 and verified hashes; the key fixture causes a clear failure. The tool stays
 in run artifacts. No remote collection runs until acceptance finishes.
+
+## LV-36: Generated client package is stale after the wake helper
+
+Candidate 5ecf0fc passed the complete 777-case client suite, early integration,
+and all 25 examples. The package check then reported that both
+client/http2client.lpk and client/http2client.pas need regeneration. The
+helper was added by hand to the package list, but the generated Pascal
+package unit and canonical ordering were not updated.
+
+The client owner uses the repository package generator in its worktree and
+reviews the resulting diff. Source checks and the package generator check
+must pass. Root reviews and merges the generated files, then runs all six
+Linux package builds and the remaining acceptance steps on the new archive.
+The already-passing runtime checks remain valid if the diff contains only
+generated package registration and ordering; no production method changes
+are permitted in this repair.
