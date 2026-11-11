@@ -26,3 +26,12 @@ framing enum values remain exported by the facade.
 `test/api/Http2.Client.Connection.Lifetime.ApiProbe.pas`. The constructor and
 free probe passed. The source sizes are 998 lines for Connection and 999 lines
 for Stream. WebSocket divisions remain in C03.
+
+Parent review keeps the atomic end-notification guard before error creation,
+as in the original stream method. This prevents repeated delivery attempts
+from reading connection error state after the first notification. The helper
+only delivers the callback and releases the temporary exception. The public
+WebSocket constants now refer to the protocol constants instead of repeating
+the values. The retained thread constructor/free probe has the required
+header and runs with the API probes. Six probes and all 16 API cases pass
+in bin/review-c02-c03-api.log.

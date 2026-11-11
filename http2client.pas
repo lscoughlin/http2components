@@ -17,6 +17,9 @@ uses
   Http2.Client.BodyReader,
   Http2.Client.ClientCert,
   Http2.Client.Clock,
+  Http2.Client.Connection.Observer,
+  Http2.Client.Connection.Queue,
+  Http2.Client.Connection.Thread,
   Http2.Client.Connection,
   Http2.Client.Core,
   Http2.Client.Defaults,
@@ -46,6 +49,8 @@ uses
   Http2.Client.SocketFactory,
   Http2.Client.Socks,
   Http2.Client.Sse,
+  Http2.Client.Stream.Exchange,
+  Http2.Client.Stream.Send,
   Http2.Client.Stream.Types,
   Http2.Client.Stream,
   Http2.Client.Tls.Plain,
@@ -56,6 +61,7 @@ uses
   Http2.Client.Upgrade,
   Http2.Client.Url,
   Http2.Client.WebSocket.Connection,
+  Http2.Client.WebSocket.Protocol,
   Http2.Client.WebSocket,
   Http2.Client;
 

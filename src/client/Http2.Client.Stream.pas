@@ -78,8 +78,6 @@ type
   /// the response (receive) side assembly state
   TResponseState = (rsIdle, rsBodyOpen, rsBodyComplete, rsFailed);
 
-  /// why a lease's exchange is due to be reported (first reason wins)
-
   TStreamLease = class;
 
   /// IHttpBodyStream view of a lease's response body
@@ -952,13 +950,14 @@ var
 begin
   if FExchange = nil then
     Exit;
+  if InterlockedCompareExchange(FEndFired, 1, 0) <> 0 then Exit;
   E := nil;
   case AReason of
     edFailed:    E := MakeStreamError;
     edCancelled: E := EHttpStreamError.Create('body read cancelled',
                    FStreamId, ecCancel);
   end;
-  FireExchangeEnd(FExchange, FEndFired, AReason, AAbandoned,
+  FireExchangeEnd(FExchange, AAbandoned,
     FBodyReceived, FBytesSent, FArrivals, E);
 end;
 

@@ -21,7 +21,6 @@ uses
 procedure RecordExchangeEnd(const AExchange: IExchangeObserver;
   var AEndDue: TLeaseEndDue; const AReason: TLeaseEndDue);
 procedure FireExchangeEnd(const AExchange: IExchangeObserver;
-  var AEndFired: LongInt; const AReason: TLeaseEndDue;
   const AAbandoned: Boolean; const ABytesIn, ABytesOut: Int64;
   const AArrivals: TArrivalStats; AError: Exception);
 function ConcatStreamBytes(const A, B: TBytes): TBytes;
@@ -39,15 +38,13 @@ begin
 end;
 
 procedure FireExchangeEnd(const AExchange: IExchangeObserver;
-  var AEndFired: LongInt; const AReason: TLeaseEndDue;
   const AAbandoned: Boolean; const ABytesIn, ABytesOut: Int64;
   const AArrivals: TArrivalStats; AError: Exception);
 var
   Info: TExchangeEnd;
 begin
   try
-    if (AExchange = nil) or
-       (InterlockedCompareExchange(AEndFired, 1, 0) <> 0) then
+    if AExchange = nil then
       Exit;
     Info.Abandoned := AAbandoned;
     Info.BytesIn := ABytesIn;

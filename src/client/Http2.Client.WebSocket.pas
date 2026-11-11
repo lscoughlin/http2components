@@ -26,29 +26,29 @@ uses
 
 const
   /// frame opcodes (RFC 6455 section 5.2)
-  cWsOpContinuation = $0;
-  cWsOpText         = $1;
-  cWsOpBinary       = $2;
-  cWsOpClose        = $8;
-  cWsOpPing         = $9;
-  cWsOpPong         = $A;
+  cWsOpContinuation = Http2.Client.WebSocket.Protocol.cWsOpContinuation;
+  cWsOpText         = Http2.Client.WebSocket.Protocol.cWsOpText;
+  cWsOpBinary       = Http2.Client.WebSocket.Protocol.cWsOpBinary;
+  cWsOpClose        = Http2.Client.WebSocket.Protocol.cWsOpClose;
+  cWsOpPing         = Http2.Client.WebSocket.Protocol.cWsOpPing;
+  cWsOpPong         = Http2.Client.WebSocket.Protocol.cWsOpPong;
 
   /// close status codes the client sends or reports
-  cWsCloseNormal        = 1000;
-  cWsCloseGoingAway     = 1001;
-  cWsCloseProtocolError = 1002;
-  cWsCloseUnsupported   = 1003;
-  cWsCloseNoStatus      = 1005;   // never on the wire
-  cWsCloseAbnormal      = 1006;   // never on the wire
-  cWsCloseBadData       = 1007;
-  cWsCloseTooBig        = 1009;
+  cWsCloseNormal        = Http2.Client.WebSocket.Protocol.cWsCloseNormal;
+  cWsCloseGoingAway     = Http2.Client.WebSocket.Protocol.cWsCloseGoingAway;
+  cWsCloseProtocolError = Http2.Client.WebSocket.Protocol.cWsCloseProtocolError;
+  cWsCloseUnsupported   = Http2.Client.WebSocket.Protocol.cWsCloseUnsupported;
+  cWsCloseNoStatus      = Http2.Client.WebSocket.Protocol.cWsCloseNoStatus;   // never on the wire
+  cWsCloseAbnormal      = Http2.Client.WebSocket.Protocol.cWsCloseAbnormal;   // never on the wire
+  cWsCloseBadData       = Http2.Client.WebSocket.Protocol.cWsCloseBadData;
+  cWsCloseTooBig        = Http2.Client.WebSocket.Protocol.cWsCloseTooBig;
 
   cWsGuid = '258EAFA5-E914-47DA-95CA-C5AB0DC85B11';
-  cWsMaxControlPayload = 125;
+  cWsMaxControlPayload = Http2.Client.WebSocket.Protocol.cWsMaxControlPayload;
   /// a frame header declaring more than this is refused before allocation
-  cWsMaxFrameBytes = 64 * 1024 * 1024;
-  cWsDefaultMaxMessageBytes = 16 * 1024 * 1024;
-  cWsDefaultCloseTimeoutMs = 5000;
+  cWsMaxFrameBytes = Http2.Client.WebSocket.Protocol.cWsMaxFrameBytes;
+  cWsDefaultMaxMessageBytes = Http2.Client.WebSocket.Protocol.cWsDefaultMaxMessageBytes;
+  cWsDefaultCloseTimeoutMs = Http2.Client.WebSocket.Protocol.cWsDefaultCloseTimeoutMs;
 
 type
   TWsMaskKey = Http2.Client.WebSocket.Protocol.TWsMaskKey;
