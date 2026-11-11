@@ -8,12 +8,19 @@ notes:
 
 # Current verification status
 
-The current implementation candidate is `15feb54`, checked on 2026-11-11
-on macOS 27.2 arm64 with Free Pascal 3.2.4, Lazarus 4.0, and OpenSSL 3.5.9.
-The [TLS replacement record](tls-replacement-0.30.0.md) contains the commands,
-versions, counts, artifacts, review limits, and cleanup results.
+Native Linux Docker validation is in progress on 2026-11-11. The
+[Linux verification record](linux-tls-2026-11-11.md) contains the current
+candidates, repairs, executed checks, failures, and peer limitations.
+Candidate `610a86b` passed all acceptance steps except the complete server
+suite, which ran 717 tests with one error and two failures. Performance
+validation remains pending. There is no release approval.
 
-## Completed checks
+The earlier bounded implementation candidate was `15feb54`, checked on
+macOS 27.2 arm64 with Free Pascal 3.2.4, Lazarus 4.0, and OpenSSL 3.5.9.
+The [TLS replacement record](tls-replacement-0.30.0.md) preserves those
+commands, versions, counts, artifacts, and review limits.
+
+## Earlier bounded macOS checks
 
 | Check | Result |
 | --- | --- |
@@ -42,12 +49,14 @@ replacement. Earlier source-merge results, including the 805-case client run
 and four-package build, describe an earlier implementation. They do not count
 as current TLS replacement results.
 
-## Deferred checks
+## Linux validation status
 
-Linux, containers, load, abuse, long-duration cleanup, full timed server
-suites, real proxy matrices, independent TLS/HTTP/WebSocket peers, and full
-conformance remain deferred. Release readiness depends on that separate
-validation. No Linux or load run was made for this implementation.
+Linux builds, packages, examples, the full client suite, provider matrices,
+independent peers, real proxy and mTLS matrices, conformance, and abuse have
+recorded results. The full server suite has unresolved results in HTTP/1
+WebSocket shutdown, a slow reader, and a reset-flood peer. Performance and
+long-duration resource checks remain pending. The Linux record distinguishes
+strict passes from explicit peer limitations and classified harness rows.
 
 The [repository README](../../README.md) describes the build and validation
 commands. The detailed TLS record identifies unsupported provider features

@@ -11,8 +11,10 @@ notes:
 The check date is 2026-11-11. The implementation candidate is `15feb54`.
 The result covers the common TLS API, both providers, client and server
 transports, public examples, documentation, and package isolation. It is not
-release approval. Linux, load, containers, external proxies, independent TLS
-peers, and full conformance remain deferred.
+release approval. At that checkpoint, Linux, load, containers, external
+proxies, independent TLS peers, and full conformance were deferred. The
+later [native Linux record](linux-tls-2026-11-11.md) contains their separate
+validation results and current status.
 
 ## Environment and dependencies
 
