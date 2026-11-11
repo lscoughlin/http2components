@@ -408,3 +408,20 @@ A demonstrated client defect receives a narrow fix and regression check in
 the owner's worktree, followed by affected independent cases. An oracle or
 peer-lifetime limit has explicit evidence and remains a classified limit;
 it does not become a strict protocol pass. No expected outcome is changed.
+
+## LV-24: Concurrent incomplete TLS handshake evidence
+
+The final matrix needs load evidence for incomplete TLS handshakes in addition
+to successful handshake churn. The server owner adds a separate Python probe
+for both providers at TLS 1.2 and TLS 1.3. It uses the existing provider server
+binary and its declared handshake timeout. Concurrent peers include silent
+TCP connections and partial ClientHello records. The probe records connection
+counts, close times, process memory, CPU, and file descriptors. It checks
+bounded timeout or admission refusal and a verified HTTP/2 request after the
+incomplete peers close. A valid request during the load has a recorded result;
+capacity refusal is reported separately from protocol success. All peers and
+server processes close on every exit path. The measured deadline follows the
+configured timeout and listener scheduling, with an explicit finite margin.
+The run preserves raw results and does not reduce existing handshake checks.
+The owner prepares and checks the tool locally. Root reviews it and runs it
+alone on the Linux validation host after the functional acceptance batch.
