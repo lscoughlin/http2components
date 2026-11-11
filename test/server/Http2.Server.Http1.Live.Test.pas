@@ -61,6 +61,8 @@ type
     procedure TestHeaderInjectionByTheHandlerIsRefused;
     procedure TestEarlyAnswerWithAnUnreadBodyKeepsTheConnection;
     procedure TestQueueFullAnswers503WithRetryAfter;
+    procedure TestWriteTimeoutDoesNotCloseAnIdleKeepAlive;
+    procedure TestRequestAfterIdleIsServed;
     procedure TestStopEndsAnOpenConnection;
     procedure TestFallbackOffClosesAnHttp1Request;
     procedure TestOneListenerServesBothProtocols;
@@ -586,6 +588,46 @@ begin
     A.Free;
     B.Free;
     D.Free;
+  end;
+end;
+
+procedure THttp1LiveTest.TestWriteTimeoutDoesNotCloseAnIdleKeepAlive;
+var
+  C: TRawHttp;
+  R: TRawResponse;
+begin
+  StartServer(LiveFactory(FHandlerRef).WithIdleTimeout(5000)
+    .WithServerLimits(TServerLimits.Create.WithWriteTimeoutMs(1000)));
+  C := TRawHttp.Create(FServer.Port);
+  try
+    C.Send('GET /hello HTTP/1.1' + CRLF + 'Host: a' + CRLF + CRLF);
+    AssertTrue('the first response', C.ReadResponse(False, ResponseMs, R));
+    AssertFalse('the write timeout closed an idle keep-alive connection',
+      C.WaitClosed(1500));
+  finally
+    C.Free;
+  end;
+end;
+
+procedure THttp1LiveTest.TestRequestAfterIdleIsServed;
+var
+  C: TRawHttp;
+  R: TRawResponse;
+begin
+  StartServer(LiveFactory(FHandlerRef).WithIdleTimeout(5000)
+    .WithServerLimits(TServerLimits.Create.WithWriteTimeoutMs(1000)));
+  C := TRawHttp.Create(FServer.Port);
+  try
+    C.Send('GET /hello HTTP/1.1' + CRLF + 'Host: a' + CRLF + CRLF);
+    AssertTrue('the first response', C.ReadResponse(False, ResponseMs, R));
+    AssertFalse('the idle connection closed before its idle timeout',
+      C.WaitClosed(1500));
+    C.Send('GET /hello HTTP/1.1' + CRLF + 'Host: a' + CRLF + CRLF);
+    AssertTrue('the first response after idle',
+      C.ReadResponse(False, ResponseMs, R));
+    AssertEquals('hello', R.Body);
+  finally
+    C.Free;
   end;
 end;
 

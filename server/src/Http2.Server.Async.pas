@@ -613,12 +613,28 @@ var
 begin
   if ATimeoutMs <= 0 then Exit;
   if FMode = cmHttp1 then
+  begin
+    // HTTP/1 output can keep the mORMot operation timestamp fresh while the
+    // peer stops reading. Track the same queued and socket-held bytes as the
+    // exchange backpressure check, so a partial drain does not hide a stall.
+    Backlog := FH1.Core.OutputBacklog;
+    if (Backlog > 0) and
+       ((FLastSweepBacklog <= 0) or (Backlog < FLastSweepBacklog)) then
+      FLastWriteProgressMs := ANowMs;
+    FLastSweepBacklog := Backlog;
+    if WriteStalled(ANowMs, FLastWriteProgressMs, ATimeoutMs, Backlog) then
+    begin
+      fOwner.ConnectionRemove(Handle);
+      Exit;
+    end;
     case FH1.IdleAction(Cardinal(ANowMs div 1000), fLastOperation,
-      Cardinal(ATimeoutMs div 1000), ANowMs,
+      FIdleSeconds, ANowMs,
       FServer.Factory.HeaderTimeoutMs) of
       iaFlush: SendPendingOutput;
       iaClose: fOwner.ConnectionRemove(Handle);
-    end else begin
+    end;
+  end
+  else begin
     // AfterWrite misses a partial drain; the sweep compares backlogs instead
     Backlog := PendingWriteBytes;
     if (Backlog > 0) and (Backlog < FLastSweepBacklog) then
