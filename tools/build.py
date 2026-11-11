@@ -113,11 +113,11 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
     if role == "tlslib":
         for name in ("HashLib4Pascal", "SimpleBaseLib4Pascal", "CryptoLib4Pascal", "TlsLib4Pascal"):
             verify_dependency(name)
-        flags.extend(tlslib_flags())
         bootstrap = ROOT / "bin" / target_name() / profile() / "tlslib" / "units" / "bootstrap"
         if bootstrap.exists():
             flags.append(f"-Fu{bootstrap}")
         flags.append(f"-Fu{ROOT / 'bin' / target_name() / profile() / 'tlslib' / 'units'}")
+        flags.extend(tlslib_flags())
     if role in ("client", "readers", "examples", "api", "integration"):
         flags.append(f"-Fu{COMPONENTS['client']['source']}")
     if role in ("server", "examples", "api", "integration"):
@@ -132,8 +132,8 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
         for provider in ("openssl", "tlslib"):
             flags.extend((f"-Fu{COMPONENTS[provider]['source']}",
                           f"-Fu{ROOT / 'bin' / target_name() / profile() / provider / 'units'}"))
-        flags.extend(tlslib_flags())
         flags.append(f"-Fu{ROOT / 'bin' / target_name() / profile() / 'tlslib' / 'units' / 'bootstrap'}")
+        flags.extend(tlslib_flags())
         flags.append("-dUSE_OPENSSL")
     if role == "examples":
         flags.extend(("-Fu./examples", "-Fu./examples/client", "-Fu./examples/server",
@@ -283,10 +283,13 @@ def compile_provider_tlslib(source: Path) -> Path:
     for package in packages:
         if not package.is_file():
             raise SystemExit(f"Pinned TlsLib dependency package is missing: {package}")
-        run([compiler(), *flags, f"-Fu{package_units}",
+        run([compiler(), f"-Fu{package_units}", *flags,
              f"-FU{package_units}", f"-FE{programs}", str(package)], timeout=300)
-    run([compiler(), *flags, f"-Fu{COMPONENTS['common']['source']}",
-         f"-Fu{COMPONENTS['tlslib']['source']}", f"-Fu{package_units}",
+    # Compiled package units must precede dependency source directories.
+    # Otherwise FPC starts a new source traversal and enters the CryptoLib
+    # ClpMultipliers/ClpWNafUtilities cycle proved in TLS-02.
+    run([compiler(), f"-Fu{package_units}", *flags,
+         f"-Fu{COMPONENTS['common']['source']}", f"-Fu{COMPONENTS['tlslib']['source']}",
          f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))], timeout=300)
     return programs / source.stem
 
