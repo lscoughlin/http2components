@@ -37,6 +37,8 @@ def check(path, count, unit_key, method_key, suite_key, removed_key=None):
             'migrated-provider-program-case', 'migrated-neutral-method',
             'obsolete-provider-ownership', 'uncovered-behavior',
         }
+        if disposition.startswith(('migrated-', 'obsolete-', 'uncovered-')) and disposition not in migration_statuses:
+            errors.append(f'{path}: unknown migration disposition {disposition!r} for {origin}')
         if disposition in migration_statuses and not migration:
             errors.append(f'{path}: migration reason missing for {origin}')
         if disposition == 'uncovered-behavior' or migration.startswith('UNRESOLVED:'):
@@ -58,10 +60,12 @@ def check(path, count, unit_key, method_key, suite_key, removed_key=None):
             if not routine:
                 errors.append(f'{path}: missing program routine {method} for {origin}')
                 continue
-            if case == method:
-                errors.append(f'{path}: program mapping needs an assertion marker for {origin}')
-            elif not re.search(r"'" + re.escape(case) + r"'", routine.group()):
-                errors.append(f'{path}: missing program assertion {case!r} in {method} for {origin}')
+            markers = [marker for marker in case.split(';') if marker]
+            if not markers or method in markers:
+                errors.append(f'{path}: program mapping needs assertion markers for {origin}')
+            for marker in markers:
+                if not re.search(r"'" + re.escape(marker) + r"'", routine.group()):
+                    errors.append(f'{path}: missing program assertion {marker!r} in {method} for {origin}')
             continue
         # Standalone live programs have explicit program-level dispositions.
         if not suite and target.startswith('test/integration/'):
