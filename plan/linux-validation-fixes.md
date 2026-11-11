@@ -594,3 +594,25 @@ check whether the sampling lock caused the failure. A recurrence receives
 request/stream traces before a narrow repair. Root reviews any change, and
 required integration and complete server acceptance remain in the matrix.
 No remote investigation overlaps the current acceptance batch.
+
+## LV-34: Performance server output can block at high session counts
+
+The performance driver reads server stdout only for readiness and explicit
+statistics, then waits for process exit before draining remaining output.
+The WebSocket example writes one close line per session. At 10,000 sessions,
+the output can fill the pipe and block the server or its shutdown before the
+driver reads the log. This would invalidate the cleanup and performance run.
+
+The runner owner promotes the prepared performance driver into a reusable
+validation tool and makes server log capture continuous or file-backed.
+Readiness and explicit accepted-count queries remain bounded and strict.
+The tool retains all server output, command records, resource samples, and
+failure logs. It preserves the existing load counts, protocol checks,
+latency measurement, and process cleanup. The default artifact path is
+inside the current repository, with an optional run-root override.
+
+A controlled local child emits more than a pipe buffer of output and must
+exit normally with the full log retained. Separate controls check statistics
+queries, startup failure, and cleanup failure. Root reviews the code and
+controlled results before running the unchanged workload on Linux. The
+runner uses its own worktree and does not run remote jobs during acceptance.
