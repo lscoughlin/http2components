@@ -616,3 +616,16 @@ exit normally with the full log retained. Separate controls check statistics
 queries, startup failure, and cleanup failure. Root reviews the code and
 controlled results before running the unchanged workload on Linux. The
 runner uses its own worktree and does not run remote jobs during acceptance.
+
+Source review also found a send-owner invariant violation. On normal loop
+exit, SendPendingOutput clears FInSend under FSendLock. Its outer finally
+then clears FInSend a second time. A new caller can claim ownership between
+those actions, after which the old caller clears the new owner's flag.
+The server owner repairs this ownership release in its own worktree; the
+client owner retains the remote trace slot and compares old/new behavior.
+The repair preserves the atomic decision between pending work and normal
+ownership release, so it does not drop a late wake while removing the double
+release. Exception cleanup still releases only the current owner's claim.
+The existing concurrent-request check and a controlled overlap trace serve
+as regression evidence. Whether this caused the observed timeout remains
+a separate question until the traces establish it.
