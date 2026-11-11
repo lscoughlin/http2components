@@ -78,13 +78,17 @@ var
   Encoder: THpackCodec;
   EncoderLock: TCriticalSection;
   Peer: TConnectionSettings;
+  Decoder: THpackCodec;
+  Payload: TBytes;
 begin
   Sock := TMockSocket.Create;
   Conn := TConnection.Create(Sock);
   Encoder := THpackCodec.Create;
+  Decoder := THpackCodec.Create;
   EncoderLock := TCriticalSection.Create;
   Conn.HeaderEncoderLock := EncoderLock;
   Conn.HeaderEncoder := Encoder;
+  Conn.HeaderDecoder := Decoder;
   try
     Conn.Start;
     AssertTrue('preface and initial settings are written',
@@ -94,9 +98,14 @@ begin
     Peer.MaxConcurrentStreams := 7;
     Sock.FeedFrame(BuildSettingsFrame(Peer));
     AssertTrue('first settings are acknowledged', Sock.WaitForWrites(4, 2000));
-    Peer := Conn.PeerSettings;
-    Peer.HeaderTableSize := 256;
-    Sock.FeedFrame(BuildSettingsFrame(Peer));
+    SetLength(Payload, 6);
+    Payload[0] := 0;
+    Payload[1] := 1;
+    Payload[2] := 0;
+    Payload[3] := 0;
+    Payload[4] := 1;
+    Payload[5] := 0;
+    Sock.FeedFrame(TFrame.Create(ftSettings, [], 0, Payload));
     AssertTrue('table setting is acknowledged', Sock.WaitForWrites(5, 2000));
     AssertEquals('initial window remains unchanged', LongWord(1234),
       Conn.PeerSettings.InitialWindowSize);
@@ -104,9 +113,15 @@ begin
       Conn.PeerSettings.MaxConcurrentStreams);
     AssertEquals('encoder applies peer table cap', LongWord(256),
       Encoder.EncoderMaxSize);
+    AssertEquals('peer settings do not change local decoder cap',
+      LongWord(4096), Decoder.DecoderMaxSize);
+    AssertEquals('peer settings do not change local header-list cap',
+      TConnectionSettings.Defaults.MaxHeaderListSize,
+      Decoder.MaxHeaderListSize);
   finally
     Conn.Free;
     Encoder.Free;
+    Decoder.Free;
     EncoderLock.Free;
   end;
 end;
