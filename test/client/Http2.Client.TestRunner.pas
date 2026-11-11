@@ -31,7 +31,7 @@ uses
   Http2.Client.ProxyTransport.HttpConnect.Test, Http2.Client.ProxyTransport.Tls.Test, Http2.Client.Readers.Test,
   Http2.Client.Redirects.Methods.Test, Http2.Client.Redirects.Policy.Test, Http2.Client.Redirects.Test, Http2.Client.Request.Test,
   Http2.Client.RequestObserver.Test, Http2.Client.SigPipe.Test,
-  Http2.Client.Socks.Test, Http2.Client.Sse.Test, Http2.Client.Stream.Test,
+  Http2.Client.Socks.Test, Http2.Client.Sse.Parser.Test, Http2.Client.Sse.Reconnect.Test, Http2.Client.Stream.Test,
   Http2.Client.Timeouts.Test, Http2.Client.Tls.Test,
   Http2.Client.WebSocket.Codec.Test, Http2.Client.WebSocket.Handshake.Test, Http2.Client.WebSocketClient.Test,
   Http2.Client.WebSocketLive.Test, Http2.Client.WebSocketObservability.Core.Test,
