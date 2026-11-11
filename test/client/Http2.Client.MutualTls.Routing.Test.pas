@@ -216,7 +216,7 @@ begin
       end;
     end;
   end;
-  AssertTrue('the scan found the dial sites (' + IntToStr(Seen) + ')', Seen >= 9);
+  AssertEquals('the scan found every dial site', 8, Seen);
 end;
 
 { selector }

@@ -274,8 +274,46 @@ begin
   end;
 end;
 
-procedure TTlsSocket.MapSessionError(const AError: ETlsSessionError);
+function ClientAuthAlertName(const ADescription: Integer): string;
 begin
+  case ADescription of
+    41: Result := 'no certificate';
+    42: Result := 'bad certificate';
+    43: Result := 'unsupported certificate';
+    44: Result := 'certificate revoked';
+    45: Result := 'certificate expired';
+    46: Result := 'unknown certificate';
+    48: Result := 'unknown ca';
+    49: Result := 'access denied';
+    116: Result := 'certificate required';
+  else
+    Result := '';
+  end;
+end;
+
+function ClientAuthAlertOf(const AError: ETlsSessionError): string;
+begin
+  if AError.PeerAlertDescription = 40 then
+  begin
+    if AError.ClientCertificateRequested then
+      Result := 'handshake failure'
+    else
+      Result := '';
+  end
+  else
+    Result := ClientAuthAlertName(AError.PeerAlertDescription);
+end;
+
+procedure TTlsSocket.MapSessionError(const AError: ETlsSessionError);
+var
+  Alert: string;
+begin
+  if AError.Category = tecAlert then
+  begin
+    Alert := ClientAuthAlertOf(AError);
+    if Alert <> '' then
+      raise EHttpTlsClientAuthError.Create(AError.Message, Alert);
+  end;
   case AError.Category of
     tecTimeout: raise EHttpTimeout.Create(AError.Message);
     tecTransportEof: raise EHttpConnectionClosed.Create(AError.Message);
