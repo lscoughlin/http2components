@@ -1,0 +1,24 @@
+http2components source provenance
+Copyright 2026 Liam Seamus Coughlin
+
+Project-owned code and documentation in this repository are licensed under
+the choice in LICENSE:
+
+    Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+
+The client and server source projects declared different terms before this
+merge. Their full license texts remain in LICENSES/ as historical source
+provenance. The source license values in LICENSES/source-provenance.tsv record
+those declarations. They are not the current license choice for project-owned
+work in this repository.
+
+The client and server NOTICE files are preserved as
+LICENSES/NOTICE-http2client.txt and LICENSES/NOTICE-http2server.txt. Their
+attribution and third-party statements apply to the source project named in
+each file. File-level provenance is recorded in
+LICENSES/source-provenance.tsv. The working inventory and target mapping are
+also recorded in plan/merge-0.30.0-inventory.tsv.
+
+The repository owner confirmed ownership of the project copyright and
+authorized this dual-license choice for project-owned code and documentation.
+Third-party works and specification text keep their own terms.
