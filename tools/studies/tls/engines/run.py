@@ -4,13 +4,15 @@
 from __future__ import annotations
 
 import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[4]
 STUDY = Path(__file__).resolve().parent
-OUT = ROOT / "bin" / "studies" / "tls-engines"
+OUT_VALUE = Path(os.environ.get("TLS_STUDY_OUT", "bin/studies/tls-engines"))
+OUT = OUT_VALUE if OUT_VALUE.is_absolute() else ROOT / OUT_VALUE
 UNITS = OUT / "units"
 TLS_UNITS = UNITS / "tlslib"
 OPENSSL_UNITS = UNITS / "openssl"
@@ -25,15 +27,50 @@ def run(args: list[str], *, timeout: int, env: dict[str, str] | None = None,
         log: Path | None = None) -> None:
     if log is None:
         print("+ " + " ".join(args), flush=True)
-        subprocess.run(args, cwd=ROOT, env=env, check=True, timeout=timeout)
-        return
-    result = subprocess.run(args, cwd=ROOT, env=env, timeout=timeout,
-                            text=True, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-    log.write_text(result.stdout)
-    print(f"+ {args[0]} {args[-1]} (log: {log.relative_to(ROOT)})", flush=True)
-    if result.returncode:
-        print(result.stdout[-12000:], file=sys.stderr, flush=True)
-        raise subprocess.CalledProcessError(result.returncode, args)
+    else:
+        log.parent.mkdir(parents=True, exist_ok=True)
+    process = subprocess.Popen(
+        args, cwd=ROOT, env=env,
+        stdout=subprocess.PIPE if log is not None else None,
+        stderr=subprocess.STDOUT if log is not None else None,
+        start_new_session=(os.name == "posix"))
+    output = b""
+    try:
+        output, _ = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as error:
+        try:
+            if os.name == "posix":
+                os.killpg(process.pid, signal.SIGTERM)
+            else:
+                process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            output, _ = process.communicate(timeout=5)
+        except subprocess.TimeoutExpired:
+            try:
+                if os.name == "posix":
+                    os.killpg(process.pid, signal.SIGKILL)
+                else:
+                    process.kill()
+            except ProcessLookupError:
+                pass
+            output, _ = process.communicate()
+        if log is not None:
+            log.write_bytes((output or b"") +
+                            f"\n[runner timeout after {timeout} seconds]\n".encode())
+        raise subprocess.TimeoutExpired(args, timeout, output=output) from error
+    if log is not None:
+        log.write_bytes(output)
+        try:
+            display_log = str(log.relative_to(ROOT))
+        except ValueError:
+            display_log = str(log)
+        print(f"+ {args[0]} {args[-1]} (log: {display_log})", flush=True)
+    if process.returncode:
+        if output:
+            print(output[-12000:].decode(errors="replace"), file=sys.stderr, flush=True)
+        raise subprocess.CalledProcessError(process.returncode, args)
 
 
 def tlslib_unit_flags() -> list[str]:
@@ -67,19 +104,20 @@ def tlslib_unit_flags() -> list[str]:
 
 
 def compile_program(name: str, flags: list[str], units: Path,
-                    extra: list[str] = ()) -> Path:
+                    extra: list[str] = (), timeout: int = 120) -> Path:
     source = STUDY / name
     exe = PROGRAMS / source.stem
     args = ["fpc", "-Mdelphi", "-O1", "-vw", "-gl", *flags,
             f"-FU{units}", f"-FE{PROGRAMS}", *extra, str(source)]
-    run(args, timeout=120, log=OUT / f"{source.stem}.compile.log")
+    run(args, timeout=timeout, log=OUT / f"{source.stem}.compile.log")
     return exe
 
 
-def compile_dependency_unit(source: Path, flags: list[str], units: Path) -> None:
+def compile_dependency_unit(source: Path, flags: list[str], units: Path,
+                            timeout: int = 300) -> None:
     args = ["fpc", "-Mdelphi", "-O1", "-vw", "-gl", *flags,
             f"-FU{units}", f"-FE{PROGRAMS}", str(source)]
-    run(args, timeout=120, log=OUT / f"{source.stem}.compile.log")
+    run(args, timeout=timeout, log=OUT / f"{source.stem}.compile.log")
 
 
 def main() -> None:
