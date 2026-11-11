@@ -21,7 +21,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, DOM,
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Stream, Http2.Client.Messages,
-  Http2.Client, Http2.Client.Readers;
+  Http2.Client, Http2.Client.Readers, Http2.Common, Http2.OpenSSL;
 
 /// render raw body bytes as text for the diagnostic print below
 function BytesToText(const A: TBytes): string;
@@ -35,6 +35,7 @@ end;
 
 var
   Client: IHttpClient;
+  TlsContext: ITLSContext;
   Url: string;
   Response: IHttpResponse;
   Sent, Got: TXMLDocument;
@@ -65,7 +66,11 @@ begin
   end;
 
   // 2. GET the URL and parse the response body directly into a TXMLDocument.
-  Client := THttpClientFactory.Create.WithMaxConnectionsPerHost(1).Build;
+  TlsContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+    .Build;
+  Client := THttpClientFactory.Create.WithTlsContext(TlsContext)
+    .WithMaxConnectionsPerHost(1).Build;
   try
     Response := Client.Send(THttpRequest.Create(hmGet, Url));
     WriteLn('status: ', Response.StatusCode);

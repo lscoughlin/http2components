@@ -20,7 +20,8 @@ program example_websocket_echo;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, SyncObjs, Http2.Client.Errors, Http2.Client, Http2.Client.WebSocket;
+  SysUtils, SyncObjs, Http2.Client.Errors, Http2.Client,
+  Http2.Client.WebSocket, Http2.Common, Http2.OpenSSL;
 
 type
   /// prints what arrives and signals when the conversation is over
@@ -79,6 +80,7 @@ end;
 
 var
   Client: IHttpClient;
+  OriginTls, ProxyTls: ITLSContext;
   Printer: TPrinter;
   Listener: IWebSocketListener;
   Socket: IWebSocket;
@@ -93,7 +95,14 @@ begin
   if ParamCount >= 2 then
     Message := ParamStr(2);
 
-  Client := THttpClientFactory.Create.WithProxyEnvironmentVars.Build;
+  OriginTls := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+    .Build;
+  ProxyTls := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+    .Build;
+  Client := THttpClientFactory.Create.WithTlsContext(OriginTls)
+    .WithProxyTlsContext(ProxyTls).WithProxyEnvironmentVars.Build;
   Printer := TPrinter.Create;
   Listener := Printer;
   try

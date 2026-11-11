@@ -22,11 +22,13 @@ program example_sse_stream;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Stream, Http2.Client.Messages,
-  Http2.Client, Http2.Client.Tls, Http2.Client.Sse;
+  Http2.Client, Http2.Client.Tls, Http2.Client.Sse, Http2.Common,
+  Http2.OpenSSL;
 
 var
   Client: IHttpClient;
   Factory: THttpClientFactory;
+  TlsContext: ITLSContext;
   Url: string;
   Loop: TSseReconnectLoop;
   Event: TSseEvent;
@@ -50,6 +52,13 @@ begin
   // working
   if Pos('http://', LowerCase(Url)) = 1 then
     Factory := Factory.WithClearText(ctUpgrade).WithHttp1Fallback(True);
+  if Pos('https://', LowerCase(Url)) = 1 then
+  begin
+    TlsContext := TOpenSSLTlsContextFactory.Create
+      .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+      .Build;
+    Factory := Factory.WithTlsContext(TlsContext);
+  end;
   Client := Factory.Build;
 
   // SseRequest sets the three headers an event source needs

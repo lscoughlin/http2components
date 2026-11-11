@@ -26,17 +26,20 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 //          MTLS_PRINT_BODY=1 also prints each response body on one `body:`
 //          line, so a server that echoes the client certificate subject can be
 //          checked (tools/client/validate/mtls-real.sh)
-// - shows: WithClientCertificateFiles, WithClientIdentitySelector,
-//   WithProxyClientIdentity, a per-request WithClientIdentity, a bad identity failing at Build, and the
-//   distinct EHttpTlsClientAuthError when the server rejects the certificate.
+// - shows: explicit OpenSSL context and identity loading, the
+//   WithClientIdentitySelector, WithProxyClientIdentity, a per-request
+//   WithClientIdentity, and EHttpTlsClientAuthError when the server rejects
+//   the certificate.
 program example_mtls_get;
 
 {$mode delphi}{$H+}
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Classes, SyncObjs, Http2.Client.Errors, Http2.Client.Stream, Http2.Client.Messages,
-  Http2.Client.ClientCert, Http2.Client.Proxy, Http2.Common.Headers, Http2.Client, Http2.Client.WebSocket;
+  SysUtils, Classes, SyncObjs, Http2.Client.Errors, Http2.Client.Stream,
+  Http2.Client.Messages, Http2.Client.ClientCert, Http2.Client.Proxy,
+  Http2.Common.Headers, Http2.Common, Http2.OpenSSL, Http2.Client,
+  Http2.Client.WebSocket;
 
 type
   /// MTLS_SELECT: the identity files for each origin port, read at every dial
@@ -135,7 +138,7 @@ begin
   if P = 0 then
     Exit;
   // read from disk now, so a file replaced since the last dial is picked up
-  Result := TClientIdentity.FromPemFiles(Copy(Value, 1, P - 1),
+  Result := TOpenSSLIdentity.FromPemFiles(Copy(Value, 1, P - 1),
     Copy(Value, P + 1, MaxInt));
 end;
 
@@ -156,7 +159,9 @@ var
   UrlIndex: Integer;
   SelectSpec, ProxyPort, ProxyCert, ProxyKey, ReqCert, ReqKey: string;
   ReqId: IClientIdentity;
+  ClientIdentity: IClientIdentity;
   Client: IHttpClient;
+  TlsContext, ProxyTlsContext: ITLSContext;
   Response: IHttpResponse;
   Listener: TFirstText;
   ListenerRef: IWebSocketListener;
@@ -181,6 +186,7 @@ begin
 
   // HTTP/1.1 is accepted as well as HTTP/2, so any server will do
   Factory := THttpClientFactory.Create.WithHttp1Fallback(True);
+  try
   SelectSpec := GetEnvironmentVariable('MTLS_SELECT');
   ProxyPort := GetEnvironmentVariable('MTLS_PROXY');
   ProxyCert := GetEnvironmentVariable('MTLS_PROXY_CERT');
@@ -191,8 +197,11 @@ begin
   if SelectSpec <> '' then
     Factory := Factory.WithClientIdentitySelector(TFileSelector.Create(SelectSpec))
   else if ParamStr(2) <> '-' then
-    Factory := Factory.WithClientCertificateFiles(ParamStr(2), ParamStr(3),
+  begin
+    ClientIdentity := TOpenSSLIdentity.FromPemFiles(ParamStr(2), ParamStr(3),
       Passphrase);
+    Factory := Factory.WithClientIdentity(ClientIdentity);
+  end;
   if ProxyPort <> '' then
     if GetEnvironmentVariable('MTLS_PROXY_KIND') = 'http' then
       Factory := Factory.WithProxySelector(
@@ -200,21 +209,41 @@ begin
     else
       Factory := Factory.WithProxySelector(
         TFixedHttpsProxy.Create(pkHttps, Word(StrToInt(ProxyPort))));
-  if CaFile <> '' then
-    Factory := Factory.WithCACertFile(CaFile);
-  try
+  if CaFile = '' then
+    TlsContext := TOpenSSLTlsContextFactory.Create
+      .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+      .Build
+  else
+    TlsContext := TOpenSSLTlsContextFactory.Create
+      .WithClientPolicy(TTlsClientPolicy.SecureDefault
+        .WithTrustAnchors([CaFile]).WithSystemTrust(True))
+      .Build;
+  Factory := Factory.WithTlsContext(TlsContext);
+  if (ProxyPort <> '') and (GetEnvironmentVariable('MTLS_PROXY_KIND') <> 'http') then
+  begin
+    if CaFile = '' then
+      ProxyTlsContext := TOpenSSLTlsContextFactory.Create
+        .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+        .Build
+    else
+      ProxyTlsContext := TOpenSSLTlsContextFactory.Create
+        .WithClientPolicy(TTlsClientPolicy.SecureDefault
+          .WithTrustAnchors([CaFile]).WithSystemTrust(True))
+        .Build;
+    Factory := Factory.WithProxyTlsContext(ProxyTlsContext);
+  end;
     if ProxyCert <> '' then
       Factory := Factory.WithProxyClientIdentity(
-        TClientIdentity.FromPemFiles(ProxyCert, ProxyKey));
+        TOpenSSLIdentity.FromPemFiles(ProxyCert, ProxyKey));
     if ReqCert <> '' then
-      ReqId := TClientIdentity.FromPemFiles(ReqCert, ReqKey);
+      ReqId := TOpenSSLIdentity.FromPemFiles(ReqCert, ReqKey);
     // an unreadable file, a wrong passphrase, a key that does not match the
     // certificate and an expired certificate all fail here, not on the request
     Client := Factory.Build;
   except
-    on E: EHttpTlsConfigError do
+    on E: Exception do
     begin
-      WriteLn(StdErr, 'client identity rejected: ', E.Message);
+      WriteLn(StdErr, 'TLS setup failed: ', E.Message);
       Halt(1);
     end;
   end;

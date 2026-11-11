@@ -32,7 +32,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils,
   mormot.core.base,
-  Http2.Server;
+  Http2.Server, Http2.Common, Http2.OpenSSL;
 
 const
   /// the size of one write to the response
@@ -253,6 +253,9 @@ var
   BigBucket, StrictBucket: TTokenBucketOptions;
   Strict, NoHttp11, Trace: Boolean;
   Factory: THttp2ServerFactory;
+  TlsContext: ITLSContext;
+  ServerIdentity: ITLSIdentity;
+  ServerPolicy: TTlsServerPolicy;
 begin
   // the validation runs drive a large body, so the control-frame rate limits
   // must not fire.  The server keeps one control bucket: it takes the least
@@ -301,9 +304,15 @@ begin
   if NoHttp11 then
     Factory := Factory.WithHttp11Fallback(False);
   if CertFile <> '' then
-    Factory := Factory.WithTls(TTlsServerOptions.Create
-      .WithCertificateFile(CertFile)
-      .WithKeyFile(KeyFile));
+  begin
+    ServerIdentity := TOpenSSLIdentity.FromPemFiles(CertFile, KeyFile);
+    ServerPolicy := TTlsServerPolicy.SecureDefault
+      .WithServerIdentity(ServerIdentity);
+    TlsContext := TOpenSSLTlsContextFactory.Create
+      .WithServerPolicy(ServerPolicy)
+      .Build;
+    Factory := Factory.WithTlsContext(TlsContext);
+  end;
   if Strict then
     Factory := Factory
       .WithResetBucket(StrictBucket)
