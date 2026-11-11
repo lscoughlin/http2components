@@ -58,7 +58,10 @@ fingerprint, links the probe, and does not execute it.
 
 The linked probe SHA-256 is
 `d2f9db78d0546516ab939fff737b89c1f748764ac4c0c9a92694d80492a5ca9e`.
-`otool -L` lists only `/usr/lib/libSystem.B.dylib`. This is static linked-image
-evidence. It does not prove runtime random reads or loaded-image closure. The
-central TLS-10 exchange and dyld image inspection provide runtime evidence. No
-Linux validation is included.
+`otool -L` lists only `/usr/lib/libSystem.B.dylib`. This is static linked-image evidence. The central probe run used
+`run_suite30s` with `DYLD_PRINT_LIBRARIES=1`. It passed all 3 cases in 0.217
+seconds and exited 0. The log is
+`bin/tls-coordinator/tls10-rng-images.log`. The dyld output contained no
+`libssl` or `libcrypto` images. It did contain the system CommonCrypto and
+CoreCrypto libraries. The run verified zero-byte, 16-byte, and 4096-byte
+requests through the patched OS entropy path. No Linux validation is included.
