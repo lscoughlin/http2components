@@ -318,3 +318,15 @@ response bytes and reject unexpected resets or GOAWAY errors. Existing load
 parameters, the half-core idle bound, and delayed-response bounds stay fixed.
 The tool reports complete counts and closes its own sockets after every path.
 Acceptance includes valid peer behavior and controlled closed/error responses.
+
+## LV-17: Apache HTTPS proxy client identity rejection
+
+The real proxy gate on e3a8ae6 reports 59 passes, six failures, and three
+explicit Squid/GnuTLS exclusions. All six failures use the Apache HTTPS
+proxy: valid proxy identity, separate proxy/origin identities, identity log,
+keep-alive, ACL rejection, and WebSocket route. They fail before CONNECT with
+a TLS client-authentication error. The client owner checks the preserved
+Apache peer log and fixture certificate chain, then repairs the demonstrated
+configuration or transport cause. Valid and invalid identity cases retain
+their existing expectations. The Squid build limitations stay explicit and
+are not extended to Apache. Acceptance is the complete real proxy matrix.
