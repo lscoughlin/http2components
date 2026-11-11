@@ -9,7 +9,7 @@ notes:
 }
 program Http2.Server.Tls.Lifecycle.Runner;
 {$mode delphi}{$H+}{$interfaces com}
-uses {$IFDEF UNIX}cthreads, Sockets,{$ENDIF} SysUtils, SyncObjs, fpcunit,
+uses {$IFDEF UNIX}cthreads, Sockets, BaseUnix,{$ENDIF} SysUtils, SyncObjs, fpcunit,
   testregistry, consoletestrunner, mormot.core.os, mormot.core.base,
   mormot.net.sock, Http2.Server, Http2.Common.Tls.Types,
   Http2.Common.Tls.Context, Http2.Common.Tls.Session, Http2.Common.Tls.Policy,
@@ -404,14 +404,17 @@ begin
       Data := ASocket.SockReceiveString;
       if Data <> '' then
         Exit(False);
-      Pending := ASocket.SockReceivePending(0);
-      Exit(Pending in [cspSocketError, cspSocketClosed]);
     end;
     // A readable socket can hold payload bytes or EOF. Peek so an open
     // session keeps its TLS bytes for the later protocol assertion.
     {$IFDEF UNIX}
     N := fpRecv(ASocket.Socket, @B, SizeOf(B), MSG_PEEK or MSG_DONTWAIT);
-    Result := N = 0;
+    if N = 0 then
+      Result := True
+    else if N > 0 then
+      Result := False
+    else
+      Result := not (fpgeterrno in [ESysEAGAIN, ESysEINTR]);
     {$ELSE}
     Result := False;
     {$ENDIF}
