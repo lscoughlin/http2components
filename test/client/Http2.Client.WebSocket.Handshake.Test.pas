@@ -349,40 +349,52 @@ begin
 end;
 
 procedure TWsRequestTest.TestUnitDependsOnRtlOnly;
+const
+  Paths: array[0..1] of string = (
+    'src/client/Http2.Client.WebSocket.pas',
+    'src/client/Http2.Client.WebSocket.Protocol.pas');
 var
   L: TStringList;
-  I: Integer;
-  S, Uses_: string;
+  I, J: Integer;
+  S, Uses_, OtherClientUses: string;
   InUses: Boolean;
 begin
-  L := TStringList.Create;
-  try
-    L.LoadFromFile('src/client/Http2.Client.WebSocket.Protocol.pas');
-    InUses := False;
-    Uses_ := '';
-    for I := 0 to L.Count - 1 do
-    begin
-      S := Trim(L[I]);
-      if (not InUses) and (LowerCase(S) = 'uses') then
+  for J := Low(Paths) to High(Paths) do
+  begin
+    L := TStringList.Create;
+    try
+      L.LoadFromFile(Paths[J]);
+      InUses := False;
+      Uses_ := '';
+      for I := 0 to L.Count - 1 do
       begin
-        InUses := True;
-        Continue;
+        S := Trim(L[I]);
+        if (not InUses) and (LowerCase(S) = 'uses') then
+        begin
+          InUses := True;
+          Continue;
+        end;
+        if InUses then
+        begin
+          Uses_ := Uses_ + ' ' + S;
+          if Pos(';', S) > 0 then
+            Break;
+        end;
       end;
-      if InUses then
+      OtherClientUses := StringReplace(Uses_, 'Http2.Client.Errors', '', []);
+      if J = 0 then
       begin
-        Uses_ := Uses_ + ' ' + S;
-        if Pos(';', S) > 0 then
-          Break;
+        OtherClientUses := StringReplace(OtherClientUses,
+          'Http2.Client.IdentityHandle', '', []);
+        OtherClientUses := StringReplace(OtherClientUses,
+          'Http2.Client.WebSocket.Protocol', '', []);
       end;
+      AssertTrue(Paths[J] + ': no client transport dependency: ' + Uses_,
+        Pos('Http2.Client.', OtherClientUses) = 0);
+      AssertTrue(Paths[J] + ': no call to Random', Pos('Random(', L.Text) = 0);
+    finally
+      L.Free;
     end;
-    // Http2.Client.IdentityHandle is the TLS-free marker a request carries for a
-    // client identity; it depends on nothing
-    AssertTrue('RTL, Errors and the identity handle only: ' + Uses_,
-      Pos('Http2.Client.', StringReplace(StringReplace(Uses_, 'Http2.Client.Errors', '', []),
-        'Http2.Client.IdentityHandle', '', [])) = 0);
-    AssertTrue('does not call Random', Pos('Random(', L.Text) = 0);
-  finally
-    L.Free;
   end;
 end;
 
