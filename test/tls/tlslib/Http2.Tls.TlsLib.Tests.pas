@@ -288,6 +288,7 @@ begin
   except on E: ETlsContextError do
     Failed := Pos('certificate bundle', LowerCase(E.Message)) > 0; end;
   Check(Failed, 'malformed partial-chain trust anchor fails during Build');
+  Inc(Count, 2);
 
   LoaderFailed := True;
   try
