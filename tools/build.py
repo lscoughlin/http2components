@@ -708,10 +708,16 @@ def main() -> int:
             build("common")
             build("openssl")
             build("tlslib")
-        binary = compile_file(source, owners[suite], tests=True)
+        sources = [source]
+        if suite == "server":
+            sources.append(required(
+                ROOT / "test/server/Http2.Server.Tls.Lifecycle.Runner.pas",
+                "bounded TLS server listener runner"))
         run_directory = output(owners[suite])[1]
-        run_suite(binary, suite in ("openssl", "integration"), timeout=30,
-                  cwd=run_directory)
+        for source in sources:
+            binary = compile_file(source, owners[suite], tests=True)
+            run_suite(binary, suite in ("openssl", "integration"), timeout=30,
+                      cwd=run_directory)
     elif target == "validate:fast":
         validate_fast()
     elif target == "validate":
