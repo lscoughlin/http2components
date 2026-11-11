@@ -8,6 +8,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
@@ -76,6 +77,14 @@ def header_pascal_files() -> list[Path]:
     return sorted(set(result))
 
 
+def include_files() -> list[Path]:
+    """Return maintained Pascal includes from every production source root."""
+    result = []
+    for base in source_dirs():
+        result.extend(path for path in base.rglob("*.inc") if path.is_file())
+    return sorted(result)
+
+
 def strip_pascal(text: str) -> str:
     """Replace Pascal comments and string literals with spaces."""
     out = list(text)
@@ -137,8 +146,34 @@ def tokens(code: str) -> list[str]:
     return re.findall(r"[A-Za-z_][A-Za-z0-9_.]*|:=|<=|>=|<>|[^\s]", code)
 
 
-def parse_pascal(path: Path) -> tuple[str | None, list[tuple[str, str]]]:
-    toks = tokens(strip_pascal(path.read_text(errors="replace")))
+INCLUDE_PATTERN = re.compile(
+    r"(?im)^\s*\{\$\s*(?:i|include)\s+([^}\s]+)\s*\}")
+
+
+def expand_pascal_includes(path: Path, active: set[Path] | None = None) -> str:
+    """Expand local includes in place, so each edge keeps its parent section."""
+    path = path.resolve()
+    active = set() if active is None else active
+    if path in active:
+        raise ValueError("recursive Pascal include: " + str(path))
+    active.add(path)
+    text = path.read_text(errors="replace")
+
+    def replace(match: re.Match[str]) -> str:
+        name = match.group(1).strip("'\"")
+        include = (path.parent / name).resolve()
+        if not include.is_file() or include.suffix.casefold() != ".inc":
+            return match.group(0)
+        return expand_pascal_includes(include, active)
+
+    try:
+        return INCLUDE_PATTERN.sub(replace, text)
+    finally:
+        active.remove(path)
+
+
+def parse_pascal_text(text: str) -> tuple[str | None, list[tuple[str, str]]]:
+    toks = tokens(strip_pascal(text))
     lower = [t.lower() for t in toks]
     unit = None
     for i in range(len(toks) - 1):
@@ -196,6 +231,41 @@ def parse_pascal(path: Path) -> tuple[str | None, list[tuple[str, str]]]:
     return unit, edges
 
 
+def parse_pascal(path: Path) -> tuple[str | None, list[tuple[str, str]]]:
+    return parse_pascal_text(expand_pascal_includes(path))
+
+
+def common_dependency_violation(group: str, dependency: str) -> bool:
+    return group.startswith("http2.common") and dependency.startswith(
+        ("http2.client", "http2.server", "mormot.", "fpjson", "jsonparser", "xml"))
+
+
+def include_parser_check() -> None:
+    """Check that a common interface include keeps its context and section."""
+    with tempfile.TemporaryDirectory(prefix="http2-include-check-") as temp:
+        root = Path(temp)
+        (root / "Common.Uses.inc").write_text(
+            "uses mormot.core.base, Http2.Common.Types;\n")
+        source = root / "Http2.Common.IncludeProbe.pas"
+        source.write_text(
+            "unit Http2.Common.IncludeProbe;\ninterface\n"
+            "{$I Common.Uses.inc}\ntype TProbe = Integer;\n"
+            "implementation\nend.\n")
+        unit, edges = parse_pascal(source)
+    if unit is None or not unit.casefold().startswith("http2.common"):
+        raise SystemExit("Include parser check lost the common parent unit")
+    if ("mormot.core.base", "interface") not in {
+            (name.casefold(), section) for name, section in edges}:
+        raise SystemExit("Include parser check lost the common native interface edge")
+    if ("Http2.Common.Types", "interface") not in set(edges):
+        raise SystemExit("Include parser check lost the interface edge")
+    if not common_dependency_violation(unit.casefold(), "mormot.core.base"):
+        raise SystemExit("Include parser check did not reject common-to-mORMot dependency")
+    if common_dependency_violation(unit.casefold(), "http2.common.types"):
+        raise SystemExit("Include parser check rejected a common interface dependency")
+    print("Include parser check passed: common parent and interface edges are preserved")
+
+
 def version_check(c: Checks) -> None:
     version_file = ROOT / "VERSION"
     if not version_file.exists():
@@ -229,6 +299,12 @@ def source_check(c: Checks) -> None:
     units: dict[str, tuple[str, Path]] = {}
     parsed: dict[str, tuple[str, Path, str, list[tuple[str, str]]]] = {}
     for path in header_files:
+        rel = path.relative_to(ROOT).as_posix()
+        lines = path.read_text(errors="replace").splitlines()
+        if len(lines) >= 1000:
+            c.fail(f"{rel} has {len(lines)} lines; the maximum is 999")
+    includes = include_files()
+    for path in includes:
         rel = path.relative_to(ROOT).as_posix()
         lines = path.read_text(errors="replace").splitlines()
         if len(lines) >= 1000:
@@ -304,7 +380,7 @@ def source_check(c: Checks) -> None:
             if test_file and role == "server" and json_xml:
                 c.fail(f"{rel} has server-test dependency on JSON/XML unit {dep}")
             if group.startswith("http2.common"):
-                if d.startswith(("http2.client", "http2.server", "mormot.", "fpjson", "jsonparser", "xml")):
+                if common_dependency_violation(group, d):
                     c.fail(f"{rel} has prohibited {section} dependency on {dep}")
             if source_unit and group.startswith("http2.client") and d.startswith("http2.client.readers") and not readers_unit:
                 c.fail(f"{rel} has optional Readers dependency from client core: {dep}")
@@ -334,7 +410,8 @@ def source_check(c: Checks) -> None:
         visit(node, [node])
     production_units = sum(1 for _, path in units.values()
                            if path.relative_to(ROOT).parts[0] in ("common", "client", "server", "tls"))
-    print(f"Checked {len(header_files)} Pascal headers/sizes, {len(files)} active files, "
+    include_parser_check()
+    print(f"Checked {len(header_files)} Pascal headers/sizes, {len(includes)} include files, {len(files)} active files, "
           f"{production_units} production units, and {len(units)} total unit declarations")
     run_yaml(c)
 

@@ -49,10 +49,11 @@ end
 component_roots = %w[common client server tls/openssl tls/tlslib]
 pascal_roots = (%w[test examples tools] + component_roots).map { |d| File.join(root, d) }
 pascal_files = pascal_roots.flat_map { |dir| Dir[File.join(dir, '**/*.pas')] }.sort
+include_files = component_roots.flat_map { |dir| Dir[File.join(root, dir, '**/*.inc')] }.sort
 pascal_files.concat(Dir[File.join(root, '*.pas')])
 pascal_files.concat(Dir[File.join(root, 'doc/verification/client-probes/*.pas')])
 pascal_files = pascal_files.uniq.sort
-pascal_files.each do |path|
+(pascal_files + include_files).uniq.sort.each do |path|
   rel = path.delete_prefix(root + '/')
   text = File.read(path)
   match = text.match(/\A\{\*\*\n---\n(.*?)\n---\n\}\n/m)
@@ -69,5 +70,5 @@ pascal_files.each do |path|
   bad += check_yaml(rel, match[1], license, copyright)
 end
 
-puts "Checked #{docs.length} document(s) and #{pascal_files.length} Pascal file(s); failures=#{bad}"
+puts "Checked #{docs.length} document(s), #{pascal_files.length} Pascal file(s), and #{include_files.length} include file(s); failures=#{bad}"
 exit(bad.zero? ? 0 : 1)
