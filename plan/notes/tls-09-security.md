@@ -115,6 +115,13 @@ expired`. The valid control returned `OK`. The CLI was used only for local
 fixture generation and path checks. Runtime TLS used the installed OpenSSL
 3.5.9 library at `/opt/homebrew/opt/openssl@3/lib`.
 
+The two generated certificate files are PEM-only. Their DER SHA-256 values
+did not change during normalization: expired leaf
+`32bf77cd68ffdbc002a51da75cb30518f5752bbfd523e75956c0a778e309e779` and
+intermediate `99e1a0e2c97444a4475b9bc498d75501de44bd7ba56d94e16fb2e6ca28cd3407`.
+The chain remains leaf then intermediate. The synthetic private key did not
+change.
+
 ## Limits
 
 The runner covers provider-session integration over in-memory ciphertext. It
