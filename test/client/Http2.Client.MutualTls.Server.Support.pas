@@ -149,7 +149,7 @@ type
 function ConnRead(const C: TConn; var ABuf; const N: Integer): Integer;
 begin
   if C.Ssl <> nil then
-    Result := SSL_read(C.Ssl, @ABuf, N)
+    Result := TestSslRead(C.Ssl, @ABuf, N)
   else
     Result := fpRecv(C.Fd, @ABuf, N, 0);
   if Result < 0 then

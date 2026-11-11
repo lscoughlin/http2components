@@ -222,7 +222,7 @@ end;
 
 function TSslFdSrv.Read(var ABuf; N: Integer): Integer;
 begin
-  Result := SSL_read(FSsl, @ABuf, N);
+  Result := TestSslRead(FSsl, @ABuf, N);
   if Result < 0 then
     Result := 0;
 end;
@@ -324,7 +324,7 @@ var
 begin
   while True do
   begin
-    R := SSL_read(FSsl, @ABuf, N);
+    R := TestSslRead(FSsl, @ABuf, N);
     if R > 0 then
       Exit(R);
     Err := SSL_get_error(FSsl, R);
