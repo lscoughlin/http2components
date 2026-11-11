@@ -20,3 +20,9 @@ publication and tagging remain separate actions.
 
 The five-minute brief reports and 15-minute detailed reports use the start
 time above. Interim reports can also state material findings or blockers.
+
+The user authorized dual licensing for all project-owned code and confirmed
+copyright ownership. Maintained code and documentation use the SPDX
+expression `Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)`.
+This supersedes the plan's unresolved project-license gate. Source license
+records remain historical. Third-party and specification terms remain intact.
