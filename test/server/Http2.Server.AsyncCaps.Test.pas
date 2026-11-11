@@ -65,8 +65,9 @@ type
     FServer: THttp2AsyncServer;
     function StartServer(const AMaxConnections: Integer): Integer;
     procedure StopServer;
-    /// the mORMot2 cap of a factory with the given connection limit
-    function MappingOf(const AMaxConnections: Integer): Integer;
+    /// the configured bound and the disabled mORMot2 dependency gates
+    procedure ReadAdmissionLimits(const AConfiguredLimit: Integer;
+      out AConfigured, AMaxConnections, AMaxPending: Integer);
     /// TRUE once the peer closed the socket within ATimeoutMs
     function PeerClosed(const AClient: TCrtSocket;
       const ATimeoutMs: Integer): Boolean;
@@ -82,7 +83,7 @@ type
   public
     procedure TearDown; override;
   published
-    /// a factory value of N maps to the mORMot2 value of N minus one
+    /// the custom bound is retained and redundant dependency gates are disabled
     procedure TestMaxConnectionsMapping;
     /// a cap of two serves exactly two connections, then frees a slot
     procedure TestConnectionCapServesExactlyTwo;
@@ -321,7 +322,8 @@ begin
   StopServer;
 end;
 
-function TAsyncCapsTest.MappingOf(const AMaxConnections: Integer): Integer;
+procedure TAsyncCapsTest.ReadAdmissionLimits(const AConfiguredLimit: Integer;
+  out AConfigured, AMaxConnections, AMaxPending: Integer);
 var
   Factory: THttp2ServerFactory;
   Server: THttp2AsyncServer;
@@ -332,10 +334,12 @@ begin
     .WithClearTextAllowed(True)
     .WithHandler(TCapEchoHandler.Create)
     .WithServerLimits(TServerLimits.Create.WithMaxConnections(
-      AMaxConnections));
+      AConfiguredLimit));
   Server := THttp2AsyncServer.Create(Factory);
   try
-    Result := Server.MaxConnections;
+    AConfigured := Server.FFactory.ServerLimits.MaxConnections;
+    AMaxConnections := Server.MaxConnections;
+    AMaxPending := Server.MaxPending;
   finally
     Server.Free;
   end;
@@ -439,11 +443,33 @@ begin
 end;
 
 procedure TAsyncCapsTest.TestMaxConnectionsMapping;
+var
+  Configured, MaxConnections, MaxPending: Integer;
 begin
-  AssertEquals('a value of 2 maps to 1', 1, MappingOf(2));
-  AssertEquals('a value of 1 maps to 0', 0, MappingOf(1));
-  AssertEquals('a value of 0 means no cap', MaxInt, MappingOf(0));
-  AssertEquals('the default maps to 9999', 9999, MappingOf(10000));
+  ReadAdmissionLimits(2, Configured, MaxConnections, MaxPending);
+  AssertEquals('the exact configured bound is retained', 2, Configured);
+  AssertEquals('the dependency connection gate is disabled', MaxInt,
+    MaxConnections);
+  AssertEquals('the dependency pending gate is disabled', MaxInt, MaxPending);
+  ReadAdmissionLimits(1, Configured, MaxConnections, MaxPending);
+  AssertEquals('a limit of one is retained by custom admission', 1,
+    Configured);
+  AssertEquals('a limit of one disables the dependency connection gate',
+    MaxInt, MaxConnections);
+  AssertEquals('a limit of one disables the dependency pending gate', MaxInt,
+    MaxPending);
+  ReadAdmissionLimits(0, Configured, MaxConnections, MaxPending);
+  AssertEquals('zero keeps unlimited admission', 0, Configured);
+  AssertEquals('unlimited admission still disables the dependency gate',
+    MaxInt, MaxConnections);
+  AssertEquals('unlimited admission still disables pending gate', MaxInt,
+    MaxPending);
+  ReadAdmissionLimits(10000, Configured, MaxConnections, MaxPending);
+  AssertEquals('the default limit value is retained', 10000, Configured);
+  AssertEquals('the default limit disables the dependency connection gate',
+    MaxInt, MaxConnections);
+  AssertEquals('the default limit disables the dependency pending gate',
+    MaxInt, MaxPending);
 end;
 
 procedure TAsyncCapsTest.TestConnectionCapServesExactlyTwo;
