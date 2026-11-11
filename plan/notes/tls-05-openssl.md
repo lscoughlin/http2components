@@ -106,3 +106,22 @@ cases. Post-split run 09 passed 84 cases. Run 10 passed 84 cases after the
 pending-write capacity correction and returned X509, SSL, and SSL_CTX counts
 to the warmed baseline. The run logs are kept in the coordinator verification
 directory. The test suite does not force a native `SSL_write` WANT condition.
+
+## Coordinator merge check
+
+Reviewed implementation HEAD: `6e8092f`. Merge commit: `ec1c752`.
+The merged `make test-tls-openssl` command compiled and passed 86 checks in
+0.685 seconds on 2026-11-11 at 12:20 UTC. Required mTLS with missing and
+invalid client identities failed as expected. Native counts returned to the
+same warm baseline. The log is `bin/tls-coordinator/tls05-merged-main.log`.
+
+The first merged command stopped before provider compilation because the
+local mORMot2 clone still named its local cache as origin. Its HEAD and
+source were clean at the required pin. The coordinator set the target-owned
+clone origin to the recorded official URL and repeated the command. No
+sibling checkout was changed. The other four dependency pins and origins
+were checked and were already correct.
+
+The merge kept the newer main-branch build targets when older, identical
+build changes from worker prerequisite cherry-picks caused conflicts. The
+provider package inventory was then regenerated for its six source units.
