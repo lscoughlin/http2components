@@ -230,4 +230,3 @@ function ShouldEmitWindowUpdate(const AConsumed, AWindowSize: LongWord;
 begin Result := Http2.Common.FlowControl.ShouldEmitWindowUpdate(AConsumed, AWindowSize, AStreamEnded); end;
 
 end.
-

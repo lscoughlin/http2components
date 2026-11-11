@@ -33,4 +33,3 @@ The facade uses only RTL and basic FCL units, plus the common leaf units. The co
 A direct FPC 3.2.4 macOS arm64 compile of `test/common/Http2.Common.ApiProbe.pas` succeeded with exit code 0. The probe imports only `Http2.Common` and exercised header operations, HPACK encode/decode, SETTINGS frame construction and validation, window initialization, and error naming.
 
 The M04 bounded common runner passed 229 tests with zero errors, failures, or ignored tests. M05 adds no changes to common behavior.
-
