@@ -11,8 +11,9 @@ notes:
 Native Linux Docker validation is in progress on 2026-11-11. The
 [Linux verification record](linux-tls-2026-11-11.md) contains the current
 candidates, repairs, executed checks, failures, and peer limitations.
-Candidate `610a86b` passed all acceptance steps except the complete server
-suite, which ran 717 tests with one error and two failures. Performance
+Candidate `475db3d` passed its builds and packages. Its complete server
+suite ran 721 tests with zero errors and two failures in idle and first-header
+timeouts. The subsequent repair is awaiting Linux acceptance. Performance
 validation remains pending. There is no release approval.
 
 The earlier bounded implementation candidate was `15feb54`, checked on
@@ -53,8 +54,9 @@ as current TLS replacement results.
 
 Linux builds, packages, examples, the full client suite, provider matrices,
 independent peers, real proxy and mTLS matrices, conformance, and abuse have
-recorded results. The full server suite has unresolved results in HTTP/1
-WebSocket shutdown, a slow reader, and a reset-flood peer. Performance and
+recorded results. The full server suite now passes HTTP/1 WebSocket shutdown, the slow reader,
+and the reset-flood peer. Idle and first-header repairs await acceptance.
+Performance and
 long-duration resource checks remain pending. The Linux record distinguishes
 strict passes from explicit peer limitations and classified harness rows.
 
