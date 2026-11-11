@@ -26,7 +26,7 @@ uses
   SysUtils, Classes, process, fpcunit, testregistry,
   mormot.core.base,
   mormot.net.sock,
-  mormot.lib.openssl11,
+  Http2.Common.Tls.Policy, Http2.Common.Tls.Types, Http2.OpenSSL,
   Http2.Server.Config, Http2.Server.Config.Tls, Http2.Server.Seam,
   Http2.Server.Tls, Http2.Server.Async, Http2.Server.Async.Options;
 
@@ -61,8 +61,8 @@ implementation
 
 const
   /// the loopback certificate and key of the test suite
-  cTlsCertFile = 'test/certs/localhost.crt';
-  cTlsKeyFile = 'test/certs/localhost.key';
+  cTlsCertFile = 'test/fixtures/client/certs/localhost.crt';
+  cTlsKeyFile = 'test/fixtures/client/certs/localhost.key';
 
 { TTlsNullHandler }
 
@@ -94,16 +94,19 @@ function TTlsProtocolLiveTest.StartServer(const AMin,
   AMax: TTlsVersion): Integer;
 var
   Factory: THttp2ServerFactory;
+  Context: ITLSContext;
+  ServerPolicy: TTlsServerPolicy;
 begin
+  ServerPolicy := TTlsServerPolicy.SecureDefault
+    .WithVersions(AMin, AMax)
+    .WithServerIdentity(TOpenSSLIdentity.FromPemFiles(cTlsCertFile, cTlsKeyFile));
+  Context := TOpenSSLTlsContextFactory.Create
+    .WithServerPolicy(ServerPolicy).Build;
   Factory := THttp2ServerFactory.Create
     .WithHost('127.0.0.1')
     .WithPort(0)
     .WithClearTextAllowed(False)
-    .WithTls(TTlsServerOptions.Create
-      .WithCertificateFile(cTlsCertFile)
-      .WithKeyFile(cTlsKeyFile)
-      .WithMinTlsVersion(AMin)
-      .WithMaxTlsVersion(AMax))
+    .WithTlsContext(Context)
     .WithHandler(TTlsNullHandler.Create)
     .WithHandlerThreads(2)
     .WithIOThreads(2);
