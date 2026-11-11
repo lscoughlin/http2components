@@ -461,3 +461,16 @@ has its own helper. The runner owner corrects the helper and port use, keeps
 strict mode, and preserves startup and peer output on success and failure.
 A controlled readiness check and the full Linux abuse gate verify the change.
 The HTTP/1 WebSocket abuse checks already pass and remain required.
+
+## LV-28: Validation helper child-process reaping
+
+The validation container contains defunct example-server and pipe-holder
+processes after completed gates. The shell helpers terminate the children and
+then terminate their parent shell before it can collect the child exit status.
+The runner owner changes stop handling so the parent can reap its children,
+with a finite fallback for a child or parent that does not exit. Cleanup still
+stops only processes created by that helper. Controlled repeated start/stop
+checks verify that no live or defunct descendants remain. Startup failures
+must preserve logs and release children too. Existing defunct processes in
+the old container remain part of the evidence; container removal at completion
+removes them. This repair does not change protocol expectations.
