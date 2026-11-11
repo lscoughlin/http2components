@@ -146,17 +146,17 @@ The stale factory source paths found during that run are corrected; its
 part of the comparison record and require classification if they recur.
 
 
-## Execution status at 2026-11-11 20:41 UTC
+## Execution status at 2026-11-11 22:06 UTC
 
 | IDs | Status |
 | --- | --- |
-| V00 | Each candidate has an immutable Git archive and command/result records. Candidate 610a86b is in the complete final acceptance batch. |
+| V00 | Each candidate has a Git archive and command/result records. Candidate 33e69e4 stopped after the concurrent integration failure. The absent 610a86b nested artifacts are an explicit evidence gap; source and top-level logs remain. |
 | V01 | All 146 expected harness rows are present: MATCH 30, BETTER 39, WORSE 0, CLASS-DIFF 15, UNKNOWN 62. Non-matching outcomes have source and trace classifications. |
-| V02, V12 | Full server conformance passed 94 HTTP/2 and eight HPACK cases, with no skips. The affected gate runs again after the socket-close repair. |
+| V02, V12 | Full server conformance passed 94 HTTP/2 and eight HPACK cases with no skips on 475db3d. Required gates run again after the remaining repair. |
 | V03 | Client Autobahn, independent server HTTP/2 WebSocket, HTTP/1 WebSocket, and SSE checks passed. |
 | V04, V13 | Real mTLS passed 54 rows; real proxy passed 65 rows with three explicit Squid build limitations. |
-| V05, V07, V11 | Abuse passed all required cases. Performance, long-lived connections, and concurrent incomplete handshakes remain pending. |
-| V06 | Five builds, six packages, 25 examples, and the complete client suite passed. The final complete server run is pending. Focused slow-reader and explicit abort checks passed after the socket-close repair. |
+| V05, V07, V11 | Abuse passed all required cases on 475db3d. Performance, long-lived connections, and concurrent incomplete handshakes remain pending. The reviewed performance logging fix passed controlled local checks. |
+| V06 | Five builds, six packages, 25 examples, and the complete client suite passed. The 475db3d server run had 721 cases, zero errors, and two idle failures. The idle repair passed all seven focused cases on 33e69e4; concurrent integration still fails. |
 | V09, V10 | Bounded provider/security matrices, independent client checks, and 32 independent server identity rows passed. The affected server checks run again. |
 | V14 | The 13 adapter and 13 listener cases, 40 live mTLS cases, and 20 repeated shutdown cases passed after the EOF repair. |
 | V08 | Release review remains incomplete. No release is published. |
