@@ -125,8 +125,10 @@ begin
 end;
 function TTlsClientPolicy.WithVerificationDepth(const AValue: Integer): TTlsClientPolicy;
 begin
+  if AValue < 0 then
+    raise ETlsContextError.Create('Verification depth cannot be negative');
   Result := Self;
-  Result.HasVerificationDepth := AValue > 0;
+  Result.HasVerificationDepth := True;
   Result.VerificationDepth := AValue;
 end;
 class function TTlsServerPolicy.SecureDefault: TTlsServerPolicy;
@@ -168,8 +170,10 @@ begin
 end;
 function TTlsServerPolicy.WithVerificationDepth(const AValue: Integer): TTlsServerPolicy;
 begin
+  if AValue < 0 then
+    raise ETlsContextError.Create('Verification depth cannot be negative');
   Result := Self;
-  Result.HasVerificationDepth := AValue > 0;
+  Result.HasVerificationDepth := True;
   Result.VerificationDepth := AValue;
 end;
 function TTlsClientSessionOptions.WithAlpns(const AValues: array of string): TTlsClientSessionOptions;

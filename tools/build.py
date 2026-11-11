@@ -12,8 +12,10 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import fcntl
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -98,8 +100,8 @@ def fpc_unit_root() -> str:
 
 def base_flags(component: str, *, tests: bool = False) -> list[str]:
     role = component.removesuffix("-test")
-    if role == "tls-client":
-        role = "client"
+    if role in ("tls-client", "tls-server"):
+        role = role.removeprefix("tls-")
     tls_integration = role == "tls-integration"
     if tls_integration:
         role = "integration"
@@ -115,11 +117,11 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
     if role == "tlslib":
         for name in ("HashLib4Pascal", "SimpleBaseLib4Pascal", "CryptoLib4Pascal", "TlsLib4Pascal"):
             verify_dependency(name)
-        flags.extend(tlslib_flags())
         bootstrap = ROOT / "bin" / target_name() / profile() / "tlslib" / "units" / "bootstrap"
         if bootstrap.exists():
             flags.append(f"-Fu{bootstrap}")
         flags.append(f"-Fu{ROOT / 'bin' / target_name() / profile() / 'tlslib' / 'units'}")
+        flags.extend(tlslib_flags())
     if role in ("client", "readers", "examples", "api", "integration"):
         flags.append(f"-Fu{COMPONENTS['client']['source']}")
     if role in ("server", "examples", "api", "integration"):
@@ -134,8 +136,8 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
         for provider in ("openssl", "tlslib"):
             flags.extend((f"-Fu{COMPONENTS[provider]['source']}",
                           f"-Fu{ROOT / 'bin' / target_name() / profile() / provider / 'units'}"))
-        flags.extend(tlslib_flags())
         flags.append(f"-Fu{ROOT / 'bin' / target_name() / profile() / 'tlslib' / 'units' / 'bootstrap'}")
+        flags.extend(tlslib_flags())
         flags.append("-dUSE_OPENSSL")
     if role == "examples":
         flags.extend(("-Fu./examples", "-Fu./examples/client", "-Fu./examples/server",
@@ -285,8 +287,13 @@ def compile_provider_tlslib(source: Path) -> Path:
     for package in packages:
         if not package.is_file():
             raise SystemExit(f"Pinned TlsLib dependency package is missing: {package}")
-        run([compiler(), *flags, f"-FU{package_units}", f"-FE{programs}", str(package)], timeout=300)
-    run([compiler(), *flags, f"-Fu{COMPONENTS['common']['source']}", f"-Fu{package_units}",
+        run([compiler(), f"-Fu{package_units}", *flags,
+             f"-FU{package_units}", f"-FE{programs}", str(package)], timeout=300)
+    # Compiled package units must precede dependency source directories.
+    # Otherwise FPC starts a new source traversal and enters the CryptoLib
+    # ClpMultipliers/ClpWNafUtilities cycle proved in TLS-02.
+    run([compiler(), f"-Fu{package_units}", *flags,
+         f"-Fu{COMPONENTS['common']['source']}", f"-Fu{COMPONENTS['tlslib']['source']}",
          f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))], timeout=300)
     return programs / source.stem
 
@@ -473,6 +480,9 @@ def run_suite(binary: Path, needs_openssl: bool = False,
             raise ValueError
     except ValueError:
         raise SystemExit("TEST_TIMEOUT must be a positive number of seconds")
+    print(f"Test start (UTC): {datetime.now(timezone.utc).isoformat()}; "
+          f"limit: {timeout_seconds}s", flush=True)
+    started = time.monotonic()
     proc = subprocess.Popen(args, cwd=cwd, env=env, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             start_new_session=True)
@@ -487,8 +497,11 @@ def run_suite(binary: Path, needs_openssl: bool = False,
             stdout, _ = proc.communicate()
         if stdout:
             print(stdout, end="", flush=True)
+        print(f"Test elapsed: {time.monotonic() - started:.3f}s (timeout)", flush=True)
         raise SystemExit(f"Test run exceeded TEST_TIMEOUT={timeout_seconds}s; process group stopped")
     print(stdout, end="", flush=True)
+    print(f"Test elapsed: {time.monotonic() - started:.3f}s; "
+          f"child exit: {proc.returncode}", flush=True)
     if proc.returncode:
         if proc.returncode < 0:
             signum = -proc.returncode
@@ -643,6 +656,8 @@ def main() -> int:
         build("common")
         build("client")
         build("server")
+        build("openssl")
+        build("tlslib")
     elif target.startswith("test:") and target.split(":", 1)[1] in ("common", "client", "server"):
         run_tests(target.split(":", 1)[1])
     elif target == "test":
@@ -663,19 +678,21 @@ def main() -> int:
     elif target == "test:integration":
         run_integration_tests()
     elif target in ("test:tls:contract", "test:tls:openssl", "test:tls:tlslib",
-                    "test:tls:client", "test:tls:integration"):
+                    "test:tls:client", "test:tls:server", "test:tls:integration"):
         suite = target.removeprefix("test:tls:")
         runners = {
             "contract": ROOT / "test/common/Http2.Common.Tls.Contract.Run.pas",
             "openssl": ROOT / "test/tls/openssl/Http2.Tls.OpenSSL.Tests.pas",
             "tlslib": ROOT / "test/tls/tlslib/Http2.Tls.TlsLib.Tests.pas",
             "client": ROOT / "test/client/Http2.Client.Tls.Session.Runner.pas",
+            "server": ROOT / "test/server/Http2.Server.Tls.Session.Runner.pas",
             "integration": ROOT / "test/integration/tls/Http2.Tls.Integration.Tests.pas",
         }
         source = runners[suite]
-        required(source, f"bounded TLS {suite} runner (owned by TLS-03/05/06/09)")
+        required(source, f"bounded TLS {suite} runner (owned by TLS-03/05/06/07/08/09)")
         owners = {"contract": "common-test", "openssl": "openssl-test", "tlslib": "tlslib-test",
-                  "client": "tls-client-test", "integration": "tls-integration-test"}
+                  "client": "tls-client-test", "server": "tls-server-test",
+                  "integration": "tls-integration-test"}
         if suite == "contract":
             build("common")
         elif suite == "openssl":
@@ -684,9 +701,9 @@ def main() -> int:
         elif suite == "tlslib":
             build("common")
             build("tlslib")
-        elif suite == "client":
+        elif suite in ("client", "server"):
             build("common")
-            build("client")
+            build(suite)
         else:
             build("common")
             build("openssl")
@@ -713,7 +730,7 @@ def main() -> int:
             "common": ("common", "common-test", "package-http2common"),
             "client": ("client", "readers", "tls-client-test", "package-http2client", "package-http2clientreaders"),
             "readers": ("readers", "package-http2clientreaders"),
-            "server": ("server", "package-http2server"),
+            "server": ("server", "tls-server-test", "package-http2server"),
             "openssl": ("openssl", "openssl-test", "package-http2openssl"),
             "tlslib": ("tlslib", "tlslib-test", "package-http2tlslib"),
         }[component]

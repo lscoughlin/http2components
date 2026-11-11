@@ -25,11 +25,31 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="1">
+    <Files Count="6">
       <Item1>
+        <Filename Value="src/Http2.OpenSSL.Context.pas" />
+        <UnitName Value="Http2.OpenSSL.Context" />
+      </Item1>
+      <Item2>
+        <Filename Value="src/Http2.OpenSSL.Factory.pas" />
+        <UnitName Value="Http2.OpenSSL.Factory" />
+      </Item2>
+      <Item3>
+        <Filename Value="src/Http2.OpenSSL.Identity.pas" />
+        <UnitName Value="Http2.OpenSSL.Identity" />
+      </Item3>
+      <Item4>
+        <Filename Value="src/Http2.OpenSSL.Session.pas" />
+        <UnitName Value="Http2.OpenSSL.Session" />
+      </Item4>
+      <Item5>
+        <Filename Value="src/Http2.OpenSSL.Trust.pas" />
+        <UnitName Value="Http2.OpenSSL.Trust" />
+      </Item5>
+      <Item6>
         <Filename Value="src/Http2.OpenSSL.pas" />
         <UnitName Value="Http2.OpenSSL" />
-      </Item1>
+      </Item6>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>

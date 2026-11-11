@@ -12,6 +12,11 @@ unit http2openssl;
 interface
 
 uses
+  Http2.OpenSSL.Context,
+  Http2.OpenSSL.Factory,
+  Http2.OpenSSL.Identity,
+  Http2.OpenSSL.Session,
+  Http2.OpenSSL.Trust,
   Http2.OpenSSL;
 
 implementation
