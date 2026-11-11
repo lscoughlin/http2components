@@ -12,6 +12,78 @@ INTEROP_PID=''
 EXAMPLE_PID=''
 EXAMPLE_OUT=''
 EXAMPLE_PORT=''
+PIPELINE_STOP_RESULT=''
+
+# Wait for an owned pipeline subshell to finish. Zombies are complete here;
+# the caller reaps them with wait.
+pipeline_running() {
+  pipeline_state=$(ps -o stat= -p "$1" 2>/dev/null | sed 's/^[[:space:]]*//')
+  case "$pipeline_state" in
+    ''|Z*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+wait_pipeline() {
+  wait_pipeline_pid=$1
+  wait_pipeline_count=$2
+  wait_pipeline_index=0
+  while [ "$wait_pipeline_index" -lt "$wait_pipeline_count" ]; do
+    if ! pipeline_running "$wait_pipeline_pid"; then
+      return 0
+    fi
+    sleep 0.1
+    wait_pipeline_index=$((wait_pipeline_index + 1))
+  done
+  ! pipeline_running "$wait_pipeline_pid"
+}
+
+signal_pipeline_children() {
+  signal_pipeline_pid=$1
+  signal_pipeline_name=$2
+  signal_pipeline_list=$3
+  signal_pipeline_current=" $(pgrep -P "$signal_pipeline_pid" 2>/dev/null \
+    | tr '\n' ' ' || true) "
+  for signal_pipeline_child in $signal_pipeline_list; do
+    case "$signal_pipeline_current" in
+      *" $signal_pipeline_child "*)
+        kill -"$signal_pipeline_name" "$signal_pipeline_child" 2>/dev/null || true ;;
+    esac
+  done
+}
+
+# Stop the owned input holder first. Then let its server consume EOF and
+# let the pipeline shell reap both children. Signals are a bounded fallback.
+stop_owned_pipeline() {
+  stop_pipeline_pid=$1
+  [ -n "$stop_pipeline_pid" ] || return 0
+  PIPELINE_STOP_RESULT='graceful-eof'
+  stop_pipeline_children=$(pgrep -P "$stop_pipeline_pid" 2>/dev/null || true)
+  stop_pipeline_holders=''
+  for stop_pipeline_child in $stop_pipeline_children; do
+    stop_pipeline_comm=$(ps -o comm= -p "$stop_pipeline_child" 2>/dev/null \
+      | sed 's/^[[:space:]]*//')
+    case "${stop_pipeline_comm##*/}" in
+      sleep) stop_pipeline_holders="$stop_pipeline_holders $stop_pipeline_child" ;;
+    esac
+  done
+  signal_pipeline_children "$stop_pipeline_pid" TERM "$stop_pipeline_holders"
+  if ! wait_pipeline "$stop_pipeline_pid" 50; then
+    PIPELINE_STOP_RESULT='fallback-term'
+    signal_pipeline_children "$stop_pipeline_pid" TERM "$stop_pipeline_children"
+    if ! wait_pipeline "$stop_pipeline_pid" 20; then
+      PIPELINE_STOP_RESULT='fallback-kill'
+      signal_pipeline_children "$stop_pipeline_pid" KILL "$stop_pipeline_children"
+      if ! wait_pipeline "$stop_pipeline_pid" 20; then
+        kill -TERM "$stop_pipeline_pid" 2>/dev/null || true
+        if ! wait_pipeline "$stop_pipeline_pid" 10; then
+          kill -KILL "$stop_pipeline_pid" 2>/dev/null || true
+        fi
+      fi
+    fi
+  fi
+  wait "$stop_pipeline_pid" 2>/dev/null || true
+}
 
 # start_interop_server [binary] [extra args...]
 # Start the server and set INTEROP_PID and INTEROP_PORT.
@@ -78,13 +150,7 @@ ensure_validation_certificate() {
 # whole sleep.  Each child ends first, and the subshell follows.
 stop_interop_server() {
   if [ -n "$INTEROP_PID" ]; then
-    # the process id names the subshell; its children hold the pipe ends
-    children=$(pgrep -P "$INTEROP_PID" 2>/dev/null || true)
-    for child in $children; do
-      kill "$child" 2>/dev/null || true
-    done
-    kill "$INTEROP_PID" 2>/dev/null || true
-    wait "$INTEROP_PID" 2>/dev/null || true
+    stop_owned_pipeline "$INTEROP_PID"
     INTEROP_PID=''
     if [ -n "${INTEROP_LOG:-}" ] && [ -f "$interop_out" ]; then
       cat "$interop_out" >> "$INTEROP_LOG"
@@ -121,13 +187,11 @@ start_example_server() {
 # Stop only the example server started by start_example_server.
 stop_example_server() {
   if [ -n "$EXAMPLE_PID" ]; then
-    children=$(pgrep -P "$EXAMPLE_PID" 2>/dev/null || true)
-    for child in $children; do
-      kill "$child" 2>/dev/null || true
-    done
-    kill "$EXAMPLE_PID" 2>/dev/null || true
-    wait "$EXAMPLE_PID" 2>/dev/null || true
+    stop_owned_pipeline "$EXAMPLE_PID"
     EXAMPLE_PID=''
+  fi
+  if [ -n "${EXAMPLE_LOG:-}" ] && [ -n "$EXAMPLE_OUT" ] && [ -f "$EXAMPLE_OUT" ]; then
+    cat "$EXAMPLE_OUT" >> "$EXAMPLE_LOG"
   fi
   [ -n "$EXAMPLE_OUT" ] && rm -f "$EXAMPLE_OUT"
   EXAMPLE_OUT=''

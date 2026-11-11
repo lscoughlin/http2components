@@ -219,15 +219,28 @@ case "$gate" in
     echo "--- HTTP/2 abuse peer output: $abuse_peer_log ---"
     cat "$abuse_peer_log"
     unset INTEROP_ERR INTEROP_LOG
+    ws_server_log="$log_dir/abuse-websocket-server-$run_id.log"
+    ws_peer_log="$log_dir/abuse-websocket-peer-$run_id.log"
+    : > "$ws_server_log"
+    : > "$ws_peer_log"
+    EXAMPLE_LOG=$ws_server_log
+    export EXAMPLE_LOG
     if start_example_server "$SERVER_BIN/ws_echo" 127.0.0.1 0; then
-      if python3 "$here/../abuse/ws_abuse.py" 127.0.0.1 "$EXAMPLE_PORT"; then
+      if python3 "$here/../abuse/ws_abuse.py" 127.0.0.1 "$EXAMPLE_PORT" \
+        >"$ws_peer_log" 2>&1; then
         report_pass "HTTP/1.1 WebSocket abuse checks"
       else
         report_fail "HTTP/1.1 WebSocket abuse checks"
       fi
+      stop_example_server
     else
       report_fail "WebSocket example server did not become ready"
     fi
+    echo "--- WebSocket server output: $ws_server_log ---"
+    cat "$ws_server_log"
+    echo "--- WebSocket abuse peer output: $ws_peer_log ---"
+    cat "$ws_peer_log"
+    unset EXAMPLE_LOG
     exit "$exit_code"
     ;;
   conformance)
