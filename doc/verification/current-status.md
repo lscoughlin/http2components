@@ -16,7 +16,9 @@ Candidate `5ecf0fc` passed all 777 client tests, five production builds,
 runs. The package-only update in `97aca1d` passed all six packages and the
 complete server suite: 721 tests, zero errors, and zero failures. Server TLS,
 independent identities, conformance, abuse, and repeated shutdown checks also
-passed. The remaining client peer checks and performance are in progress.
+passed. The remaining client peer checks passed. The first performance stage found
+an incomplete-handshake admission failure at the configured connection
+limit; repair and the remaining performance stages are in progress.
 There is no release approval.
 
 The earlier bounded implementation candidate was `15feb54`, checked on
@@ -59,8 +61,10 @@ as current TLS replacement results.
 Linux builds, packages, examples, both full unit suites, provider matrices,
 independent server peers, conformance, and abuse have passing results. The
 real proxy matrix passed 65 cases with three documented Squid limitations.
-The client mTLS upload matrix and final client interoperation run continue.
-Performance and long-duration resource checks remain pending. The Linux
+The client mTLS upload matrix passed all 54 rows, and client interoperation
+passed all 13 required cases with its existing peer limitation. Performance
+started, but the incomplete-handshake admission check failed. Its repair and
+the remaining resource checks are pending. The Linux
 record distinguishes strict passes from explicit peer limitations and
 classified harness rows.
 

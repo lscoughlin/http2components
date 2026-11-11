@@ -694,3 +694,12 @@ passes afterward. Focused admission and TLS lifecycle checks precede the
 affected full acceptance rerun. Root reviews and merges the fix, then repeats
 all four incomplete-handshake cases before the remaining performance stages.
 The load count and admission assertions are not weakened to obtain a pass.
+
+The probe also requires actual prompt rejection of the excess wave. An
+excess socket still open after the existing 200 ms observation is a failure,
+not a refusal. EOF, reset, and TCP refusal remain separate observed outcomes.
+Client cleanup does not become server-close evidence. The server owner
+checks whether the dependency's separate count gates and retry backoff
+conflict with the exact reservation; a redundant gate cannot weaken the
+combined active bound or delay refusal. The zero-limit setting retains its
+unlimited-connection meaning.
