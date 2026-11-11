@@ -20,6 +20,23 @@ for the build paths, not for the TLS-06 implementation.
 Logs are `bin/tls-coordinator/tls04-path-review.log` and
 `bin/tls-coordinator/tls04-path-review-repeat.log`.
 
+## Real engine compile path
+
+The TLS-06 provider then exposed a third path error. The package bootstrap
+completed, but the final provider compile selected CryptoLib source before
+its compiled units. That source traversal reached the
+`ClpMultipliers` / `ClpWNafUtilities` cycle. The error named a missing unit
+even though its compiled unit existed.
+
+A small program that imports `TlpDefaultCryptoProvider` and
+`TlpDefaultPkixProvider` reproduced the error with the original path order.
+The same program compiled when the bootstrap directory came before the
+dependency source directories. Commit `f8fd26d` applies that order to
+provider, test, integration, and package bootstrap commands. The earlier
+skeleton build did not reach these engine imports and did not detect this
+error. Compiler traces are under `bin/tls-coordinator/tlslib-resolution`.
+The probe was compiled only; no executable TLS exchange was claimed.
+
 ## Installed Lazarus group reader
 
 A temporary probe under `bin/tls-coordinator/lazarus-group` compiled the
