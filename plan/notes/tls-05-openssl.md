@@ -65,7 +65,8 @@ The provider cases also cover:
 - TLS 1.2 and TLS 1.3, AEAD cipher selection, DNS name with SNI, IPv4 SAN
   success and wrong-IP rejection.
 - mTLS none, request with no identity, request with an invalid presented
-  identity, and require with a valid identity.
+  identity, require with a valid identity, and require with missing and
+  invalid identities. Failed server handshakes expose no negotiated peer.
 - Trusted and wrong-CA certificates, an expired trusted server certificate,
   a partial-chain leaf trust anchor, and verification depth zero.
 - Zero-origin handshake timeout, verification error categories, and retained

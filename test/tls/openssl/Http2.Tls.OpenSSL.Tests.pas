@@ -422,15 +422,16 @@ end;
 
 function VerificationFailureFor(const AContext: ITLSContext;
   const AClientIdentity: ITLSIdentity; const AServerTrustsClients: Boolean;
-  const AHost: string = 'localhost'): Boolean;
+  const AHost: string = 'localhost'; const ARequiredClientAuth: Boolean = False): Boolean;
 var
   ClientOptions: TTlsClientSessionOptions;
   ServerOptions: TTlsServerSessionOptions;
   Client, Server: ITLSSession;
   ToClient, ToServer: TBytes;
+  Info: TTlsNegotiatedInfo;
   I, N, AlertBytes: Integer;
   ClientCategory, ServerCategory: TTlsErrorCategory;
-  ClientFailed, ServerFailed: Boolean;
+  ClientFailed, ServerFailed, MetadataHidden: Boolean;
 begin
   ClientOptions := Default(TTlsClientSessionOptions).WithAlpns(['h2']);
   ClientOptions.HostName := AHost;
@@ -441,6 +442,7 @@ begin
   Server := AContext.CreateServerSession(ServerOptions);
   SetLength(ToClient, 16384); SetLength(ToServer, 16384);
   ClientFailed := False; ServerFailed := False;
+  MetadataHidden := False;
   ClientCategory := tecProtocol; ServerCategory := tecProtocol;
   AlertBytes := 0;
   try
@@ -462,8 +464,12 @@ begin
     end;
     if AServerTrustsClients then
     begin
-      Result := ServerFailed and (ServerCategory = tecVerification) and
-        (AlertBytes > 0);
+      try Info := Server.NegotiatedInfo;
+      except on ETlsSessionError do MetadataHidden := True; end;
+      Result := ServerFailed and
+        ((ServerCategory = tecVerification) or
+         (ARequiredClientAuth and (ServerCategory = tecAlert))) and
+        (AlertBytes > 0) and MetadataHidden;
     end
     else
     begin
@@ -682,7 +688,8 @@ var
   ClientPolicy: TTlsClientPolicy;
   ServerPolicy: TTlsServerPolicy;
   BadIdentity: ITLSIdentity;
-  UntrustedContext, RequestContext, NameContext, ExpiredContext: ITLSContext;
+  UntrustedContext, RequestContext, NameContext, ExpiredContext,
+  RequireContext: ITLSContext;
   ExpiredIdentity: ITLSIdentity;
 begin
   ClientPolicy := TTlsClientPolicy.SecureDefault.WithTrustAnchors([
@@ -715,6 +722,15 @@ begin
     .WithClientPolicy(ClientPolicy).WithServerPolicy(ServerPolicy).Build;
   Check(VerificationFailureFor(RequestContext, BadIdentity, True),
     'request mode rejects an invalid presented certificate');
+
+  ServerPolicy := TTlsServerPolicy.SecureDefault.WithTrustAnchors([RootCert])
+    .WithClientAuth(tlsAuthRequire).WithServerIdentity(ServerIdentity);
+  RequireContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(ClientPolicy).WithServerPolicy(ServerPolicy).Build;
+  Check(VerificationFailureFor(RequireContext, nil, True, 'localhost', True),
+    'require mode rejects a missing client certificate');
+  Check(VerificationFailureFor(RequireContext, BadIdentity, True),
+    'require mode rejects an invalid client certificate');
 end;
 
 procedure Run;
