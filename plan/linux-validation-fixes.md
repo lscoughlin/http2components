@@ -165,3 +165,17 @@ transport rejects. The server owner migrates these server-only probes and
 related fixtures to explicit OpenSSL contexts and identity loaders. Existing
 ALPN/mTLS expectations remain unchanged. The independent provider probe is
 additional coverage and does not replace these existing policy cases.
+
+## LV-08: Linux TLS listener close/deadline failures
+
+The repaired Linux TLS server target runs 13 adapter checks successfully.
+Its 12-case listener suite then reports four assertion failures at
+18:08:26 UTC: StopClosesAnAcceptedHeldHandshake,
+TwoBindingsKeepTheirSessionsSeparate,
+SilentAndTricklingPeersMeetTheAcceptDeadline, and
+StrictMissingAndUnsupportedAlpnAreRejected. All four fail on peer closure.
+The server owner checks the Linux test observation first, then the epoll
+transport close and deadline paths. Production server transport and the
+listener test helper are in scope if the failure requires them. No assertion
+is weakened to hide a live connection. Acceptance is the complete listener
+suite with actual closure/deadline behavior and unaffected adapter checks.
