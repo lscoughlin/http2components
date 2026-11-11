@@ -64,11 +64,23 @@ unexpected terminal state, setup error, or other session error fails the
 case.
 
 The expired TLSLib fixture has a valid hostname and matching root issuer. The
-runner now also sets the client trust anchor explicitly and checks a valid
-server chain control. The coordinator must run the updated binary under its
-bounded execution protocol and record actual outcomes, skips, failures,
-timeout status, and cleanup before acceptance. The current worker has not
-executed any TLS binary and reports no runtime pass count.
+runner now uses owned fixtures under
+`test/fixtures/tls-integration-security/`. The expired leaf is signed by the
+same intermediate as the valid chain control. The leaf includes a DNS SAN,
+the server-auth usage, and the intermediate in its transmitted chain. The
+client trust anchor is the shared test root. OpenSSL 4.1.0 generated this
+local fixture. `openssl verify` confirmed that the expired leaf fails only
+because it is expired and the valid control chain verifies. The CLI was used
+for fixture generation and certificate-path checks only; it was not a TLS
+peer.
+
+The coordinator's first run stopped after the trusted O/O TLS 1.2 case on an
+uncaught expected verification error. The second run stopped after seven O/O
+TLS 1.2 assertions because the server-preference ALPN case expected `h2`
+while the configured server preference was `http/1.1`. The runner now checks
+the configured server preference, while the trusted case checks `h2` when
+the server lists it first. A new coordinator run is required. The current
+worker has not executed any TLS binary and reports no runtime pass count.
 
 ## Limits
 

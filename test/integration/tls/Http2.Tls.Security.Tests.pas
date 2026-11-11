@@ -84,6 +84,16 @@ begin
     raise Exception.Create('missing TLS fixture: ' + AName);
 end;
 
+function SecurityFixture(const AName: string): string;
+begin
+  Result := ExpandFileName('test/fixtures/tls-integration-security/' + AName);
+  if not FileExists(Result) then
+    Result := ExpandFileName(ExtractFilePath(ParamStr(0)) +
+      '../../../../../test/fixtures/tls-integration-security/' + AName);
+  if not FileExists(Result) then
+    raise Exception.Create('missing TLS fixture: ' + AName);
+end;
+
 function LoadIdentity(const AProvider: TProvider; const ACert, AKey: string): ITLSIdentity;
 var CertPath, KeyPath: string;
 begin
@@ -91,6 +101,11 @@ begin
   begin
     CertPath := TlsFixture(Copy(ACert, 5, MaxInt));
     KeyPath := TlsFixture(Copy(AKey, 5, MaxInt));
+  end
+  else if Copy(ACert, 1, 9) = 'security:' then
+  begin
+    CertPath := SecurityFixture(Copy(ACert, 10, MaxInt));
+    KeyPath := SecurityFixture(Copy(AKey, 10, MaxInt));
   end
   else
   begin
@@ -241,8 +256,8 @@ begin
   ClientIdentity := LoadIdentity(AClientProvider, 'client-chain.pem', 'client.key');
   ServerIdentity := LoadIdentity(AServerProvider, 'server.crt', 'server.key');
   InvalidIdentity := LoadIdentity(AClientProvider, 'other-client.crt', 'other-client.key');
-  ExpiredIdentity := LoadIdentity(AServerProvider, 'tls:expired-server.crt',
-    'tls:server-intermediate.key');
+  ExpiredIdentity := LoadIdentity(AServerProvider, 'security:expired-server-chain.crt',
+    'security:expired-server.key');
 
   for V := Low(TTlsVersion) to High(TTlsVersion) do
   begin
@@ -306,8 +321,8 @@ begin
     CO := CO.WithAlpns(['h2', 'http/1.1']);
     SO := Default(TTlsServerSessionOptions).WithAlpns(['http/1.1', 'h2']);
     Verify(Handshake(CC, SC, CO, SO, H, Status, ErrorCategory) and
-      (H.ClientInfo.SelectedAlpn = 'h2'),
-      Pair + '/A07/preference-h2/' + VersionName(V));
+      (H.ClientInfo.SelectedAlpn = 'http/1.1'),
+      Pair + '/A07/server-preference-http11/' + VersionName(V));
     SO := Default(TTlsServerSessionOptions).WithAlpns(['http/1.1']);
     Verify(Handshake(CC, SC, CO, SO, H, Status, ErrorCategory) and
       (H.ClientInfo.SelectedAlpn = 'http/1.1'),
