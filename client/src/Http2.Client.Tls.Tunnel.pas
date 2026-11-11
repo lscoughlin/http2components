@@ -18,7 +18,8 @@ interface
 uses
   SysUtils, Classes, Sockets, BaseUnix, Http2.Client.Errors, Http2.Client.Proxy,
   Http2.Client.Proxy.Types, Http2.Client.IdentityHandle,
-  Http2.Client.ClientCert, Http2.Client.Socks, Http2.Client.Tls.Types;
+  Http2.Client.ClientCert, Http2.Client.Socks, Http2.Client.Tls.Types,
+  Http2.Common.Tls.Context;
 
 type
   /// the production transport selector (plan S13): picks TLS or cleartext and
@@ -35,6 +36,8 @@ type
     FProxyPort: Word;
     FIdentity: IClientIdentity;
     FProxyIdentity: IClientIdentity;
+    FTlsContext: ITLSContext;
+    FProxyTlsContext: ITLSContext;
   public
     /// AIdentity is presented on every TLS connection to an origin; cleartext
     /// dials ignore it (doc/design/mtls.md).  AProxyIdentity is presented to
@@ -42,7 +45,9 @@ type
     constructor Create(const ACACertFile: string = '';
       const AInsecure: Boolean = False; const AProxyHost: string = '';
       const AProxyPort: Word = 0; const AIdentity: IClientIdentity = nil;
-      const AProxyIdentity: IClientIdentity = nil);
+      const AProxyIdentity: IClientIdentity = nil;
+      const ATlsContext: ITLSContext = nil;
+      const AProxyTlsContext: ITLSContext = nil);
     function DialProtocol(const AHost: string; const APort: Word;
       const AScheme: string; const AHttp1Fallback: Boolean;
       const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
@@ -59,10 +64,11 @@ type
       const AScheme: string; const AHttp1Fallback: Boolean;
       const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
       const AProxy: IProxy; const AIdentity: IClientIdentity;
-      out AProtocol: TNegotiatedProtocol): IHttp2Socket;
+      const AIdentityExplicit: Boolean; out AProtocol: TNegotiatedProtocol): IHttp2Socket;
     function DialHttp1As(const AHost: string; const APort: Word;
       const AScheme: string; const ATimeoutMs: Integer;
-      const AProxy: IProxy; const AIdentity: IClientIdentity): IHttp2Socket;
+      const AProxy: IProxy; const AIdentity: IClientIdentity;
+      const AIdentityExplicit: Boolean): IHttp2Socket;
   end;
 
 procedure EstablishProxyTunnelFd(AFd: Integer; const AHost: string;
@@ -71,14 +77,15 @@ procedure EstablishProxyTunnelFd(AFd: Integer; const AHost: string;
 function DialRoutedTransport(const AHost: string; const APort: Word;
   const AConnectTimeoutMs: Integer; const AProxy: IProxy;
   const AInsecure: Boolean; const ACACertFile: string;
-  const AProxyIdentity: IClientIdentity; out AStream: Boolean): IHttp2Socket;
+  const AProxyIdentity: IClientIdentity; out AStream: Boolean;
+  const AProxyContext: ITLSContext): IHttp2Socket;
 
 implementation
 
 uses
   Http2.Client.Tls.Plain, Http2.Client.Tls.Socket,
   Http2.Client.SigPipe, mormot.core.base, mormot.core.os,
-  mormot.lib.openssl11;
+  Http2.Common.Tls.Types;
 
 type
   /// the proxy exchange over a raw descriptor
@@ -261,11 +268,13 @@ end;
 function DialRoutedTransport(const AHost: string; const APort: Word;
   const AConnectTimeoutMs: Integer; const AProxy: IProxy;
   const AInsecure: Boolean; const ACACertFile: string;
-  const AProxyIdentity: IClientIdentity; out AStream: Boolean): IHttp2Socket;
+  const AProxyIdentity: IClientIdentity; out AStream: Boolean;
+  const AProxyContext: ITLSContext): IHttp2Socket;
 var
   Plain: TPlainSocket;
   Who: string;
 begin
+  RejectLegacyTlsPolicy(AInsecure, ACACertFile);
   AStream := False;
   if AProxy = nil then
   begin
@@ -273,6 +282,10 @@ begin
     Exit;
   end;
   ValidateProxy(AProxy);
+  if (AProxy.Kind = pkHttps) and (AProxyContext = nil) then
+    raise EHttpTlsConfigError.Create('an explicit HTTPS proxy TLS context is required');
+  if AProxy.Kind = pkHttps then
+    RequireClientTlsContext(AProxyContext, 'HTTPS proxy');
   Who := Format('%s:%d', [AProxy.Host, AProxy.Port]);
   // plain TCP to the proxy first: no tunnel is requested by the constructor
   Plain := TPlainSocket.Create(AProxy.Host, AProxy.Port, AConnectTimeoutMs);
@@ -286,8 +299,10 @@ begin
       // CONNECT exchange is HTTP/1.1.  It presents the proxy identity only:
       // the origin identity never reaches this leg (doc/design/mtls.md)
       try
-        Result := DialProxyTlsSocket(Plain, AProxy.Host, AInsecure,
-          ACACertFile, AProxyIdentity, AConnectTimeoutMs);
+        if AProxyContext = nil then
+          raise EHttpTlsConfigError.Create('an explicit HTTPS proxy TLS context is required');
+        Result := DialProxyTlsSocket(Plain, AProxy.Host, AProxyContext,
+          AProxyIdentity, AConnectTimeoutMs);
       except
         on E: EHttpConnectionError do
           raise EHttpConnectionError.CreateFmt(
@@ -311,11 +326,14 @@ end;
 
 constructor TProtocolSocketFactory.Create(const ACACertFile: string;
   const AInsecure: Boolean; const AProxyHost: string;
-  const AProxyPort: Word; const AIdentity, AProxyIdentity: IClientIdentity);
+  const AProxyPort: Word; const AIdentity, AProxyIdentity: IClientIdentity;
+  const ATlsContext, AProxyTlsContext: ITLSContext);
 begin
   inherited Create;
   FIdentity := AIdentity;
   FProxyIdentity := AProxyIdentity;
+  FTlsContext := ATlsContext;
+  FProxyTlsContext := AProxyTlsContext;
   FCACertFile := ACACertFile;
   FInsecure := AInsecure;
   FProxyHost := AProxyHost;
@@ -344,18 +362,26 @@ function TProtocolSocketFactory.DialProtocolVia(const AHost: string;
   out AProtocol: TNegotiatedProtocol): IHttp2Socket;
 begin
   Result := DialProtocolViaAs(AHost, APort, AScheme, AHttp1Fallback, APolicy,
-    ATimeoutMs, AProxy, FIdentity, AProtocol);
+    ATimeoutMs, AProxy, FIdentity, False, AProtocol);
 end;
 
 function TProtocolSocketFactory.DialProtocolViaAs(const AHost: string;
   const APort: Word; const AScheme: string; const AHttp1Fallback: Boolean;
   const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
   const AProxy: IProxy; const AIdentity: IClientIdentity;
-  out AProtocol: TNegotiatedProtocol): IHttp2Socket;
+  const AIdentityExplicit: Boolean; out AProtocol: TNegotiatedProtocol): IHttp2Socket;
 var
   Sock: IHttp2Socket;
   Name: string;
+  TlsInfo: IHttp2TlsSocketInfo;
+  Proxy: IProxy;
 begin
+  Proxy := AProxy;
+  if (Proxy = nil) and (FProxyHost <> '') then Proxy := TProxy.Create(FProxyHost, FProxyPort);
+  if (AScheme <> 'http') and (FTlsContext = nil) then
+    raise EHttpTlsConfigError.Create('an explicit origin TLS context is required');
+  if (Proxy <> nil) and (Proxy.Kind = pkHttps) and (FProxyTlsContext = nil) then
+    raise EHttpTlsConfigError.Create('an explicit HTTPS proxy TLS context is required');
   AProtocol := npHttp2Tls;
   if AScheme = 'http' then
   begin
@@ -370,15 +396,15 @@ begin
         // layers the Upgrade probe on it, under ctHttp1 it sends no probe
         begin
           AProtocol := npHttp1Cleartext;
-          Result := TTlsSocket.DialCleartextVia(AHost, APort, ATimeoutMs, AProxy,
-            FInsecure, FCACertFile, FProxyIdentity);
+          Result := TTlsSocket.DialCleartextVia(AHost, APort, ATimeoutMs, Proxy,
+            FInsecure, FCACertFile, FProxyIdentity, FProxyTlsContext);
         end;
     else
       // ctPriorKnowledge: speak HTTP/2 at once, the caller writes the preface
       begin
         AProtocol := npHttp2Cleartext;
-        Result := TTlsSocket.DialCleartextVia(AHost, APort, ATimeoutMs, AProxy,
-          FInsecure, FCACertFile, FProxyIdentity);
+        Result := TTlsSocket.DialCleartextVia(AHost, APort, ATimeoutMs, Proxy,
+          FInsecure, FCACertFile, FProxyIdentity, FProxyTlsContext);
       end;
     end;
     Exit;
@@ -387,25 +413,16 @@ begin
   // https: the ALPN offer follows the fallback flag, then the result maps to a
   // codec.  DialWithAlpn skips the strict check so we can map the name here.
   Sock := TTlsSocket.DialWithAlpnVia(AHost, APort, AlpnOfferFor(AHttp1Fallback),
-    FInsecure, ATimeoutMs, FCACertFile, AProxy, AIdentity, FProxyIdentity);
-  // $interfaces com: an interface reference points past the object's VMT, so
-  // `TTlsSocket(Sock)` (a raw hard cast) would read the wrong memory.  Recover
-  // the object with `as TObject` before the class cast so the property read
-  // returns the name Establish recorded.
-  Name := TTlsSocket(Sock as TObject).SelectedProtocol;
-  if Name = cHttp11AlpnProtocol then
-    AProtocol := npHttp1Tls
-  else if Name = cHttp2AlpnProtocol then
-    AProtocol := npHttp2Tls
-  else if AHttp1Fallback then
-    // RFC 7301: no ALPN result means the peer speaks HTTP/1.1
-    AProtocol := npHttp1Tls
-  else
-  begin
+    FInsecure, ATimeoutMs, FCACertFile, Proxy, AIdentity, FProxyIdentity,
+    FTlsContext, FProxyTlsContext, AIdentityExplicit);
+  Name := '';
+  if Supports(Sock, IHttp2TlsSocketInfo, TlsInfo) then
+    Name := TlsInfo.SelectedProtocol;
+  try
+    AProtocol := ProtocolForTlsAlpn(Name, AHttp1Fallback);
+  except
     Sock.Close;
-    raise EHttpProtocolError.CreateFmt(
-      'peer did not negotiate ALPN "%s" (selected "%s")',
-      [cHttp2AlpnProtocol, Name]);
+    raise;
   end;
   Result := Sock;
 end;
@@ -414,29 +431,34 @@ function TProtocolSocketFactory.DialHttp1(const AHost: string;
   const APort: Word; const AScheme: string; const ATimeoutMs: Integer;
   const AProxy: IProxy): IHttp2Socket;
 begin
-  Result := DialHttp1As(AHost, APort, AScheme, ATimeoutMs, AProxy, FIdentity);
+  Result := DialHttp1As(AHost, APort, AScheme, ATimeoutMs, AProxy, FIdentity, False);
 end;
 
 function TProtocolSocketFactory.DialHttp1As(const AHost: string;
   const APort: Word; const AScheme: string; const ATimeoutMs: Integer;
-  const AProxy: IProxy; const AIdentity: IClientIdentity): IHttp2Socket;
+  const AProxy: IProxy; const AIdentity: IClientIdentity;
+      const AIdentityExplicit: Boolean): IHttp2Socket;
 var
   Proxy: IProxy;
-  TlsObj: TObject;
+  TlsInfo: IHttp2TlsSocketInfo;
   Name: string;
 begin
   Proxy := AProxy;
   if (Proxy = nil) and (FProxyHost <> '') then
     Proxy := TProxy.Create(FProxyHost, FProxyPort);
+  if (AScheme <> 'http') and (FTlsContext = nil) then
+    raise EHttpTlsConfigError.Create('an explicit origin TLS context is required');
+  if (Proxy <> nil) and (Proxy.Kind = pkHttps) and (FProxyTlsContext = nil) then
+    raise EHttpTlsConfigError.Create('an explicit HTTPS proxy TLS context is required');
   if AScheme = 'http' then
     Exit(TTlsSocket.DialCleartextVia(AHost, APort, ATimeoutMs, Proxy,
-      FInsecure, FCACertFile, FProxyIdentity));
+      FInsecure, FCACertFile, FProxyIdentity, FProxyTlsContext));
   Result := TTlsSocket.DialWithAlpnVia(AHost, APort,
     AlpnProtocolList([cHttp11AlpnProtocol]), FInsecure, ATimeoutMs,
-    FCACertFile, Proxy, AIdentity, FProxyIdentity);
+    FCACertFile, Proxy, AIdentity, FProxyIdentity, FTlsContext, FProxyTlsContext, AIdentityExplicit);
   Name := '';
-  if Supports(Result, TTlsSocket, TlsObj) then
-    Name := TTlsSocket(TlsObj).SelectedProtocol;
+  if Supports(Result, IHttp2TlsSocketInfo, TlsInfo) then
+    Name := TlsInfo.SelectedProtocol;
   // a server without ALPN support answers nothing and speaks HTTP/1.1; one
   // that picked h2 anyway cannot carry an Upgrade
   if (Name <> '') and (Name <> cHttp11AlpnProtocol) then

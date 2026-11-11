@@ -76,7 +76,7 @@ begin
   // the selector's answer, nil included, replaces the factory's fixed identity
   if AUseIdentity and Supports(FFactory, IIdentitySocketFactory, IdFactory) then
     Exit(IdFactory.DialProtocolViaAs(AHost, APort, AScheme, FHttp1Fallback,
-      FClearTextPolicy, ATimeoutMs, AProxy, AIdentity, AProtocol));
+      FClearTextPolicy, ATimeoutMs, AProxy, AIdentity, True, AProtocol));
 
   // a factory that takes the route per dial (the default factory) gets the
   // proxy chosen for this request; nil dials directly
@@ -303,14 +303,20 @@ var
   First: IHttpResponse;
   Waiting, Opened: Boolean;
   Protocol: TNegotiatedProtocol;
-  Key, PendingKey, Remembered, Fingerprint: string;
+  Key, PendingKey, Remembered, Fingerprint, BaseKey, ContextKey: string;
   Selecting, Resolved, NeedSelect, Fixed, Marked, Deferred: Boolean;
   Identity: IClientIdentity;
+  ContextKeyFactory: ITlsContextPoolKey;
 begin
   Marked := False;
   Deadline := GetTickCount64 + QWord(AHeaderTimeoutMs);
   Waiting := False;
-  PendingKey := AOrigin;
+  ContextKey := '';
+  if Supports(FFactory, ITlsContextPoolKey, ContextKeyFactory) then
+    ContextKey := ContextKeyFactory.TlsContextPoolKey;
+  BaseKey := AOrigin + ' tls=' + ContextKey + ' protocol=' +
+    IntToStr(Ord(FHttp1Fallback)) + ':' + IntToStr(Ord(FClearTextPolicy));
+  PendingKey := BaseKey;
   // a selector only applies to a TLS dial on a factory that can take the
   // identity per dial; everything else keeps the plain key
   Selecting := (FIdentitySelector <> nil) and (ARequest.Scheme = 'https') and
@@ -327,7 +333,7 @@ begin
   begin
     Selecting := False;
     Identity := ARequestIdentity;
-    Fingerprint := ARequestIdentity.Fingerprint;
+    Fingerprint := ARequestIdentity.Leaf.FingerprintSha256;
   end;
   try
     while True do
@@ -345,23 +351,23 @@ begin
         // so a concurrent request may stop waiting for it
         if Marked then
         begin
-          FSelecting.Remove(AOrigin);
+          FSelecting.Remove(BaseKey);
           Marked := False;
         end;
         // with a selector the key carries the fingerprint: the one the
         // selector just answered, else the one the last dial here presented,
         // so a reused connection never asks the selector again
-        Key := AOrigin;
+        Key := BaseKey;
         if Selecting then
         begin
           if Resolved then
             Remembered := Fingerprint
-          else if not FIdentityKeys.TryGetValue(AOrigin, Remembered) then
+          else if not FIdentityKeys.TryGetValue(BaseKey, Remembered) then
             Remembered := '';
-          Key := AOrigin + ' id=' + Remembered;
+          Key := BaseKey + ' id=' + Remembered;
         end
         else if Fixed then
-          Key := AOrigin + ' id=' + Fingerprint;
+          Key := BaseKey + ' id=' + Fingerprint;
         if Waiting and (PendingKey <> Key) then
         begin
           AddPendingLocked(PendingKey, -1);
@@ -379,12 +385,12 @@ begin
             // back and key the new connection by its answer.  While another
             // request is already asking for this origin, wait for its dial
             // to publish a connection (or fail) instead of asking again
-            if FSelecting.ContainsKey(AOrigin) then
+            if FSelecting.ContainsKey(BaseKey) then
               Deferred := True
             else
             begin
               NeedSelect := True;
-              FSelecting.Add(AOrigin, True);
+              FSelecting.Add(BaseKey, True);
               Marked := True;
             end;
           end
@@ -398,7 +404,7 @@ begin
               First);
             Opened := Conn <> nil;
             if Opened and Selecting then
-              FIdentityKeys.AddOrSetValue(AOrigin, Fingerprint);
+              FIdentityKeys.AddOrSetValue(BaseKey, Fingerprint);
           end;
         end;
         // a caller with no connection and no answer parks below: count it so
@@ -426,7 +432,7 @@ begin
         Identity := ChooseClientIdentity(FIdentitySelector, AHost, APort);
         Fingerprint := '';
         if Identity <> nil then
-          Fingerprint := Identity.Fingerprint;
+          Fingerprint := Identity.Leaf.FingerprintSha256;
         Resolved := True;
         Continue;
       end;
@@ -515,7 +521,7 @@ begin
       FLock.Acquire;
       try
         if Marked then
-          FSelecting.Remove(AOrigin);
+          FSelecting.Remove(BaseKey);
         if Waiting then
           AddPendingLocked(PendingKey, -1);
       finally

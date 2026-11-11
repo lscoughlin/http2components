@@ -20,6 +20,7 @@ uses
   Http2.Client.Tls,
   Http2.Client.Proxy,
   Http2.Client.ClientCert,
+  Http2.Common.Tls.Context,
   Http2.Client.Observer,
   Http2.Client.RequestObserver,
   Http2.Client.Api,
@@ -54,9 +55,10 @@ type
     FRequestObservers: TArray<IHttpClientObserver>;
     FLogger: IHttpLogger;
     FIdentity: IClientIdentity;
-    FIdentityError: string;   // a deferred WithClientCertificateFiles failure
     FIdentitySelector: IClientIdentitySelector;
     FProxyIdentity: IClientIdentity;
+    FTlsContext: ITLSContext;
+    FProxyTlsContext: ITLSContext;
   public
     class function Create: THttpClientFactory; static;
     /// compatibility shim: sets BOTH the per-host and the total cap to AMax,
@@ -94,13 +96,16 @@ type
     function WithIdleTimeout(const AMs: Integer): THttpClientFactory;
     /// test seam: inject the transport factory (no real sockets)
     function WithSocketFactory(const AFactory: IHttp2SocketFactory): THttpClientFactory;
-    /// PEM bundle used to verify the peer's certificate; '' = system trust
-    /// store. Needed whenever the origin uses a private CA.
+    /// obsolete trust setting; a nonempty value raises EHttpTlsConfigError.
+    /// Configure peer trust with WithTlsContext.
     function WithCACertFile(const AFileName: string): THttpClientFactory;
-    /// disable peer certificate verification. Dangerous, intended for test
-    /// harnesses whose cert has no SAN (e.g. the h2 conformance harness,
-    /// which self-signs with CN=localhost only).
+    /// obsolete insecure setting; True raises EHttpTlsConfigError. Configure
+    /// verification with WithTlsContext.
     function WithInsecureTls(const AInsecure: Boolean = True): THttpClientFactory;
+    /// use AContext for origin TLS sessions. Required for owned HTTPS routes.
+    function WithTlsContext(const AContext: ITLSContext): THttpClientFactory;
+    /// use AContext only for TLS to an HTTPS proxy.
+    function WithProxyTlsContext(const AContext: ITLSContext): THttpClientFactory;
     /// present AIdentity (doc/design/mtls.md) on every TLS connection to an
     /// origin: HTTP/2, HTTP/1.1, SSE and wss, direct or through a tunnel.
     /// Cleartext connections ignore it.  Build raises EHttpTlsConfigError when
@@ -121,11 +126,6 @@ type
     /// nowhere else; the origin identity is never sent to the proxy.  nil
     /// removes it.  Build raises EHttpTlsConfigError when the leaf has expired.
     function WithProxyClientIdentity(const AIdentity: IClientIdentity): THttpClientFactory;
-    /// load a PEM certificate chain (leaf first) and key, then WithClientIdentity.
-    /// A file that cannot be loaded raises EHttpTlsConfigError from Build, so
-    /// the passphrase is not kept past this call.
-    function WithClientCertificateFiles(const ACertFile, AKeyFile: string;
-      const APassphrase: string = ''): THttpClientFactory;
     /// offer "http/1.1" as an ALPN alternative and accept an HTTP/1.1
     /// response when the peer does not select "h2" (doc/design/fallback.md).
     /// Off by default: strict mode keeps failing loudly (interop A.9).
@@ -205,9 +205,10 @@ begin
   Result.FCACertFile := '';
   Result.FInsecure := False;
   Result.FIdentity := nil;
-  Result.FIdentityError := '';
   Result.FIdentitySelector := nil;
   Result.FProxyIdentity := nil;
+  Result.FTlsContext := nil;
+  Result.FProxyTlsContext := nil;
   Result.FObserver := nil;
   Result.FRequestObservers := nil;
   Result.FLogger := nil;
@@ -317,24 +318,33 @@ end;
 function THttpClientFactory.WithCACertFile(
   const AFileName: string): THttpClientFactory;
 begin
+  if AFileName <> '' then
+    raise EHttpTlsConfigError.Create(
+      'CA files are no longer accepted; configure peer trust in WithTlsContext');
   Result := Self;
-  Result.FCACertFile := AFileName;
-  // an explicitly injected factory still wins; otherwise rebuild the default
-  if not (Result.FSocketFactory is TDefaultSocketFactory) then
-    Exit;
-  Result.FSocketFactory := TDefaultSocketFactory.Create(AFileName,
-    Result.FInsecure);
 end;
 
 function THttpClientFactory.WithInsecureTls(
   const AInsecure: Boolean): THttpClientFactory;
 begin
+  if AInsecure then
+    raise EHttpTlsConfigError.Create(
+      'WithInsecureTls is no longer supported; configure verification in WithTlsContext');
   Result := Self;
-  Result.FInsecure := AInsecure;
-  if not (Result.FSocketFactory is TDefaultSocketFactory) then
-    Exit;
-  Result.FSocketFactory := TDefaultSocketFactory.Create(Result.FCACertFile,
-    AInsecure);
+end;
+
+function THttpClientFactory.WithTlsContext(
+  const AContext: ITLSContext): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FTlsContext := AContext;
+end;
+
+function THttpClientFactory.WithProxyTlsContext(
+  const AContext: ITLSContext): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FProxyTlsContext := AContext;
 end;
 
 function THttpClientFactory.WithClientIdentity(
@@ -342,7 +352,6 @@ function THttpClientFactory.WithClientIdentity(
 begin
   Result := Self;
   Result.FIdentity := AIdentity;
-  Result.FIdentityError := '';
   Result.FIdentitySelector := nil;
 end;
 
@@ -352,7 +361,6 @@ begin
   Result := Self;
   Result.FIdentitySelector := ASelector;
   Result.FIdentity := nil;
-  Result.FIdentityError := '';
 end;
 
 function THttpClientFactory.WithProxyClientIdentity(
@@ -360,24 +368,6 @@ function THttpClientFactory.WithProxyClientIdentity(
 begin
   Result := Self;
   Result.FProxyIdentity := AIdentity;
-end;
-
-function THttpClientFactory.WithClientCertificateFiles(const ACertFile,
-  AKeyFile: string; const APassphrase: string): THttpClientFactory;
-begin
-  Result := Self;
-  try
-    Result.FIdentity := TClientIdentity.FromPemFiles(ACertFile, AKeyFile,
-      APassphrase);
-    Result.FIdentityError := '';
-    Result.FIdentitySelector := nil;
-  except
-    on E: EHttpTlsConfigError do
-    begin
-      Result.FIdentity := nil;
-      Result.FIdentityError := E.Message;
-    end;
-  end;
 end;
 
 function THttpClientFactory.WithConnectTimeout(
@@ -453,9 +443,6 @@ var
   Client: THttpClient;
   Factory: IHttp2SocketFactory;
 begin
-  // a bad identity fails here, not on the first request
-  if FIdentityError <> '' then
-    raise EHttpTlsConfigError.Create(FIdentityError);
   Factory := FSocketFactory;
   // an injected factory that cannot present identities would drop them
   // silently: refuse the combination
@@ -466,15 +453,15 @@ begin
   if FProxyIdentity <> nil then
     RequireIdentityFactory(Factory, 'a proxy client identity is configured');
   if FIdentity <> nil then
-    if FIdentity.NotAfter < LocalTimeToUniversal(Now) then
+    if FIdentity.Leaf.NotAfterUtc < LocalTimeToUniversal(Now) then
       raise EHttpTlsConfigError.CreateFmt(
         'the client certificate expired on %s UTC',
-        [FormatDateTime('yyyy-mm-dd hh:nn:ss', FIdentity.NotAfter)]);
+        [FormatDateTime('yyyy-mm-dd hh:nn:ss', FIdentity.Leaf.NotAfterUtc)]);
   if FProxyIdentity <> nil then
-    if FProxyIdentity.NotAfter < LocalTimeToUniversal(Now) then
+    if FProxyIdentity.Leaf.NotAfterUtc < LocalTimeToUniversal(Now) then
       raise EHttpTlsConfigError.CreateFmt(
         'the proxy client certificate expired on %s UTC',
-        [FormatDateTime('yyyy-mm-dd hh:nn:ss', FProxyIdentity.NotAfter)]);
+        [FormatDateTime('yyyy-mm-dd hh:nn:ss', FProxyIdentity.Leaf.NotAfterUtc)]);
   // an injected transport factory that presents identities is left alone; with a
   // selector installed the fixed identity is nil and each dial is handed the
   // selector's answer instead
@@ -482,6 +469,10 @@ begin
       (FIdentitySelector <> nil)) and (Factory is TDefaultSocketFactory) then
     Factory := TDefaultSocketFactory(Factory as TObject).WithIdentity(
       FIdentity, FLogger, FProxyIdentity);
+  if (Factory is TDefaultSocketFactory) and
+     ((FTlsContext <> nil) or (FProxyTlsContext <> nil)) then
+    Factory := TDefaultSocketFactory(Factory as TObject).WithTlsContexts(
+      FTlsContext, FProxyTlsContext);
   // every proxy source collapses into one selector here (nil = all direct);
   // an unusable proxy value raises EHttpProxyConfigError before any request
   Fixed := nil;

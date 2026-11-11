@@ -20,7 +20,8 @@ interface
 
 uses
   SysUtils, Classes, fpcunit, testregistry, sockets, baseunix,
-  mormot.lib.openssl11, Http2.Client.Errors, Http2.Client.Tls;
+  mormot.lib.openssl11, Http2.Client.Errors, Http2.Client.Tls,
+  Http2.Common.Tls.Context, Http2.Common.Tls.Policy, Http2.OpenSSL;
 
 type
   /// a trivial mock byte stream; proves at compile time that a small class can
@@ -45,49 +46,6 @@ type
     procedure SetWriteTimeoutMs(const AValue: Integer);
   end;
 
-  /// exposes the protected crypto seams of TTlsSocket and scripts their
-  /// results, so Establish can be tested without OpenSSL or the network
-  TFakeTlsSocket = class(TTlsSocket)
-  private
-    FVerifyMode: Integer;
-    FSniHost: string;
-    FHostnameVerified: Boolean;
-    FAlpnBytes: TBytes;
-    FReadChunks: array of TBytes;
-    FReadIndex: Integer;
-    FShutdownCalled: Boolean;
-  protected
-    function CreateSslContext: PSSL_CTX; override;
-    procedure DestroySslContext; override;
-    function CreateSslHandle(const ACtx: PSSL_CTX): PSSL; override;
-    procedure DestroySslHandle; override;
-    function ApplyAlpnProtos(const ACtx: PSSL_CTX): Integer; override;
-    procedure ApplyVerifyMode(const ACtx: PSSL_CTX; const AMode: Integer); override;
-    function ApplyHostnameVerification(const ASsl: PSSL;
-      const AHost: string): Integer; override;
-    function ApplySniHost(const ASsl: PSSL;
-      const AHost: string): Integer; override;
-    function BindSocket(const ASsl: PSSL; const AFd: Integer): Integer; override;
-    function HandshakeConnect(const ASsl: PSSL): Integer; override;
-    function SelectedAlpnBytes(const ASsl: PSSL): TBytes; override;
-    function LastSslError(const ASsl: PSSL; const AResult: Integer): Integer; override;
-    function SslReadBytes(const ASsl: PSSL; const ABuffer: Pointer;
-      const ACount: Integer): Integer; override;
-    function SslWriteBytes(const ASsl: PSSL; const ABuffer: Pointer;
-      const ACount: Integer): Integer; override;
-    procedure SslShutdown(const ASsl: PSSL); override;
-    function GetSocketFd: Integer; override;
-  public
-    constructor Create(const ATransport: IHttp2Socket; const AHost: string;
-      const AInsecure: Boolean = False);
-    procedure SetAlpnBytes(const ABytes: array of Byte);
-    procedure AddReadChunk(const ABytes: array of Byte);
-    property VerifyMode: Integer read FVerifyMode;
-    property SniHost: string read FSniHost;
-    property HostnameVerified: Boolean read FHostnameVerified;
-    property ShutdownCalled: Boolean read FShutdownCalled;
-  end;
-
   TWriterThread = class(TThread)
   private
     FFd: Integer;
@@ -104,7 +62,6 @@ type
   TRealHandshakeResult = record
     Skipped: Boolean;
     Raised: Boolean;
-    WasProtocolError: Boolean;
     Connected: Boolean;
   end;
 
@@ -208,133 +165,6 @@ end;
 procedure TMockSocket.SetWriteTimeoutMs(const AValue: Integer);
 begin
   FWriteTimeoutMs := AValue;
-end;
-
-{ TFakeTlsSocket }
-
-constructor TFakeTlsSocket.Create(const ATransport: IHttp2Socket;
-  const AHost: string; const AInsecure: Boolean);
-begin
-  inherited Create(ATransport, AHost, AInsecure);
-  FAlpnBytes := nil;
-  FReadIndex := 0;
-end;
-
-procedure TFakeTlsSocket.SetAlpnBytes(const ABytes: array of Byte);
-var
-  i: Integer;
-begin
-  SetLength(FAlpnBytes, Length(ABytes));
-  for i := 0 to High(ABytes) do
-    FAlpnBytes[i] := ABytes[i];
-end;
-
-procedure TFakeTlsSocket.AddReadChunk(const ABytes: array of Byte);
-var
-  i: Integer;
-begin
-  SetLength(FReadChunks, Length(FReadChunks) + 1);
-  SetLength(FReadChunks[High(FReadChunks)], Length(ABytes));
-  for i := 0 to High(ABytes) do
-    FReadChunks[High(FReadChunks)][i] := ABytes[i];
-end;
-
-function TFakeTlsSocket.CreateSslContext: PSSL_CTX;
-begin
-  Result := PSSL_CTX(1);
-end;
-
-procedure TFakeTlsSocket.DestroySslContext;
-begin
-end;
-
-function TFakeTlsSocket.CreateSslHandle(const ACtx: PSSL_CTX): PSSL;
-begin
-  Result := PSSL(2);
-end;
-
-procedure TFakeTlsSocket.DestroySslHandle;
-begin
-end;
-
-function TFakeTlsSocket.ApplyAlpnProtos(const ACtx: PSSL_CTX): Integer;
-begin
-  Result := 0;
-end;
-
-procedure TFakeTlsSocket.ApplyVerifyMode(const ACtx: PSSL_CTX;
-  const AMode: Integer);
-begin
-  FVerifyMode := AMode;
-end;
-
-function TFakeTlsSocket.ApplyHostnameVerification(const ASsl: PSSL;
-  const AHost: string): Integer;
-begin
-  FHostnameVerified := True;
-  Result := 1;
-end;
-
-function TFakeTlsSocket.ApplySniHost(const ASsl: PSSL;
-  const AHost: string): Integer;
-begin
-  FSniHost := AHost;
-  Result := 1;
-end;
-
-function TFakeTlsSocket.BindSocket(const ASsl: PSSL;
-  const AFd: Integer): Integer;
-begin
-  Result := 1;
-end;
-
-function TFakeTlsSocket.HandshakeConnect(const ASsl: PSSL): Integer;
-begin
-  Result := 1;
-end;
-
-function TFakeTlsSocket.SelectedAlpnBytes(const ASsl: PSSL): TBytes;
-begin
-  Result := FAlpnBytes;
-end;
-
-function TFakeTlsSocket.LastSslError(const ASsl: PSSL;
-  const AResult: Integer): Integer;
-begin
-  Result := 0;
-end;
-
-function TFakeTlsSocket.SslReadBytes(const ASsl: PSSL; const ABuffer: Pointer;
-  const ACount: Integer): Integer;
-var
-  chunk: TBytes;
-  n: Integer;
-begin
-  if FReadIndex > High(FReadChunks) then
-    Exit(0);
-  chunk := FReadChunks[FReadIndex];
-  n := Length(chunk);
-  if n > ACount then
-    n := ACount;
-  Move(chunk[0], ABuffer^, n);
-  Inc(FReadIndex);
-  Result := n;
-end;
-
-function TFakeTlsSocket.SslWriteBytes(const ASsl: PSSL; const ABuffer: Pointer;
-  const ACount: Integer): Integer;
-begin
-  Result := ACount;
-end;
-
-procedure TFakeTlsSocket.SslShutdown(const ASsl: PSSL);
-begin
-  FShutdownCalled := True;
-end;
-
-function TFakeTlsSocket.GetSocketFd: Integer;
-begin
-  Result := -1;
 end;
 
 { TWriterThread }
@@ -477,11 +307,12 @@ var
   port: Word;
   server: TLoopbackTlsServer;
   Sock: IHttp2Socket;
+  Context: ITLSContext;
+  Policy: TTlsClientPolicy;
   certFile, keyFile: string;
 begin
   Result.Skipped := False;
   Result.Raised := False;
-  Result.WasProtocolError := False;
   Result.Connected := False;
   certFile := TestCertPath('localhost.crt');
   keyFile := TestCertPath('localhost.key');
@@ -510,16 +341,18 @@ begin
   Sleep(30);
   try
     try
-      Sock := TTlsSocket.Dial('localhost', port, AInsecure, 2000);
+      Policy := TTlsClientPolicy.SecureDefault.WithSystemTrust(False)
+        .WithInsecure(AInsecure);
+      Context := TOpenSSLTlsContextFactory.Create
+        .WithClientPolicy(Policy).Build;
+      Sock := TTlsSocket.Dial('localhost', port, False, 2000,
+        '', '', 0, nil, Context);
       Result.Connected := Sock.Connected;
       Sock.Close;
     except
-      on E: EHttpProtocolError do
-      begin
-        Result.Raised := True;
-        Result.WasProtocolError := True;
-      end;
       on E: EHttpError do
+        Result.Raised := True;
+      on E: Exception do
         Result.Raised := True;
     end;
   finally

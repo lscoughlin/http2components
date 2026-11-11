@@ -24,7 +24,8 @@ uses
   Http2.Client,
   Http2.Client.Sse, Http2.Client.WebSocket, Http2.Client.RequestObserver,
   Http2.Client.RequestObserver.Support, Http2.Client.MutualTls.Server.Support,
-  Http2.Client.MutualTls.Client.Support;
+  Http2.Client.MutualTls.Client.Support, Http2.OpenSSL,
+  Http2.Common.Tls.Context, Http2.Common.Tls.Policy;
 
 type
   TMutualTlsTestBase = class(TTestCase)
@@ -38,6 +39,7 @@ type
     function RouteVia(const AFactory: THttpClientFactory): THttpClientFactory;
     function Url(const AScheme: string = 'https'): string;
     function GoodIdentity: IClientIdentity;
+    function ClientTlsContext(const AIdentity: IClientIdentity = nil): ITLSContext;
     function NewClient(const AIdentity: IClientIdentity;
       const AFallback: Boolean = False): IHttpClient;
     function Fetch(const AClient: IHttpClient; out ABody: string): Integer;
@@ -102,8 +104,21 @@ end;
 
 function TMutualTlsTestBase.GoodIdentity: IClientIdentity;
 begin
-  Result := TClientIdentity.FromPemFiles(Fixture('client-chain.pem'),
+  Result := TOpenSSLIdentity.FromPemFiles(Fixture('client-chain.pem'),
     Fixture('client.key'));
+end;
+
+function TMutualTlsTestBase.ClientTlsContext(
+  const AIdentity: IClientIdentity): ITLSContext;
+var
+  Policy: TTlsClientPolicy;
+begin
+  Policy := TTlsClientPolicy.SecureDefault
+    .WithTrustAnchors([Fixture('ca.crt')]).WithSystemTrust(False);
+  if AIdentity <> nil then
+    Policy := Policy.WithDefaultIdentity(AIdentity);
+  Result := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(Policy).Build;
 end;
 
 function TMutualTlsTestBase.NewClient(const AIdentity: IClientIdentity;
@@ -112,7 +127,7 @@ var
   F: THttpClientFactory;
 begin
   F := THttpClientFactory.Create
-    .WithCACertFile(Fixture('ca.crt'))
+    .WithTlsContext(ClientTlsContext(AIdentity))
     .WithConnectTimeout(3000)
     .WithHeaderTimeout(5000);
   if AIdentity <> nil then
@@ -128,6 +143,8 @@ function TMutualTlsTestBase.RouteVia(
   const AFactory: THttpClientFactory): THttpClientFactory;
 begin
   Result := AFactory;
+  if (FProxy <> nil) and (FProxy.Mode = tmHttps) then
+    Result := Result.WithProxyTlsContext(ClientTlsContext(FProxyIdentity));
   if FProxyIdentity <> nil then
     Result := Result.WithProxyClientIdentity(FProxyIdentity);
   if FProxy <> nil then
@@ -254,7 +271,7 @@ var
   Alert: string;
 begin
   StartServer(mkH2, AVersion);
-  Client := NewClient(TClientIdentity.FromPemFiles(Fixture('other-client.crt'),
+  Client := NewClient(TOpenSSLIdentity.FromPemFiles(Fixture('other-client.crt'),
     Fixture('other-client.key')));
   Alert := AlertOfFetch(Client);
   Client.Close;
@@ -269,13 +286,15 @@ function TMutualTlsTestBase.ProbeAlert(const AVersion: Integer;
   const AIdentity: IClientIdentity; const AKind: TMtlsKind): string;
 var
   Sock: IHttp2Socket;
+  Context: ITLSContext;
   B: array[0..8] of Byte;
 begin
   Result := '';
   try
+    Context := ClientTlsContext(AIdentity);
     Sock := TTlsSocket.DialWithAlpn('localhost', FServer.Port,
       AlpnProtocolList([cHttp2AlpnProtocol, cHttp11AlpnProtocol]), False, 3000,
-      Fixture('ca.crt'), '', 0, AIdentity);
+      '', '', 0, AIdentity, Context);
     B[0] := 0;
     Sock.Write(B[0], 1);
     Sock.Read(B[0], 9);
@@ -292,7 +311,7 @@ var
   Alert: string;
 begin
   StartServer(mkH2, AVersion);
-  Alert := ProbeAlert(AVersion, TClientIdentity.FromPemFiles(
+  Alert := ProbeAlert(AVersion, TOpenSSLIdentity.FromPemFiles(
     Fixture('expired.crt'), Fixture('expired.key')), mkH2);
   FServer.Stop;
   AssertEquals('the alert', AExpected, Alert);
@@ -359,7 +378,7 @@ end;
 
 function TMutualTlsTestBase.Client2Identity: IClientIdentity;
 begin
-  Result := TClientIdentity.FromPemFiles(Fixture('client2-chain.pem'),
+  Result := TOpenSSLIdentity.FromPemFiles(Fixture('client2-chain.pem'),
     Fixture('client2.key'));
 end;
 
@@ -381,7 +400,7 @@ function TMutualTlsTestBase.SelectorClient(
   const ASelector: IClientIdentitySelector): IHttpClient;
 begin
   Result := RouteVia(THttpClientFactory.Create
-    .WithCACertFile(Fixture('ca.crt'))
+    .WithTlsContext(ClientTlsContext(nil))
     .WithConnectTimeout(3000)
     .WithHeaderTimeout(5000)
     .WithHttp1Fallback(True)
@@ -446,7 +465,7 @@ begin
   AssertTrue('the origin saw the selector identity',
     SubjectIs(FServer.LastSubject, 'mtls client two'));
   AssertTrue('the key carries the origin identity fingerprint',
-    Pos(Client2Identity.Fingerprint, Keys) > 0);
+    Pos(Client2Identity.Leaf.FingerprintSha256, Keys) > 0);
   if AMode = tmHttps then
   begin
     AssertTrue('the proxy saw the proxy identity only',
@@ -557,7 +576,7 @@ begin
   AssertEquals('one origin handshake: the second request reused it', 1,
     FServer.Handshakes);
   AssertTrue('the key carries the request identity fingerprint',
-    Pos(Client2Identity.Fingerprint, Keys) > 0);
+    Pos(Client2Identity.Leaf.FingerprintSha256, Keys) > 0);
   if AViaProxy and (AMode = tmHttps) then
   begin
     AssertTrue('the proxy saw the proxy identity only',

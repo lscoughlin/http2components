@@ -21,13 +21,14 @@ uses
   Http2.Client.ClientCert,
   Http2.Client.RequestObserver,
   Http2.Client.SocketFactory.Types,
-  Http2.Client.Defaults;
+  Http2.Client.Defaults,
+  Http2.Common.Tls.Context;
 
 
 type
   TDefaultSocketFactory = class(TInterfacedObject, IHttp2SocketFactory,
     ICleartextSocketFactory, IProxySocketFactory, IHttp1SocketFactory,
-    IIdentitySocketFactory)
+    IIdentitySocketFactory, ITlsContextPoolKey)
   private
     FCACertFile: string;
     FInsecure: Boolean;
@@ -35,6 +36,8 @@ type
     FProxyPort: Word;
     FIdentity: IClientIdentity;
     FProxyIdentity: IClientIdentity;
+    FTlsContext: ITLSContext;
+    FProxyTlsContext: ITLSContext;
     FLogger: IHttpLogger;
     FProtocols: TProtocolSocketFactory;
     /// debug line naming the identity a TLS dial to AHost:APort installs
@@ -49,11 +52,15 @@ type
       const AInsecure: Boolean = False; const AProxyHost: string = '';
       const AProxyPort: Word = 0; const AIdentity: IClientIdentity = nil;
       const ALogger: IHttpLogger = nil;
-      const AProxyIdentity: IClientIdentity = nil);
+      const AProxyIdentity: IClientIdentity = nil;
+      const ATlsContext: ITLSContext = nil;
+      const AProxyTlsContext: ITLSContext = nil);
     /// a copy of this factory that presents the identities and logs to ALogger
     function WithIdentity(const AIdentity: IClientIdentity;
       const ALogger: IHttpLogger;
       const AProxyIdentity: IClientIdentity = nil): TDefaultSocketFactory;
+    function WithTlsContexts(const ATlsContext,
+      AProxyTlsContext: ITLSContext): TDefaultSocketFactory;
     function Dial(const AHost: string; const APort: Word;
       const ATimeoutMs: Integer): IHttp2Socket;
     function DialProtocol(const AHost: string; const APort: Word;
@@ -77,10 +84,12 @@ type
       const AScheme: string; const AHttp1Fallback: Boolean;
       const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
       const AProxy: IProxy; const AIdentity: IClientIdentity;
-      out AProtocol: TNegotiatedProtocol): IHttp2Socket;
+      const AIdentityExplicit: Boolean; out AProtocol: TNegotiatedProtocol): IHttp2Socket;
     function DialHttp1As(const AHost: string; const APort: Word;
       const AScheme: string; const ATimeoutMs: Integer;
-      const AProxy: IProxy; const AIdentity: IClientIdentity): IHttp2Socket;
+      const AProxy: IProxy; const AIdentity: IClientIdentity;
+      const AIdentityExplicit: Boolean): IHttp2Socket;
+    function TlsContextPoolKey: string;
   end;
 
   TIdentityHttp1Dialer = class(TInterfacedObject, IHttp1SocketFactory)
@@ -110,7 +119,7 @@ function TIdentityHttp1Dialer.DialHttp1(const AHost: string; const APort: Word;
   const AProxy: IProxy): IHttp2Socket;
 begin
   Result := FFactory.DialHttp1As(AHost, APort, AScheme, ATimeoutMs, AProxy,
-    FIdentity);
+    FIdentity, True);
 end;
 
 { IHttp2SocketFactory }
@@ -118,7 +127,8 @@ end;
 constructor TDefaultSocketFactory.Create(const ACACertFile: string;
   const AInsecure: Boolean; const AProxyHost: string; const AProxyPort: Word;
   const AIdentity: IClientIdentity; const ALogger: IHttpLogger;
-  const AProxyIdentity: IClientIdentity);
+  const AProxyIdentity: IClientIdentity; const ATlsContext: ITLSContext;
+  const AProxyTlsContext: ITLSContext);
 begin
   inherited Create;
   FCACertFile := ACACertFile;
@@ -127,9 +137,11 @@ begin
   FProxyPort := AProxyPort;
   FIdentity := AIdentity;
   FProxyIdentity := AProxyIdentity;
+  FTlsContext := ATlsContext;
+  FProxyTlsContext := AProxyTlsContext;
   FLogger := ALogger;
   FProtocols := TProtocolSocketFactory.Create(ACACertFile, AInsecure, AProxyHost,
-    AProxyPort, AIdentity, AProxyIdentity);
+    AProxyPort, AIdentity, AProxyIdentity, ATlsContext, AProxyTlsContext);
 end;
 
 function TDefaultSocketFactory.WithIdentity(const AIdentity: IClientIdentity;
@@ -137,7 +149,28 @@ function TDefaultSocketFactory.WithIdentity(const AIdentity: IClientIdentity;
   const AProxyIdentity: IClientIdentity): TDefaultSocketFactory;
 begin
   Result := TDefaultSocketFactory.Create(FCACertFile, FInsecure, FProxyHost,
-    FProxyPort, AIdentity, ALogger, AProxyIdentity);
+    FProxyPort, AIdentity, ALogger, AProxyIdentity, FTlsContext, FProxyTlsContext);
+end;
+
+function TDefaultSocketFactory.WithTlsContexts(const ATlsContext,
+  AProxyTlsContext: ITLSContext): TDefaultSocketFactory;
+begin
+  Result := TDefaultSocketFactory.Create(FCACertFile, FInsecure, FProxyHost,
+    FProxyPort, FIdentity, FLogger, FProxyIdentity, ATlsContext,
+    AProxyTlsContext);
+end;
+
+function TDefaultSocketFactory.TlsContextPoolKey: string;
+var OriginContext, ProxyContext: PtrUInt;
+begin
+  OriginContext := 0;
+  ProxyContext := 0;
+  if FTlsContext <> nil then
+    OriginContext := PtrUInt(FTlsContext as TObject);
+  if FProxyTlsContext <> nil then
+    ProxyContext := PtrUInt(FProxyTlsContext as TObject);
+  Result := IntToHex(OriginContext, SizeOf(Pointer) * 2) + ':' +
+    IntToHex(ProxyContext, SizeOf(Pointer) * 2);
 end;
 
 procedure TDefaultSocketFactory.LogIdentity(const AHost: string;
@@ -149,7 +182,7 @@ begin
   try
     FLogger.Log(llDebug, Format(
       'TLS to %s:%d presents client identity subject="%s" fingerprint=%s',
-      [AHost, APort, AIdentity.Subject, AIdentity.Fingerprint]));
+      [AHost, APort, AIdentity.Leaf.Subject, AIdentity.Leaf.FingerprintSha256]));
   except
     // a logger that raises must not break a dial
   end;
@@ -160,7 +193,7 @@ function TDefaultSocketFactory.Dial(const AHost: string; const APort: Word;
 begin
   LogIdentity(AHost, APort, FIdentity);
   Result := TTlsSocket.Dial(AHost, APort, FInsecure, ATimeoutMs, FCACertFile,
-    FProxyHost, FProxyPort, FIdentity);
+    FProxyHost, FProxyPort, FIdentity, FTlsContext);
 end;
 
 function TDefaultSocketFactory.DialProtocol(const AHost: string;
@@ -176,17 +209,18 @@ function TDefaultSocketFactory.DialHttp1(const AHost: string;
   const APort: Word; const AScheme: string; const ATimeoutMs: Integer;
   const AProxy: IProxy): IHttp2Socket;
 begin
-  Result := DialHttp1As(AHost, APort, AScheme, ATimeoutMs, AProxy, FIdentity);
+  Result := DialHttp1As(AHost, APort, AScheme, ATimeoutMs, AProxy, FIdentity, False);
 end;
 
 function TDefaultSocketFactory.DialHttp1As(const AHost: string;
   const APort: Word; const AScheme: string; const ATimeoutMs: Integer;
-  const AProxy: IProxy; const AIdentity: IClientIdentity): IHttp2Socket;
+  const AProxy: IProxy; const AIdentity: IClientIdentity;
+      const AIdentityExplicit: Boolean): IHttp2Socket;
 begin
   if AScheme <> 'http' then
     LogIdentity(AHost, APort, AIdentity);
   Result := FProtocols.DialHttp1As(AHost, APort, AScheme, ATimeoutMs, AProxy,
-    AIdentity);
+    AIdentity, AIdentityExplicit);
 end;
 
 function TDefaultSocketFactory.DialProtocolVia(const AHost: string;
@@ -196,17 +230,17 @@ function TDefaultSocketFactory.DialProtocolVia(const AHost: string;
   out AProtocol: TNegotiatedProtocol): IHttp2Socket;
 begin
   Result := DialProtocolViaAs(AHost, APort, AScheme, AHttp1Fallback, APolicy,
-    ATimeoutMs, AProxy, FIdentity, AProtocol);
+    ATimeoutMs, AProxy, FIdentity, False, AProtocol);
 end;
 
 function TDefaultSocketFactory.DialProtocolViaAs(const AHost: string;
   const APort: Word; const AScheme: string; const AHttp1Fallback: Boolean;
   const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
   const AProxy: IProxy; const AIdentity: IClientIdentity;
-  out AProtocol: TNegotiatedProtocol): IHttp2Socket;
+  const AIdentityExplicit: Boolean; out AProtocol: TNegotiatedProtocol): IHttp2Socket;
 var
   Sock: IHttp2Socket;
-  TlsObj: TObject;
+  TlsInfo: IHttp2TlsSocketInfo;
   Name: string;
   Proxy: IProxy;
 begin
@@ -229,25 +263,16 @@ begin
   // (doc/design/fallback.md "Negotiation").
   LogIdentity(AHost, APort, AIdentity);
   Sock := TTlsSocket.DialWithAlpnVia(AHost, APort, AlpnOfferFor(AHttp1Fallback),
-    FInsecure, ATimeoutMs, FCACertFile, Proxy, AIdentity, FProxyIdentity);
-  // downcast with Supports, NOT a hard class cast: a hard cast reinterprets
-  // the interface pointer (which is not the object base) and reads garbage
+    FInsecure, ATimeoutMs, FCACertFile, Proxy, AIdentity, FProxyIdentity,
+    FTlsContext, FProxyTlsContext, AIdentityExplicit);
   Name := '';
-  if Supports(Sock, TTlsSocket, TlsObj) then
-    Name := TTlsSocket(TlsObj).SelectedProtocol;
-  if Name = cHttp11AlpnProtocol then
-    AProtocol := npHttp1Tls
-  else if Name = cHttp2AlpnProtocol then
-    AProtocol := npHttp2Tls
-  else if AHttp1Fallback then
-    // RFC 7301: no ALPN result means the peer speaks HTTP/1.1
-    AProtocol := npHttp1Tls
-  else
-  begin
+  if Supports(Sock, IHttp2TlsSocketInfo, TlsInfo) then
+    Name := TlsInfo.SelectedProtocol;
+  try
+    AProtocol := ProtocolForTlsAlpn(Name, AHttp1Fallback);
+  except
     Sock.Close;
-    raise EHttpProtocolError.CreateFmt(
-      'peer did not negotiate ALPN "%s" (selected "%s")',
-      [cHttp2AlpnProtocol, Name]);
+    raise;
   end;
   Result := Sock;
 end;

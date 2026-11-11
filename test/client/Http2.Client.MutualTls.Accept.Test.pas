@@ -25,7 +25,7 @@ uses
   Http2.Client.Sse, Http2.Client.WebSocket, Http2.Client.RequestObserver,
   Http2.Client.RequestObserver.Support, Http2.Client.MutualTls.Support,
   Http2.Client.MutualTls.Server.Support,
-  Http2.Client.MutualTls.Client.Support;
+  Http2.Client.MutualTls.Client.Support, Http2.OpenSSL;
 
 type
   TMutualTlsAcceptTest = class(TMutualTlsTestBase)
@@ -89,7 +89,7 @@ var
   Body: string;
 begin
   StartServer(mkH2, cTls13);
-  Client := NewClient(TClientIdentity.FromPkcs12File(Fixture('client-chain.p12'),
+  Client := NewClient(TOpenSSLIdentity.FromPkcs12File(Fixture('client-chain.p12'),
     cPass));
   AssertEquals('status', 200, Fetch(Client, Body));
   Client.Close;

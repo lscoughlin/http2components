@@ -313,13 +313,12 @@ end;
 
 class function TPoolState.BaseOfKey(const AKey: string): string;
 var
-  P: Integer;
+  P, Q: Integer;
 begin
   P := Pos(' id=', AKey);
-  if P = 0 then
-    Result := AKey
-  else
-    Result := Copy(AKey, 1, P - 1);
+  Q := Pos(' tls=', AKey);
+  if (P = 0) or ((Q > 0) and (Q < P)) then P := Q;
+  if P = 0 then Result := AKey else Result := Copy(AKey, 1, P - 1);
 end;
 
 function TPoolState.CountForBase(const ABase: string): Integer;

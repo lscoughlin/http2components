@@ -46,11 +46,11 @@ begin
   end;
   // an expired answer is refused before anything is dialled; the message
   // names the expiry, never key material
-  if (Result <> nil) and (Result.NotAfter < LocalTimeToUniversal(Now)) then
+  if (Result <> nil) and (Result.Leaf.NotAfterUtc < LocalTimeToUniversal(Now)) then
     raise EHttpTlsConfigError.CreateFmt(
       'the client identity selector returned a certificate for %s:%d that ' +
       'expired on %s UTC',
-      [AHost, APort, FormatDateTime('yyyy-mm-dd hh:nn:ss', Result.NotAfter)]);
+      [AHost, APort, FormatDateTime('yyyy-mm-dd hh:nn:ss', Result.Leaf.NotAfterUtc)]);
 end;
 
 /// raise EHttpTlsConfigError when an identity (or selector) is configured but
@@ -72,10 +72,10 @@ procedure CheckRequestIdentity(const AIdentity: IClientIdentity);
 begin
   if AIdentity = nil then
     Exit;
-  if AIdentity.NotAfter < LocalTimeToUniversal(Now) then
+  if AIdentity.Leaf.NotAfterUtc < LocalTimeToUniversal(Now) then
     raise EHttpTlsConfigError.CreateFmt(
       'the request client certificate expired on %s UTC',
-      [FormatDateTime('yyyy-mm-dd hh:nn:ss', AIdentity.NotAfter)]);
+      [FormatDateTime('yyyy-mm-dd hh:nn:ss', AIdentity.Leaf.NotAfterUtc)]);
 end;
 
 end.

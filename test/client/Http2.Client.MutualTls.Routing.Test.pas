@@ -25,7 +25,8 @@ uses
   Http2.Client.Sse, Http2.Client.WebSocket, Http2.Client.RequestObserver,
   Http2.Client.RequestObserver.Support, Http2.Client.MutualTls.Support,
   Http2.Client.MutualTls.Server.Support,
-  Http2.Client.MutualTls.Client.Support;
+  Http2.Client.MutualTls.Client.Support, Http2.OpenSSL,
+  Http2.Common.Tls.Context;
 
 type
   TMutualTlsRoutingTest = class(TMutualTlsTestBase)
@@ -120,6 +121,7 @@ end;
 procedure TMutualTlsRoutingTest.TestEveryDialHelperPresentsTheIdentity;
 var
   Id: IClientIdentity;
+  Context: ITLSContext;
   Sock: IHttp2Socket;
   Offer: TBytes;
   Before: Integer;
@@ -138,21 +140,22 @@ var
 begin
   StartServer(mkH2, cTls13);
   Id := GoodIdentity;
+  Context := ClientTlsContext(Id);
   Offer := AlpnOfferFor(False);
   Before := 0;
   Sock := TTlsSocket.Dial('localhost', FServer.Port, False, 3000,
-    Fixture('ca.crt'), '', 0, Id);
+    '', '', 0, Id, Context);
   Check('Dial');
   Sock := TTlsSocket.DialWithAlpn('localhost', FServer.Port, Offer, False, 3000,
-    Fixture('ca.crt'), '', 0, Id);
+    '', '', 0, Id, Context);
   Check('DialWithAlpn');
   Sock := TTlsSocket.DialVia('localhost', FServer.Port, False, 3000,
-    Fixture('ca.crt'), nil, Id);
+    '', nil, Id, nil, Context);
   Check('DialVia');
   Sock := TTlsSocket.DialWithAlpnVia('localhost', FServer.Port, Offer, False,
-    3000, Fixture('ca.crt'), nil, Id);
+    3000, '', nil, Id, nil, Context);
   Check('DialWithAlpnVia');
-  Sock := TProtocolSocketFactory.Create(Fixture('ca.crt'), False, '', 0, Id)
+  Sock := TProtocolSocketFactory.Create('', False, '', 0, Id, nil, Context)
     .DialHttp1('localhost', FServer.Port, 'https', 3000, nil);
   Check('TProtocolSocketFactory.DialHttp1');
 end;
@@ -213,7 +216,7 @@ begin
       end;
     end;
   end;
-  AssertTrue('the scan found the dial sites (' + IntToStr(Seen) + ')', Seen >= 9);
+  AssertEquals('the scan found every dial site', 8, Seen);
 end;
 
 { selector }
@@ -389,7 +392,7 @@ begin
   Sel := TCountingSelector.Create;
   SelRef := Sel;
   Sel.Answer := GoodIdentity;
-  FpOld := Sel.Answer.Fingerprint;
+  FpOld := Sel.Answer.Leaf.FingerprintSha256;
   Client := SelectorClient(SelRef);
   // the first response is held open, so its connection stays in use
   Old := SendTo(Client, Url);
@@ -398,7 +401,7 @@ begin
     SubjectIs(FServer.LastSubject, 'mtls client'));
   // rotate: the next dial presents the new identity
   Sel.Answer := Client2Identity;
-  FpNew := Sel.Answer.Fingerprint;
+  FpNew := Sel.Answer.Leaf.FingerprintSha256;
   Fresh := SendTo(Client, Url);
   AssertEquals('second status', 200, Fresh.StatusCode);
   AssertEquals('two selector calls: one per dial', 2, Sel.Calls);
@@ -570,7 +573,8 @@ begin
   StartServer(mkPlain, 0);
   FProxy := TTunnelProxy.Create(tmHttps, FServer.Port, True);
   Client := THttpClientFactory.Create
-    .WithCACertFile(Fixture('ca.crt'))
+    .WithTlsContext(ClientTlsContext(nil))
+    .WithProxyTlsContext(ClientTlsContext(FProxyIdentity))
     .WithClientIdentity(GoodIdentity)
     .WithProxyClientIdentity(Client2Identity)
     .WithProxySelector(TFixedSelector.Create(pkHttps, FProxy.Port))
@@ -604,7 +608,8 @@ begin
   SelRef := Sel;
   Sel.Answer := GoodIdentity;
   Client := THttpClientFactory.Create
-    .WithCACertFile(Fixture('ca.crt'))
+    .WithTlsContext(ClientTlsContext(nil))
+    .WithProxyTlsContext(ClientTlsContext(Client2Identity))
     .WithClientIdentitySelector(SelRef)
     .WithProxyClientIdentity(Client2Identity)
     .WithProxySelector(TFixedSelector.Create(pkHttps, FProxy.Port))
@@ -631,7 +636,7 @@ begin
   Failed := False;
   try
     THttpClientFactory.Create
-      .WithProxyClientIdentity(TClientIdentity.FromPemFiles(
+      .WithProxyClientIdentity(TOpenSSLIdentity.FromPemFiles(
         Fixture('expired.crt'), Fixture('expired.key')))
       .Build;
   except

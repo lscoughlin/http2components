@@ -25,7 +25,7 @@ uses
   Http2.Client.Sse, Http2.Client.WebSocket, Http2.Client.RequestObserver,
   Http2.Client.RequestObserver.Support, Http2.Client.MutualTls.Support,
   Http2.Client.MutualTls.Server.Support,
-  Http2.Client.MutualTls.Client.Support;
+  Http2.Client.MutualTls.Client.Support, Http2.OpenSSL;
 
 type
   TMutualTlsRequestTest = class(TMutualTlsTestBase)
@@ -125,8 +125,8 @@ begin
   AssertEquals('the second identity handshook once', 1,
     CountOf('mtls client two', FServer.AllSubjects));
   AssertTrue('two keys, one per identity',
-    (Pos(GoodIdentity.Fingerprint, Keys) > 0) and
-    (Pos(Client2Identity.Fingerprint, Keys) > 0));
+    (Pos(GoodIdentity.Leaf.FingerprintSha256, Keys) > 0) and
+    (Pos(Client2Identity.Leaf.FingerprintSha256, Keys) > 0));
 end;
 
 procedure TMutualTlsRequestTest.TestRequestIdentityWinsOverTheSelector;
@@ -189,7 +189,7 @@ begin
   Client.Close;
   FServer.Stop;
   AssertTrue('the identity request has its own key',
-    Pos(' id=' + Client2Identity.Fingerprint, Keys) > 0);
+    Pos(' id=' + Client2Identity.Leaf.FingerprintSha256, Keys) > 0);
   AssertEquals('two handshakes, no sharing', 2, FServer.Handshakes);
 end;
 
@@ -278,7 +278,7 @@ begin
   Failed := False;
   try
     Client.Send(THttpRequest.Create(hmGet, Url).WithClientIdentity(
-      TClientIdentity.FromPemFiles(Fixture('expired.crt'),
+      TOpenSSLIdentity.FromPemFiles(Fixture('expired.crt'),
         Fixture('expired.key'))));
   except
     on E: EHttpTlsConfigError do
@@ -301,7 +301,7 @@ begin
   try
     Client.Send(TWebSocketRequest.Create(
       Format('wss://localhost:%d/chat', [FServer.Port]), TWsRecorder.Create)
-      .WithClientIdentity(TClientIdentity.FromPemFiles(
+      .WithClientIdentity(TOpenSSLIdentity.FromPemFiles(
         Fixture('expired.crt'), Fixture('expired.key'))));
   except
     on E: EHttpTlsConfigError do

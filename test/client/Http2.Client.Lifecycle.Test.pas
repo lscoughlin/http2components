@@ -20,7 +20,8 @@ uses
     SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack,
   Http2.Client.Tls, Http2.Client.Connection, Http2.Client.Stream, Http2.Client.Messages, Http2.Client,
-  Http2.Client.Observer, Http2.Client.Encoding, Http2.Client.Test.Support;
+  Http2.Client.Observer, Http2.Client.Encoding, Http2.Client.Test.Support,
+  Http2.Client.Test.TlsContext;
 
 type
   TClientLifecycleTest = class(TTestCase)
@@ -46,7 +47,8 @@ begin
   if Url = '' then
     Url := 'https://127.0.0.1:8080/';
   Client := THttpClientFactory.Create
-    .WithCACertFile(GetEnvironmentVariable('HTTP2_LIVE_ITEST_CA'))
+    .WithTlsContext(OpenSslClientTestContext(
+      GetEnvironmentVariable('HTTP2_LIVE_ITEST_CA')))
     .Build;
   try
     R := Client.Send(THttpRequest.Create(hmGet, Url));
@@ -70,7 +72,8 @@ begin
     Url := 'https://127.0.0.1:8080/';
   Sent := 'http2client-echo-body';
   Client := THttpClientFactory.Create
-    .WithCACertFile(GetEnvironmentVariable('HTTP2_LIVE_ITEST_CA'))
+    .WithTlsContext(OpenSslClientTestContext(
+      GetEnvironmentVariable('HTTP2_LIVE_ITEST_CA')))
     .Build;
   try
     R := Client.Send(THttpRequest.Create(hmPost, Url)
