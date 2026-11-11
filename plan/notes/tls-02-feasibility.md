@@ -93,7 +93,10 @@ runs the two programs sequentially with a 30-second per-program timeout.
 The OpenSSL study uses `/opt/homebrew/opt/openssl@3/lib`, OpenSSL 3.5.9
 (29 Sep 2026), matching the project build environment. The runner writes
 provider compiler units to separate subdirectories under `bin`; this is
-output placement, not a complete provider dependency-isolation proof.
+output placement, not a complete provider dependency-isolation proof. Set
+`TLS_STUDY_OUT` to select a fresh output path. On POSIX, the runner starts
+each subprocess in a new process group. A timeout terminates that group and
+stores captured output with a timeout marker in the command log.
 
 Both programs passed. TlsLib executed TLS 1.2 and 1.3, ALPN, DNS and IP
 identity, SNI omission for IP, wrong-name and untrusted-root rejection,
@@ -105,6 +108,13 @@ partial-chain trust, data transfer, and close-notify. Its one-byte BIO writes
 prove incremental transport feed; OpenSSL consumes bytes accumulated in the
 BIO when its handshake call runs, so this is not evidence of one handshake
 advance per byte. Output was drained in seven-byte chunks.
+
+A clean compile used
+`MORMOT=/path/to/pinned/mORMot2/src TLS_STUDY_OUT=bin/tls02-engines-clean python3 tools/studies/tls/engines/run.py --compile-only`
+with an empty output directory. HashLib, SimpleBase, CryptoLib, and both
+study programs compiled successfully in about 134 seconds. Each dependency
+package compile has a 300-second timeout. This is cold-build evidence; the
+earlier warm-cache compile time is not reported as a cold-build result.
 
 The work is macOS-only. It does not prove Linux support, a production
 conformance matrix, load behavior, or the server event-loop integration.
