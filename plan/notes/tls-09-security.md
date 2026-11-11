@@ -56,10 +56,19 @@ python3 -c "import runpy; from pathlib import Path; m=runpy.run_path('tools/buil
 All four commands completed successfully. The initial TlsLib build performed
 its dependency bootstrap. The final runner compile exited 0 and produced
 `bin/aarch64-darwin/default/tls-integration-test/programs/Http2.Tls.Security.Tests`.
-The binary was not executed by this task. No runtime cases are reported as
-passed here. The coordinator must run the binary under its bounded execution
-protocol and record actual outcomes, skips, failures, timeout status, and
-cleanup before acceptance.
+The coordinator ran the first compiled version and it stopped after the first
+trusted O/O TLS 1.2 case. The next unknown-CA case raised the expected
+`ETlsSessionError` outside the runner's result classification. The runner
+now records only verification or alert errors as peer rejection. A timeout,
+unexpected terminal state, setup error, or other session error fails the
+case.
+
+The expired TLSLib fixture has a valid hostname and matching root issuer. The
+runner now also sets the client trust anchor explicitly and checks a valid
+server chain control. The coordinator must run the updated binary under its
+bounded execution protocol and record actual outcomes, skips, failures,
+timeout status, and cleanup before acceptance. The current worker has not
+executed any TLS binary and reports no runtime pass count.
 
 ## Limits
 

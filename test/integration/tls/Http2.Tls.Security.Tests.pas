@@ -18,6 +18,7 @@ uses
 
 type
   TProvider = (prOpenSSL, prTlsLib);
+  THandshakeStatus = (hsOpen, hsRejected, hsTimeout, hsUnexpectedTerminal);
   THandshakeResult = record
     ClientInfo, ServerInfo: TTlsNegotiatedInfo;
   end;
@@ -34,6 +35,8 @@ function ProviderName(const AProvider: TProvider): string;
 begin
   if AProvider = prOpenSSL then Result := 'O' else Result := 'T';
 end;
+
+procedure Verify(const AValue: Boolean; const ACaseId: string); forward;
 
 function VersionName(const AVersion: TTlsVersion): string;
 begin
@@ -139,38 +142,82 @@ end;
 function Handshake(const AClientContext, AServerContext: ITLSContext;
   const AClientOptions: TTlsClientSessionOptions;
   const AServerOptions: TTlsServerSessionOptions;
-  out AResult: THandshakeResult): Boolean;
+  out AResult: THandshakeResult; out AStatus: THandshakeStatus;
+  out AErrorCategory: TTlsErrorCategory): Boolean;
 var C, S: ITLSSession; CO: TTlsClientSessionOptions;
   SO: TTlsServerSessionOptions; StartMs: Int64; I: Integer;
   CQ, SQ: TBytes;
 begin
   AResult := Default(THandshakeResult);
+  AStatus := hsUnexpectedTerminal;
+  AErrorCategory := tecInternal;
   StartMs := GetTickCount64;
   CO := AClientOptions; SO := AServerOptions;
   CO.HandshakeStartMs := StartMs; SO.HandshakeStartMs := StartMs;
   CO.HandshakeDeadlineMs := StartMs + HandshakeMs;
   SO.HandshakeDeadlineMs := StartMs + HandshakeMs;
-  C := AClientContext.CreateClientSession(CO);
-  S := AServerContext.CreateServerSession(SO);
+  C := nil;
+  S := nil;
   Result := False;
   try
-    for I := 1 to MaxPumpSteps do
-    begin
-      Transfer(C, S, CQ); Transfer(S, C, SQ);
-      C.Advance(GetTickCount64); S.Advance(GetTickCount64);
-      if (C.State = tssOpen) and (S.State = tssOpen) then
+    C := AClientContext.CreateClientSession(CO);
+    S := AServerContext.CreateServerSession(SO);
+    try
+      for I := 1 to MaxPumpSteps do
       begin
-        AResult.ClientInfo := C.NegotiatedInfo;
-        AResult.ServerInfo := S.NegotiatedInfo;
-        Exit(True);
+        Transfer(C, S, CQ); Transfer(S, C, SQ);
+        C.Advance(GetTickCount64); S.Advance(GetTickCount64);
+        if (C.State = tssOpen) and (S.State = tssOpen) then
+        begin
+          AResult.ClientInfo := C.NegotiatedInfo;
+          AResult.ServerInfo := S.NegotiatedInfo;
+          AStatus := hsOpen;
+          Exit(True);
+        end;
+        if (C.State in [tssFailed, tssClosed]) or
+           (S.State in [tssFailed, tssClosed]) then
+        begin
+          AStatus := hsUnexpectedTerminal;
+          Exit(False);
+        end;
+        if GetTickCount64 >= StartMs + HandshakeMs then
+        begin
+          AStatus := hsTimeout;
+          Exit(False);
+        end;
       end;
-      if (C.State in [tssFailed, tssClosed]) or
-         (S.State in [tssFailed, tssClosed]) or
-         (GetTickCount64 >= StartMs + HandshakeMs) then Exit(False);
+      AStatus := hsTimeout;
+    except
+      on E: ETlsSessionError do
+      begin
+        AErrorCategory := E.Category;
+        if E.Category in [tecVerification, tecAlert] then
+          AStatus := hsRejected
+        else
+          raise;
+        Exit(False);
+      end;
     end;
   finally
-    C.Abort; S.Abort;
+    if C <> nil then C.Abort;
+    if S <> nil then S.Abort;
   end;
+end;
+
+procedure VerifyRejected(const ACompleted: Boolean;
+  const AStatus: THandshakeStatus; const ACategory: TTlsErrorCategory;
+  const AExpectedCategory: TTlsErrorCategory; const ACaseId: string);
+begin
+  Verify(not ACompleted and (AStatus = hsRejected) and
+    (ACategory = AExpectedCategory), ACaseId);
+end;
+
+procedure VerifyRejectedAlert(const ACompleted: Boolean;
+  const AStatus: THandshakeStatus; const ACategory: TTlsErrorCategory;
+  const ACaseId: string);
+begin
+  Verify(not ACompleted and (AStatus = hsRejected) and
+    (ACategory in [tecVerification, tecAlert]), ACaseId);
 end;
 
 procedure Verify(const AValue: Boolean; const ACaseId: string);
@@ -187,6 +234,7 @@ var Pair, Name: string; ClientIdentity, ServerIdentity, InvalidIdentity,
   CC, SC: ITLSContext; CO: TTlsClientSessionOptions;
   SO: TTlsServerSessionOptions; H: THandshakeResult; V: TTlsVersion;
   Mode: TTlsClientAuthMode; IdentityCase: Integer; Ok: Boolean;
+  Status: THandshakeStatus; ErrorCategory: TTlsErrorCategory;
   ClientPeer, ServerPeer: ITLSPeerCertificate;
 begin
   Pair := ProviderName(AClientProvider) + '/' + ProviderName(AServerProvider);
@@ -208,7 +256,7 @@ begin
     CO := Default(TTlsClientSessionOptions); CO.HostName := 'localhost';
     CO := CO.WithAlpns(['h2', 'http/1.1']);
     SO := Default(TTlsServerSessionOptions).WithAlpns(['h2', 'http/1.1']);
-    Ok := Handshake(CC, SC, CO, SO, H);
+    Ok := Handshake(CC, SC, CO, SO, H, Status, ErrorCategory);
     ClientPeer := H.ClientInfo.PeerCertificate;
     Verify(Ok and (H.ClientInfo.Version = V) and (H.ServerInfo.Version = V) and
       (H.ClientInfo.CipherName <> '') and (H.ServerInfo.CipherName <> '') and
@@ -222,35 +270,50 @@ begin
       .WithTrustAnchors([Fixture('ca.crt')]).WithVersions(V, V);
     CC := ClientContext(AClientProvider, CP);
     SC := ServerContext(AServerProvider, SP);
-    Verify(not Handshake(CC, SC, CO, SO, H), Pair + '/A05/unknown-ca/' + VersionName(V));
+    Ok := Handshake(CC, SC, CO, SO, H, Status, ErrorCategory);
+    VerifyRejected(Ok, Status, ErrorCategory, tecVerification,
+      Pair + '/A05/unknown-ca/' + VersionName(V));
     CP := TTlsClientPolicy.SecureDefault.WithTrustAnchors([Fixture('ca.crt')])
       .WithVersions(V, V);
     SC := ServerContext(AServerProvider,
-      TTlsServerPolicy.SecureDefault.WithServerIdentity(ExpiredIdentity).WithVersions(V, V));
+      TTlsServerPolicy.SecureDefault.WithServerIdentity(ExpiredIdentity)
+        .WithTrustAnchors([Fixture('ca.crt')]).WithVersions(V, V));
     CC := ClientContext(AClientProvider, CP);
-    Verify(not Handshake(CC, SC, CO, SO, H), Pair + '/A05/expired/' + VersionName(V));
+    Ok := Handshake(CC, SC, CO, SO, H, Status, ErrorCategory);
+    VerifyRejected(Ok, Status, ErrorCategory, tecVerification,
+      Pair + '/A05/expired/' + VersionName(V));
     SC := ServerContext(AServerProvider,
-      TTlsServerPolicy.SecureDefault.WithServerIdentity(ServerIdentity).WithVersions(V, V));
+      TTlsServerPolicy.SecureDefault
+        .WithServerIdentity(LoadIdentity(AServerProvider,
+          'tls:server-intermediate-chain.crt', 'tls:server-intermediate.key'))
+        .WithVersions(V, V));
+    Verify(Handshake(CC, SC, CO, SO, H, Status, ErrorCategory),
+      Pair + '/A05/expired-control-valid-chain/' + VersionName(V));
     CO.HostName := 'wrong.example';
-    Verify(not Handshake(CC, SC, CO, SO, H), Pair + '/A05/dns-mismatch/' + VersionName(V));
+    Ok := Handshake(CC, SC, CO, SO, H, Status, ErrorCategory);
+    VerifyRejected(Ok, Status, ErrorCategory, tecVerification,
+      Pair + '/A05/dns-mismatch/' + VersionName(V));
     CO.HostName := '127.0.0.1';
-    Verify(Handshake(CC, SC, CO, SO, H) and
+    Verify(Handshake(CC, SC, CO, SO, H, Status, ErrorCategory) and
       (H.ClientInfo.PeerCertificate <> nil) and
       H.ClientInfo.PeerCertificate.Verified,
       Pair + '/A05/ip-san/' + VersionName(V));
     CO.HostName := '127.0.0.2';
-    Verify(not Handshake(CC, SC, CO, SO, H), Pair + '/A05/ip-mismatch/' + VersionName(V));
+    Ok := Handshake(CC, SC, CO, SO, H, Status, ErrorCategory);
+    VerifyRejected(Ok, Status, ErrorCategory, tecVerification,
+      Pair + '/A05/ip-mismatch/' + VersionName(V));
     CO.HostName := 'localhost';
     CO := CO.WithAlpns(['h2', 'http/1.1']);
     SO := Default(TTlsServerSessionOptions).WithAlpns(['http/1.1', 'h2']);
-    Verify(Handshake(CC, SC, CO, SO, H) and (H.ClientInfo.SelectedAlpn = 'h2'),
+    Verify(Handshake(CC, SC, CO, SO, H, Status, ErrorCategory) and
+      (H.ClientInfo.SelectedAlpn = 'h2'),
       Pair + '/A07/preference-h2/' + VersionName(V));
     SO := Default(TTlsServerSessionOptions).WithAlpns(['http/1.1']);
-    Verify(Handshake(CC, SC, CO, SO, H) and
+    Verify(Handshake(CC, SC, CO, SO, H, Status, ErrorCategory) and
       (H.ClientInfo.SelectedAlpn = 'http/1.1'),
       Pair + '/A07/http11/' + VersionName(V));
     SO := Default(TTlsServerSessionOptions);
-    Verify(Handshake(CC, SC, CO, SO, H) and
+    Verify(Handshake(CC, SC, CO, SO, H, Status, ErrorCategory) and
       (H.ClientInfo.SelectedAlpn = ''), Pair + '/A07/no-alpn/' + VersionName(V));
 
     for Mode := Low(TTlsClientAuthMode) to High(TTlsClientAuthMode) do
@@ -269,7 +332,7 @@ begin
         if IdentityCase = 0 then CO.Identity := nil
         else if IdentityCase = 1 then CO.Identity := ClientIdentity
         else CO.Identity := InvalidIdentity;
-        Ok := Handshake(CC, SC, CO, SO, H);
+        Ok := Handshake(CC, SC, CO, SO, H, Status, ErrorCategory);
         ClientPeer := H.ClientInfo.PeerCertificate;
         ServerPeer := H.ServerInfo.PeerCertificate;
         Name := Pair + '/A06/' + VersionName(V) + '/' + AuthName(Mode) + '/' +
@@ -284,14 +347,15 @@ begin
               Verify(Ok and (ServerPeer <> nil) and ServerPeer.Verified and
                 (ServerPeer.Leaf.CommonName <> ''), Name + '/optional-verified')
             else
-              Verify(not Ok or (ServerPeer = nil) or not ServerPeer.Verified,
-                Name + '/optional-invalid-untrusted');
+              VerifyRejectedAlert(Ok, Status, ErrorCategory,
+                Name + '/optional-invalid-rejected');
           tlsAuthRequire:
             if IdentityCase = 1 then
               Verify(Ok and (ServerPeer <> nil) and ServerPeer.Verified and
                 (ServerPeer.Leaf.CommonName <> ''), Name + '/required-verified')
             else
-              Verify(not Ok, Name + '/required-rejected');
+              VerifyRejectedAlert(Ok, Status, ErrorCategory,
+                Name + '/required-rejected');
         end;
         { The client always verifies the server in this matrix. }
         if Ok then
@@ -308,7 +372,7 @@ begin
     RunPair(prOpenSSL, prTlsLib);
     RunPair(prTlsLib, prOpenSSL);
     RunPair(prTlsLib, prTlsLib);
-    WriteLn('PASS total ', CaseCount, ' TLS security assertions');
+    WriteLn('PASS ', CaseCount, ' cases');
   except
     on E: Exception do
     begin
