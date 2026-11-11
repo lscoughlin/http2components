@@ -166,7 +166,7 @@ JSON
     exit 2
   fi
   local M="${MORMOT:-$ROOT/third_party/mORMot2/src}"
-  fpc -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$ROOT/tls/openssl/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
+  fpc -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$ROOT/tls/openssl/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" -Fl"$M/../static/$(fpc -iTP)-$(fpc -iTO)" \
     -FE"$WORK" -FU"$WORK" "$HERE/autobahn_client.pas" >"$WORK/fpc.log" 2>&1 \
     || { cat "$WORK/fpc.log"; echo "websocket-live: could not build the Autobahn client" >&2; exit 2; }
   "$WORK/autobahn_client" "127.0.0.1:$PORT"

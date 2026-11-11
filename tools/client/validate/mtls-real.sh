@@ -103,14 +103,14 @@ mkdir -p "$RUN_DIR/client"
 if [ "$NATIVE" = 1 ]; then
   CD="$CERTS"
   M="${MORMOT:-$ROOT/third_party/mORMot2/src}"
-  ${FPC:-fpc} -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$ROOT/tls/openssl/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
+  ${FPC:-fpc} -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$ROOT/tls/openssl/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" -Fl"$M/../static/$TARGET" \
     -FE"$RUN_DIR/client" -FU"$WORK" "$ROOT/examples/client/mtls_get.pas" >"$WORK/fpc.log" 2>&1 \
     || { cat "$WORK/fpc.log"; echo "mtls-real: could not build examples/client/mtls_get.pas" >&2; exit 2; }
 else
   CD="/src/bin/$TARGET/$PROFILE/validation/$TAG/certs"
   M=/src/third_party/mORMot2/src
   docker run --rm --user "$ID" -e HOME=/tmp -v "$ROOT:/src" -w /src "$IMAGE" \
-    fpc -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu/src/common/src -Fu/src/client/src -Fu/src/server/src -Fu/src/tls/openssl/src -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
+    fpc -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu/src/common/src -Fu/src/client/src -Fu/src/server/src -Fu/src/tls/openssl/src -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" -Fl"$M/../static/$TARGET" \
     -FE"/src/bin/$TARGET/$PROFILE/validation/$TAG/client" -FU/tmp examples/client/mtls_get.pas >"$WORK/fpc.log" 2>&1 \
     || { cat "$WORK/fpc.log"; echo "mtls-real: could not build examples/client/mtls_get.pas" >&2; exit 2; }
   docker run -d --rm --name "$TAG-client" --network host --user "$ID" -e HOME=/tmp \

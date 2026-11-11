@@ -67,6 +67,7 @@ compile_probe() {
   mkdir -p "$BUILD"
   if ! "$FPC" -O2 -Mdelphi -dUSE_OPENSSL -Fu./common/src -Fu./client/src -Fu./server/src -Fu./test/client -Fu./tls/openssl/src -Fu"$BUILD" \
       -Fu"$MORMOT/core" -Fu"$MORMOT/lib" -Fu"$MORMOT/net" -Fu"$MORMOT/crypt" \
+      -Fl"$MORMOT/../static/$("$FPC" -iTP)-$("$FPC" -iTO)" \
       -FU"$BUILD" -FE"$BUILD" tools/client/h2probe.pas >"$BUILD/build.log" 2>&1; then
     echo "ERROR: h2probe failed to compile; see $BUILD/build.log" >&2
     tail -20 "$BUILD/build.log" >&2

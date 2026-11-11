@@ -64,6 +64,7 @@ if [ "$1" = "--build" ]; then
   BUILD_DIR="${PROXY_REAL_BUILD_DIR:-$VALIDATION_BIN/proxy-real-build}"
   mkdir -p "$BUILD_DIR"
   exec fpc -O2 -vewn -Mdelphi -dUSE_OPENSSL -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$ROOT/tls/openssl/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" \
+    -Fl"$M/../static/$TARGET" \
     -Fu"$M/crypt" -FE"$BUILD_DIR" -FU"$BUILD_DIR" \
     "$ROOT/tools/client/validate/proxy_real_client.pas"
 fi
