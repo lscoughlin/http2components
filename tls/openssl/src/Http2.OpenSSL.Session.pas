@@ -30,7 +30,7 @@ type
     FClientCertificateRequested: Boolean;
     FDeadline: Int64;
     FVerifyPeer: Boolean;
-    FAlpns: TArray<string>;
+    FEncodedAlpns: TBytes;
     FIdentity: ITLSIdentity;
     FInfo: TTlsNegotiatedInfo;
     FHasInfo: Boolean;
@@ -55,6 +55,13 @@ type
     procedure Abort;
     function NegotiatedInfo:TTlsNegotiatedInfo;
   end;
+type
+  TOpenSSLAlpnBytePtr = ^Byte;
+  TOpenSSLAlpnBytePtrPtr = ^TOpenSSLAlpnBytePtr;
+function OpenSSLSelectAlpnVector(APreferred: TOpenSSLAlpnBytePtr;
+  const APreferredLength: LongWord; AInput: TOpenSSLAlpnBytePtr;
+  const AInputLength: LongWord; AOutput: TOpenSSLAlpnBytePtrPtr;
+  AOutputLength: TOpenSSLAlpnBytePtr): LongInt; cdecl;
 function OpenSSLInstallServerAlpn(const ACtx: PSSL_CTX): Boolean;
 function OpenSSLDisableResumption(const ACtx: PSSL_CTX): Boolean;
 function OpenSSLSetVerificationDepth(const ACtx: PSSL_CTX; const ADepth: Integer): Boolean;
@@ -139,36 +146,78 @@ begin
   finally GlobalUnLock; end;
 end;
 
-function OpenSSLAlpnSelect(ssl: PSSL; out_: PPByte; outlen: PByte;
-  input: PByte; inlen: Cardinal; arg: Pointer): Integer; cdecl;
-var S: TOpenSSLSession; Posn, L, I, J: Cardinal; Wanted: UTF8String;
+function OpenSSLSelectAlpnVector(APreferred: TOpenSSLAlpnBytePtr;
+  const APreferredLength: LongWord; AInput: TOpenSSLAlpnBytePtr;
+  const AInputLength: LongWord; AOutput: TOpenSSLAlpnBytePtrPtr;
+  AOutputLength: TOpenSSLAlpnBytePtr): LongInt; cdecl;
+var
+  Posn, EntryLength, J, PreferredPosn, PreferredLength: Cardinal;
 begin
   Result := 2;
-  if (out_ = nil) or (outlen = nil) or (input = nil) then Exit;
-  S := TOpenSSLSession(SSL_get_ex_data(ssl, AlpnDataIndex));
-  if (S = nil) or (Length(S.FAlpns) = 0) then begin Result := 3; Exit; end;
-  for I := 0 to High(S.FAlpns) do
+  if (AOutput = nil) or (AOutputLength = nil) then
+    Exit;
+  AOutput^ := nil;
+  AOutputLength^ := 0;
+  if (APreferred = nil) and (APreferredLength <> 0) then
+    Exit;
+  if (AInput = nil) or (AInputLength = 0) then
+    Exit;
+
+  Posn := 0;
+  while Posn < AInputLength do
   begin
-    Wanted := UTF8String(S.FAlpns[I]);
-    if (Length(Wanted) = 0) or (Length(Wanted) > 255) then Continue;
+    EntryLength := PByte(PtrUInt(AInput) + Posn)^;
+    Inc(Posn);
+    if (EntryLength = 0) or (EntryLength > AInputLength - Posn) then
+      Exit;
+    Inc(Posn, EntryLength);
+  end;
+  Posn := 0;
+  while Posn < APreferredLength do
+  begin
+    EntryLength := PByte(PtrUInt(APreferred) + Posn)^;
+    Inc(Posn);
+    if (EntryLength = 0) or (EntryLength > APreferredLength - Posn) then
+      Exit;
+    Inc(Posn, EntryLength);
+  end;
+  if APreferredLength = 0 then
+  begin
+    Result := 3;
+    Exit;
+  end;
+
+  PreferredPosn := 0;
+  while PreferredPosn < APreferredLength do
+  begin
+    PreferredLength := PByte(PtrUInt(APreferred) + PreferredPosn)^;
+    Inc(PreferredPosn);
     Posn := 0;
-    while Posn < inlen do
+    while Posn < AInputLength do
     begin
-      L := input[Posn]; Inc(Posn);
-      if (L = 0) or (Posn + L > inlen) then Exit;
-      if L = Cardinal(Length(Wanted)) then
+      EntryLength := PByte(PtrUInt(AInput) + Posn)^;
+      Inc(Posn);
+      if EntryLength = PreferredLength then
       begin
         J := 0;
-        while (J < L) and (input[Posn + J] = Byte(Wanted[J + 1])) do Inc(J);
-        if J = L then
+        while (J < EntryLength) and
+          (PByte(PtrUInt(AInput) + Posn + J)^ =
+            PByte(PtrUInt(APreferred) + PreferredPosn + J)^) do
+          Inc(J);
+        if J = EntryLength then
         begin
-          out_^ := @input[Posn]; outlen^ := L; Result := 0; Exit;
+          AOutput^ := PByte(PtrUInt(AInput) + Posn);
+          AOutputLength^ := Byte(EntryLength);
+          Result := 0;
+          Exit;
         end;
       end;
-      Inc(Posn, L);
+      Inc(Posn, EntryLength);
     end;
+    Inc(PreferredPosn, PreferredLength);
   end;
 end;
+
 
 function EncodeAlpns(const AValues: TArray<string>): TBytes;
 var I, N, J: Integer; S: UTF8String;
@@ -185,6 +234,23 @@ begin
   end;
   if Length(Result) > TlsMaxHandshakeAlpnBytes then
     raise ETlsContextError.Create('ALPN offer exceeds the OpenSSL handshake bound');
+end;
+
+function OpenSSLAlpnSelect(ssl: PSSL; out_: PPByte; outlen: PByte;
+  input: PByte; inlen: Cardinal; arg: Pointer): Integer; cdecl;
+var S: TOpenSSLSession;
+begin
+  S := TOpenSSLSession(SSL_get_ex_data(ssl, AlpnDataIndex));
+  if S = nil then
+  begin
+    Result := 3;
+    Exit;
+  end;
+  if Length(S.FEncodedAlpns) = 0 then
+    Result := OpenSSLSelectAlpnVector(nil, 0, input, inlen, out_, outlen)
+  else
+    Result := OpenSSLSelectAlpnVector(@S.FEncodedAlpns[0],
+      Length(S.FEncodedAlpns), input, inlen, out_, outlen);
 end;
 
 function InRange(const ALength, AOffset, ACount: SizeInt): Boolean;
@@ -237,7 +303,6 @@ begin
   FOwner := AOwner;
   FRole := ARole;
   FVerifyPeer := AVerifyPeer;
-  FAlpns := Copy(AAlpns);
   FIdentity := AIdentity;
   FState := tssNew;
   FPeerAlertDescription := -1;
@@ -247,7 +312,8 @@ begin
   if (ARole = trClient) and ((Length(AHost) > 253) or
     (Length(AServerName) > 253)) then
     raise ETlsContextError.Create('TLS host and server names must not exceed 253 bytes');
-  Alpn := EncodeAlpns(AAlpns);
+  FEncodedAlpns := EncodeAlpns(AAlpns);
+  Alpn := FEncodedAlpns;
   if AOwner.Info.HandshakeTimeoutMs > 0 then
   begin
     if AStartMs > High(Int64) - Int64(AOwner.Info.HandshakeTimeoutMs) then

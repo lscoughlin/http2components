@@ -13,6 +13,7 @@ uses cthreads, SysUtils, Classes, Process, Http2.Common.Tls.Types,
   Http2.Common.Tls.Policy, Http2.Common.Tls.Context,
   Http2.Common.Tls.Session, Http2.Common.Tls.Identity,
   Http2.OpenSSL, Http2.OpenSSL.Identity, Http2.OpenSSL.Live.Resources,
+  Http2.Tls.OpenSSL.Alpn.Test, Http2.Tls.OpenSSL.Policy.Test,
   Http2.Test.Tls.SessionContract, Http2.Test.Tls.AlertContract;
 
 type
@@ -806,6 +807,8 @@ begin
   LoadIdentities;
   CheckLegacyIdentityInputs;
   BuildContext;
+  Inc(Cases, RunOpenSSLAlpnRegressionTests);
+  Inc(Cases, RunOpenSSLPolicyRegressionTests(ServerIdentity, ServerCert, ServerKey, ClientKey));
   OpenSessions(Context, 'localhost', 'localhost', ClientInfo, ServerInfo, True);
   ClientOptions := Default(TTlsClientSessionOptions);
   ClientOptions.HostName := 'localhost';
