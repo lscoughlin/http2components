@@ -296,8 +296,11 @@ fi
 
 compile_probe
 
-if ! docker run --rm "$IMG" --list >"$RUN_DIR/image-list.log" 2>&1; then
-  echo "ERROR: harness image could not list its test ids; see $RUN_DIR/image-list.log" >&2
+docker run --rm "$IMG" --list >"$RUN_DIR/image-list.log" 2>&1
+IMAGE_LIST_RC=$?
+printf '%s\n' "$IMAGE_LIST_RC" >"$RUN_DIR/image-list.exit"
+if [ "$IMAGE_LIST_RC" -gt 1 ]; then
+  echo "ERROR: harness image could not list its test ids (exit $IMAGE_LIST_RC); see $RUN_DIR/image-list.log" >&2
   exit 1
 fi
 sed -n 's/^  - //p' "$RUN_DIR/image-list.log" >"$RUN_DIR/image-ids.txt"
@@ -325,6 +328,10 @@ sort "$RUN_DIR/expectation-ids.txt" >"$RUN_DIR/expectation-ids.sorted.txt"
 if ! cmp -s "$RUN_DIR/image-ids.sorted.txt" "$RUN_DIR/expectation-ids.sorted.txt"; then
   echo "ERROR: harness image ids do not match declared expectations; see $RUN_DIR/image-ids.sorted.txt and $RUN_DIR/expectation-ids.sorted.txt" >&2
   diff -u "$RUN_DIR/expectation-ids.sorted.txt" "$RUN_DIR/image-ids.sorted.txt" >&2 || true
+  exit 1
+fi
+if [ "$IMAGE_LIST_RC" -ne 0 ] && [ "$IMAGE_LIST_RC" -ne 1 ]; then
+  echo "ERROR: harness image list command failed with exit $IMAGE_LIST_RC; see $RUN_DIR/image-list.log" >&2
   exit 1
 fi
 
