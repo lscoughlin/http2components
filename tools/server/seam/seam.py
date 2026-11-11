@@ -273,7 +273,7 @@ def run_idle(host, port, count, window, pid):
 
 
 def pump(poller, by_fd, socks, tails, latencies, sent_at, answers, bodies,
-         failures):
+         completed, failures):
     """Read whatever is ready, and count the finished streams.
 
     A DATA frame that carries END_STREAM finishes one stream.  The caller
@@ -316,6 +316,10 @@ def pump(poller, by_fd, socks, tails, latencies, sent_at, answers, bodies,
                     failures.append("connection %d received DATA for unknown stream %d"
                                     % (index, stream_id))
                     continue
+                if key in completed:
+                    failures.append("connection %d stream %d sent DATA after END_STREAM"
+                                    % (index, stream_id))
+                    continue
                 bodies.setdefault(key, bytearray()).extend(payload)
                 if payload:
                     # a correct client returns the credit it consumed,
@@ -324,6 +328,7 @@ def pump(poller, by_fd, socks, tails, latencies, sent_at, answers, bodies,
                     sock.sendall(frame(FT_WINDOW_UPDATE, 0, 0, bump))
                     sock.sendall(frame(FT_WINDOW_UPDATE, 0, stream_id, bump))
                 if flags & FF_END_STREAM:
+                    completed.add(key)
                     answers[index] += 1
                     done += 1
                     if bytes(bodies.get(key, b"")) != EXPECTED_BINARY:
@@ -331,6 +336,34 @@ def pump(poller, by_fd, socks, tails, latencies, sent_at, answers, bodies,
                                         % (index, stream_id))
                     latencies.append(time.monotonic() - sent_at[key])
     return done
+
+
+def receive_active_batch(socks, sent_at, batch, per_connection, deadline,
+                         latencies, failures):
+    """Read and validate one independent batch, then close its sockets."""
+    poller = select.poll()
+    by_fd = {}
+    tails = [b""] * batch
+    answers = [0] * batch
+    bodies = {}
+    completed = set()
+    try:
+        for index, sock in enumerate(socks):
+            by_fd[sock.fileno()] = index
+            poller.register(sock.fileno(), select.POLLIN)
+        done = 0
+        wanted = batch * per_connection
+        while done < wanted and time.monotonic() < deadline and not failures:
+            done += pump(poller, by_fd, socks, tails, latencies, sent_at,
+                         answers, bodies, completed, failures)
+        return done
+    finally:
+        for sock in socks:
+            try:
+                poller.unregister(sock.fileno())
+            except (KeyError, OSError):
+                pass
+            sock.close()
 
 
 def run_active(host, port, count, per_connection, pid):
@@ -354,7 +387,6 @@ def run_active(host, port, count, per_connection, pid):
         window = count
     block = get_request_block("/binary", "127.0.0.1")
     latencies = []
-    bodies = {}
     failures = []
     answered = 0
     totals = count * per_connection
@@ -384,27 +416,11 @@ def run_active(host, port, count, per_connection, pid):
                 sock.close()
             print("FAIL  the active setup stopped: %s" % error)
             return 1
-        poller = select.poll()
-        by_fd = {}
-        tails = [b""] * batch
-        answers = [0] * batch
-        for index, sock in enumerate(socks):
-            by_fd[sock.fileno()] = index
-            poller.register(sock.fileno(), select.POLLIN)
         if before is None:
             before = read_cpu_seconds(pid)
-        done = 0
-        wanted = batch * per_connection
-        while done < wanted and time.monotonic() < deadline and not failures:
-            done += pump(poller, by_fd, socks, tails, latencies, sent_at, answers,
-                         bodies, failures)
+        done = receive_active_batch(socks, sent_at, batch, per_connection,
+                                    deadline, latencies, failures)
         answered += done
-        for sock in socks:
-            try:
-                poller.unregister(sock.fileno())
-            except (KeyError, OSError):
-                pass
-            sock.close()
         if failures:
             break
     elapsed = time.monotonic() - start
@@ -470,70 +486,7 @@ def run_delayed(host, port, count, delay_ms):
         print("FAIL  the delayed setup stopped: %s" % error)
         return 1
 
-    poller = select.poll()
-    by_fd = {}
-    tails = [b""] * count
-    for index, sock in enumerate(socks):
-        by_fd[sock.fileno()] = index
-        poller.register(sock.fileno(), select.POLLIN)
-
-    answered = {}
-    bodies = {}
-    failures = []
-    deadline = time.monotonic() + (delay_ms / 1000.0) * 4 + 10
-    while len(answered) < len(socks) and time.monotonic() < deadline:
-        finished = []
-        for fd, _ in poller.poll(50):
-            index = by_fd.get(fd, -1)
-            if index < 0:
-                continue
-            sock = socks[index]
-            try:
-                chunk = sock.recv(262144)
-            except (BlockingIOError, InterruptedError):
-                continue
-            except OSError as error:
-                failures.append("connection %d receive failed: %s" % (index, error))
-                continue
-            if not chunk:
-                failures.append("connection %d closed before the delayed answer" % index)
-                continue
-            frames, tails[index] = take_frames(tails[index] + chunk)
-            for ftype, flags, stream_id, payload in frames:
-                if ftype == FT_RST_STREAM:
-                    code = int.from_bytes(payload[:4], "big") if len(payload) >= 4 else -1
-                    failures.append("connection %d received RST_STREAM code %d"
-                                    % (index, code))
-                    continue
-                if ftype == FT_GOAWAY:
-                    code = int.from_bytes(payload[4:8], "big") if len(payload) >= 8 else -1
-                    if code != 0:
-                        failures.append("connection %d received GOAWAY error %d"
-                                        % (index, code))
-                    continue
-                if ftype != FT_DATA:
-                    continue
-                if stream_id != 1:
-                    failures.append("connection %d received DATA on stream %d"
-                                    % (index, stream_id))
-                    continue
-                bodies.setdefault(index, bytearray()).extend(payload)
-                if flags & FF_END_STREAM:
-                    if bytes(bodies[index]) != EXPECTED_SLOW_BODY:
-                        failures.append("connection %d returned an unexpected delayed body"
-                                        % index)
-                    finished.append(index)
-        for index in finished:
-            if index not in answered:
-                answered[index] = time.monotonic() - sent_at[index]
-        if failures:
-            break
-    for sock in socks:
-        try:
-            poller.unregister(sock.fileno())
-        except (KeyError, OSError):
-            pass
-        sock.close()
+    answered, failures = receive_delayed(socks, sent_at, delay_ms)
 
     if len(answered) < len(socks):
         print("FAIL  %d of %d delayed answers did not arrive"
@@ -561,6 +514,81 @@ def run_delayed(host, port, count, delay_ms):
         return 1
     print("PASS  every delayed answer arrived from the timer")
     return 0
+
+
+def receive_delayed(socks, sent_at, delay_ms):
+    """Read delayed responses and close all sockets on every exit path."""
+    poller = select.poll()
+    by_fd = {}
+    tails = [b""] * len(socks)
+    answered = {}
+    bodies = {}
+    completed = set()
+    failures = []
+    deadline = time.monotonic() + (delay_ms / 1000.0) * 4 + 10
+    try:
+        for index, sock in enumerate(socks):
+            by_fd[sock.fileno()] = index
+            poller.register(sock.fileno(), select.POLLIN)
+        while len(answered) < len(socks) and time.monotonic() < deadline:
+            finished = []
+            for fd, _ in poller.poll(50):
+                index = by_fd.get(fd, -1)
+                if index < 0:
+                    continue
+                sock = socks[index]
+                try:
+                    chunk = sock.recv(262144)
+                except (BlockingIOError, InterruptedError):
+                    continue
+                except OSError as error:
+                    failures.append("connection %d receive failed: %s" % (index, error))
+                    continue
+                if not chunk:
+                    failures.append("connection %d closed before the delayed answer" % index)
+                    continue
+                frames, tails[index] = take_frames(tails[index] + chunk)
+                for ftype, flags, stream_id, payload in frames:
+                    if ftype == FT_RST_STREAM:
+                        code = int.from_bytes(payload[:4], "big") if len(payload) >= 4 else -1
+                        failures.append("connection %d received RST_STREAM code %d"
+                                        % (index, code))
+                        continue
+                    if ftype == FT_GOAWAY:
+                        code = int.from_bytes(payload[4:8], "big") if len(payload) >= 8 else -1
+                        if code != 0:
+                            failures.append("connection %d received GOAWAY error %d"
+                                            % (index, code))
+                        continue
+                    if ftype != FT_DATA:
+                        continue
+                    if stream_id != 1:
+                        failures.append("connection %d received DATA on stream %d"
+                                        % (index, stream_id))
+                        continue
+                    if index in completed:
+                        failures.append("connection %d sent DATA after END_STREAM" % index)
+                        continue
+                    bodies.setdefault(index, bytearray()).extend(payload)
+                    if flags & FF_END_STREAM:
+                        completed.add(index)
+                        if bytes(bodies[index]) != EXPECTED_SLOW_BODY:
+                            failures.append("connection %d returned an unexpected delayed body"
+                                            % index)
+                        finished.append(index)
+            for index in finished:
+                if index not in answered:
+                    answered[index] = time.monotonic() - sent_at[index]
+            if failures:
+                break
+        return answered, failures
+    finally:
+        for sock in socks:
+            try:
+                poller.unregister(sock.fileno())
+            except (KeyError, OSError):
+                pass
+            sock.close()
 
 
 def main(argv):
