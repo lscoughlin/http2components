@@ -19,6 +19,7 @@ var
   ServerOptions: TTlsServerSessionOptions;
   ClientSession, ServerSession: ITLSSession;
   Policy: TTlsClientPolicy;
+  ServerPolicy: TTlsServerPolicy;
   Anchors, Alpns: TArray<string>;
   Buffer: TBytes;
   N: SizeInt;
@@ -57,6 +58,22 @@ begin
     Check(TTlsClientPolicy.SecureDefault.MinVersion = tls12, 'minimum version');
     Check(TTlsClientPolicy.SecureDefault.MaxVersion = tls13, 'maximum version');
     Pass('secure defaults and protocol bounds');
+
+    Policy := TTlsClientPolicy.SecureDefault.WithVerificationDepth(0);
+    ServerPolicy := TTlsServerPolicy.SecureDefault.WithVerificationDepth(0);
+    Check(Policy.HasVerificationDepth and (Policy.VerificationDepth = 0),
+      'explicit client depth zero was lost');
+    Check(ServerPolicy.HasVerificationDepth and (ServerPolicy.VerificationDepth = 0),
+      'explicit server depth zero was lost');
+    Failed := False;
+    try Policy := Policy.WithVerificationDepth(-1);
+    except on E: ETlsContextError do Failed := E.Category = tecConfiguration; end;
+    Check(Failed, 'negative client depth was accepted');
+    Failed := False;
+    try ServerPolicy := ServerPolicy.WithVerificationDepth(-1);
+    except on E: ETlsContextError do Failed := E.Category = tecConfiguration; end;
+    Check(Failed, 'negative server depth was accepted');
+    Pass('explicit verification depth and invalid depth');
 
     SetLength(Anchors, 1); Anchors[0] := 'root-a.pem';
     Policy := TTlsClientPolicy.SecureDefault.WithTrustAnchors(Anchors);
