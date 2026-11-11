@@ -20,7 +20,8 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
-  Http2.Server, Http2.Server.Duplex, Http2.Server.Sse.Encoder, Http2.Server.Sse,
+  Http2.Server, Http2.Server.Config.Socket, Http2.Server.Duplex,
+  Http2.Server.Sse.Encoder, Http2.Server.Sse,
   Http2.Server.Http1.RawClient;
 
 type
@@ -50,6 +51,19 @@ type
     procedure Release;
   end;
 
+  TAbortSender = class(TThread)
+  private
+    FChannel: IDuplexChannel;
+    FCompleted: LongInt;
+    FSent: LongInt;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AChannel: IDuplexChannel);
+    function Completed: Boolean;
+    function Sent: Integer;
+  end;
+
   THttp1DetachTest = class(TTestCase)
   private
     FHandler: TStreamHandler;
@@ -73,6 +87,7 @@ type
     procedure TestCompleteSendsAWholeResponse;
     procedure TestTheDetachLimitRefusesTheNextDetach;
     procedure TestAbortCutsTheConnection;
+    procedure TestAbortWithPendingOutputClosesPromptly;
     procedure TestSendDuringActivateNeverOvertakesTheHead;
   end;
 
@@ -93,6 +108,51 @@ begin
     ;
   for I := 251 to 500 do
     Channel.Send(TBytes.Create(Ord('r')));
+end;
+
+{ TAbortSender }
+
+constructor TAbortSender.Create(const AChannel: IDuplexChannel);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FChannel := AChannel;
+end;
+
+procedure TAbortSender.Execute;
+var
+  I: Integer;
+  Chunk: TBytes;
+  SentResult: TSendResult;
+begin
+  try
+    SetLength(Chunk, 65536);
+    FillChar(Chunk[0], Length(Chunk), Ord('x'));
+    for I := 1 to 128 do
+    begin
+      repeat
+        SentResult := FChannel.Send(Chunk);
+        if SentResult = srFull then
+          Sleep(5);
+      until SentResult <> srFull;
+      if SentResult = srClosed then
+        Break;
+      InterlockedIncrement(FSent);
+    end;
+  except
+    // aborting a blocked send is the outcome under test
+  end;
+  InterlockedExchange(FCompleted, 1);
+end;
+
+function TAbortSender.Completed: Boolean;
+begin
+  Result := InterlockedCompareExchange(FCompleted, 0, 0) <> 0;
+end;
+
+function TAbortSender.Sent: Integer;
+begin
+  Result := InterlockedCompareExchange(FSent, 0, 0);
 end;
 
 { TStreamHandler }
@@ -498,6 +558,61 @@ begin
     WaitChannel.Close(ccAbort);
     AssertTrue('an abort closes the connection', C.WaitClosed(ResponseMs));
   finally
+    C.Free;
+  end;
+end;
+
+procedure THttp1DetachTest.TestAbortWithPendingOutputClosesPromptly;
+var
+  C: TRawHttp;
+  R: TRawResponse;
+  Channel: IDuplexChannel;
+  Sender: TAbortSender;
+  Count, LastCount: Integer;
+  LastProgress, Started, Deadline: QWord;
+begin
+  StartServer(LiveFactory(FHandlerRef).WithSocketOptions(
+    TSocketOptions.Create.WithSendBufferBytes(8192)));
+  C := TRawHttp.Create(FServer.Port);
+  Sender := nil;
+  try
+    C.Send('GET /channel HTTP/1.1' + CRLF + 'Host: a' + CRLF + CRLF);
+    AssertTrue(C.ReadHead(ResponseMs, R));
+    Channel := WaitChannel;
+    Sender := TAbortSender.Create(Channel);
+    Sender.Start;
+    Started := GetTickCount64;
+    Deadline := Started + ResponseMs;
+    LastCount := Sender.Sent;
+    LastProgress := Started;
+    while (GetTickCount64 < Deadline) and
+          (GetTickCount64 - LastProgress < 100) and not Sender.Completed do
+    begin
+      Count := Sender.Sent;
+      if Count <> LastCount then
+      begin
+        LastCount := Count;
+        LastProgress := GetTickCount64;
+      end;
+      Sleep(5);
+    end;
+    AssertTrue('the channel queued output before the abort', Sender.Sent > 0);
+    AssertFalse('the sender is blocked by pending output', Sender.Completed);
+    Started := GetTickCount64;
+    Channel.Close(ccAbort);
+    AssertTrue('the abort closes the client promptly', C.WaitClosed(2000));
+    AssertTrue('the blocked sender ends after the abort', Sender.WaitFor = 0);
+    AssertTrue('abortive socket close does not wait for linger',
+      GetTickCount64 - Started < 1000);
+  finally
+    if Sender <> nil then
+    begin
+      if not Sender.Completed then
+        Channel.Close(ccAbort);
+      Sender.WaitFor;
+      Sender.Free;
+    end;
+    Channel := nil;
     C.Free;
   end;
 end;

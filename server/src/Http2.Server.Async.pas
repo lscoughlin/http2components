@@ -129,6 +129,7 @@ type
     function PullOutput(out AData: TBytes): Boolean;
     function OutputPending: Boolean;
     procedure ApplyClosePhase;
+    procedure CloseAbortively;
     /// drop the state of the connection that ended: both cores, the waker and the lock
     procedure ReleaseState;
   protected
@@ -273,7 +274,7 @@ begin
       // wakes this connection to drain its final output.  SendPendingOutput
       // has released its send guard here, so only this failed connection is
       // removed and the wake caller cannot lose a pool thread or stop sequence.
-      fOwner.ConnectionRemove(Handle);
+      CloseAbortively;
   end;
 end;
 procedure THttp2AsyncConnection.AfterCreate;
@@ -415,7 +416,7 @@ begin
         // connection ends at once and the queued bytes are dropped
         if FCore.Aborted then
         begin
-          fOwner.ConnectionRemove(Handle);
+          CloseAbortively;
           exit;
         end;
       end;
@@ -426,7 +427,7 @@ begin
         begin
           if FTlsAdapter.TransportFailed then
           begin
-            fOwner.ConnectionRemove(Handle);
+            CloseAbortively;
             exit;
           end;
           PumpTlsOutput;
@@ -445,7 +446,7 @@ begin
           begin
             if FTlsAdapter.TransportFailed then
             begin
-              fOwner.ConnectionRemove(Handle);
+              CloseAbortively;
               exit;
             end;
             Break;
@@ -455,7 +456,7 @@ begin
           if (FServer.CoreOptions.MaxOutputBytes > 0) and
              (PendingWriteBytes > Int64(FServer.CoreOptions.MaxOutputBytes)) then
           begin
-            fOwner.ConnectionRemove(Handle);
+            CloseAbortively;
             exit;
           end;
           Continue;
@@ -472,7 +473,7 @@ begin
           begin
             // the bytes did not reach the write path. A stream with a hole in it
             // cannot continue, so the connection ends
-            fOwner.ConnectionRemove(Handle);
+            CloseAbortively;
             exit;
           end;
         result := True;
@@ -488,7 +489,7 @@ begin
         if (FServer.CoreOptions.MaxOutputBytes > 0) and
            (PendingWriteBytes > Int64(FServer.CoreOptions.MaxOutputBytes)) then
         begin
-          fOwner.ConnectionRemove(Handle);
+          CloseAbortively;
           exit;
         end;
       end;
@@ -633,7 +634,7 @@ begin
     FLastSweepBacklog := Backlog;
     if WriteStalled(ANowMs, FLastWriteProgressMs, ATimeoutMs, Backlog) then
     begin
-      fOwner.ConnectionRemove(Handle);
+      CloseAbortively;
       Exit;
     end;
     case FH1.IdleAction(Cardinal(ANowMs div 1000), fLastOperation,
@@ -650,7 +651,7 @@ begin
       FLastWriteProgressMs := ANowMs;
     FLastSweepBacklog := Backlog;
     if WriteStalled(ANowMs, FLastWriteProgressMs, ATimeoutMs, Backlog) then
-      fOwner.ConnectionRemove(Handle);
+      CloseAbortively;
   end;
 end;
 
@@ -738,9 +739,20 @@ begin
         {$IFDEF UNIX}Sockets.fpshutdown(LongInt(fSocket.Socket), cShutWrite);{$ENDIF}
       end;
     cpCloseNow:
-      if DrainTlsClose then
+      if FH1.Core.AbortRequested then
+        CloseAbortively
+      else if DrainTlsClose then
         fOwner.ConnectionRemove(Handle);
   end;
+end;
+
+procedure THttp2AsyncConnection.CloseAbortively;
+begin
+  // mORMot's Stop closes with the accepted socket's SO_LINGER value. A
+  // positive linger can block this handler while queued output has no reader.
+  if fSocket <> nil then
+    fSocket.SetLinger(0);
+  fOwner.ConnectionRemove(Handle);
 end;
 
 function THttp2AsyncConnection.OnReadHttp1: TPollAsyncSocketOnReadWrite;
