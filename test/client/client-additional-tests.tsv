@@ -1,0 +1,5 @@
+test_unit	test_suite	test_name	reason
+Http2.Client.ConnectionSettings.Test.pas	TConnectionSettingsRegressionTest	TestHeaderDecoderUsesLocalSettings	Protect local HPACK decoder limits
+Http2.Client.ConnectionSettings.Test.pas	TConnectionSettingsRegressionTest	TestPooledConnectionCreatesEncoderLock	Protect shared encoder lock ownership
+Http2.Client.ConnectionSettings.Test.pas	TConnectionSettingsRegressionTest	TestHeaderTableSettingPreservesOtherPeerSettings	Protect peer HPACK settings update
+Http2.Client.ConnectionSettings.Test.pas	TConnectionSettingsRegressionTest	TestSettingsFailureReleasesEncoderLock	Protect lock cleanup on invalid window settings

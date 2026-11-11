@@ -25,7 +25,7 @@ interface
 
 uses
   SysUtils, Classes, SyncObjs, Sockets, BaseUnix, fpcunit, testregistry,
-  Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Tls, Http2.Client.Client, Http2.Client.WebSocket,
+  Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Tls, Http2.Client, Http2.Client.WebSocket,
   Http2.Client.WebSocket.Connection;
 
 type

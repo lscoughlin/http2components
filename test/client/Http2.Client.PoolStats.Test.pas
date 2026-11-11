@@ -26,7 +26,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls, Http2.Client.Connection, Http2.Client.Stream,
-  Http2.Client.Messages, Http2.Client.Proxy, Http2.Client.Client, Http2.Client.MockSocket,
+  Http2.Client.Messages, Http2.Client.Proxy, Http2.Client, Http2.Client.MockSocket,
   Http2.Client.ProxyClient.Test;
 
 type

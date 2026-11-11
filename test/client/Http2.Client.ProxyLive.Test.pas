@@ -23,7 +23,7 @@ interface
 
 uses
   SysUtils, Classes, fpcunit, testregistry, Http2.Client.Errors, Http2.Client.Tls,
-  Http2.Client.Stream, Http2.Client.Messages, Http2.Client.Proxy, Http2.Client.Client;
+  Http2.Client.Stream, Http2.Client.Messages, Http2.Client.Proxy, Http2.Client;
 
 type
   TProxyLiveTest = class(TTestCase)

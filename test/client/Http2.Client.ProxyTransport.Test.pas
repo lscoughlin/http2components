@@ -26,7 +26,7 @@ interface
 uses
   SysUtils, Classes, Sockets, BaseUnix, fpcunit, testregistry,
   mormot.core.base, mormot.lib.openssl11,
-  Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Socks, Http2.Client.Tls, Http2.Client.Client;
+  Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Socks, Http2.Client.Tls, Http2.Client;
 
 type
   TProxyMode = (pmHttp, pmHttps, pmSocks5);

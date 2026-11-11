@@ -22,7 +22,7 @@ interface
 
 uses
   SysUtils, Classes, DateUtils, fpcunit, testregistry,
-  mormot.lib.openssl11, Http2.Client.Errors, Http2.Client.ClientCert, Http2.Client.Tls, Http2.Client.Client;
+  mormot.lib.openssl11, Http2.Client.Errors, Http2.Client.ClientCert, Http2.Client.Tls, Http2.Client;
 
 type
   TClientCertTest = class(TTestCase)

@@ -30,7 +30,7 @@ interface
 
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections,
-  Http2.Client.Client, Http2.Client.RequestObserver;
+  Http2.Client, Http2.Client.RequestObserver;
 
 type
   /// a monotonic count per label set; a label is a preformatted string such as

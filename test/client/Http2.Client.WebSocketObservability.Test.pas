@@ -29,7 +29,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Client.Tls, Http2.Common.Headers, Http2.Client.Messages, Http2.Client.Http1,
-  Http2.Client.Client, Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.WebSocket,
+  Http2.Client, Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.WebSocket,
   Http2.Client.WebSocket.Connection, Http2.Client.MockSocket,
   Http2.Client.RequestObserver.Test, Http2.Client.WebSocketClient.Test;
 

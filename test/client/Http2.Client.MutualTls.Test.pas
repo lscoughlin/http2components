@@ -30,7 +30,7 @@ uses
   mormot.core.base, mormot.core.os, mormot.lib.openssl11,
   Http2.Client.Errors, Http2.Client.ClientCert, Http2.Client.Proxy, Http2.Client.Tls, Http2.Client.Messages,
   Http2.Client.Stream,
-  Http2.Client.Client,
+  Http2.Client,
   Http2.Client.Sse, Http2.Client.WebSocket, Http2.Client.RequestObserver,
   Http2.Client.RequestObserver.Test;
 
