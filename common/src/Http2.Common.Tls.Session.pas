@@ -23,6 +23,10 @@ type
   TTlsProgress = record
     State: TTlsSessionState;
     NeedInput, NeedOutput, MadeProgress: Boolean;
+    { Accepted plaintext bytes that do not yet have complete encrypted output.
+      Zero alone does not prove transport delivery. The caller also drains all
+      encrypted output and waits for its transport queue to become empty. }
+    PendingPlaintextOutput: SizeInt;
   end;
   ITLSSession = interface(IInterface)
     ['{B7C805A9-BC07-47C6-B8C3-E6E5D1AA2303}']

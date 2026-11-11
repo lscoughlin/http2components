@@ -130,6 +130,7 @@ end;
 procedure TSessionPair.TransferPlaintext(const ASource, ADestination: ITLSSession);
 const PayloadSize = 196613;
 var Payload, Buffer: TBytes; Accepted, Received, N, I, FirstCredit: SizeInt;
+  Progress: TTlsProgress;
 begin
   SetLength(Payload, PayloadSize);
   SetLength(Buffer, 997);
@@ -145,7 +146,11 @@ begin
   until N = 0;
   FirstCredit := Accepted;
   Check(FirstCredit > 0, 'open session cannot accept plaintext');
-  Check(ASource.Advance(GetTickCount64).NeedOutput,
+  Progress := ASource.Advance(GetTickCount64);
+  Check((Progress.PendingPlaintextOutput >= 0) and
+    (Progress.PendingPlaintextOutput <= Accepted),
+    'pending plaintext exceeds accepted write credit');
+  Check(Progress.NeedOutput,
     'blocked plaintext does not report pending ciphertext');
   while Received < Length(Payload) do
   begin
@@ -167,6 +172,8 @@ begin
   end;
   Check(Accepted = Length(Payload), 'plaintext credit was lost');
   for I := 1 to 32 do Pump;
+  Check(ASource.Advance(GetTickCount64).PendingPlaintextOutput = 0,
+    'delivered plaintext remains pending at the sender');
   Check(ADestination.ReadPlaintext(Buffer, 0, Length(Buffer)) = 0,
     'plaintext was delivered twice');
 end;
