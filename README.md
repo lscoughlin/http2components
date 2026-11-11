@@ -62,7 +62,7 @@ checks and the server mTLS gate passed 40 checks. A separate-process HTTP
 and TLS check also passed. The default client runner passed 805 registered
 cases. Thirty-three environment-gated proxy, WebSocket, SSE, TLS, and lifecycle
 cases did not run. Source checks passed for 353 Pascal headers and
-size limits, 337 active Pascal files, 135 production units, 53 documentation
+size limits, 337 active Pascal files, 135 production units, 54 documentation
 files, and 1,780 source test mappings. All four Lazarus package checks passed.
 
 The full server unit run reached its 60-second deadline. A progress sample

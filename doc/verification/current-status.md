@@ -24,12 +24,12 @@ OpenSSL 3. It separates completed checks from runs without a final result.
 | Server mTLS live gate | 40 checks passed. The checks include client identity modes, HTTP/1.1, HTTP/2 WebSocket, and the leak counter. |
 | Focused server factory suite | 27 passed. |
 | Focused server TLS-context suite | 10 passed. |
-| Source and package checks | 353 Pascal header and size checks, 337 active Pascal file checks, 135 production unit checks, 53 documentation checks, and 1,780 source test mappings passed. All four Lazarus packages passed. |
+| Source and package checks | 353 Pascal header and size checks, 337 active Pascal file checks, 135 production unit checks, 54 documentation checks, and 1,780 source test mappings passed. All four Lazarus packages passed. |
 
 The integration cases use the merged client and server. They verify local
 peer agreement. They do not establish independent protocol conformance.
 
-## Runs without a final suite result
+## Unit suite coverage
 
 The full server unit run reached its 60-second deadline. A progress sample
 showed about 149 completed test cases after 45 seconds, including normal

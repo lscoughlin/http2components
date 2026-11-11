@@ -7,8 +7,6 @@
 .claude
 bin
 third_party
-plan
-doc/references
 *.o
 *.ppu
 *.a
