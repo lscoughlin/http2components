@@ -7,7 +7,8 @@ list is not a verification result for those tasks.
 ## Public surface
 
 - Common owns the TLS types, policies, identity metadata, context, and
-  buffer-session interfaces. Client and server facades use type aliases.
+  buffer-session interfaces. Both role factories accept these same common
+  interfaces. The role facades do not add separate TLS interface declarations.
 - Both role factories have `WithTlsContext`. The client also has
   `WithProxyTlsContext`. Context selection is explicit. A TLS URL without a
   suitable context fails before DNS or socket creation.
