@@ -538,6 +538,39 @@ def compile_client_test_runner() -> Path:
                         "client-test", tests=True)
 
 
+def server_program_providers(source: Path) -> tuple[str, ...]:
+    imports = [name.casefold() for name, _ in parse_pascal(source)[1]]
+    return tuple(provider for provider in ("openssl", "tlslib")
+                 if any(name == "http2." + provider or
+                        name.startswith("http2." + provider + ".")
+                        for name in imports))
+
+
+def example_provider_flags(providers: tuple[str, ...]) -> tuple[str, ...]:
+    flags: list[str] = []
+    for provider in providers:
+        flags.extend(base_flags(provider, user_flags=False))
+        flags.append(f"-Fu{output(provider)[0]}")
+    return tuple(flags)
+
+
+def compile_server_program(source: Path) -> Path:
+    source = source.resolve()
+    try:
+        source.relative_to(ROOT)
+    except ValueError:
+        raise SystemExit(f"Server probe must be under the repository root: {source}")
+    if source.suffix.casefold() != ".pas":
+        raise SystemExit(f"Server probe must be a Pascal source file: {source}")
+    build("common")
+    build("server")
+    providers = server_program_providers(source)
+    for provider in providers:
+        build(provider)
+    provider_flags = example_provider_flags(providers)
+    return compile_file(source, "examples-server", extra_flags=provider_flags)
+
+
 def compile_server_examples() -> None:
     sources: list[Path] = []
     for source in sorted((ROOT / "examples/server").rglob("*.pas")):
@@ -549,8 +582,13 @@ def compile_server_examples() -> None:
         raise SystemExit("No server example programs are present")
     build("common")
     build("server")
+    for provider in ("openssl", "tlslib"):
+        if any(provider in server_program_providers(source) for source in sources):
+            build(provider)
     for source in sources:
-        compile_file(source, "examples-server")
+        providers = server_program_providers(source)
+        provider_flags = example_provider_flags(providers)
+        compile_file(source, "examples-server", extra_flags=provider_flags)
 
 
 def validate_fast() -> None:
@@ -825,14 +863,13 @@ def examples() -> None:
         if any(provider in selected for selected in providers.values()):
             build(provider)
     for source, role in programs:
-        provider_flags = tuple(flag for provider in providers[source]
-                               for flag in base_flags(provider, user_flags=False))
+        provider_flags = example_provider_flags(providers[source])
         compile_file(source, f"examples-{role}", extra_flags=provider_flags)
 
 
 def main() -> int:
-    if len(sys.argv) != 2:
-        raise SystemExit("Usage: python3 tools/build.py <target>")
+    if len(sys.argv) not in (2, 3):
+        raise SystemExit("Usage: python3 tools/build.py <target> [source]")
     target = sys.argv[1].replace("-", ":").replace("_", ":")
     if target == "setup:deps":
         setup_deps()
@@ -883,6 +920,8 @@ def main() -> int:
         compile_tlslib_runtime_trace()
     elif target == "examples":
         examples()
+    elif target == "compile:server:probe" and len(sys.argv) == 3:
+        compile_server_program(ROOT / sys.argv[2])
     elif target == "test:api":
         run_api_tests()
     elif target == "test:integration":
