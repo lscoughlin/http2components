@@ -283,7 +283,8 @@ def compile_provider_tlslib(source: Path) -> Path:
     for package in packages:
         if not package.is_file():
             raise SystemExit(f"Pinned TlsLib dependency package is missing: {package}")
-        run([compiler(), *flags, f"-FU{package_units}", f"-FE{programs}", str(package)], timeout=300)
+        run([compiler(), *flags, f"-Fu{package_units}",
+             f"-FU{package_units}", f"-FE{programs}", str(package)], timeout=300)
     run([compiler(), *flags, f"-Fu{COMPONENTS['common']['source']}",
          f"-Fu{COMPONENTS['tlslib']['source']}", f"-Fu{package_units}",
          f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))], timeout=300)
