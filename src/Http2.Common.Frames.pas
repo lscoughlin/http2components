@@ -743,6 +743,9 @@ begin
   end;
   if (AFrame.Header.FrameType = ftHeaders) and AFrame.IsPriority then
     Inc(Result, 5);
+  if Result > Length(AFrame.Payload) then
+    raise EHttpProtocolError.Create('frame payload too short for its fields',
+      ecProtocolError);
 end;
 
 function ExtractHeaderBlock(const AFrame: TFrame): TBytes;

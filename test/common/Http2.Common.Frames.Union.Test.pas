@@ -14,7 +14,8 @@ unit Http2.Common.Frames.Union.Test;
 interface
 
 uses
-  SysUtils, Classes, fpcunit, testregistry, Http2.Common.Frames;
+  SysUtils, Classes, fpcunit, testregistry, Http2.Common.Errors,
+  Http2.Common.Headers, Http2.Common.Frames;
 
 type
   TCommonFramesUnionTest = class(TTestCase)
@@ -23,7 +24,9 @@ type
     procedure TestSettingsDecodeUsesBase;
     procedure TestClientPrefaceHelpers;
     procedure TestHeaderBlockOffsetIncludesPaddingAndPriority;
+    procedure TestHeaderBlockOffsetRejectsShortPriorityFields;
     procedure TestHeaderPriorityDependsOn;
+    procedure TestFrameMetadataIsNotSerialized;
   end;
 
 implementation
@@ -76,6 +79,32 @@ begin
   AssertEquals(6, HeaderBlockOffset(F));
 end;
 
+procedure TCommonFramesUnionTest.TestHeaderBlockOffsetRejectsShortPriorityFields;
+var
+  F: TFrame;
+begin
+  F.Header.FrameType := ftHeaders;
+  F.Header.Flags := [ffPriority];
+  F.Payload := TBytes.Create(0, 0, 0, 0);
+  try
+    HeaderBlockOffset(F);
+    Fail('short priority block must raise');
+  except
+    on E: EHttpProtocolError do
+      AssertEquals(Ord(ecProtocolError), Ord(E.ErrorCode));
+  end;
+
+  F.Header.Flags := [ffPadded, ffPriority];
+  F.Payload := TBytes.Create(0, 0, 0, 0, 0);
+  try
+    HeaderBlockOffset(F);
+    Fail('short padded priority block must raise');
+  except
+    on E: EHttpProtocolError do
+      AssertEquals(Ord(ecProtocolError), Ord(E.ErrorCode));
+  end;
+end;
+
 procedure TCommonFramesUnionTest.TestHeaderPriorityDependsOn;
 var
   F: TFrame;
@@ -84,6 +113,33 @@ begin
   F.Header.Flags := [ffPriority];
   F.Payload := TBytes.Create(0, 0, 0, 5, 0);
   AssertEquals(5, HeaderPriorityDependsOn(F));
+end;
+
+procedure TCommonFramesUnionTest.TestFrameMetadataIsNotSerialized;
+var
+  Plain, Marked: TFrame;
+  PlainStream, MarkedStream: TMemoryStream;
+  I: Integer;
+begin
+  Plain := TFrame.Create(ftData, [ffEndStream], 3, TBytes.Create(1, 2, 3));
+  Marked := Plain;
+  Marked.ArrivedUs := 123456;
+  Marked.HeadersDecoded := True;
+  SetLength(Marked.DecodedHeaders, 1);
+  Marked.DecodedHeaders[0].Name := HeaderMethod;
+  Marked.DecodedHeaders[0].Value := 'GET';
+  PlainStream := TMemoryStream.Create;
+  MarkedStream := TMemoryStream.Create;
+  try
+    WriteFrame(PlainStream, Plain);
+    WriteFrame(MarkedStream, Marked);
+    AssertEquals(PlainStream.Size, MarkedStream.Size);
+    for I := 0 to PlainStream.Size - 1 do
+      AssertEquals(PByte(PlainStream.Memory)[I], PByte(MarkedStream.Memory)[I]);
+  finally
+    PlainStream.Free;
+    MarkedStream.Free;
+  end;
 end;
 
 initialization
