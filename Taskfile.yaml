@@ -86,6 +86,11 @@ tasks:
     cmds:
       - python3 tools/build.py test:tls:integration
 
+  test:tls-client:
+    desc: Run the bounded client TLS transport tests
+    cmds:
+      - make test-tls-client
+
   packages:check:
     desc: Check package files, source inventory, and versions
     cmds:
