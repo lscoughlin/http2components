@@ -27,7 +27,42 @@ def check(path, count, unit_key, method_key, suite_key, removed_key=None):
         if not target or not file.is_file():
             errors.append(f'{path}: missing target {target} for {origin}')
             continue
-        suite, method = row[suite_key], row[method_key]
+        suite = row[suite_key]
+        method = row.get('target_method') or row[method_key]
+        migration = row.get('migration_reason', '')
+        case = row.get('target_case', '')
+        disposition = row.get('disposition') or row.get('status', '')
+        migration_statuses = {
+            'migrated-neutral-alpn', 'migrated-neutral-build',
+            'migrated-provider-program-case', 'migrated-neutral-method',
+            'obsolete-provider-ownership', 'uncovered-behavior',
+        }
+        if disposition in migration_statuses and not migration:
+            errors.append(f'{path}: migration reason missing for {origin}')
+        if disposition == 'uncovered-behavior' or migration.startswith('UNRESOLVED:'):
+            errors.append(f'{path}: unresolved migration coverage for {origin}')
+        if disposition in {
+            'migrated-provider-program-case', 'obsolete-provider-ownership',
+            'uncovered-behavior',
+        } and (case or not suite):
+            if suite or not method or not case:
+                errors.append(f'{path}: invalid program case mapping for {origin}')
+                continue
+            source = file.read_text()
+            if method == 'program-main':
+                routine = re.search(r'(?is)\bbegin\b[\s\S]*\bend\.', source)
+            else:
+                routine = re.search(
+                    r'(?im)^\s*(?:procedure|function)\s+' + re.escape(method) +
+                    r'\b[\s\S]*?(?=^\s*(?:procedure|function)\s+|\Z)', source)
+            if not routine:
+                errors.append(f'{path}: missing program routine {method} for {origin}')
+                continue
+            if case == method:
+                errors.append(f'{path}: program mapping needs an assertion marker for {origin}')
+            elif not re.search(r"'" + re.escape(case) + r"'", routine.group()):
+                errors.append(f'{path}: missing program assertion {case!r} in {method} for {origin}')
+            continue
         # Standalone live programs have explicit program-level dispositions.
         if not suite and target.startswith('test/integration/'):
             continue
