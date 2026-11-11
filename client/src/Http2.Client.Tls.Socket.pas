@@ -332,13 +332,14 @@ end;
 procedure TTlsSocket.ReadPeerAlertAfterWriteFailure;
 var
   PreviousTimeout: Integer;
+  Deadline, NowMs: QWord;
 begin
   // Some TLS 1.3 servers reject a client certificate only after they receive
   // application data.  With HTTP/2, the connection preface is the first data;
   // a server can send its TLS alert and reset the socket before the preface
-  // write completes.  Read once with a short bound so the provider can retain
-  // a pending peer alert.  A timeout or EOF leaves the original write error
-  // as the connection failure.
+  // write completes.  Read until a terminal TLS result or a short absolute
+  // deadline so a preceding record fragment cannot hide the alert.  A timeout
+  // or EOF leaves the original write error as the connection failure.
   FSessionLock.Acquire;
   try
     // Do not invert the ordinary reader -> session lock order.
@@ -347,16 +348,23 @@ begin
     try
       PreviousTimeout := FTransport.ReadTimeoutMs;
       try
-        FTransport.ReadTimeoutMs := 100;
-        try
-          if ReadEncrypted then
+        Deadline := mormot.core.os.GetTickCount64 + 100;
+        repeat
+          NowMs := mormot.core.os.GetTickCount64;
+          if NowMs >= Deadline then
+            Break;
+          FTransport.ReadTimeoutMs := Integer(Deadline - NowMs);
+          try
+            if not ReadEncrypted then
+              Break;
             AdvanceSession;
-        except
-          on E: EHttpTlsClientAuthError do
-            raise;
-          on Exception do
-            ; // keep the transport write error when no client-auth alert arrived
-        end;
+          except
+            on E: EHttpTlsClientAuthError do
+              raise;
+            on Exception do
+              Break; // keep the transport write error without a TLS auth alert
+          end;
+        until False;
       finally
         FTransport.ReadTimeoutMs := PreviousTimeout;
       end;

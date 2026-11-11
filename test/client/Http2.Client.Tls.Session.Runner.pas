@@ -628,8 +628,12 @@ begin
   Socket := TTlsSocket.Create(RawSocket, 'example.test', Context, nil,
     ['h2'], 1000);
   Raw.FailNextWrite;
-  SetLength(Alert, 1);
-  Alert[0] := $FA;
+  // A benign record fragment arrives before the alert.  The recovery loop
+  // must keep reading within its deadline instead of reporting the write
+  // failure after only the first fragment.
+  Alert := Bytes('ab');
+  SetLength(Alert, Length(Alert) + 1);
+  Alert[High(Alert)] := $FA;
   Raw.Push(Alert);
   Payload := Bytes('preface');
   GotAlert := False;
