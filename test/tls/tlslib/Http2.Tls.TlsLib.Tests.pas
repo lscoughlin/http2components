@@ -17,7 +17,7 @@ uses
   Http2.Common.Tls.Identity, Http2.Common.Tls.Context,
   Http2.Common.Tls.Session, Http2.TlsLib,
   Http2.TlsLib.Diagnostics,
-  Http2.Test.Tls.SessionContract;
+  Http2.Test.Tls.SessionContract, Http2.Test.Tls.AlertContract;
 
 type
   TForeignTlsIdentity = class(TInterfacedObject, ITLSIdentity)
@@ -201,6 +201,7 @@ var
   TemporaryContext: ITLSContext;
   TemporaryClient, TemporaryServer: ITLSSession;
   LifecycleIndex: Integer;
+  ExpectedAlert: Integer;
   AlpnIndex: Integer;
   OversizedAlpn: TArray<string>;
   FailureInput, FailureOutput: TBytes;
@@ -579,6 +580,19 @@ begin
   Check(not TryHandshake(Context, ClientOptions, ServerOptions, Peer, Version, CipherName),
     'expired server certificate fails');
 
+  for Version := Low(TTlsVersion) to High(TTlsVersion) do
+  begin
+    ClientPolicy := TTlsClientPolicy.SecureDefault
+      .WithTrustAnchors([Root + '/ca.crt']).WithVersions(Version, Version);
+    ServerPolicy := TTlsServerPolicy.SecureDefault.WithServerIdentity(Identity)
+      .WithTrustAnchors([Root + '/ca.crt']).WithClientAuth(tlsAuthRequire)
+      .WithVersions(Version, Version);
+    TemporaryContext := MakeContext(ClientPolicy, ServerPolicy);
+    if Version = tls12 then ExpectedAlert := 40 else ExpectedAlert := 116;
+    { TLS 1.2 publishes request metadata only after a completed handshake. }
+    RequireTlsClientAuthAlert(TemporaryContext, ExpectedAlert, Version = tls13);
+    Check(True, 'peer client-authentication alert and available request context are retained');
+  end;
   WriteLn('PASS ', Count + PassedCheckCount, ' cases');
 end;
 
