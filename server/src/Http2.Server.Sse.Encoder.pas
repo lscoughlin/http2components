@@ -102,15 +102,50 @@ end;
 
 function SseEncodeEvent(const AEvent: TSseEvent): TBytes;
 var
-  Out_, Data: RawByteString;
-  I, Start: Integer;
+  Data, RetryText: RawByteString;
+  I, Start, OutAt: Integer;
+  OutputLength: Int64;
 
-  procedure AddField(const AName: RawByteString; const AValue: RawByteString);
+  procedure AddFieldLength(const ANameLength, AValueLength: Integer);
   begin
+    Inc(OutputLength, ANameLength + 2);
+    if AValueLength > 0 then
+      Inc(OutputLength, AValueLength + 1);
+  end;
+
+  procedure AddText(const AText: RawByteString);
+  begin
+    if Length(AText) = 0 then
+      Exit;
+    Move(AText[1], Result[OutAt], Length(AText));
+    Inc(OutAt, Length(AText));
+  end;
+
+  procedure AddField(const AName, AValue: RawByteString);
+  begin
+    AddText(AName);
     if AValue = '' then
-      Out_ := Out_ + AName + ':'#10
+      AddText(':'#10)
     else
-      Out_ := Out_ + AName + ': ' + AValue + #10;
+    begin
+      AddText(': ');
+      AddText(AValue);
+      AddText(#10);
+    end;
+  end;
+
+  procedure AddDataField(const AStart, ALength: Integer);
+  begin
+    AddText('data');
+    if ALength = 0 then
+      AddText(':'#10)
+    else
+    begin
+      AddText(': ');
+      Move(Data[AStart], Result[OutAt], ALength);
+      Inc(OutAt, ALength);
+      AddText(#10);
+    end;
   end;
 
 begin
@@ -131,34 +166,60 @@ begin
   if not IsUtf8(Data) then
     raise ESseError.Create('SSE data is not UTF-8');
 
-  Out_ := '';
+  RetryText := '';
+  OutputLength := 1;
   if AEvent.Retry > 0 then
-    Out_ := Out_ + 'retry: ' + RawByteString(IntToStr(AEvent.Retry)) + #10;
+  begin
+    RetryText := 'retry: ' + RawByteString(IntToStr(AEvent.Retry)) + #10;
+    Inc(OutputLength, Length(RetryText));
+  end;
   if AEvent.Id <> '' then
-    AddField('id', AEvent.Id);
+    AddFieldLength(2, Length(AEvent.Id));
   if AEvent.Event <> '' then
-    AddField('event', AEvent.Event);
+    AddFieldLength(5, Length(AEvent.Event));
 
-  // split the data at CR, LF and CRLF; the last part follows the last break,
-  // so data that ends with a break writes a final empty data field
+  // Count the data fields first so the output buffer has its exact size.
   Start := 1;
   I := 1;
   while I <= Length(Data) do
   begin
     if (Data[I] = #10) or (Data[I] = #13) then
     begin
-      AddField('data', Copy(Data, Start, I - Start));
+      AddFieldLength(4, I - Start);
       if (Data[I] = #13) and (I < Length(Data)) and (Data[I + 1] = #10) then
         Inc(I);
       Start := I + 1;
     end;
     Inc(I);
   end;
-  AddField('data', Copy(Data, Start, Length(Data) - Start + 1));
-  Out_ := Out_ + #10;
+  AddFieldLength(4, Length(Data) - Start + 1);
+  if OutputLength > High(Integer) then
+    raise ERangeError.Create('SSE event is too large to encode');
 
-  SetLength(Result, Length(Out_));
-  Move(Out_[1], Result[0], Length(Out_));
+  SetLength(Result, Integer(OutputLength));
+  OutAt := 0;
+  AddText(RetryText);
+  if AEvent.Id <> '' then
+    AddField('id', AEvent.Id);
+  if AEvent.Event <> '' then
+    AddField('event', AEvent.Event);
+
+  // Split CR, LF and CRLF. The final part follows the last break.
+  Start := 1;
+  I := 1;
+  while I <= Length(Data) do
+  begin
+    if (Data[I] = #10) or (Data[I] = #13) then
+    begin
+      AddDataField(Start, I - Start);
+      if (Data[I] = #13) and (I < Length(Data)) and (Data[I + 1] = #10) then
+        Inc(I);
+      Start := I + 1;
+    end;
+    Inc(I);
+  end;
+  AddDataField(Start, Length(Data) - Start + 1);
+  AddText(#10);
 end;
 
 function SseEncodeComment(const AText: UTF8String): TBytes;
