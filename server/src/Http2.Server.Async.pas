@@ -110,6 +110,8 @@ type
     FJitterPermille: Integer; // the age reduction in permille, drawn at accept
     FRetireDeadlineMs: QWord; // the end of the retire grace, or 0
     FLastWriteProgressMs: QWord; FLastSweepBacklog: Int64; // the stall state of the sweep
+    FLastSocketBytesSent, FLastKernelQueueBytes: Int64;
+    FHasKernelQueueSample: Boolean;
     function PumpTlsInput(out AProgress: Boolean): Boolean;
     function PumpTlsOutput: Boolean;
     function AcceptPendingTlsPlaintext: Boolean;
@@ -160,6 +162,7 @@ type
     property Waker: IWriteWaker read FWaker;
     property H1: TH1Driver read FH1;
     property LastWriteProgressMs: QWord read FLastWriteProgressMs write FLastWriteProgressMs; // the test seam of the write check
+    property BytesSentForProgress: Int64 read fBytesSend;
   end;
 
   /// the HTTP/2 async server
@@ -286,6 +289,8 @@ begin
     FHandshakeDeadlineMs := TlsHandshakeDeadline(FAcceptedMs,
       FServer.FTlsBinding.Context.Info.HandshakeTimeoutMs);
   FLastWriteProgressMs := FAcceptedMs; FLastSweepBacklog := 0;
+  FLastSocketBytesSent := fBytesSend; FLastKernelQueueBytes := 0;
+  FHasKernelQueueSample := False;
   FHeaderDeadlineSec := HeaderDeadlineSec(mormot.core.os.GetTickCount64,
     FServer.Factory.HeaderTimeoutMs);
   FIdleSeconds := cardinal(FServer.Factory.IdleTimeoutMs div 1000);
@@ -356,6 +361,7 @@ begin
   FLocalTlsShutdown := False;
   FMode := cmUndecided;
   FRetireDeadlineMs := 0; FLastWriteProgressMs := 0; FLastSweepBacklog := 0;
+  FLastSocketBytesSent := 0; FLastKernelQueueBytes := 0; FHasKernelQueueSample := False;
   FServer := nil;
 end;
 
@@ -624,35 +630,31 @@ begin
   if ATimeoutMs <= 0 then Exit;
   if FMode = cmHttp1 then
   begin
-    // HTTP/1 output can keep the mORMot operation timestamp fresh while the
-    // peer stops reading. Track the same queued and socket-held bytes as the
-    // exchange backpressure check, so a partial drain does not hide a stall.
+    // Preserve HTTP/1 idle and output-progress behavior.
     Backlog := FH1.Core.OutputBacklog;
     if (Backlog > 0) and
        ((FLastSweepBacklog <= 0) or (Backlog < FLastSweepBacklog)) then
       FLastWriteProgressMs := ANowMs;
     FLastSweepBacklog := Backlog;
-    if WriteStalled(ANowMs, FLastWriteProgressMs, ATimeoutMs, Backlog) then
-    begin
-      CloseAbortively;
+  end
+  else begin
+    Backlog := PendingWriteBytes;
+    if not ObserveWriteProgress(fOwner, Self, Backlog, ANowMs,
+      FLastSweepBacklog, FLastSocketBytesSent, FLastKernelQueueBytes,
+      FHasKernelQueueSample, FLastWriteProgressMs) then
       Exit;
-    end;
+  end;
+  if WriteStalled(ANowMs, FLastWriteProgressMs, ATimeoutMs, Backlog) then
+  begin
+    CloseAbortively;
+    Exit;
+  end;
+  if FMode = cmHttp1 then
     case FH1.IdleAction(Cardinal(ANowMs div 1000), fLastOperation,
-      FIdleSeconds, ANowMs,
-      FServer.Factory.HeaderTimeoutMs) of
+      FIdleSeconds, ANowMs, FServer.Factory.HeaderTimeoutMs) of
       iaFlush: SendPendingOutput;
       iaClose: fOwner.ConnectionRemove(Handle);
     end;
-  end
-  else begin
-    // AfterWrite misses a partial drain; the sweep compares backlogs instead
-    Backlog := PendingWriteBytes;
-    if (Backlog > 0) and (Backlog < FLastSweepBacklog) then
-      FLastWriteProgressMs := ANowMs;
-    FLastSweepBacklog := Backlog;
-    if WriteStalled(ANowMs, FLastWriteProgressMs, ATimeoutMs, Backlog) then
-      CloseAbortively;
-  end;
 end;
 
 procedure THttp2AsyncConnection.CheckHandshakeDeadline(const ANowMs: QWord);

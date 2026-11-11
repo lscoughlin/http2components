@@ -29,6 +29,16 @@ uses
 //   because the idle callback misses it
 function WriteStalled(const ANowMs, ALastProgressMs: QWord;
   const ATimeoutMs: Integer; const ABacklog: Int64): Boolean;
+/// true when a sample shows queued application or transport progress
+function WriteProgressObserved(const ABacklog, APreviousBacklog,
+  ASocketBytesSent, APreviousSocketBytesSent, AKernelQueueBytes,
+  APreviousKernelQueueBytes: Int64; const AHasKernelQueueSample: Boolean): Boolean;
+/// sample local sends and the kernel queue under the connection write lock
+function ObserveWriteProgress(const AServer: TAsyncConnections;
+  const AConnection: TAsyncConnection; const ABacklog: Int64;
+  const ANowMs: QWord; var ALastBacklog, ALastSocketBytesSent,
+  ALastKernelQueueBytes: Int64; var AHasKernelQueueSample: Boolean;
+  var ALastProgressMs: QWord): Boolean;
 
 /// retire the connections past their maximum age, and close the ones whose
 /// writes stalled
@@ -55,7 +65,66 @@ implementation
 uses
   SysUtils,
   mormot.core.os,
-  Http2.Server.Async;
+  Http2.Server.Async,
+  Http2.Server.Async.Socket;
+
+function WriteProgressObserved(const ABacklog, APreviousBacklog,
+  ASocketBytesSent, APreviousSocketBytesSent, AKernelQueueBytes,
+  APreviousKernelQueueBytes: Int64; const AHasKernelQueueSample: Boolean): Boolean;
+begin
+  Result := (ABacklog > 0) and
+    ((APreviousBacklog <= 0) or (ABacklog < APreviousBacklog) or
+     (ASocketBytesSent > APreviousSocketBytesSent) or
+     (AHasKernelQueueSample and
+      (AKernelQueueBytes < APreviousKernelQueueBytes)));
+end;
+
+function ObserveWriteProgress(const AServer: TAsyncConnections;
+  const AConnection: TAsyncConnection; const ABacklog: Int64;
+  const ANowMs: QWord; var ALastBacklog, ALastSocketBytesSent,
+  ALastKernelQueueBytes: Int64; var AHasKernelQueueSample: Boolean;
+  var ALastProgressMs: QWord): Boolean;
+var
+  Current: TAsyncConnection;
+  SocketBytesSent, KernelQueueBytes: Int64;
+  KernelQueueAvailable, TransportSample: Boolean;
+begin
+  SocketBytesSent := ALastSocketBytesSent;
+  KernelQueueBytes := ALastKernelQueueBytes;
+  KernelQueueAvailable := False;
+  TransportSample := False;
+  AServer.ConnectionLock.ReadOnlyLock;
+  try
+    Current := AServer.LockedConnectionSearch(AConnection.Handle);
+    if (Current = AConnection) and AConnection.TryLock(True) then
+      try
+        TransportSample := not AConnection.IsClosed;
+        if TransportSample then
+        begin
+          SocketBytesSent := THttp2AsyncConnection(AConnection).BytesSentForProgress;
+          KernelQueueAvailable := (ABacklog > 0) and
+            TryGetSocketSendQueue(AConnection.Socket, KernelQueueBytes);
+        end;
+      finally
+        AConnection.UnLock(True);
+      end;
+  finally
+    AServer.ConnectionLock.ReadOnlyUnLock;
+  end;
+  Result := TransportSample;
+  if not TransportSample then
+    Exit;
+  if WriteProgressObserved(ABacklog, ALastBacklog, SocketBytesSent,
+    ALastSocketBytesSent, KernelQueueBytes, ALastKernelQueueBytes,
+    KernelQueueAvailable and AHasKernelQueueSample) and
+     (ANowMs > ALastProgressMs) then
+    ALastProgressMs := ANowMs;
+  ALastBacklog := ABacklog;
+  ALastSocketBytesSent := SocketBytesSent;
+  AHasKernelQueueSample := KernelQueueAvailable;
+  if KernelQueueAvailable then
+    ALastKernelQueueBytes := KernelQueueBytes;
+end;
 
 function WriteStalled(const ANowMs, ALastProgressMs: QWord;
   const ATimeoutMs: Integer; const ABacklog: Int64): Boolean;

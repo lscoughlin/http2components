@@ -132,6 +132,7 @@ procedure TAbuseLimitTest.TestResetFloodGoAway;
 var
   Port: Integer;
   Client: TRawClient;
+  Frames: array[0..19] of TFrame;
   Frame: TFrame;
   Code: THttp2ErrorCode;
   Last: LongWord;
@@ -148,13 +149,15 @@ begin
   try
     Client.SendPreface;
     // RFC 9113 section 5.1 makes a reset on an idle stream a connection
-    // fault, so the flood opens each stream and then resets it
+    // fault, so the flood opens each stream and then resets it. Send this
+    // bounded flood in one write, so no frame follows the GOAWAY.
     for I := 0 to 9 do
     begin
-      Client.SendFrame(Client.GetFrame(LongWord(1 + I * 2), '/'));
+      Frames[I * 2] := Client.GetFrame(LongWord(1 + I * 2), '/');
       Frame := BuildRstStreamFrame(LongWord(1 + I * 2), ecCancel);
-      Client.SendFrame(Frame);
+      Frames[I * 2 + 1] := Frame;
     end;
+    Client.SendFrames(Frames);
     AssertTrue('the reset flood ends in GOAWAY',
       Client.WaitGoAway(Code, Last, ResponseTimeoutMs));
     AssertEquals('the GOAWAY code is ENHANCE_YOUR_CALM',
