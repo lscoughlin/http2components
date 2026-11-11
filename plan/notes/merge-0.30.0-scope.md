@@ -33,3 +33,9 @@ is not complete until its dependencies and acceptance checks are satisfied.
 This permits common-source preparation while build tools are prepared, and
 source-document migration before final API review. It does not permit
 unreviewed shared API changes or overlapping file ownership.
+
+The source client tracks public test certificate/key fixtures. These are test
+inputs, not deployment credentials. The merge retains required fixture inputs
+or their deterministic generators and records their locations. The archive
+check excludes generated and operational private keys; it does not silently
+remove tracked test inputs required by the preserved test suite.
