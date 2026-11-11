@@ -254,6 +254,7 @@ def compile_file(source: Path, component: str, *, tests: bool = False,
     units, programs = output(component)
     if component.startswith("examples-"):
         units = units / source.stem
+        shutil.rmtree(units, ignore_errors=True)
         units.mkdir(parents=True, exist_ok=True)
     args = [compiler(), *base_flags(component, tests=tests), *extra_flags,
             f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))]
