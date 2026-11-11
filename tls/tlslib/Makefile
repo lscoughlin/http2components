@@ -5,6 +5,6 @@ build:
 	@if [ "$(BUILD_DEPS)" != "0" ]; then $(MAKE) -C ../.. build-common; fi
 	$(PYTHON) ../../tools/build.py build:tlslib
 check:
-	$(PYTHON) ../../tools/build.py build:tlslib
+	$(PYTHON) ../../tools/check/repository.py component --component=tlslib
 clean:
 	$(PYTHON) ../../tools/build.py clean:component:tlslib

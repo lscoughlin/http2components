@@ -1,6 +1,7 @@
 PYTHON ?= python3
 .PHONY: all setup-deps setup-harness build build-common build-client build-server build-readers \
         build-openssl build-tlslib test test-common test-client test-server test-integration test-api \
+        test-tls-contract test-tls-openssl test-tls-tlslib test-tls-integration \
         packages-check source-check docs-check version-check examples \
         validate-fast validate clean
 
@@ -23,6 +24,9 @@ build-openssl: build-common
 	$(MAKE) -C tls/openssl build BUILD_DEPS=0
 build-tlslib: build-common
 	$(MAKE) -C tls/tlslib build BUILD_DEPS=0
+
+test-tls-contract test-tls-openssl test-tls-tlslib test-tls-integration:
+	$(PYTHON) tools/build.py $(subst -, :,$@)
 
 test test-common test-client test-server test-integration test-api packages-check source-check docs-check version-check examples validate-fast validate:
 	$(PYTHON) tools/build.py $(subst -, :, $@)

@@ -1,0 +1,29 @@
+http2tlslib
+Copyright 2026 Liam Seamus Coughlin
+
+Owned source in this component retains the project's dual-license choice:
+Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception). The
+repository LICENSE and LICENSES files hold the license texts.
+
+Third-party components
+----------------------
+
+1. TlsLib4Pascal
+   Origin: https://github.com/Xor-el/TlsLib4Pascal.git
+   Revision: 2b47b18f61e5039a990e623353df88a0379ca948.
+   License: MIT. The pinned checkout retains its LICENSE file.
+
+2. CryptoLib4Pascal
+   Origin: https://github.com/Xor-el/CryptoLib4Pascal.git
+   Revision: f559d27462ddd149ef9d1880f97854a8a4cc8368.
+   License: MIT. The pinned checkout retains its LICENSE file.
+
+3. HashLib4Pascal
+   Origin: https://github.com/Xor-el/HashLib4Pascal.git
+   Revision: 465c0c7c2c9a78596dd07e022f81073c11775a52.
+   License: MIT. The pinned checkout retains its LICENSE file.
+
+4. SimpleBaseLib4Pascal
+   Origin: https://github.com/Xor-el/SimpleBaseLib4Pascal.git
+   Revision: 9310af083d398ed62f01d8c82d39f85ad194dc93.
+   License: MIT. The pinned checkout retains its LICENSE file.

@@ -11,7 +11,8 @@ from tools.components import ROOT, COMPONENTS, PACKAGE_COMPONENT
 LICENSE = 'Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)'
 HEADER = ('{**\n---\nlicense: ' + LICENSE +
           '\ncopyright: Copyright 2026 Liam Seamus Coughlin\n---\n}\n')
-ACTIVE_PACKAGES = ('http2common', 'http2client', 'http2clientreaders', 'http2server')
+ACTIVE_PACKAGES = ('http2common', 'http2client', 'http2server', 'http2openssl',
+                   'http2tlslib', 'http2clientreaders')
 
 
 def package_for(unit: str) -> str:
@@ -41,21 +42,41 @@ def render(name: str, sources: list[Path]) -> dict[Path, str]:
     value(pkg, 'License', LICENSE)
     opts = ET.SubElement(pkg, 'CompilerOptions')
     value(opts, 'Version', '11')
+    if component == 'openssl':
+        value(ET.SubElement(opts, 'Other'), 'CustomOptions', '-dUSE_OPENSSL')
     paths = ET.SubElement(opts, 'SearchPaths')
     def relative(path: Path) -> str:
         return Path(os.path.relpath(path, package_dir)).as_posix()
     include_roles = ('common',) if component == 'common' else ('common', component)
-    value(paths, 'IncludeFiles', ';'.join(relative(ROOT / COMPONENTS[role]['source'])
-                                          for role in include_roles))
+    include_paths = [ROOT / COMPONENTS[role]['source'] for role in include_roles]
+    if component == 'tlslib':
+        for dependency, base in (('TlsLib4Pascal', 'TlsLib/src'),
+                                 ('CryptoLib4Pascal', 'CryptoLib/src'),
+                                 ('HashLib4Pascal', 'HashLib/src'),
+                                 ('SimpleBaseLib4Pascal', 'SimpleBaseLib/src')):
+            dep_root = ROOT / 'third_party' / dependency / base
+            if dep_root.exists():
+                include_paths.extend(sorted({path.parent for path in dep_root.rglob('*.inc')}))
+    value(paths, 'IncludeFiles', ';'.join(relative(path) for path in include_paths))
     output = ROOT / 'bin' / '$(TargetCPU)-$(TargetOS)' / 'default' / ('package-' + name) / 'units'
     value(paths, 'UnitOutputDirectory', relative(output))
     search = [relative(ROOT / COMPONENTS['common']['source'])]
-    if component in ('client', 'server'):
+    if component in ('client', 'server', 'openssl', 'tlslib'):
         search.append(relative(ROOT / COMPONENTS[component]['source']))
     if component == 'client' and name == 'http2clientreaders':
         search.extend(relative(ROOT / 'third_party/mORMot2/src' / p) for p in ('core', 'lib'))
-    elif component in ('client', 'server'):
+    elif component in ('client', 'server', 'openssl'):
         search.extend(relative(ROOT / 'third_party/mORMot2/src' / p) for p in ('core', 'lib', 'net', 'crypt'))
+    elif component == 'tlslib':
+        for dependency, base in (('TlsLib4Pascal', 'TlsLib/src'),
+                                 ('CryptoLib4Pascal', 'CryptoLib/src'),
+                                 ('HashLib4Pascal', 'HashLib/src'),
+                                 ('SimpleBaseLib4Pascal', 'SimpleBaseLib/src')):
+            dep_root = ROOT / 'third_party' / dependency / base
+            if dep_root.exists():
+                search.extend(relative(path) for path in sorted({item.parent for item in dep_root.rglob('*.pas')}))
+        # Package manifests are source-only metadata. tools/build.py supplies
+        # the exact dependency paths for command-line builds.
     value(paths, 'OtherUnitFiles', ';'.join(search))
     syntax = ET.SubElement(ET.SubElement(opts, 'Parsing'), 'SyntaxOptions')
     value(syntax, 'SyntaxMode', 'Delphi')
@@ -88,7 +109,7 @@ def main():
     parser.add_argument('--check', action='store_true')
     args = parser.parse_args()
     groups = {name: [] for name in ACTIVE_PACKAGES}
-    required_dirs = [ROOT / COMPONENTS[name]['source'] for name in ('common', 'client', 'server')]
+    required_dirs = [ROOT / COMPONENTS[name]['source'] for name in COMPONENTS]
     for source_dir in required_dirs:
         if not source_dir.is_dir():
             raise SystemExit('Required component source directory is missing: ' + source_dir.relative_to(ROOT).as_posix())
