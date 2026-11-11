@@ -226,6 +226,9 @@ begin
 
     EofSession := Context.CreateClientSession(ClientOptions);
     EofSession.Advance(5);
+    SetLength(Buffer, 4);
+    Check(EofSession.DrainEncrypted(Buffer, 0, 4) = 4,
+      'initial handshake output was not available');
     SetLength(Buffer, 4); Buffer[0] := 11; Buffer[1] := 12;
     Buffer[2] := 13; Buffer[3] := $FE;
     EofSession.FeedEncrypted(Buffer, 0, 4);
@@ -236,6 +239,10 @@ begin
     Check((Buffer[0] = 11) and (Buffer[2] = 13), 'close changed buffered data');
     Check(EofSession.ReadPlaintext(Buffer, 0, 1) = 0,
       'authenticated close returned extra data');
+    Check(EofSession.DrainEncrypted(Buffer, 0, 4) = 2,
+      'peer close response was not drainable after authenticated close');
+    Check((Buffer[0] = $15) and (Buffer[1] = $00),
+      'peer close response contained incorrect bytes');
     Pass('authenticated close differs from truncated EOF');
 
     ShutdownSession := Context.CreateClientSession(ClientOptions);
