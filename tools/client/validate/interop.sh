@@ -148,6 +148,8 @@ LoadModule log_config_module modules/mod_log_config.so
 LoadModule unixd_module modules/mod_unixd.so
 LoadModule http2_module modules/mod_http2.so
 ServerName localhost
+User daemon
+Group daemon
 Protocols $protocols
 $h2upgrade
 DocumentRoot "/htdocs"
@@ -155,6 +157,7 @@ DocumentRoot "/htdocs"
   Require all granted
 </Directory>
 ErrorLog /dev/stderr
+LogLevel http2:trace2
 EOF
   "$DOCKER" rm -f "$name" >/dev/null 2>&1
   "$DOCKER" create --name "$name" --network host httpd:2.4 >/dev/null 2>&1 || return 1
