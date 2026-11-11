@@ -1,0 +1,39 @@
+# TLS-09 reading and evidence
+
+Checked 2026-11-11 at base `f52bdf7d2b50b7a64bb337fa519637043f667019`.
+
+## Reading
+
+- R1: RFC 9113 sections 3.2, 3.4 and 9.2; RFC 8740 sections 2 and 3; RFC 7301 sections 3.1 and 3.2. HTTPS HTTP/2 uses ALPN `h2`, then both peers send their connection preface. HTTP/2 does not use `h2c` over TLS. RFC 8740 permits TLS 1.3 post-handshake messages and requires implementations to support KeyUpdate. ALPN carries a list of non-empty protocol IDs and the server selects one offered value.
+- R2: RFC 8446 sections 4.1, 4.2, 4.3.2, 4.4, 5 and 6. The handshake negotiates versions and extensions, CertificateRequest controls client authentication, certificate messages and verification form the authentication exchange, record protection carries application data, and alerts carry errors and closure. `close_notify` is the authenticated closure signal.
+- R3: RFC 5280 sections 4.1, 4.2.1.6, 4.2.1.9, 4.2.1.12 and 6; RFC 4514 sections 2 and 3. Certificate identity includes subject and issuer names, validity, key usage and SAN forms. Path validation checks certificate signatures and constraints. Distinguished-name strings use escaped attribute values and reverse RDN order.
+- R4: `doc/design/client/mtls.md` and client TLS, proxy, fallback, selector, pool and socket tests. Origin and HTTPS proxy contexts are separate; explicit nil identity selection must not restore a default identity; TLS context participates in pool identity.
+- R5: `doc/design/server/tls.md`, `doc/design/server/mtls.md`, server async accept, TLS policy, ALPN, principal and listener tests. The server selects ALPN by its per-listener policy. Peer identity is verified before a principal is exposed and copied metadata remains tied to the connection.
+
+## Frozen integration contract
+
+`ITLSContext` is the sole declaration in `Http2.Common.Tls.Context`; common,
+client and server facades alias it. The context has separate client and server
+policies. Its sessions are distinct role objects and retain the context. The
+provider factories are `TOpenSSLTlsContextFactory` and
+`TTlsLibContextFactory`. Identity loaders live in provider facades. Server
+configuration uses `WithTlsContext`, `WithClearTextAllowed`,
+`WithHttp11Fallback`, and `WithClientCertPrincipal`; client configuration uses
+`WithTlsContext` and `WithProxyTlsContext`.
+
+The acceptance matrix requires all four client/server provider pairs and both
+TLS 1.2 and 1.3 for valid HTTP/2 requests. Shared trust, client-auth, ALPN,
+identity and lifetime features apply to all pairs. Same-provider loopback is
+integration evidence only. Required rows cannot be reported as skipped.
+
+## Scope and bounded execution
+
+This worktree owns test/API probes, integration tests and TLS fixtures. The
+plan is user-owned and is not changed here. Tests compile only in this worktree.
+No TLS or network test executable is run by this worker. The central run limit
+is one executable at a time, 30 seconds per executable, at most ten lifecycle
+repetitions, and only a few simultaneous sessions. Test timeouts need cleanup.
+
+RFC reading is protocol context, not test evidence. Provider implementation
+and execution results are recorded only after the coordinator runs the bounded
+integration program.

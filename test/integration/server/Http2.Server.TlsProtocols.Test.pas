@@ -4,15 +4,11 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: http2, server, tls, protocol, version, test, fpcunit
 notes:
-  - Tests for the accepted TLS version range of the server.
-  - The factory range reaches the TLS policy, and the policy reaches the
-    server context in ApplyTls.
-  - The live tests drive real handshakes with the openssl command against a
-    loopback server, and they skip with a clear message when the command or
-    the loopback certificate is absent.
+  - Tests the TLS version range through the common provider context.
+  - Live OpenSSL command checks remain for the deferred independent-peer run.
 ---
 }
-/// TLS protocol range tests for BuildTlsPolicy and ApplyTls
+/// TLS protocol range tests through the common server context
 unit Http2.Server.TlsProtocols.Test;
 
 {$mode delphi}{$H+}
@@ -26,9 +22,9 @@ uses
   SysUtils, Classes, process, fpcunit, testregistry,
   mormot.core.base,
   mormot.net.sock,
-  Http2.Common.Tls.Policy, Http2.Common.Tls.Types, Http2.OpenSSL,
-  Http2.Server.Config, Http2.Server.Config.Tls, Http2.Server.Seam,
-  Http2.Server.Tls, Http2.Server.Async, Http2.Server.Async.Options;
+  Http2.Common.Tls.Context, Http2.Common.Tls.Policy,
+  Http2.Common.Tls.Types, Http2.OpenSSL, Http2.Server.Config,
+  Http2.Server.Seam, Http2.Server.Async, Http2.Server.Async.Options;
 
 type
   /// a handler that does nothing, only to satisfy the factory wiring
@@ -186,11 +182,11 @@ var
   Out: string;
   Tag: string;
 begin
-  if AMin = tvTls12 then
+  if AMin = tls12 then
     Tag := '1.2'
   else
     Tag := '1.3';
-  if AMax = tvTls12 then
+  if AMax = tls12 then
     Tag := Tag + '-1.2'
   else
     Tag := Tag + '-1.3';
@@ -218,16 +214,16 @@ end;
 
 procedure TTlsProtocolLiveTest.TestTls12ClientAcrossRanges;
 begin
-  RunCase(tvTls12, tvTls13, '-tls1_2', 'TLSv1.2', True);
-  RunCase(tvTls12, tvTls12, '-tls1_2', 'TLSv1.2', True);
-  RunCase(tvTls13, tvTls13, '-tls1_2', '', False);
+  RunCase(tls12, tls13, '-tls1_2', 'TLSv1.2', True);
+  RunCase(tls12, tls12, '-tls1_2', 'TLSv1.2', True);
+  RunCase(tls13, tls13, '-tls1_2', '', False);
 end;
 
 procedure TTlsProtocolLiveTest.TestTls13ClientAcrossRanges;
 begin
-  RunCase(tvTls12, tvTls13, '-tls1_3', 'TLSv1.3', True);
-  RunCase(tvTls13, tvTls13, '-tls1_3', 'TLSv1.3', True);
-  RunCase(tvTls12, tvTls12, '-tls1_3', '', False);
+  RunCase(tls12, tls13, '-tls1_3', 'TLSv1.3', True);
+  RunCase(tls13, tls13, '-tls1_3', 'TLSv1.3', True);
+  RunCase(tls12, tls12, '-tls1_3', '', False);
 end;
 
 initialization
