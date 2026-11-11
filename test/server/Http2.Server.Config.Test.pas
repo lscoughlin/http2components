@@ -87,8 +87,8 @@ implementation
 const
   /// the source files that hold the factory; the test reads this text
   cConfigSources: array[0..3] of string = (
-    'src/Http2.Server.Config.pas', 'src/Http2.Server.Config.Tls.pas',
-    'src/Http2.Server.Config.Limits.pas', 'src/Http2.Server.Config.Socket.pas');
+    'src/server/Http2.Server.Config.pas', 'src/server/Http2.Server.Config.Tls.pas',
+    'src/server/Http2.Server.Config.Limits.pas', 'src/server/Http2.Server.Config.Socket.pas');
 
 { TFakeHandler }
 

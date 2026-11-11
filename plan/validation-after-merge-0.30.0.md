@@ -122,3 +122,15 @@ to run again. Missing mandatory cases, unexplained skips, resource leaks,
 and unresolved failures keep the release incomplete. The final record
 lists the tested platforms and remaining explicit limits. Version fields
 remain 0.30.0; the intended release tag is `v0.30.0`.
+
+## Timed suite completion
+
+The complete server unit runner includes timed connection-age and lifecycle
+cases. The implementation review stopped the whole run at 60 seconds. A
+45-second diagnostic sample reached a normal sleep in
+`TConnectionAgeTest.TestH1WebSocketStaysOpenPastAgeAndGrace`. V00 records a
+complete server run with a deadline based on these timed cases, before V05.
+The earlier timeout is not a pass and does not by itself prove a deadlock.
+The stale factory source paths found during that run are corrected; its
+27 focused tests pass. The original baseline cancellation failures remain
+part of the comparison record and require classification if they recur.
