@@ -28,15 +28,13 @@ SMALLWIN_PORT="${INTEROP_SMALLWIN_PORT:-18483}"
 HTDOCS="$(mktemp -d /tmp/h2interop.XXXXXX)"
 BUILD="$(mktemp -d /tmp/h2interop-build.XXXXXX)"
 PROBE="$BUILD/h2probe"
-DOCKER="${DOCKER:-$(command -v docker || echo "$HOME/.rd/bin/docker")}"
+DOCKER="${DOCKER:-$(command -v docker || true)}"
 DOCKER_OK=no
 CONTAINER_H2C="http2client-h2c-$$"
 CONTAINER_H1="http2client-h1-$$"
 
 FPC="${FPC:-fpc}"
-FPC_UNITS="${FPC_UNITS:-/usr/local/lib/fpc/3.2.4/units/aarch64-darwin}"
 MORMOT="${MORMOT:-third_party/mORMot2/src}"
-export OPENSSL_LIBPATH="${OPENSSL_LIBPATH:-/opt/homebrew/opt/openssl@3/lib}"
 
 NGHTTPD="$(command -v nghttpd || true)"
 
@@ -67,7 +65,7 @@ record() { # id case expected actual status
 compile_probe() {
   rm -rf "$BUILD"
   mkdir -p "$BUILD"
-  if ! "$FPC" -O2 -Mdelphi -Fu./common/src -Fu./client/src -Fu./server/src -Fu./test/client -Fu"$BUILD" \
+  if ! "$FPC" -O2 -Mdelphi -Fu./common/src -Fu./client/src -Fu./server/src -Fu./test/client -Fu./tls/openssl/src -Fu"$BUILD" \
       -Fu"$MORMOT/core" -Fu"$MORMOT/lib" -Fu"$MORMOT/net" -Fu"$MORMOT/crypt" \
       -FU"$BUILD" -FE"$BUILD" tools/client/h2probe.pas >"$BUILD/build.log" 2>&1; then
     echo "ERROR: h2probe failed to compile; see $BUILD/build.log" >&2
@@ -158,7 +156,6 @@ EOF
 if [ -n "$DOCKER" ] && "$DOCKER" info >/dev/null 2>&1; then
   DOCKER_OK=yes
 fi
-
 # seed a document root (must exist before start_apache copies it in)
 printf 'hello-http2\n' > "$HTDOCS/index.html"
 printf '0123456789'     > "$HTDOCS/small.txt"
@@ -297,7 +294,7 @@ if command -v openssl >/dev/null 2>&1; then
   fi
 else
   record A.9 "ALPN: no-h2 peer raises" "connection error (ALPN)" \
-    "openssl not available" SKIP
+    "openssl is required but is not available" FAIL
 fi
 
 # --- S13 A.10: h2c prior knowledge against nghttpd --no-tls ----------------
@@ -318,7 +315,7 @@ if [ "$DOCKER_OK" = yes ]; then
   fi
 else
   record A.11 "h2c upgrade -> 101 then HTTP/2" "200,10" \
-    "docker unavailable" SKIP
+    "Docker or required Apache server is unavailable" FAIL
 fi
 
 # --- S13 A.12: HTTP/1.1 fallback (upgrade offered, peer stays HTTP/1.1) ---
@@ -331,7 +328,7 @@ if [ "$DOCKER_OK" = yes ]; then
   fi
 else
   record A.12 "HTTP/1.1 fallback -> 200" "200,10" \
-    "docker unavailable" SKIP
+    "Docker or required Apache server is unavailable" FAIL
 fi
 
 # --- S13 A.13: strict mode rejects cleartext -------------------------------

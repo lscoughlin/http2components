@@ -25,6 +25,7 @@ program h2probe;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, TypInfo, Http2.Client.Errors, Http2.Client.Tls, Http2.Client.Messages, Http2.Client,
+  Http2.Common, Http2.OpenSSL,
   Http2.Client.Stream,
   Http2.Client.ProbeOutcome, Http2.Common.Frames, Http2.Client.Observer;
 
@@ -410,6 +411,8 @@ end;
 var
   Client: IHttpClient;
   Factory: THttpClientFactory;
+  TlsContext: ITLSContext;
+  TlsPolicy: TTlsClientPolicy;
   Workers: array of TProbeWorker;
   I, Succeeded: Integer;
   FinalOutcome: TProbeOutcome;
@@ -418,6 +421,11 @@ var
 begin
   ParseArgs;
 
+  TlsPolicy := TTlsClientPolicy.SecureDefault.WithSystemTrust(not GInsecure);
+  if GInsecure then
+    TlsPolicy := TlsPolicy.WithInsecure(True);
+  TlsContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TlsPolicy).Build;
   Factory := THttpClientFactory.Create
     .WithMaxConnections(GParallel)
     .WithMaxStreamsPerConnection(GParallel)
@@ -425,7 +433,7 @@ begin
     .WithConnectTimeout(GTimeoutMs)
     .WithHeaderTimeout(GTimeoutMs)
     .WithIdleTimeout(0)
-    .WithInsecureTls(GInsecure)
+    .WithTlsContext(TlsContext)
     .WithClearText(GClearTextPolicy)
     .WithHttp1Fallback(GHttp1Fallback);
   if GProxyHost <> '' then

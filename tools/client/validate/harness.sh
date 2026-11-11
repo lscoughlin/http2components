@@ -45,8 +45,6 @@ RESULTS_TSV="$BUILD/results.tsv"
 
 FPC="${FPC:-fpc}"
 MORMOT="${MORMOT:-third_party/mORMot2/src}"
-export OPENSSL_LIBPATH="${OPENSSL_LIBPATH:-/opt/homebrew/opt/openssl@3/lib}"
-export PATH="/Users/liamcoughlin/.rd/bin:$PATH"
 
 DOCKER="$(command -v docker || true)"
 IMG="h2-test-harness"
@@ -101,7 +99,7 @@ wrote_status() { # id -> yes/no
 }
 
 compile_probe() {
-  "$FPC" -O2 -Mdelphi -Fu./common/src -Fu./client/src -Fu./server/src -Fu./test/client -Fu"$BUILD" \
+  "$FPC" -O2 -Mdelphi -Fu./common/src -Fu./client/src -Fu./server/src -Fu./test/client -Fu./tls/openssl/src -Fu"$BUILD" \
     -Fu"$MORMOT/core" -Fu"$MORMOT/lib" -Fu"$MORMOT/net" -Fu"$MORMOT/crypt" \
     -FU"$BUILD" -FE"$BUILD" tools/client/h2probe.pas >"$BUILD/build.log" 2>&1 || {
     echo "ERROR: h2probe failed to compile; see $BUILD/build.log" >&2
