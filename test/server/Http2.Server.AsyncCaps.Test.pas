@@ -350,7 +350,7 @@ begin
   Deadline := GetTickCount64 + QWord(ATimeoutMs);
   while GetTickCount64 < Deadline do
   begin
-    if TestSocketClosed(AClient) then
+    if TestSocketClosed(AClient, True) then
       Exit(True);
     Sleep(100);
   end;

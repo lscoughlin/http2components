@@ -207,9 +207,10 @@ begin
           FStreamWindow.AddOrSetValue(Header.StreamId,
             Credit(Header.StreamId) + ParseWindowUpdate(Frame));
       ftData:
-        if Header.Length > 0 then
+        if (Header.Length > 0) and not Frame.IsEndStream then
         begin
-          // keep the windows of the server open
+          // An ended stream needs no more credit. In particular, Stop can
+          // send the WebSocket close frame and close the connection at once.
           Write(BuildWindowUpdateFrame(0, Header.Length));
           Write(BuildWindowUpdateFrame(Header.StreamId, Header.Length));
         end;

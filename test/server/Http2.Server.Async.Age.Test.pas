@@ -516,7 +516,7 @@ end;
 
 function TAgeH2Client.IsClosed: Boolean;
 begin
-  Result := TestSocketClosed(FSock);
+  Result := TestSocketClosed(FSock, True);
 end;
 
 function TAgeH2Client.WaitClosed(const ATimeoutMs: Integer): Boolean;

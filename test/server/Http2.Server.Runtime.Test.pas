@@ -377,7 +377,7 @@ begin
   Deadline := GetTickCount64 + QWord(ATimeoutMs);
   while GetTickCount64 < Deadline do
   begin
-    if TestSocketClosed(FSock) then
+    if TestSocketClosed(FSock, True) then
       Exit(True);
     Sleep(100);
   end;
