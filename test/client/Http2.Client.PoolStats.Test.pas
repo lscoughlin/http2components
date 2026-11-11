@@ -428,7 +428,7 @@ begin
   AssertEquals('one stream each', 2, S.ActiveStreams);
   AssertEquals('pending acquires', 3, S.PendingAcquires);
   AssertEquals('one origin', 1, Length(S.PerOrigin));
-  AssertEquals('api.example', S.PerOrigin[0].Origin);
+  AssertEquals('api.example tls= protocol=0:0', S.PerOrigin[0].Origin);
   AssertEquals(2, Length(S.PerOrigin[0].Details));
   AssertEquals(3, S.PerOrigin[0].PendingAcquires);
 
