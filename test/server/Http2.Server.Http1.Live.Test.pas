@@ -703,7 +703,7 @@ begin
   StartServer(LiveFactory(FHandlerRef).WithHandlerThreads(1).WithIdleTimeout(1000)
     .WithServerLimits(TServerLimits.Create.WithWriteTimeoutMs(1000)));
   A := TRawHttp.Create(FServer.Port);
-  B := TRawHttp.Create(FServer.Port);
+  B := nil;
   try
     A.Send('GET /huge HTTP/1.1' + CRLF + 'Host: a' + CRLF + CRLF);
     // the handler now waits for the reader that never comes
@@ -711,9 +711,21 @@ begin
     while (FHandler.HugeStarted = 0) and (GetTickCount64 < Deadline) do
       Sleep(5);
     AssertEquals('the handler began to write', 1, FHandler.HugeStarted);
-    B.Send('GET /hello HTTP/1.1' + CRLF + 'Host: a' + CRLF + CRLF);
-    AssertTrue('the second client is served once the write timeout freed the thread',
-      B.ReadResponse(False, 15000, R));
+    Deadline := GetTickCount64 + ResponseMs;
+    repeat
+      FreeAndNil(B);
+      B := TRawHttp.Create(FServer.Port);
+      B.Send('GET /hello HTTP/1.1' + CRLF + 'Host: a' + CRLF + CRLF);
+      AssertTrue('the second client got no answer',
+        B.ReadResponse(False, ResponseMs, R));
+      if R.Status = 200 then
+        Break;
+      AssertEquals('busy response includes the bounded retry delay: ' + R.Head,
+        '1', R.Header('retry-after'));
+      AssertEquals('busy response status: ' + R.Head, 503, R.Status);
+      if GetTickCount64 < Deadline then
+        Sleep(1000);
+    until GetTickCount64 >= Deadline;
     AssertEquals('status of the second answer: ' + R.Head, 200, R.Status);
     AssertEquals('hello', R.Body);
   finally
