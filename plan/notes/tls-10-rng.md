@@ -49,6 +49,16 @@ provider object SHA-256 is
 
 ## Limits
 
-The probe compile does not prove runtime random reads or loaded-image closure.
-The central TLS-10 exchange and dyld image inspection provide that evidence.
-No Linux validation is included.
+The reproducible compile and link helper is
+`tools/studies/tls/rng/compile_probe.py`. It reads the dependency roots from
+`CRYPTOLIB4PASCAL_ROOT`, `HASHLIB4PASCAL_ROOT`, `SIMPLEBASELIB4PASCAL_ROOT`,
+and `TLSLIB4PASCAL_ROOT`. `HTTP2_ROOT` names this checkout. `TLS10_RNG_OUTPUT`
+selects the output directory. The helper prints the exact FPC command and
+fingerprint, links the probe, and does not execute it.
+
+The linked probe SHA-256 is
+`d2f9db78d0546516ab939fff737b89c1f748764ac4c0c9a92694d80492a5ca9e`.
+`otool -L` lists only `/usr/lib/libSystem.B.dylib`. This is static linked-image
+evidence. It does not prove runtime random reads or loaded-image closure. The
+central TLS-10 exchange and dyld image inspection provide runtime evidence. No
+Linux validation is included.

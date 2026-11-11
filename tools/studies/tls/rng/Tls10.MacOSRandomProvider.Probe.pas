@@ -29,7 +29,7 @@ begin
     Provider.GetBytes(SmallBytes);
     SetLength(LargeBytes, 4096);
     Provider.GetBytes(LargeBytes);
-    WriteLn('PASS 3: zero, 16-byte, and 4096-byte requests');
+    WriteLn('PASS 3 cases');
   finally
     Provider.Free;
   end;
