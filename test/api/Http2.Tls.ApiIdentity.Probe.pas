@@ -68,8 +68,11 @@ begin
   OpenSslFactoryB := Default(TOpenSslFactoryAlias);
   TlsLibFactoryB := Default(TTlsLibFactoryAlias);
   CheckContextType(C, D);
+  CheckContextType(D, C);
   CheckSessionType(S, SD);
+  CheckSessionType(SD, S);
   CheckIdentityType(I, ID);
+  CheckIdentityType(ID, I);
   D := C; C := D;
   SD := S; S := SD;
   ID := I; I := ID;

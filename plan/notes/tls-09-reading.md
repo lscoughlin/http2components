@@ -12,12 +12,12 @@ Checked 2026-11-11 at base `f52bdf7d2b50b7a64bb337fa519637043f667019`.
 
 ## Frozen integration contract
 
-`ITLSContext` is the sole declaration in `Http2.Common.Tls.Context`; common,
-client and server facades alias it. The context has separate client and server
-policies. Its sessions are distinct role objects and retain the context. The
-provider factories are `TOpenSSLTlsContextFactory` and
-`TTlsLibContextFactory`. Identity loaders live in provider facades. Server
-configuration uses `WithTlsContext`, `WithClearTextAllowed`,
+`ITLSContext` is the sole declaration in `Http2.Common.Tls.Context`; the
+`Http2.Common` facade aliases it. Client and server factories accept this
+interface. The context has separate client and server policies. Its sessions
+are distinct role objects and retain the context. The provider factories are
+`TOpenSSLTlsContextFactory` and `TTlsLibContextFactory`. Identity loaders live
+in provider facades. Server configuration uses `WithTlsContext`, `WithClearTextAllowed`,
 `WithHttp11Fallback`, and `WithClientCertPrincipal`; client configuration uses
 `WithTlsContext` and `WithProxyTlsContext`.
 
@@ -59,6 +59,29 @@ acceptance, and OpenSSL/TlsLib identity, context, and factory aliases.
 Fixture paths resolve by walking upward from the executable to the repository
 root, so the integration target can run from its isolated `bin/.../programs`
 directory. Body reads use the configured idle timeout.
-The run limit is 30 seconds. The worker compiled this program at base `f52bdf7`
-with the pinned providers; it did not execute the program. Runtime results
-remain pending the coordinator's bounded run.
+The run limit is 30 seconds. The coordinator ran 29 cases at revision
+`696e1cd` in 6.488 seconds with exit 0. Log:
+`bin/tls-coordinator/tls09-integration-03.log`. It reported TLS 1.2 and 1.3,
+ALPN `h2`, nonempty ciphers, and verified peers for all eight provider pairs.
+That tested revision preceded the per-case A02/A04 output labels and
+executable-relative fixture lookup in later commits.
+
+Earlier runs failed for test-driver and test-setup reasons. At `61b7a4f`, the
+child returned exit 0 with `PASS 20 provider-pair TLS metadata and HTTP/2
+cases`, but the driver rejected the nonstandard summary and empty FPCUnit
+suite (`tls09-integration-01.log`). At `2266a87`, the run stopped after 20
+cases because the listener test used a server-only context for a fresh client
+(`tls09-integration-02.log`). The listener now creates a client-role context.
+
+The worker compiled the runner and API probe with these compile-only
+commands. The final merged target remains the runtime check for the later
+logging and fixture-resolution changes:
+
+```sh
+MORMOT2_ROOT=/Users/liamcoughlin/Source/lscoughlin/http2components/third_party/mORMot2 \
+TLSLIB4PASCAL_ROOT=/Users/liamcoughlin/Source/lscoughlin/http2components/third_party/TlsLib4Pascal \
+CRYPTOLIB4PASCAL_ROOT=/Users/liamcoughlin/Source/lscoughlin/http2components/third_party/CryptoLib4Pascal \
+HASHLIB4PASCAL_ROOT=/Users/liamcoughlin/Source/lscoughlin/http2components/third_party/HashLib4Pascal \
+SIMPLEBASELIB4PASCAL_ROOT=/Users/liamcoughlin/Source/lscoughlin/http2components/third_party/SimpleBaseLib4Pascal \
+python3 -c 'import tools.build as b; b.compile_file(b.ROOT / "test/integration/tls/Http2.Tls.Integration.Tests.pas", "tls-integration-test", tests=True); b.compile_file(b.ROOT / "test/api/Http2.Tls.ApiIdentity.Probe.pas", "tls-integration-test", tests=True)'
+```
