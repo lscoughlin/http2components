@@ -320,6 +320,12 @@ begin
     Progress := TimeoutSession.Advance(50);
     Check((Progress.State = tssHandshaking) and Progress.NeedInput,
       'held handshake did not wait for input');
+    SetLength(Buffer, 1); Buffer[0] := $16;
+    Check(TimeoutSession.FeedEncrypted(Buffer, 0, 1) = 1,
+      'held handshake rejected trickle input');
+    Progress := TimeoutSession.Advance(99);
+    Check((Progress.State = tssHandshaking) and Progress.NeedInput,
+      'trickle input incorrectly completed the held handshake');
     Failed := False;
     try TimeoutSession.Advance(100);
     except on E: ETlsSessionError do Failed := E.Category = tecTimeout; end;
@@ -336,6 +342,18 @@ begin
     Check(TimeoutSession.ReadPlaintext(Buffer, 0, 1) = 0,
       'handshake script leaked into application plaintext');
     Pass('fake held handshake accepts scripted readiness');
+
+    Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 100, False, '');
+    TimeoutSession := Context.CreateClientSession(TimeoutOptions);
+    TimeoutSession.Advance(1);
+    Check(TimeoutSession.NegotiatedInfo.SelectedAlpn = '',
+      'fake session cannot represent an absent ALPN selection');
+    Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 100, False, 'http/1.1');
+    TimeoutSession := Context.CreateClientSession(TimeoutOptions);
+    TimeoutSession.Advance(1);
+    Check(TimeoutSession.NegotiatedInfo.SelectedAlpn = 'http/1.1',
+      'fake session cannot represent HTTP/1.1 selection');
+    Pass('fake selected ALPN is explicit per context');
 
     Failed := False;
     try Context.CreateServerSession(ServerOptions);

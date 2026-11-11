@@ -200,3 +200,21 @@ The server review found that an empty ciphertext queue alone cannot prove that a
 OpenSSL reports the sum of its queued and in-flight plaintext. TlsLib protects accepted plaintext synchronously in `TTlsEngine.Write`; its count is zero. The fake session also encodes synchronously and its default progress count is zero. The shared contract checks the count against accepted credit and requires zero after complete delivery. The OpenSSL test also fills the pending queue, observes a positive count after partial encryption, and checks that Abort clears it.
 
 Main bounded checks passed: OpenSSL 90 cases in 0.585 seconds (`bin/tls-coordinator/tls-progress-openssl-03.log`), TlsLib 84 cases in 1.011 seconds (`bin/tls-coordinator/tls-progress-tlslib.log`). The first new OpenSSL assertion failed because the test assumed a full write instead of the permitted 16 KiB prefix. The corrected test retains and submits the suffix. This is not a forced native WANT_READ/WANT_WRITE test.
+
+## Peer close review, 2026-11-11
+
+A one-sided close case now checks that the receiving session returns a close_notify response and preserves the final authenticated plaintext. The shared test uses one local shutdown call only. OpenSSL moves from a received close to closing, then completes SSL_shutdown; TlsLib queues its idempotent native SendClose response before closing. Closed sessions can retain drainable close output. The fake session follows the same response rule.
+
+Main bounded checks passed: OpenSSL 91 cases in 0.692 seconds (`bin/tls-coordinator/tls-close-openssl.log`), TlsLib 85 cases in 1.193 seconds (`bin/tls-coordinator/tls-close-tlslib.log`), and common 22 cases in 0.215 seconds (`bin/tls-coordinator/tls-close-common.log`). No load or Linux validation was run.
+
+## Peer alert detail review, 2026-11-11
+
+Preserved client mTLS routing tests exposed the loss of EHttpTlsClientAuthError details when native role code was removed. ETlsSessionError now carries PeerAlertDescription (the standard wire byte, or -1) and ClientCertificateRequested (true only with observed evidence). The constructor retains its previous arguments and adds optional fields. OpenSSL uses a per-session message callback for decrypted incoming alerts and CertificateRequest messages. No native error-code bit layout or string parsing enters the role. TlsLib uses LastError.AlertByte only for peer-origin errors.
+
+Both providers retain peer alert details on repeated failures. Local verification failures have no peer alert. New tests exercise missing-client-certificate alerts in TLS 1.2 and TLS 1.3. OpenSSL passed 93 cases in 0.570 seconds; TlsLib passed 87 cases in 0.986 seconds. Logs are bin/tls-coordinator/tls-alert-openssl-02.log and tls-alert-tlslib-02.log.
+
+TlsLib limitation: its pinned TLS 1.2 state machine publishes requested signature schemes only after a completed handshake. After a failed TLS 1.2 client handshake, the generic handshake_failure alert is retained, but ClientCertificateRequested can remain false. The role does not infer certificate rejection from that ambiguous alert. TLS 1.3 certificate_required is unambiguous. OpenSSL retains the previous TLS 1.2 certificate-request-based classification. The first new TlsLib test failed on the unavailable request metadata; the final check requires the wire alert in both versions and request evidence where the engine supplies it. This limitation belongs in the TlsLib design/migration documentation.
+
+## Fake listener controls, 2026-11-11
+
+The held fake handshake now consumes non-ready input without opening or resetting its deadline. A leading $FC marker opens it and is removed from application data. An optional selected-ALPN constructor argument is copied into each session; its default remains h2. The absent and HTTP/1.1 selections support server routing tests without changing default client fake behavior. The bounded common runner passed 23 cases; output is in bin/tls-coordinator/tls-fake-readiness.log.

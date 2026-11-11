@@ -34,9 +34,11 @@ type
     FLock: TRTLCriticalSection;
     FLifetime: ITlsFakeLifetime;
     FHoldHandshake: Boolean;
+    FSelectedAlpn: string;
   public
     constructor Create(const ARoles: TTlsRoles; const AAuth: TTlsClientAuthMode;
-      const ATimeoutMs: Cardinal; const AHoldHandshake: Boolean = False);
+      const ATimeoutMs: Cardinal; const AHoldHandshake: Boolean = False;
+      const ASelectedAlpn: string = 'h2');
     destructor Destroy; override;
     function BackendName: string;
     function Capabilities: TTlsCapabilities;
@@ -68,6 +70,7 @@ type
     FInput, FOutput, FPlaintext: TBytes;
     FFailureCategory: TTlsErrorCategory;
     FFailureMessage: string;
+    FSelectedAlpn: string;
     procedure Fail(const ACategory: TTlsErrorCategory; const AMessage: string);
     procedure RequireWritable;
   public
@@ -75,7 +78,7 @@ type
       const AId: Integer; const ADeadlineMs: Int64;
       const AClientOptions: TTlsClientSessionOptions;
       const AServerOptions: TTlsServerSessionOptions;
-      const AHoldHandshake: Boolean);
+      const AHoldHandshake: Boolean; const ASelectedAlpn: string);
     function State: TTlsSessionState;
     function FeedEncrypted(const ABuffer: TBytes; const AOffset, ACount: SizeInt): SizeInt;
     function DrainEncrypted(var ABuffer: TBytes; const AOffset, ACapacity: SizeInt): SizeInt;
@@ -100,7 +103,7 @@ begin Result := FAlive; end;
 
 constructor TTlsFakeContext.Create(const ARoles: TTlsRoles;
   const AAuth: TTlsClientAuthMode; const ATimeoutMs: Cardinal;
-  const AHoldHandshake: Boolean);
+  const AHoldHandshake: Boolean; const ASelectedAlpn: string);
 begin
   inherited Create;
   InitCriticalSection(FLock);
@@ -109,6 +112,7 @@ begin
   FInfo.ClientAuth := AAuth;
   FInfo.HandshakeTimeoutMs := ATimeoutMs;
   FHoldHandshake := AHoldHandshake;
+  FSelectedAlpn := ASelectedAlpn;
 end;
 destructor TTlsFakeContext.Destroy;
 var Life: ITlsFakeLifetime;
@@ -145,7 +149,8 @@ begin
   try
     Inc(FNextId);
     Result := TTlsFakeSession.Create(Self as ITLSContext, trClient, FNextId,
-      Deadline, AOptions, Default(TTlsServerSessionOptions), FHoldHandshake);
+      Deadline, AOptions, Default(TTlsServerSessionOptions), FHoldHandshake,
+      FSelectedAlpn);
   finally
     LeaveCriticalSection(FLock);
   end;
@@ -164,7 +169,8 @@ begin
   try
     Inc(FNextId);
     Result := TTlsFakeSession.Create(Self as ITLSContext, trServer, FNextId,
-      Deadline, Default(TTlsClientSessionOptions), AOptions, FHoldHandshake);
+      Deadline, Default(TTlsClientSessionOptions), AOptions, FHoldHandshake,
+      FSelectedAlpn);
   finally
     LeaveCriticalSection(FLock);
   end;
@@ -174,7 +180,7 @@ constructor TTlsFakeSession.Create(const AOwner: ITLSContext;
   const ARole: TTlsRole; const AId: Integer; const ADeadlineMs: Int64;
   const AClientOptions: TTlsClientSessionOptions;
   const AServerOptions: TTlsServerSessionOptions;
-  const AHoldHandshake: Boolean);
+  const AHoldHandshake: Boolean; const ASelectedAlpn: string);
 begin
   inherited Create;
   FOwner := AOwner;
@@ -185,6 +191,7 @@ begin
   FServerOptions := AServerOptions;
   FHoldHandshake := AHoldHandshake;
   FIsServer := ARole = trServer;
+  FSelectedAlpn := ASelectedAlpn;
   FState := tssNew;
 end;
 procedure TTlsFakeSession.Fail(const ACategory: TTlsErrorCategory; const AMessage: string);
@@ -277,12 +284,15 @@ begin
     Fail(tecTimeout, 'Handshake deadline expired');
     raise ETlsSessionError.Create(FFailureMessage, FFailureCategory);
   end;
-  if (FState in [tssNew, tssHandshaking]) and FHoldHandshake and
-    (Length(FInput) = 0) then begin
-    FState := tssHandshaking;
-    Result.State := FState;
-    Result.NeedInput := True;
-    Exit;
+  if (FState in [tssNew, tssHandshaking]) and FHoldHandshake then begin
+    if (Length(FInput) = 0) or (FInput[0] <> $FC) then begin
+      FState := tssHandshaking;
+      Result.State := FState;
+      Result.NeedInput := True;
+      Result.MadeProgress := Length(FInput) > 0;
+      FInput := nil;
+      Exit;
+    end;
   end;
   if FState in [tssNew, tssHandshaking] then begin
     if FHoldHandshake and (Length(FInput) > 0) and (FInput[0] = $FC) then
@@ -381,7 +391,7 @@ begin
   Result.Role := FRole;
   Result.Version := tls13;
   Result.CipherName := 'FAKE-AEAD';
-  Result.SelectedAlpn := 'h2';
+  Result.SelectedAlpn := FSelectedAlpn;
 end;
 function TTlsFakeSession.IsServer: Boolean;
 begin Result := FIsServer; end;
