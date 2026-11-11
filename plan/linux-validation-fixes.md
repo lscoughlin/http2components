@@ -670,3 +670,27 @@ Linux package builds and the remaining acceptance steps on the new archive.
 The already-passing runtime checks remain valid if the diff contains only
 generated package registration and ordering; no production method changes
 are permitted in this repair.
+
+## LV-37: Incomplete-handshake admission exceeds the configured bound
+
+The first performance stage on accepted runtime 97aca1d failed its
+incomplete-handshake admission check. The probe configured a limit of 64,
+but the recorded accepted total rose from 65 after the first wave to 129
+after the excess wave. The count includes one completed warm-up connection.
+This is new runtime evidence; the earlier source-only limit interpretation
+does not establish the behavior of pending handshakes.
+
+The client owner retains the raw peer states and checks probe timing, open
+connections, closure, accepted totals, and effective configuration in a
+private diagnostic copy. The server owner traces listener admission before
+first read and during TLS negotiation, with the pinned dependency unchanged.
+A closed first wave cannot count as concurrent load. If those peers remain
+open, the listener must enforce the configured active bound before accepting
+more pending sessions. Any repair preserves normal completed handshakes,
+configured timeouts, prompt refusal, recovery, and descriptor cleanup.
+
+A deterministic regression reproduces the observed gap before repair and
+passes afterward. Focused admission and TLS lifecycle checks precede the
+affected full acceptance rerun. Root reviews and merges the fix, then repeats
+all four incomplete-handshake cases before the remaining performance stages.
+The load count and admission assertions are not weakened to obtain a pass.
