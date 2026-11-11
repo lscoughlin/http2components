@@ -185,6 +185,10 @@ type
   end;
 
 
+  /// local side of the RFC 7540 section 5.1 state machine
+  TLeaseLocalState = (lsIdle, lsHeadersSent, lsLocalHalfClosed, lsClosed);
+  TLeaseEndDue = (edNone, edEof, edFailed, edCancelled);
+
 implementation
 
 function HttpMethodToken(const AMethod: THttpMethod): string;
