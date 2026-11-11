@@ -22,7 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
-from tools.check.repository import strip_pascal  # noqa: E402
+from tools.check.repository import parse_pascal, strip_pascal  # noqa: E402
 from tools.components import COMPONENTS, PACKAGE_COMPONENT  # noqa: E402
 
 HARNESS_REV = "0bc075cc21e5a247dfd222e005d1e7e5679d2bff"
@@ -248,10 +248,14 @@ def verify_dependency(name: str) -> Path:
     return repo
 
 
-def compile_file(source: Path, component: str, *, tests: bool = False) -> Path:
+def compile_file(source: Path, component: str, *, tests: bool = False,
+                 extra_flags: tuple[str, ...] = ()) -> Path:
     source = required(source, f"{component} source")
     units, programs = output(component)
-    args = [compiler(), *base_flags(component, tests=tests),
+    if component.startswith("examples-"):
+        units = units / source.stem
+        units.mkdir(parents=True, exist_ok=True)
+    args = [compiler(), *base_flags(component, tests=tests), *extra_flags,
             f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))]
     uses_tls = component in ("client", "server", "readers", "examples", "api-test", "integration-test", "openssl", "openssl-test", "tls-integration-test") or component.startswith("examples-")
     run(args, env=open_ssl_env() if uses_tls else None)
@@ -809,8 +813,20 @@ def examples() -> None:
         build("client")
     if "server" in roles or "integration" in roles:
         build("server")
+    providers: dict[Path, tuple[str, ...]] = {}
+    for source, _ in programs:
+        imports = [name.casefold() for name, _ in parse_pascal(source)[1]]
+        providers[source] = tuple(provider for provider in ("openssl", "tlslib")
+                                  if any(name == "http2." + provider or
+                                         name.startswith("http2." + provider + ".")
+                                         for name in imports))
+    for provider in ("openssl", "tlslib"):
+        if any(provider in selected for selected in providers.values()):
+            build(provider)
     for source, role in programs:
-        compile_file(source, f"examples-{role}")
+        provider_flags = tuple(flag for provider in providers[source]
+                               for flag in base_flags(provider, user_flags=False))
+        compile_file(source, f"examples-{role}", extra_flags=provider_flags)
 
 
 def main() -> int:
