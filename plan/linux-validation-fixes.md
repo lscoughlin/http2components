@@ -155,3 +155,13 @@ this owner's scope only for this defect. A global signal override must not
 conceal a transport error. Acceptance includes the reproduced broken-peer
 case and the complete combined client suite, with normal error reporting and
 no process signal termination. Earlier logs remain unchanged.
+
+## LV-07: Server live probe TLS API migration
+
+Review confirms that Http2.Server.TlsLive still calls removed WithTls and
+TTlsServerOptions APIs. It and Http2.Server.Mtls.Live.Raw use legacy
+TTlsSocket.DialWithAlpn arguments with no explicit context, which the new
+transport rejects. The server owner migrates these server-only probes and
+related fixtures to explicit OpenSSL contexts and identity loaders. Existing
+ALPN/mTLS expectations remain unchanged. The independent provider probe is
+additional coverage and does not replace these existing policy cases.
