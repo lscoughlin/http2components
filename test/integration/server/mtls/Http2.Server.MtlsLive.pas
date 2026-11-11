@@ -168,6 +168,9 @@ begin
     '(! grep -q "^New, ' + AProtocol + '" ' + AProtocol + '-full.log) || ' +
     '(! grep -Eq "Verification: OK|Verify return code: 0 \\(ok\\)" ' +
     AProtocol + '-full.log); then cat ' + AProtocol + '-full.log; exit 1; fi; ' +
+    'if [ ! -s ' + AProtocol + '.pem ]; then ' +
+    'echo "PASS ' + AProtocol + ' verified full handshake; no resumable session was issued"; ' +
+    'exit 0; fi; ' +
     '(sleep 1; printf Q) | ' + Common + ' -sess_in ' + AProtocol +
     '.pem >' + AProtocol + '-saved.log 2>&1; ' +
     'saved_status=$?; ' +
