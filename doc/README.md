@@ -96,6 +96,10 @@ The [TLS replacement record](verification/tls-replacement-0.30.0.md) describes
 the current bounded checks, provider isolation, review limits, and deferred
 validation for version 0.30.0.
 
+The [native Linux record](verification/linux-tls-2026-11-11.md) identifies
+completed Docker checks, repairs, retained evidence, and acceptance work
+that is still in progress.
+
 The [client compiler probes](verification/client-probes/README.md) are
 historical compiler evidence. The source validation and toolchain records
 are grouped by role:
