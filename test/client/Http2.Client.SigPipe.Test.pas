@@ -25,7 +25,7 @@ interface
 uses
   SysUtils, Classes, Sockets, BaseUnix, fpcunit, testregistry,
   mormot.lib.openssl11, Http2.Client.Errors, Http2.Client.SigPipe, Http2.Client.Tls,
-  Http2.Client.Tls.Test;
+  Http2.Client.Tls.Support;
 
 type
   /// room for the platform's sigset_t (128 bytes on glibc, 4 on Darwin)
