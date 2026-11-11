@@ -210,3 +210,17 @@ LV-06 remains open: the complete client suite still exits SIGPIPE after the
 first fixture wrapper repair. A new stack identifies the remaining raw socket
 or SSL call; all fixture operations that can write are covered with scoped
 signal handling. The prior failed rerun is retained as evidence.
+
+### LV-10 evidence, 2026-11-11 18:14 UTC
+
+WebSocket live: one of 18 cases errors because the HTTPS proxy context is
+absent. Proxy live: three of ten cases error (two absent HTTPS proxy contexts,
+one loopback certificate verification failure). The client owner fixes test
+policies and trust inputs while keeping certificate verification meaningful.
+The mTLS PKI script uses x509 -not_before/-not_after, which requires newer
+OpenSSL than Ubuntu 3.0. The client owner generates the same fixed expired
+certificate dates with the compatible CA signing command and verifies expiry.
+
+The first real proxy and mTLS command invocations attempted a nested SSH hop.
+The root coordinator uses their documented local/native mode environment in
+this already-remote Docker container; the failed invocations remain recorded.
