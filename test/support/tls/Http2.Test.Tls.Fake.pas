@@ -221,6 +221,10 @@ begin
   if (AOffset < 0) or (ACount < 0) or (AOffset > Length(ABuffer)) or
     (ACount > Length(ABuffer) - AOffset) then
     raise ETlsSessionError.Create('Invalid encrypted input range', tecProtocol);
+  // This marker keeps the input queued so the transport's zero-feed path can
+  // be tested with TLS output pending after a failed socket write.
+  if (ACount > 0) and (ABuffer[AOffset] = $FB) then
+    Exit(0);
   Result := TlsMaxEncryptedInput - Length(FInput);
   if Result > ACount then Result := ACount;
   OldLength := Length(FInput);
@@ -308,6 +312,10 @@ begin
     N := TlsMaxPlaintextBuffer - Length(FPlaintext);
   while I < N do begin
     B := FInput[I];
+    if B = $FA then begin
+      Fail(tecAlert, 'Fake peer rejected the client certificate');
+      raise ETlsSessionError.Create(FFailureMessage, tecAlert, '', 116, True);
+    end;
     if B = $FF then begin
       if I > 0 then begin
         OldLength := Length(FPlaintext); SetLength(FPlaintext, OldLength + I);

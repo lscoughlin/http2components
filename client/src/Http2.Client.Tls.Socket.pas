@@ -61,6 +61,7 @@ type
     procedure Pump(const AReadInput: Boolean);
     function AdvanceSession: TTlsProgress;
     procedure MapSessionError(const AError: ETlsSessionError);
+    procedure ReadPeerAlertAfterWriteFailure;
     procedure NotifyTransportEof;
     function FlushEncrypted: Boolean;
     function ReadEncrypted: Boolean;
@@ -252,8 +253,13 @@ begin
         raise EHttpConnectionClosed.Create('TLS transport closed during write');
       FSessionLock.Release;
       try
-        N := FTransport.Write(FEncryptedOutput[FEncryptedOutputOffset],
-          Length(FEncryptedOutput) - FEncryptedOutputOffset);
+        try
+          N := FTransport.Write(FEncryptedOutput[FEncryptedOutputOffset],
+            Length(FEncryptedOutput) - FEncryptedOutputOffset);
+        except
+          ReadPeerAlertAfterWriteFailure;
+          raise;
+        end;
       finally
         FSessionLock.Acquire;
       end;
@@ -320,6 +326,88 @@ begin
     tecConfiguration: raise EHttpTlsConfigError.Create(AError.Message);
     tecVerification, tecProtocol, tecAlert, tecInternal:
       raise EHttpConnectionError.Create(AError.Message);
+  end;
+end;
+
+procedure TTlsSocket.ReadPeerAlertAfterWriteFailure;
+var
+  PreviousTimeout, N: Integer;
+  Data: TBytes;
+  Deadline, NowMs: QWord;
+  Used: SizeInt;
+begin
+  // Some TLS 1.3 servers reject a client certificate only after they receive
+  // application data.  With HTTP/2, the connection preface is the first data;
+  // a server can send its TLS alert and reset the socket before the preface
+  // write completes.  Read until a terminal TLS result or a short absolute
+  // deadline so a preceding record fragment cannot hide the alert.  A timeout
+  // or EOF leaves the original write error as the connection failure.
+  FSessionLock.Acquire;
+  try
+    // Do not invert the ordinary reader -> session lock order.
+    if not FReadLock.TryEnter then
+      Exit;
+    try
+      PreviousTimeout := FTransport.ReadTimeoutMs;
+      try
+        Deadline := mormot.core.os.GetTickCount64 + 100;
+        repeat
+          NowMs := mormot.core.os.GetTickCount64;
+          if NowMs >= Deadline then
+            Break;
+          FTransport.ReadTimeoutMs := Integer(Deadline - NowMs);
+          try
+            if Length(FEncryptedPending) = 0 then
+            begin
+              SetLength(Data, TlsMaxEncryptedInput);
+              N := FReader.ReadSome(Data[0], Length(Data));
+              if N <= 0 then
+              begin
+                FTransportEof := True;
+                NotifyTransportEof;
+                Break;
+              end;
+              if N > Length(Data) then
+                Break;
+              SetLength(Data, N);
+              FEncryptedPending := Data;
+              FEncryptedOffset := 0;
+            end;
+            try
+              Used := FSession.FeedEncrypted(FEncryptedPending,
+                FEncryptedOffset, Length(FEncryptedPending) - FEncryptedOffset);
+            except
+              on E: ETlsSessionError do
+                MapSessionError(E);
+            end;
+            if (Used <= 0) or
+               (Used > Length(FEncryptedPending) - FEncryptedOffset) then
+              Break;
+            Inc(FEncryptedOffset, Used);
+            if FEncryptedOffset >= Length(FEncryptedPending) then
+            begin
+              FEncryptedPending := nil;
+              FEncryptedOffset := 0;
+            end;
+            InterlockedIncrement(FInputGeneration);
+            RTLEventSetEvent(FInputProgress);
+            AdvanceSession;
+          except
+            on E: EHttpTlsClientAuthError do
+              raise;
+            on Exception do
+              Break; // keep the transport write error without a TLS auth alert
+          end;
+        until False;
+      finally
+        FTransport.ReadTimeoutMs := PreviousTimeout;
+      end;
+    finally
+      FReadLock.Release;
+      RTLEventSetEvent(FInputProgress);
+    end;
+  finally
+    FSessionLock.Release;
   end;
 end;
 
