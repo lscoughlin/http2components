@@ -82,3 +82,16 @@ cleanup results; independent peers are distinct from same-library exchanges.
 Runtime failures receive a dated issue entry here or a linked plan before a
 GPT-6-Luna worker implements a repair in its own worktree. The root reviews
 and merges each repair and records affected reruns.
+
+### LV-03 extension, 2026-11-11 17:56 UTC
+
+Review found that existing load tools exercise plaintext only and server TLS
+live gates use the component client. A dedicated validation server under
+`tools/server/validate/` can select OpenSSL or TlsLib and TLS 1.2 or TLS 1.3
+from command arguments. The server owner supplies this probe and its build
+contract. Independent OpenSSL and h2load clients measure handshake churn,
+throughput and latency against the same response body and host settings.
+The existing plaintext WS/SSE probe remains a separate baseline. Correctness
+requires all requested operations to complete without unexpected errors.
+Performance values are measurements; the run does not assert an invented
+cross-host regression threshold. Resource cleanup is checked after disconnect.
