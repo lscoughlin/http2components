@@ -19,7 +19,8 @@ program Http2.Server.ProviderLive;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils,
-  Http2.Server, Http2.Common, Http2.OpenSSL, Http2.TlsLib;
+  Http2.Server, Http2.Common, Http2.Server.Config.Limits,
+  Http2.OpenSSL, Http2.TlsLib;
 
 type
   TFixedHandler = class(TInterfacedObject, IHttp2Handler)
@@ -74,6 +75,21 @@ begin
   raise Exception.Create('client auth mode must be none, request, or require');
 end;
 
+function PositiveEnvironmentValue(const AName: string;
+  const ADefault: Integer): Integer;
+var
+  Value: string;
+  Parsed: Int64;
+begin
+  Value := GetEnvironmentVariable(AName);
+  if Value = '' then
+    Exit(ADefault);
+  if not TryStrToInt64(Value, Parsed) or (Parsed < 1) or
+     (Parsed > High(Integer)) then
+    raise Exception.Create(AName + ' must be an integer in 1..2147483647');
+  Result := Parsed;
+end;
+
 var
   Identity: ITLSIdentity;
   Policy: TTlsServerPolicy;
@@ -85,6 +101,8 @@ var
   AuthMode: TTlsClientAuthMode;
   TrustAnchor: string;
   Line: string;
+  HandshakeTimeoutMs, MaxConnections: Integer;
+  Limits: TServerLimits;
 begin
   if (ParamCount < 4) or (ParamCount > 6) then
   begin
@@ -92,6 +110,11 @@ begin
     Halt(2);
   end;
   try
+    HandshakeTimeoutMs := PositiveEnvironmentValue(
+      'HTTP2_TEST_HANDSHAKE_TIMEOUT_MS', 0);
+    MaxConnections := PositiveEnvironmentValue(
+      'HTTP2_TEST_MAX_CONNECTIONS', 10000);
+    Limits := TServerLimits.Create.WithMaxConnections(MaxConnections);
     Provider := ParamStr(1);
     if Provider = 'tlslib' then
       Identity := TTlsLibIdentity.FromPemFiles(ParamStr(2), ParamStr(3))
@@ -113,9 +136,11 @@ begin
     ProviderObserver := TProviderObserver.Create;
     Observer := ProviderObserver;
     if Provider = 'tlslib' then
-      Context := TTlsLibContextFactory.Create.WithServerPolicy(Policy).Build
+      Context := TTlsLibContextFactory.Create.WithServerPolicy(Policy)
+        .WithHandshakeTimeoutMs(HandshakeTimeoutMs).Build
     else
-      Context := TOpenSSLTlsContextFactory.Create.WithServerPolicy(Policy).Build;
+      Context := TOpenSSLTlsContextFactory.Create.WithServerPolicy(Policy)
+        .WithHandshakeTimeoutMs(HandshakeTimeoutMs).Build;
     Server := THttp2ServerFactory.Create
       .WithHost('127.0.0.1')
       .WithPort(0)
@@ -124,6 +149,7 @@ begin
       .WithHandler(TFixedHandler.Create)
       .WithHandlerThreads(2)
       .WithIOThreads(2)
+      .WithServerLimits(Limits)
       .Build(Observer);
     Server.Start;
     WriteLn('READY port ', Server.Port);
