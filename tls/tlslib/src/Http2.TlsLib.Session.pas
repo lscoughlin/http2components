@@ -318,6 +318,8 @@ end;
 function TTlsLibSession.Advance(const AMonotonicMs: Int64): TTlsProgress;
 var E: ITlsEvent; N, OldCipher, OldPlain: Integer; OldState: TTlsSessionState; B: TBytes;
 begin
+  { Engine.Write protects accepted plaintext before it returns. }
+  Result := Default(TTlsProgress);
   RaiseFailure;
   if FEngine = nil then
   begin

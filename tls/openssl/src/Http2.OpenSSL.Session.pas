@@ -528,6 +528,7 @@ begin
     Fail('OpenSSL output exceeded the TLS queue limit', tecInternal);
   if FState = tssFailed then RaiseFailure;
   Result.State := FState;
+  Result.PendingPlaintextOutput := Length(FPendingWrite) + Length(FInFlightWrite);
   Result.NeedOutput := PendingOutput > 0;
   Result.NeedInput := (FState in [tssHandshaking, tssOpen, tssClosing]) and not Result.NeedOutput;
   Result.MadeProgress := (PendingOutput <> BeforeOut) or
