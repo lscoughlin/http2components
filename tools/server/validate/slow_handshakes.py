@@ -2,9 +2,10 @@
 """Measure TLS handshake timeout and admission under incomplete peer load.
 
 Use PROVIDER_LIVE_BINARY to select an existing ProviderLive executable.
-The target is configured with a 1000 ms handshake timeout and a 65 connection
-limit. The async listener admits at most 64 connections for that configured
-limit, because its source maps the public limit to N minus one.
+The target is configured with a 1000 ms handshake timeout and a 64 connection
+limit. The async listener admits 64 connections. It stores the configured
+limit minus one, then checks whether the current reader count is strictly
+greater before adding the next connection.
 """
 
 from __future__ import annotations
@@ -27,8 +28,8 @@ from ws_sse_load import cpu_seconds
 
 
 HANDSHAKE_TIMEOUT_MS = 1000
-MAX_CONNECTIONS = 65
-EFFECTIVE_CONNECTION_LIMIT = MAX_CONNECTIONS - 1
+MAX_CONNECTIONS = 64
+EFFECTIVE_CONNECTION_LIMIT = MAX_CONNECTIONS
 SILENT_PEERS = 64
 PARTIAL_PEERS = 64
 ADMISSION_OBSERVE_MS = 200
@@ -367,8 +368,9 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
         f"scheduler_margin_ms={SCHEDULER_MARGIN_MS}\n"
         f"listener_max_connections={MAX_CONNECTIONS}\n"
         f"source_effective_admission_limit={EFFECTIVE_CONNECTION_LIMIT}\n"
-        "limit_source=server/src/Http2.Server.Async.pas:THttp2AsyncServer.Create, "
-        "MaxConnections := AFactory.ServerLimits.MaxConnections - 1\n"
+        "limit_source=server/src/Http2.Server.Async.pas:THttp2AsyncServer.Create sets "
+        "MaxConnections := public_limit - 1; third_party/mORMot2/src/net/mormot.net.async.pas "
+        "checks fRead.Count > fMaxConnections before ConnectionCreate\n"
         f"silent_peers={SILENT_PEERS}\npartial_client_hello_peers={PARTIAL_PEERS}\n",
         encoding="utf-8",
     )

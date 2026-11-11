@@ -12,7 +12,8 @@ notes:
   - The example serves HTTP/1.1 and HTTP/2 clients. The commands curl -N
     http://127.0.0.1:8085/events and the same with --http2-prior-knowledge read the stream.
   - The path /hold opens a stream that sends no event and stays open. The limit of detached
-    streams is 30000, so a load run can hold many of them.
+    streams and listener connections is 30000, so a load run can hold many of them and
+    serve ordinary requests at the same time.
   - The optional arguments are the host and the port. The port 0 picks a free port.
 ---
 }
@@ -90,6 +91,7 @@ begin
     .WithPort(Port)
     .WithClearTextAllowed(True)
     .WithMaxDetachedStreams(30000)
+    .WithServerLimits(TServerLimits.Create.WithMaxConnections(30000))
     .WithHandler(TReplayHandler.Create)
     .Build;
   Server.Start;

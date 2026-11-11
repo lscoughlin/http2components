@@ -15,7 +15,8 @@ notes:
   - The server runs until the caller presses Enter, then stops.
   - There are three optional arguments. They are the host (default 127.0.0.1), the port (default 8084) and the
     word big, which raises the message limits to 32 MiB for a conformance run. The word
-    load raises the limit of detached streams to 30000 for a load run.
+    load raises the limits of detached streams and listener connections to
+    30000 for a load run. The listener limit remains 10000 in other modes.
 ---
 }
 /// A WebSocket echo server with a browser page
@@ -168,6 +169,8 @@ begin
   Server := THttp2ServerFactory.Create
     .WithMaxConcurrentStreams(256)
     .WithMaxDetachedStreams(IfThen((ParamCount >= 3) and (ParamStr(3) = 'load'), 30000, 10000))
+    .WithServerLimits(TServerLimits.Create.WithMaxConnections(
+      IfThen((ParamCount >= 3) and (ParamStr(3) = 'load'), 30000, 10000)))
     .WithHost(Host)
     .WithPort(Port)
     .WithClearTextAllowed(True)
