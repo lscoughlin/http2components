@@ -28,6 +28,12 @@ def run(command, *, timeout=30, **kwargs):
 
 
 def compile_probe():
+    supplied = os.environ.get("PROVIDER_LIVE_BINARY")
+    if supplied:
+        binary = Path(supplied).resolve()
+        if not binary.is_file():
+            raise RuntimeError(f"provider probe binary does not exist: {binary}")
+        return binary
     run([sys.executable, "tools/build.py", "compile:server-probe", SOURCE],
         cwd=ROOT, timeout=180)
     target = os.environ.get("TARGET")
