@@ -38,9 +38,9 @@ def read_frame(sock, pending):
     first, second = read_exact(sock, 2, pending)
     length = second & 0x7f
     if length == 126:
-        length = struct.unpack(">H", read_exact(sock, 2))[0]
+        length = struct.unpack(">H", read_exact(sock, 2, pending))[0]
     elif length == 127:
-        length = struct.unpack(">Q", read_exact(sock, 8))[0]
+        length = struct.unpack(">Q", read_exact(sock, 8, pending))[0]
     return first & 0x0f, read_exact(sock, length, pending)
 
 
