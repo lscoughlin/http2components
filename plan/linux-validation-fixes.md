@@ -507,3 +507,10 @@ owner does not weaken expected close codes or remove slow-reader progress
 checks. Root reviews the repair and runs all affected tests followed by the
 complete server suite. Performance stays blocked until the required server
 checks pass. Remote diagnostic runs wait for the current batch to finish.
+
+The complete run finished with 717 tests, one error, and two failures.
+TAbuseLimitTest.TestResetFloodGoAway raised ECONNRESET in the test peer's
+send path. This third result is part of the same investigation. The peer
+must verify the intended GOAWAY result; an abort that discards a required
+protocol notice is not accepted as a passing flood response. Existing
+independent abuse coverage remains required after the repair.
