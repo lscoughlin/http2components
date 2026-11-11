@@ -27,6 +27,7 @@ type
     procedure ClientOnlyContextIsRejected;
     procedure VerifiedPeerIdentityIsCopied;
     procedure UnverifiedPeerIdentityIsDropped;
+    procedure NilPeerHasNoIdentity;
   end;
 implementation
 function ProblemsText(const AProblems: TArray<string>): string;
@@ -129,6 +130,12 @@ begin
   Peer := NewTlsPeerCertificate(False, Leaf, [], [], [], [], []);
   AssertTrue('unverified metadata does not become an identity',
     ClientCertificateFromPeer(Peer, ccpCommonName) = nil);
+end;
+
+procedure TMtlsContextTest.NilPeerHasNoIdentity;
+begin
+  AssertTrue('an absent TLS peer has no client identity',
+    ClientCertificateFromPeer(nil, ccpCommonName) = nil);
 end;
 
 initialization
