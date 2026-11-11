@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Abuse checks for WebSocket sessions over HTTP/1.1.
 
-The script starts nothing. A caller starts `bin/ws_echo HOST PORT` with the default
+The script starts nothing. A caller starts the `ws_echo` example program with the default
 limits first. Each check opens its own connections, misbehaves in one way, and then
 checks two things: the server ended or limited the offender as the design says, and an
 ordinary request on a new connection is still answered within two seconds.

@@ -28,7 +28,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes,
   mormot.core.base, mormot.core.os,
-  Http2.Tls, Http2.ClientCert,
+  Http2.Client.Tls, Http2.Client.ClientCert,
   Http2.Common.Hpack, Http2.Common.Frames, Http2.Server.WebSocket.Frames;
 
 type

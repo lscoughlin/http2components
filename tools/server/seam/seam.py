@@ -4,7 +4,7 @@ Drive the connection seam of a running HTTP/2 server.
 
 This script starts nothing.  A caller starts the example server first:
 
-    ./bin/interop_server PORT
+    bin/<target>/<profile>/examples-server/programs/interop_server PORT
 
 The checks measure the cost of many connections, so the caller raises the
 file limit first (see the note at the top of Taskfile.yaml):

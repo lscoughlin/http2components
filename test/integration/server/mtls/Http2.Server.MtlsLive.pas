@@ -26,8 +26,8 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs,
   Http2.Server,
-  Http2.Errors, Http2.ClientCert, Http2.Stream, Http2.Messages, Http2.Client,
-  Http2.WebSocket,
+  Http2.Client.Errors, Http2.Client.ClientCert, Http2.Client.Stream,
+  Http2.Client.Messages, Http2.Client, Http2.Client.WebSocket,
   Http2.Server.Mtls.Live.Server, Http2.Server.Mtls.Live.Raw,
   Http2.Server.Mtls.Live.Leak;
 

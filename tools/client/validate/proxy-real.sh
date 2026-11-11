@@ -32,6 +32,13 @@ set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
+FPC="${FPC:-fpc}"
+if [ -z "${TARGET:-}" ]; then TARGET=$("$FPC" -iTP)-$("$FPC" -iTO); fi
+if [ -z "${PROFILE:-}" ]; then
+  PROFILE=default
+  [ -n "${DEBUG:-}" ] && PROFILE=debug
+fi
+VALIDATION_BIN="$ROOT/bin/$TARGET/$PROFILE/validation"
 HOST="${PROXY_REAL_HOST:-lscoughlin@liam-rzbox.local}"
 # the remote tree remote-run.sh uses for this checkout (same derivation)
 RDIR="${HTTP2_REMOTE_DIR:-http2client-ci/run-$(printf '%s' "$ROOT" | cksum | cut -d' ' -f1)}"
@@ -53,23 +60,25 @@ fi
 
 # ----------------------------------------------------- build (in the dev image)
 if [ "$1" = "--build" ]; then
-  M="$ROOT/third_party/mORMot2/src"
-  mkdir -p "$ROOT/bin/proxy-real"
-  exec fpc -O2 -vewn -Mdelphi -Fu"$ROOT/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" \
-    -Fu"$M/crypt" -FE"$ROOT/bin/proxy-real" -FU"$ROOT/bin/proxy-real" \
+  M="${MORMOT:-$ROOT/third_party/mORMot2/src}"
+  BUILD_DIR="${PROXY_REAL_BUILD_DIR:-$VALIDATION_BIN/proxy-real-build}"
+  mkdir -p "$BUILD_DIR"
+  exec fpc -O2 -vewn -Mdelphi -Fu"$ROOT/src/common" -Fu"$ROOT/src/client" -Fu"$ROOT/src/server" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" \
+    -Fu"$M/crypt" -FE"$BUILD_DIR" -FU"$BUILD_DIR" \
     "$ROOT/tools/client/validate/proxy_real_client.pas"
 fi
 
 # ------------------------------------------------------------------ on the host
 cd "$ROOT" || exit 2
 BASE="${PR_BASE:-18400}"
-WORK="$ROOT/bin/proxy-real-work"
+WORK="$VALIDATION_BIN/proxy-real-work-$$"
+RESULTS_DIR="$VALIDATION_BIN/proxy-real-results-$$"
 CERTS="$ROOT/test/fixtures/client/certs"
-MT="$CERTS/mtls"
-CA_C=/src/bin/proxy-real-work/ca.pem   # the same files as the client container sees them
-MTC=/src/test/fixtures/client/certs/mtls
+MT="$WORK/certs"
+CA_C="/src/bin/$TARGET/$PROFILE/validation/proxy-real-work-$$/ca.pem"   # the same files as the client container sees them
+MTC="/src/bin/$TARGET/$PROFILE/validation/proxy-real-work-$$/certs"
 export LC_ALL=C
-rm -rf "$WORK"; mkdir -p "$WORK/apache" "$WORK/squid"
+rm -rf "$WORK"; mkdir -p "$WORK/apache" "$WORK/squid" "$RESULTS_DIR"
 
 # origins
 O_H2=$((BASE + 1)); O_H1=$((BASE + 2)); O_PL=$((BASE + 3)); O_WS=$((BASE + 4))
@@ -82,15 +91,26 @@ A_OPEN=$((BASE + 20)); A_AUTH=$((BASE + 21)); A_TLS=$((BASE + 22))
 S_OPEN=$((BASE + 30)); S_AUTH=$((BASE + 31)); S_TLS=$((BASE + 32))
 ALLOWED="$O_H2 $O_H1 $O_PL $O_WS $O_WSS $O_SSE $O_MT $O_MT2 $O_DOWN"   # O_DENY is not
 
-TOOLS=pr-tools; APACHE=pr-apache; SQUID=pr-squid
-RESULTS="$WORK/results.tsv"; : > "$RESULTS"
+TOOLS="pr-tools-$$"; APACHE="pr-apache-$$"; SQUID="pr-squid-$$"
+RESULTS="$RESULTS_DIR/results.tsv"; : > "$RESULTS"
 FAILS=0
 
 cleanup() {
-  docker rm -f $TOOLS $APACHE $SQUID >/dev/null 2>&1
+  mkdir -p "$RESULTS_DIR"
+  for container in "$TOOLS" "$APACHE" "$SQUID"; do
+    docker logs "$container" >"$RESULTS_DIR/$container-docker.log" 2>&1 || true
+  done
+  docker rm -f "$TOOLS" "$APACHE" "$SQUID" >/dev/null 2>&1
+  for diagnostic in "$WORK"/*.log "$WORK"/*.out "$WORK"/*.err; do
+    [ -f "$diagnostic" ] && cp -p "$diagnostic" "$RESULTS_DIR/"
+  done
+  rm -rf "$WORK"
+  echo "proxy-real: diagnostic results are in $RESULTS_DIR"
 }
 trap cleanup EXIT INT TERM
-cleanup
+bash "$ROOT/tools/client/validate/make-mtls-certs.sh" "$MT" \
+  >"$WORK/certs.log" 2>&1 \
+  || { cat "$WORK/certs.log" >&2; echo "proxy-real: could not generate its test PKI" >&2; exit 2; }
 
 command -v docker >/dev/null || { echo "proxy-real: docker not found" >&2; exit 2; }
 docker image inspect "$IMG" >/dev/null 2>&1 || { echo "proxy-real: image $IMG missing (tools/client/container/remote-run.sh builds it)" >&2; exit 2; }
@@ -100,20 +120,22 @@ done
 
 HOSTS="--add-host other.example:127.0.0.1"
 ME="$(id -u):$(id -g)"
-docker run -d --rm --name $TOOLS --network host $HOSTS --user "$ME" -e HOME=/tmp \
+docker run -d --rm --name "$TOOLS" --network host $HOSTS --user "$ME" -e HOME=/tmp \
   -v "$ROOT:/src" -w /src "$IMG" sleep 3600 >/dev/null || exit 2
-tx() { docker exec -w /src $TOOLS "$@"; }
+tx() { docker exec -w /src "$TOOLS" "$@"; }
 
 echo "proxy-real: building the client driver"
-tx bash tools/client/validate/proxy-real.sh --build >"$WORK/build.log" 2>&1 \
+mkdir -p "$WORK/build"
+docker exec -w /src -e PROXY_REAL_BUILD_DIR="/src/bin/$TARGET/$PROFILE/validation/proxy-real-work-$$/build" "$TOOLS" \
+  bash tools/client/validate/proxy-real.sh --build >"$WORK/build.log" 2>&1 \
   || { tail -20 "$WORK/build.log"; echo "proxy-real: build failed" >&2; exit 2; }
-CLIENT=bin/proxy-real/proxy_real_client
+CLIENT="bin/$TARGET/$PROFILE/validation/proxy-real-work-$$/build/proxy_real_client"
 
 # ----------------------------------------------------------------- the origins
 CA_BUNDLE="$WORK/ca.pem"     # trusts the origin (other.example) and the https proxies (localhost)
 cat "$CERTS/other.crt" "$CERTS/localhost.crt" > "$CA_BUNDLE"
 mkdir -p "$WORK/htdocs"; echo origin-h2 > "$WORK/htdocs/index.html"
-WORKC=/src/bin/proxy-real-work
+WORKC="/src/bin/$TARGET/$PROFILE/validation/proxy-real-work-$$"
 
 bg() { # name command...   (a background process in the tools container)
   local n="$1"; shift
@@ -137,7 +159,7 @@ bg ws python3 tools/client/validate/ws_servers.py --log $WORKC/origin-ws.log --p
   --tls-port $O_WSS --cert test/fixtures/client/certs/other.crt --key test/fixtures/client/certs/other.key
 bg sse python3 tools/client/validate/sse_server.py --port $O_SSE
 bg mt python3 -u tools/client/validate/mtls_server.py --port $O_MT --tls 1.3 --log $WORKC/origin-mt.log \
-  --cert test/fixtures/client/certs/other.crt --key test/fixtures/client/certs/other.key --ca test/fixtures/client/certs/mtls/ca.crt
+  --cert test/fixtures/client/certs/other.crt --key test/fixtures/client/certs/other.key --ca $MTC/ca.crt
 for p in $O_H2 $O_MT2 $O_H1 $O_PL $O_WS $O_WSS $O_SSE $O_MT; do waitport $p origin || exit 2; done
 
 # --------------------------------------------------------------- proxy configs
@@ -233,9 +255,9 @@ EOF
 } > "$WORK/squid/squid.conf"
 
 MOUNTS=(-v "$WORK/htpasswd:/conf/htpasswd:ro" -v "$CERTS:/certs:ro")
-docker run -d --name $APACHE --network host $HOSTS "${MOUNTS[@]}" \
+docker run -d --name "$APACHE" --network host $HOSTS "${MOUNTS[@]}" \
   -v "$WORK/apache/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro" "$HTTPD_IMG" >/dev/null || exit 2
-docker run -d --name $SQUID --network host $HOSTS "${MOUNTS[@]}" \
+docker run -d --name "$SQUID" --network host $HOSTS "${MOUNTS[@]}" \
   -v "$WORK/squid/squid.conf:/etc/squid/squid.conf:ro" "$SQUID_IMG" >/dev/null || exit 2
 for p in $A_OPEN $A_AUTH $A_TLS $S_OPEN $S_AUTH $S_TLS; do
   waitport $p proxy || { docker logs $APACHE 2>&1 | tail -20; docker logs $SQUID 2>&1 | tail -20; exit 2; }

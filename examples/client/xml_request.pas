@@ -4,9 +4,9 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: send XML and read XML directly into a TXMLDocument.
+/// http2components client example: send XML and read XML directly into a TXMLDocument.
 // - build: `task examples`
-// - run:   bin/xml_request https://nghttp2.org/httpbin/xml
+// - run:   bin/<target>/<profile>/examples-client/programs/xml_request https://nghttp2.org/httpbin/xml
 // - shows: Http2.Readers.pas. WithXmlBody serializes a TXMLDocument request
 //   body and defaults `content-type: application/xml`; ReadXmlDocument parses
 //   an XML response straight into a TXMLDocument. The reader returns a

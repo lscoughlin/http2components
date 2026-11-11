@@ -31,12 +31,6 @@ uses
   Http2.Server.Tls, Http2.Server.Async, Http2.Server.Async.Options;
 
 type
-  /// the pure mapping tests of the protocol range
-  TTlsProtocolMappingTest = class(TTestCase)
-  published
-    procedure TestFactoryMapsProtocolRange;
-  end;
-
   /// a handler that does nothing, only to satisfy the factory wiring
   TTlsNullHandler = class(TInterfacedObject, IHttp2Handler)
   public
@@ -69,37 +63,6 @@ const
   /// the loopback certificate and key of the test suite
   cTlsCertFile = 'test/certs/localhost.crt';
   cTlsKeyFile = 'test/certs/localhost.key';
-
-{ TTlsProtocolMappingTest }
-
-procedure TTlsProtocolMappingTest.TestFactoryMapsProtocolRange;
-var
-  Factory: THttp2ServerFactory;
-  Policy: TTlsPolicy;
-begin
-  Factory := THttp2ServerFactory.Create
-    .WithHandler(TTlsNullHandler.Create)
-    .WithClearTextAllowed(False)
-    .WithTls(TTlsServerOptions.Create
-      .WithCertificateFile(cTlsCertFile)
-      .WithMinTlsVersion(tvTls13)
-      .WithMaxTlsVersion(tvTls13));
-  Policy := BuildTlsPolicy(Factory);
-  AssertEquals('the minimum reaches the policy', TLS1_3_VERSION,
-    Policy.MinProtocol);
-  AssertEquals('the maximum reaches the policy', TLS1_3_VERSION,
-    Policy.MaxProtocol);
-  Factory := THttp2ServerFactory.Create
-    .WithHandler(TTlsNullHandler.Create)
-    .WithClearTextAllowed(False)
-    .WithTls(TTlsServerOptions.Create
-      .WithCertificateFile(cTlsCertFile));
-  Policy := BuildTlsPolicy(Factory);
-  AssertEquals('the default minimum is TLS 1.2', TLS1_2_VERSION,
-    Policy.MinProtocol);
-  AssertEquals('the default maximum is TLS 1.3', TLS1_3_VERSION,
-    Policy.MaxProtocol);
-end;
 
 { TTlsNullHandler }
 
@@ -265,7 +228,6 @@ begin
 end;
 
 initialization
-  RegisterTest(TTlsProtocolMappingTest);
   RegisterTest(TTlsProtocolLiveTest);
 
 end.

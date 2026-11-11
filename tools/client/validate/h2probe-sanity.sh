@@ -28,7 +28,7 @@ cd "$REPO_ROOT"
 BUILD="$(mktemp -d /tmp/h2sanity-build.XXXXXX)"
 PROBE="$BUILD/h2probe"
 FPC="${FPC:-fpc}"
-MORMOT="third_party/mORMot2/src"
+MORMOT="${MORMOT:-third_party/mORMot2/src}"
 export OPENSSL_LIBPATH="${OPENSSL_LIBPATH:-/opt/homebrew/opt/openssl@3/lib}"
 export PATH="/Users/liamcoughlin/.rd/bin:$PATH"
 
@@ -93,7 +93,7 @@ wait_log_line() { # file pattern [tenths]
   return 1
 }
 
-"$FPC" -O2 -Mdelphi -Fu./src -Fu"$BUILD" \
+"$FPC" -O2 -Mdelphi -Fu./src/common -Fu./src/client -Fu./src/server -Fu./test/client -Fu"$BUILD" \
   -Fu"$MORMOT/core" -Fu"$MORMOT/lib" -Fu"$MORMOT/net" -Fu"$MORMOT/crypt" \
   -FU"$BUILD" -FE"$BUILD" tools/client/h2probe.pas >"$BUILD/build.log" 2>&1 || {
     echo "ERROR: h2probe failed to compile" >&2; tail -20 "$BUILD/build.log" >&2

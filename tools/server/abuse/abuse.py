@@ -5,7 +5,7 @@ Drive the abuse limits of the example server with raw HTTP/2 frames.
 The script starts nothing.  It expects a server that a caller started with
 the `strict` profile, so the control-frame buckets fire quickly:
 
-    ./bin/interop_server PORT strict
+    bin/<target>/<profile>/examples-server/programs/interop_server PORT strict
 
 Each check opens a fresh connection, sends the frames of one flood, and
 asserts the answer of the server.  A check prints PASS or FAIL.  The script

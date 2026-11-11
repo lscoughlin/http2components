@@ -36,7 +36,7 @@ else
 fi
 
 # 2. Every document starts with the YAML front matter.
-licence='LGPL-2.1-only WITH Independent-modules-exception'
+licence='Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)'
 bad=""
 for f in $(find doc -name '*.md' | sort); do
   first=$(sed -n '1p' "$f")

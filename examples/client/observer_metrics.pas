@@ -7,7 +7,7 @@ notes:
   - this preserves a client test from the source project
 ---
 }
-/// http2client example adapter: metrics over IHttpClientObserver.
+/// http2components client example adapter: metrics over IHttpClientObserver.
 // - this unit is NOT part of the library.  It shows how a consumer derives
 //   metrics from THttpOutcome, from the per-message seam and from
 //   THttpClient.PoolStats.  The registry is a small in-memory stand-in for a

@@ -16,7 +16,13 @@ set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BIN="${BIN:-$ROOT/bin}"
+FPC="${FPC:-fpc}"
+if [ -z "${TARGET:-}" ]; then TARGET=$("$FPC" -iTP)-$("$FPC" -iTO); fi
+if [ -z "${PROFILE:-}" ]; then
+  PROFILE=default
+  [ -n "${DEBUG:-}" ] && PROFILE=debug
+fi
+BIN="${BIN:-$ROOT/bin/$TARGET/$PROFILE/client-test/programs}"
 SSE_HOST="${SSE_HOST:-127.0.0.1}"
 SSE_PORT="${SSE_PORT:-8399}"
 RUNNER="$BIN/Http2.Client.RunTests"
@@ -42,12 +48,18 @@ SRV_PID=$!
 # wait for the listener rather than sleeping a fixed second. The probe runs
 # in a subshell whose stderr is dropped, because bash reports a refused
 # /dev/tcp connection before later redirections on the same line take effect.
+READY=no
 for _ in $(seq 1 50); do
   if (exec 3<"/dev/tcp/$SSE_HOST/$SSE_PORT") 2>/dev/null; then
+    READY=yes
     break
   fi
   sleep 0.1
 done
+if [ "$READY" != yes ]; then
+  echo "sse-live: server did not open $SSE_HOST:$SSE_PORT" >&2
+  exit 2
+fi
 
 echo "sse-live: server on http://$SSE_HOST:$SSE_PORT/events (pid $SRV_PID)"
 SSE_TEST_URL="http://$SSE_HOST:$SSE_PORT/events" \

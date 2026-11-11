@@ -15,9 +15,8 @@ notes:
   - A second argument of `strict` lowers every control bucket, so the abuse
     tool reaches its limits.
   - The optional switches `--cert=FILE` and `--key=FILE` turn the listener
-    into TLS, and the port line then names `h2` instead of `h2c`.  A
-    certificate and a key come from `test/certs`, which the validation script
-    creates when the pair is absent.
+    into TLS, and the port line then names `h2` instead of `h2c`. The validation
+    script creates a certificate and key in a temporary directory for each run.
 ---
 }
 /// The server that the validation runs drive

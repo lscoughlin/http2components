@@ -18,7 +18,13 @@ set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BIN="${BIN:-$ROOT/bin}"
+FPC="${FPC:-fpc}"
+if [ -z "${TARGET:-}" ]; then TARGET=$("$FPC" -iTP)-$("$FPC" -iTO); fi
+if [ -z "${PROFILE:-}" ]; then
+  PROFILE=default
+  [ -n "${DEBUG:-}" ] && PROFILE=debug
+fi
+BIN="${BIN:-$ROOT/bin/$TARGET/$PROFILE/client-test/programs}"
 BASE="${PROXY_BASE:-8481}"
 AUTH_BASE=$((BASE + 10))
 RUNNER="$BIN/Http2.Client.RunTests"

@@ -4,12 +4,12 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: open a WebSocket, send a text message, print the echo.
+/// http2components client example: open a WebSocket, send a text message, print the echo.
 // - build: `make examples`
-// - run:   bin/websocket_echo wss://echo.websocket.org/ "hello"
+// - run:   bin/<target>/<profile>/examples-client/programs/websocket_echo wss://echo.websocket.org/ "hello"
 //   or against the reference server:
-//          python3 tools/validate/ws_servers.py --log /tmp/ws.log --plain-port 8601 &
-//          bin/websocket_echo ws://127.0.0.1:8601/echo "hello"
+//          python3 tools/client/validate/ws_servers.py --log /tmp/ws.log --plain-port 8601 &
+//          bin/<target>/<profile>/examples-client/programs/websocket_echo ws://127.0.0.1:8601/echo "hello"
 // - shows: IWebSocketRequest / IWebSocketListener, IHttpClient.Send, the
 //   demand rule (nothing is delivered until Request), and the closing
 //   handshake.  See doc/design/websocket.md.

@@ -9,8 +9,8 @@
 #      network) and running tools/client/h2probe against it,
 # then classifies the id MATCH / BETTER / WORSE / UNKNOWN.
 #
-# It writes the full per-id table to bin/validation-results.md (a build
-# artifact) and prints a summary. It is re-runnable and independent of the
+# It writes the full per-id table to the target and profile validation
+# directory and prints a summary. It is re-runnable and independent of the
 # repo build state.
 #
 # Verdict model (approved direction):
@@ -32,14 +32,19 @@ set -u
 
 REPO_ROOT="$(cd "$(dirname "$0")/../../.." && pwd)"
 cd "$REPO_ROOT"
+if [ -z "${TARGET:-}" ]; then TARGET="$("${FPC:-fpc}" -iTP)-$("${FPC:-fpc}" -iTO)"; fi
+if [ -z "${PROFILE:-}" ]; then
+  PROFILE=default
+  [ -n "${DEBUG:-}" ] && PROFILE=debug
+fi
 
 BUILD="$(mktemp -d /tmp/h2harness-build.XXXXXX)"
 PROBE="$BUILD/h2probe"
-OUT_MD="$REPO_ROOT/bin/validation-results.md"
+OUT_MD="${OUT_MD:-$REPO_ROOT/bin/$TARGET/$PROFILE/validation/harness-results.md}"
 RESULTS_TSV="$BUILD/results.tsv"
 
 FPC="${FPC:-fpc}"
-MORMOT="third_party/mORMot2/src"
+MORMOT="${MORMOT:-third_party/mORMot2/src}"
 export OPENSSL_LIBPATH="${OPENSSL_LIBPATH:-/opt/homebrew/opt/openssl@3/lib}"
 export PATH="/Users/liamcoughlin/.rd/bin:$PATH"
 
@@ -96,7 +101,7 @@ wrote_status() { # id -> yes/no
 }
 
 compile_probe() {
-  "$FPC" -O2 -Mdelphi -Fu./src -Fu"$BUILD" \
+  "$FPC" -O2 -Mdelphi -Fu./src/common -Fu./src/client -Fu./src/server -Fu./test/client -Fu"$BUILD" \
     -Fu"$MORMOT/core" -Fu"$MORMOT/lib" -Fu"$MORMOT/net" -Fu"$MORMOT/crypt" \
     -FU"$BUILD" -FE"$BUILD" tools/client/h2probe.pas >"$BUILD/build.log" 2>&1 || {
     echo "ERROR: h2probe failed to compile; see $BUILD/build.log" >&2

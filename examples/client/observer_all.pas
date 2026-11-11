@@ -4,13 +4,13 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: the tracing, metrics and logging adapters together.
+/// http2components client example: the tracing, metrics and logging adapters together.
 // - build: `make examples`
 // - run:   against the reference fixtures in tools/validate (cleartext, so the
 //          h2c-upgrade policy is enabled for http:// and ws:// URLs):
-//            python3 tools/validate/sse_server.py --port 8091 &
-//            python3 tools/validate/ws_servers.py --log /tmp/ws.log --plain-port 8601 &
-//            bin/observer_all http://127.0.0.1:8091 ws://127.0.0.1:8601/echo
+//            python3 tools/client/validate/sse_server.py --port 8091 &
+//            python3 tools/client/validate/ws_servers.py --log /tmp/ws.log --plain-port 8601 &
+//            bin/<target>/<profile>/examples-client/programs/observer_all http://127.0.0.1:8091 ws://127.0.0.1:8601/echo
 //          (both arguments are optional and default to those addresses)
 // - shows: THttpClientFactory.WithRequestObserver installing three adapters
 //   side by side (examples/observer_tracing.pas, observer_metrics.pas and

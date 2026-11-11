@@ -4,11 +4,11 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: one GET request.
+/// http2components client example: one GET request.
 // - build: `task examples` (or see examples/README.md for a raw fpc command)
-// - run:   bin/basic_get https://nghttp2.org/
+// - run:   bin/<target>/<profile>/examples-client/programs/basic_get https://nghttp2.org/
 // - shows: the fluent factory, Send, StatusCode, a response header, and
-//   reading the whole body as text with ReadText (src/Http2.Client.pas).
+//   reading the whole body as text with ReadText (src/client/Http2.Client.pas).
 program example_basic_get;
 
 {$mode delphi}{$H+}

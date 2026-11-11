@@ -29,7 +29,7 @@ set -eu
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-OUT="$ROOT/test/fixtures/client/certs/mtls"
+OUT="${1:-$ROOT/test/fixtures/client/certs/mtls}"
 PASS="mtls-test-pass"
 DAYS=9125
 

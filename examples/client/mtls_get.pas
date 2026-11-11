@@ -4,10 +4,10 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: GETs, or a wss session, with a client certificate.
+/// http2components client example: GETs, or a wss session, with a client certificate.
 // - build: `make examples`
-// - run:   bin/mtls_get https://localhost:8443/ client.crt client.key [ca.crt [passphrase]]
-//          bin/mtls_get wss://localhost:8443/ws client.crt client.key ca.crt
+// - run:   bin/<target>/<profile>/examples-client/programs/mtls_get https://localhost:8443/ client.crt client.key [ca.crt [passphrase]]
+//          bin/<target>/<profile>/examples-client/programs/mtls_get wss://localhost:8443/ws client.crt client.key ca.crt
 //          a certificate of `-` presents no identity; the URL may be a comma
 //          separated list, fetched in turn by the one client
 // - env:   MTLS_SELECT=port:cert:key[;port:cert:key...] picks the identity per
@@ -25,7 +25,7 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 //          the origin only, and is dropped on a redirect to another origin)
 //          MTLS_PRINT_BODY=1 also prints each response body on one `body:`
 //          line, so a server that echoes the client certificate subject can be
-//          checked (tools/validate/mtls-real.sh)
+//          checked (tools/client/validate/mtls-real.sh)
 // - shows: WithClientCertificateFiles, WithClientIdentitySelector,
 //   WithProxyClientIdentity, a per-request WithClientIdentity, a bad identity failing at Build, and the
 //   distinct EHttpTlsClientAuthError when the server rejects the certificate.

@@ -1,5 +1,5 @@
 #!/bin/sh
-# SPDX-License-Identifier: LGPL-2.1-only WITH Independent-modules-exception
+# SPDX-License-Identifier: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 # Copyright 2026 Liam Seamus Coughlin
 #
 # Make the test PKI of the mutual TLS live tests in the directory $1.
