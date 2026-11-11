@@ -1,0 +1,863 @@
+{**
+---
+license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+copyright: Copyright 2026 Liam Seamus Coughlin
+keywords: http2, server, config, factory, options, tls, queue
+notes:
+  - This unit holds the server factory and its option records.
+  - Every setting of the server goes through the factory.  A server unit
+    reads its limits from the settings it is given and holds no limit of
+    its own.
+  - The factory is an immutable record.  Every WithX method returns a new
+    record with one field changed, so a stored factory is safe to reuse and
+    to fork.
+  - The defaults appear once, in Create.  The load runs set the buckets, the
+    queue depth and the IO thread count; the section "Default limits" of
+    doc/design/limits.md names the measurement of each one.
+  - Validate collects every problem of the settings into one list, so a
+    caller sees all problems in one call.
+---
+}
+/// Server factory and configuration options for the HTTP/2 server
+// - THttp2ServerFactory is the one place where a server setting is set and
+//   where a server default lives
+// - the factory builds a running server through Http2.Server.Runtime, which
+//   holds the IHttp2Server type that Build returns
+// - the settings are read-only to the caller
+unit Http2.Server.Config;
+
+{$mode delphi}{$H+}
+{$modeswitch advancedrecords}
+{$interfaces com}
+
+interface
+
+uses
+  {$IFDEF UNIX}cthreads,{$ENDIF}
+  SysUtils,
+  Http2.Server.Errors,
+  Http2.Server.AccessLog,
+  Http2.Common.Frames,
+  Http2.Common.FlowControl,
+  Http2.Server.Limits,
+  Http2.Server.Duplex,
+  Http2.Server.Http1.Limits,
+  Http2.Server.WebSocket.Options,
+  Http2.Server.Mtls.Types,
+  Http2.Server.Config.Tls, Http2.Server.Config.Limits, Http2.Server.Config.Socket,
+  Http2.Server.Seam;
+
+const
+  /// the greatest header table size: 2^31 - 1, so the value fits a signed
+  /// 32-bit number in the HPACK encoder and decoder
+  cMaxHeaderTableSize = High(LongInt);
+
+type
+  /// the action of the server when the request queue is full
+  TQueueRefusalMode = (
+    /// reset the stream with REFUSED_STREAM
+    rmRefuseStream,
+    /// answer HTTP 503
+    rmHttp503);
+
+  /// the TLS settings of the listener (see Http2.Server.Config.Tls)
+  TTlsServerOptions = Http2.Server.Config.Tls.TTlsServerOptions;
+
+  /// the request queue settings
+  ///
+  /// A record is a value, so a copy of the factory holds its own queue
+  /// settings.  Depth 0 keeps no request waiting, so every request beyond
+  /// the free handlers is refused at once.
+  TQueueOptions = record
+  private
+    FDepth: Integer;
+    FMaxWaitMs: Integer;
+    FRefusalMode: TQueueRefusalMode;
+  public
+    /// the defaults of the queue settings
+    class function Create: TQueueOptions; static;
+    /// the greatest number of requests that wait for a handler
+    function WithDepth(const AValue: Integer): TQueueOptions;
+    /// the greatest wait of a queued request, in milliseconds
+    function WithMaxWaitMs(const AValue: Integer): TQueueOptions;
+    /// the action of the server when the queue is full
+    function WithRefusalMode(const AValue: TQueueRefusalMode): TQueueOptions;
+
+    property Depth: Integer read FDepth;
+    property MaxWaitMs: Integer read FMaxWaitMs;
+    property RefusalMode: TQueueRefusalMode read FRefusalMode;
+  end;
+
+  /// the server factory
+  ///
+  /// Create returns the record with the chosen defaults.  Every WithX
+  /// method returns a new record with one field changed, so the original
+  /// record keeps its value.  Validate collects every problem of the
+  /// settings into one list and returns False when the list is not empty.
+  THttp2ServerFactory = record
+  private
+    FHost: string;
+    FPort: Integer;
+    FBacklog: Integer;
+    FClearTextAllowed: Boolean;
+    FTls: TTlsServerOptions;
+    FIOThreads: Integer;
+    FHandlerThreads: Integer;
+    FStreamPoolSize: Integer;
+    FMaxDetachedStreams: Integer;
+    FChannelQueueLimit: Integer;
+    FMaxOutputQueueBytes: Integer;
+    FChannelLowWater: Integer;
+    FSseKeepAliveMs: Integer;
+    FSseStallTimeoutMs: Integer;
+    FQueue: TQueueOptions;
+    FHttp11Fallback: Boolean;
+    FHttp11: THttp11Limits;
+    FWs: TWsOptions;
+    FWsEnabled: Boolean;
+    FServerLimits: TServerLimits; FSocket: TSocketOptions;
+    FMaxConcurrentStreams: LongWord;
+    FInitialStreamWindow: LongWord;
+    FInitialConnectionWindow: LongWord;
+    FMaxFrameSize: LongWord;
+    FMaxHeaderListSize: LongWord;
+    FMaxContinuationFrames: LongWord;
+    FHeaderTableSize: LongWord;
+    FResetBucket: TTokenBucketOptions;
+    FPingBucket: TTokenBucketOptions;
+    FSettingsBucket: TTokenBucketOptions;
+    FEmptyDataBucket: TTokenBucketOptions;
+    FWindowUpdateBucket: TTokenBucketOptions;
+    FContinuationBucket: TTokenBucketOptions;
+    FIdleTimeoutMs: Integer;
+    FHeaderTimeoutMs: Integer;
+    FGracefulStopTimeoutMs: Integer;
+    FMaxConnectionAgeMs: Integer;
+    FMaxStreamsPerConnection: Integer;
+    FHandler: IHttp2Handler;
+    FAccessLogWriter: IAccessLogWriter;
+    FClock: IMonotonicClock;
+  public
+    /// the record with the chosen defaults
+    class function Create: THttp2ServerFactory; static;
+
+    // ---- listener ----
+
+    /// the address of the listener, such as '0.0.0.0' or '::1'
+    function WithHost(const AValue: string): THttp2ServerFactory;
+    /// the TCP port of the listener; 0 asks the operating system for a free
+    /// port
+    function WithPort(const AValue: Integer): THttp2ServerFactory;
+    /// the length of the listen backlog
+    function WithBacklog(const AValue: Integer): THttp2ServerFactory;
+    /// allow cleartext HTTP/2 (h2c prior knowledge); default off
+    function WithClearTextAllowed(const AValue: Boolean): THttp2ServerFactory;
+
+    // ---- TLS ----
+
+    /// the TLS settings of the listener
+    function WithTls(
+      const AOptions: TTlsServerOptions): THttp2ServerFactory;
+
+    // ---- IO pool ----
+
+    /// the number of IO pool threads
+    function WithIOThreads(const AValue: Integer): THttp2ServerFactory;
+
+    // ---- handler pool ----
+
+    /// the number of handler pool threads
+    function WithHandlerThreads(const AValue: Integer): THttp2ServerFactory;
+
+    // ---- detached streams ----
+
+    /// the number of threads of the streaming pool, which runs the application
+    /// work for detached streams (at least 1)
+    function WithStreamPoolSize(const AValue: Integer): THttp2ServerFactory;
+    /// the greatest number of detached streams of the whole server; 0 refuses
+    /// every detach
+    function WithMaxDetachedStreams(const AValue: Integer): THttp2ServerFactory;
+    /// the outbound queue limit of a detached stream, in bytes
+    function WithChannelQueueLimit(const AValue: Integer): THttp2ServerFactory;
+    /// the queued byte count at or below which a refused writer is told
+    function WithChannelLowWater(const AValue: Integer): THttp2ServerFactory;
+    /// the most octets that the output queue of one connection may hold; a peer
+    /// that does not read ends the connection above it; 0 sets no cap
+    function WithMaxOutputQueueBytes(const AValue: Integer): THttp2ServerFactory;
+    /// the period of the keep-alive comment of an event stream, in milliseconds; 0 turns it off
+    function WithSseKeepAlive(const AValue: Integer): THttp2ServerFactory;
+    /// how long a full event stream may stay full before the server closes it; 0 turns it off
+    function WithSseStallTimeout(const AValue: Integer): THttp2ServerFactory;
+
+    // ---- queue ----
+
+    /// the request queue settings
+    function WithQueue(const AOptions: TQueueOptions): THttp2ServerFactory;
+
+    // ---- HTTP/1.1 ----
+
+    /// serve HTTP/1.1 on the same listener when the peer does not speak HTTP/2
+    function WithHttp11Fallback(const AValue: Boolean): THttp2ServerFactory;
+    /// the limits of the HTTP/1.1 parser
+    function WithHttp11Limits(const ALimits: THttp11Limits): THttp2ServerFactory;
+
+    // ---- WebSocket ----
+
+    /// the settings of the WebSocket part of the server
+    function WithWebSockets(const AOptions: TWsOptions): THttp2ServerFactory;
+    function WithServerLimits(const ALimits: TServerLimits): THttp2ServerFactory;
+    function WithSocketOptions(const AOptions: TSocketOptions): THttp2ServerFactory;
+
+    // ---- streams ----
+
+    /// SETTINGS_MAX_CONCURRENT_STREAMS of one connection
+    function WithMaxConcurrentStreams(
+      const AValue: LongWord): THttp2ServerFactory;
+    /// SETTINGS_INITIAL_WINDOW_SIZE of every new stream
+    function WithInitialStreamWindow(
+      const AValue: LongWord): THttp2ServerFactory;
+    /// the initial flow-control window of the connection
+    function WithInitialConnectionWindow(
+      const AValue: LongWord): THttp2ServerFactory;
+    /// SETTINGS_MAX_FRAME_SIZE that the server accepts
+    function WithMaxFrameSize(const AValue: LongWord): THttp2ServerFactory;
+    /// SETTINGS_MAX_HEADER_LIST_SIZE that the server accepts
+    function WithMaxHeaderListSize(
+      const AValue: LongWord): THttp2ServerFactory;
+    /// the greatest number of CONTINUATION frames in one header block
+    function WithMaxContinuationFrames(
+      const AValue: LongWord): THttp2ServerFactory;
+    /// SETTINGS_HEADER_TABLE_SIZE of the HPACK codecs
+    function WithHeaderTableSize(
+      const AValue: LongWord): THttp2ServerFactory;
+
+    // ---- bucket limits ----
+
+    /// the token bucket that limits stream resets
+    function WithResetBucket(
+      const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+    /// the token bucket that limits PING frames
+    function WithPingBucket(
+      const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+    /// the token bucket that limits SETTINGS frames
+    function WithSettingsBucket(
+      const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+    /// the token bucket that limits empty DATA frames
+    function WithEmptyDataBucket(
+      const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+    /// the token bucket that limits WINDOW_UPDATE frames
+    function WithWindowUpdateBucket(
+      const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+    /// the token bucket that limits CONTINUATION frames
+    function WithContinuationBucket(
+      const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+
+    // ---- timeouts ----
+
+    /// the time an idle connection stays open, in milliseconds
+    function WithIdleTimeout(const AValue: Integer): THttp2ServerFactory;
+    /// the time the header block of a request may take, in milliseconds
+    function WithHeaderTimeout(const AValue: Integer): THttp2ServerFactory;
+    /// the time a graceful stop waits for the open streams, in milliseconds
+    function WithGracefulStopTimeout(
+      const AValue: Integer): THttp2ServerFactory;
+    /// the greatest age of a connection, in milliseconds; 0 turns the limit off
+    function WithMaxConnectionAge(const AValue: Integer): THttp2ServerFactory;
+    function WithMaxStreamsPerConnection(const AValue: Integer): THttp2ServerFactory;
+
+    // ---- wiring ----
+
+    /// the handler that serves every request; required
+    function WithHandler(const AValue: IHttp2Handler): THttp2ServerFactory;
+    /// the receiver of the access log records; nil (the default) writes no log
+    // - TStdOutAccessLogWriter prints one Common Log Format line per request
+    function WithAccessLogWriter(const AValue: IAccessLogWriter): THttp2ServerFactory;
+    /// the clock of the token buckets and of the timeouts
+    function WithClock(const AValue: IMonotonicClock): THttp2ServerFactory;
+
+    /// collect every problem of the settings
+    // - the answer is False and AProblems holds one message per problem
+    //   when a setting is wrong
+    // - the answer is True and AProblems is empty when every setting is
+    //   correct
+    function Validate(out AProblems: TArray<string>): Boolean;
+
+    // ---- listener ----
+
+    property Host: string read FHost;
+    property Port: Integer read FPort;
+    property Backlog: Integer read FBacklog;
+    property ClearTextAllowed: Boolean read FClearTextAllowed;
+
+    // ---- TLS ----
+
+    property Tls: TTlsServerOptions read FTls;
+
+    // ---- IO pool ----
+
+    property IOThreads: Integer read FIOThreads;
+
+    // ---- handler pool ----
+
+    property HandlerThreads: Integer read FHandlerThreads;
+
+    // ---- detached streams ----
+
+    property StreamPoolSize: Integer read FStreamPoolSize;
+    property MaxDetachedStreams: Integer read FMaxDetachedStreams;
+    property ChannelQueueLimit: Integer read FChannelQueueLimit;
+    property ChannelLowWater: Integer read FChannelLowWater;
+    property MaxOutputQueueBytes: Integer read FMaxOutputQueueBytes;
+    property SseKeepAliveMs: Integer read FSseKeepAliveMs;
+    property SseStallTimeoutMs: Integer read FSseStallTimeoutMs;
+
+    // ---- queue ----
+
+    property Queue: TQueueOptions read FQueue;
+    property Http11Fallback: Boolean read FHttp11Fallback;
+    property Http11: THttp11Limits read FHttp11;
+    property WebSockets: TWsOptions read FWs;
+    /// true once WithWebSockets ran; the server then advertises RFC 8441 extended CONNECT
+    property WebSocketsEnabled: Boolean read FWsEnabled;
+    property ServerLimits: TServerLimits read FServerLimits;
+    property Socket: TSocketOptions read FSocket;
+
+    // ---- streams ----
+
+    property MaxConcurrentStreams: LongWord read FMaxConcurrentStreams;
+    property InitialStreamWindow: LongWord read FInitialStreamWindow;
+    property InitialConnectionWindow: LongWord read FInitialConnectionWindow;
+    property MaxFrameSize: LongWord read FMaxFrameSize;
+    property MaxHeaderListSize: LongWord read FMaxHeaderListSize;
+    property MaxContinuationFrames: LongWord read FMaxContinuationFrames;
+    property HeaderTableSize: LongWord read FHeaderTableSize;
+
+    // ---- bucket limits ----
+
+    property ResetBucket: TTokenBucketOptions read FResetBucket;
+    property PingBucket: TTokenBucketOptions read FPingBucket;
+    property SettingsBucket: TTokenBucketOptions read FSettingsBucket;
+    property EmptyDataBucket: TTokenBucketOptions read FEmptyDataBucket;
+    property WindowUpdateBucket: TTokenBucketOptions read FWindowUpdateBucket;
+    property ContinuationBucket: TTokenBucketOptions read FContinuationBucket;
+
+    // ---- timeouts ----
+
+    property IdleTimeoutMs: Integer read FIdleTimeoutMs;
+    property HeaderTimeoutMs: Integer read FHeaderTimeoutMs;
+    property GracefulStopTimeoutMs: Integer read FGracefulStopTimeoutMs;
+    property MaxConnectionAgeMs: Integer read FMaxConnectionAgeMs;
+    property MaxStreamsPerConnection: Integer read FMaxStreamsPerConnection;
+
+    // ---- wiring ----
+
+    property Handler: IHttp2Handler read FHandler;
+    property AccessLogWriter: IAccessLogWriter read FAccessLogWriter;
+    property Clock: IMonotonicClock read FClock;
+  end;
+
+implementation
+
+{ TQueueOptions }
+
+class function TQueueOptions.Create: TQueueOptions;
+begin
+  // the queue depth comes from the seam run: a client that carried 50
+  // streams at once saw every stream answered, and the queue holds 64 more
+  // requests behind the 4 handler threads of that run, so the bound of the
+  // streams in flight is 68 (doc/verification/validation.md)
+  Result.FDepth := 64;
+  Result.FMaxWaitMs := 5000;
+  Result.FRefusalMode := rmRefuseStream;
+end;
+
+function TQueueOptions.WithDepth(const AValue: Integer): TQueueOptions;
+begin
+  Result := Self;
+  Result.FDepth := AValue;
+end;
+
+function TQueueOptions.WithMaxWaitMs(const AValue: Integer): TQueueOptions;
+begin
+  Result := Self;
+  Result.FMaxWaitMs := AValue;
+end;
+
+function TQueueOptions.WithRefusalMode(
+  const AValue: TQueueRefusalMode): TQueueOptions;
+begin
+  Result := Self;
+  Result.FRefusalMode := AValue;
+end;
+
+{ THttp2ServerFactory }
+
+class function THttp2ServerFactory.Create: THttp2ServerFactory;
+begin
+  // the defaults of the server.  The buckets come from the load runs, and
+  // the section "The default limits" of doc/design/limits.md names the
+  // measurement of each one.  The listener, stream and timeout values are
+  // the chosen protocol and operational bounds: RFC 9113 section 6.5.2 sets
+  // 100 concurrent streams as the customary value, 16384 is the frame size
+  // that RFC 9113 section 4.2 recommends, and the timeouts bound a stalled
+  // peer without a measurement of their own.
+  Result.FHost := '0.0.0.0';
+  Result.FPort := 8443;
+  Result.FBacklog := 128;
+  Result.FClearTextAllowed := False;
+  Result.FTls := TTlsServerOptions.Create;
+  Result.FIOThreads := 4;
+  Result.FHandlerThreads := 8;
+  Result.FStreamPoolSize := 1;
+  Result.FMaxDetachedStreams := 10000;
+  Result.FChannelQueueLimit := 262144;
+  Result.FChannelLowWater := 65536;
+  Result.FMaxOutputQueueBytes := 16777216;
+  Result.FSseKeepAliveMs := 15000;
+  Result.FSseStallTimeoutMs := 30000;
+  Result.FQueue := TQueueOptions.Create;
+  Result.FHttp11Fallback := True;
+  Result.FHttp11 := THttp11Limits.Create;
+  Result.FWs := TWsOptions.Create;
+  Result.FWsEnabled := False;
+  Result.FServerLimits := TServerLimits.Create; Result.FSocket := TSocketOptions.Create;
+  Result.FMaxConcurrentStreams := 100;
+  Result.FInitialStreamWindow := 65535;
+  Result.FInitialConnectionWindow := 65535;
+  Result.FMaxFrameSize := DefaultMaxFrameSize;
+  Result.FMaxHeaderListSize := 65536;
+  Result.FMaxContinuationFrames := 16;
+  Result.FHeaderTableSize := 4096;
+  Result.FResetBucket := TTokenBucketOptions.Create
+    .WithCapacity(1000)
+    .WithRefillPerSecond(100)
+    .WithCostBeforeDispatch(1)
+    .WithCostAfterDispatch(5);
+  Result.FPingBucket := TTokenBucketOptions.Create
+    .WithCapacity(100)
+    .WithRefillPerSecond(10);
+  Result.FSettingsBucket := TTokenBucketOptions.Create
+    .WithCapacity(100)
+    .WithRefillPerSecond(10);
+  Result.FEmptyDataBucket := TTokenBucketOptions.Create
+    .WithCapacity(100)
+    .WithRefillPerSecond(10);
+  // a peer sends one WINDOW_UPDATE for each window that it refills, so a
+  // large body needs thousands of them: a measurement of a 100 MB body sent
+  // 6102 frames, and the steady rate was 2450 frames in one second
+  // (doc/verification/validation.md).  The capacity admits a whole burst of
+  // a few megabytes with no refill, and the refill rate sits above the
+  // measured rate with headroom
+  Result.FWindowUpdateBucket := TTokenBucketOptions.Create
+    .WithCapacity(10000)
+    .WithRefillPerSecond(4000);
+  Result.FContinuationBucket := TTokenBucketOptions.Create
+    .WithCapacity(100)
+    .WithRefillPerSecond(10);
+  Result.FIdleTimeoutMs := 60000;
+  Result.FHeaderTimeoutMs := 30000;
+  Result.FGracefulStopTimeoutMs := 10000;
+  Result.FMaxConnectionAgeMs := 0;
+  Result.FMaxStreamsPerConnection := 0;
+  Result.FHandler := nil;
+  Result.FAccessLogWriter := nil;
+  Result.FClock := TMonotonicClock.Create;
+end;
+
+function THttp2ServerFactory.WithHost(
+  const AValue: string): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FHost := AValue;
+end;
+
+function THttp2ServerFactory.WithPort(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FPort := AValue;
+end;
+
+function THttp2ServerFactory.WithBacklog(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FBacklog := AValue;
+end;
+
+function THttp2ServerFactory.WithClearTextAllowed(
+  const AValue: Boolean): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FClearTextAllowed := AValue;
+end;
+
+function THttp2ServerFactory.WithTls(
+  const AOptions: TTlsServerOptions): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FTls := AOptions;
+end;
+
+function THttp2ServerFactory.WithIOThreads(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FIOThreads := AValue;
+end;
+
+function THttp2ServerFactory.WithHandlerThreads(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FHandlerThreads := AValue;
+end;
+
+function THttp2ServerFactory.WithStreamPoolSize(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FStreamPoolSize := AValue;
+end;
+
+function THttp2ServerFactory.WithMaxDetachedStreams(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FMaxDetachedStreams := AValue;
+end;
+
+function THttp2ServerFactory.WithChannelQueueLimit(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FChannelQueueLimit := AValue;
+end;
+
+function THttp2ServerFactory.WithMaxOutputQueueBytes(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FMaxOutputQueueBytes := AValue;
+end;
+
+function THttp2ServerFactory.WithChannelLowWater(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FChannelLowWater := AValue;
+end;
+
+function THttp2ServerFactory.WithSseKeepAlive(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FSseKeepAliveMs := AValue;
+end;
+
+function THttp2ServerFactory.WithSseStallTimeout(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FSseStallTimeoutMs := AValue;
+end;
+
+function THttp2ServerFactory.WithQueue(
+  const AOptions: TQueueOptions): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FQueue := AOptions;
+end;
+
+function THttp2ServerFactory.WithWebSockets(
+  const AOptions: TWsOptions): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FWs := AOptions;
+  Result.FWsEnabled := True;
+end;
+function THttp2ServerFactory.WithServerLimits(
+  const ALimits: TServerLimits): THttp2ServerFactory;
+begin Result := Self; Result.FServerLimits := ALimits; end;
+function THttp2ServerFactory.WithSocketOptions(
+  const AOptions: TSocketOptions): THttp2ServerFactory;
+begin Result := Self; Result.FSocket := AOptions; end;
+
+function THttp2ServerFactory.WithHttp11Fallback(
+  const AValue: Boolean): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FHttp11Fallback := AValue;
+end;
+
+function THttp2ServerFactory.WithHttp11Limits(
+  const ALimits: THttp11Limits): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FHttp11 := ALimits;
+end;
+
+function THttp2ServerFactory.WithMaxConcurrentStreams(
+  const AValue: LongWord): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FMaxConcurrentStreams := AValue;
+end;
+
+function THttp2ServerFactory.WithInitialStreamWindow(
+  const AValue: LongWord): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FInitialStreamWindow := AValue;
+end;
+
+function THttp2ServerFactory.WithInitialConnectionWindow(
+  const AValue: LongWord): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FInitialConnectionWindow := AValue;
+end;
+
+function THttp2ServerFactory.WithMaxFrameSize(
+  const AValue: LongWord): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FMaxFrameSize := AValue;
+end;
+
+function THttp2ServerFactory.WithMaxHeaderListSize(
+  const AValue: LongWord): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FMaxHeaderListSize := AValue;
+end;
+
+function THttp2ServerFactory.WithMaxContinuationFrames(
+  const AValue: LongWord): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FMaxContinuationFrames := AValue;
+end;
+
+function THttp2ServerFactory.WithHeaderTableSize(
+  const AValue: LongWord): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FHeaderTableSize := AValue;
+end;
+
+function THttp2ServerFactory.WithResetBucket(
+  const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FResetBucket := AOptions;
+end;
+
+function THttp2ServerFactory.WithPingBucket(
+  const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FPingBucket := AOptions;
+end;
+
+function THttp2ServerFactory.WithSettingsBucket(
+  const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FSettingsBucket := AOptions;
+end;
+
+function THttp2ServerFactory.WithEmptyDataBucket(
+  const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FEmptyDataBucket := AOptions;
+end;
+
+function THttp2ServerFactory.WithWindowUpdateBucket(
+  const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FWindowUpdateBucket := AOptions;
+end;
+
+function THttp2ServerFactory.WithContinuationBucket(
+  const AOptions: TTokenBucketOptions): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FContinuationBucket := AOptions;
+end;
+
+function THttp2ServerFactory.WithIdleTimeout(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FIdleTimeoutMs := AValue;
+end;
+
+function THttp2ServerFactory.WithHeaderTimeout(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FHeaderTimeoutMs := AValue;
+end;
+
+function THttp2ServerFactory.WithGracefulStopTimeout(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FGracefulStopTimeoutMs := AValue;
+end;
+
+function THttp2ServerFactory.WithMaxConnectionAge(const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FMaxConnectionAgeMs := AValue;
+end;
+
+function THttp2ServerFactory.WithMaxStreamsPerConnection(
+  const AValue: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FMaxStreamsPerConnection := AValue;
+end;
+
+function THttp2ServerFactory.WithHandler(
+  const AValue: IHttp2Handler): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FHandler := AValue;
+end;
+
+function THttp2ServerFactory.WithAccessLogWriter(
+  const AValue: IAccessLogWriter): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FAccessLogWriter := AValue;
+end;
+
+function THttp2ServerFactory.WithClock(
+  const AValue: IMonotonicClock): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FClock := AValue;
+end;
+
+function THttp2ServerFactory.Validate(out AProblems: TArray<string>): Boolean;
+var
+  Problems: TArray<string>;
+
+  procedure Add(const AProblem: string);
+  var
+    Count: Integer;
+  begin
+    Count := Length(Problems) + 1;
+    SetLength(Problems, Count);
+    Problems[Count - 1] := AProblem;
+  end;
+
+  procedure CheckBucket(const AName: string; const ABucket: TTokenBucketOptions);
+  begin
+    if ABucket.Capacity < 1 then
+      Add('the ' + AName + ' bucket capacity is below 1');
+    if ABucket.RefillPerSecond < 0 then
+      Add('the ' + AName + ' bucket refill rate is below 0');
+  end;
+
+begin
+  Problems := nil;
+
+  if (FPort < 0) or (FPort > High(Word)) then
+    Add('the port ' + IntToStr(FPort) + ' is outside 0 to ' +
+      IntToStr(High(Word)));
+  if FBacklog < 1 then
+    Add('the listen backlog is below 1');
+  if FIOThreads < 1 then
+    Add('the IO thread count is below 1');
+  if FHandlerThreads < 1 then
+    Add('the handler thread count is below 1');
+  if FStreamPoolSize < 1 then
+    Add('the streaming pool size is below 1');
+  if FMaxDetachedStreams < 0 then
+    Add('the detached stream limit is below 0');
+  if FChannelQueueLimit < 1 then
+    Add('the channel queue limit is below 1');
+  if FMaxOutputQueueBytes < 0 then
+    Add('the output queue cap is below 0');
+  if (FChannelLowWater < 0) or (FChannelLowWater >= FChannelQueueLimit) then
+    Add('the channel low-water mark is outside 0 to the queue limit minus 1');
+  if (FSseKeepAliveMs < 0) or (FSseKeepAliveMs > cSseMaxMs) then
+    Add('the SSE keep-alive period is outside 0 to one hour');
+  if (FSseStallTimeoutMs < 0) or (FSseStallTimeoutMs > cSseMaxMs) then
+    Add('the SSE stall timeout is outside 0 to one hour');
+  FHttp11.Problems(Problems);
+  FWs.Problems(Problems);
+  FServerLimits.Validate(Problems); FSocket.Validate(Problems);
+  if FTls.MinTlsVersion > FTls.MaxTlsVersion then
+    Add('the minimum TLS version is above the maximum');
+  if FQueue.Depth < 0 then
+    Add('the queue depth is below 0');
+  if FQueue.MaxWaitMs < 0 then
+    Add('the maximum queue wait is below 0');
+  if not FClearTextAllowed then
+  begin
+    // the key file is optional: ApplyTls accepts a certificate file that
+    // holds the key too
+    if FTls.CertificateFile = '' then
+      Add('the TLS certificate file is empty while cleartext is off');
+  end;
+  if FTls.ClientCertMode <> ccmNone then
+  begin
+    if (FTls.ClientCaFile = '') and not FTls.ClientTrustSystemStore then
+      Add('the client certificate mode has no trust anchor');
+    if (FTls.ClientCaFile <> '') and not FileExists(FTls.ClientCaFile) then
+      Add('the client CA file is not present');
+    if (FTls.ClientVerifyDepth < 1) or
+       (FTls.ClientVerifyDepth > cMaxClientVerifyDepth) then
+      Add('the client verify depth is outside 1 to ' +
+        IntToStr(cMaxClientVerifyDepth));
+    if FTls.CertificateFile = '' then
+      Add('the client certificate mode needs a TLS certificate file');
+    if (FTls.ClientCertMode = ccmRequired) and FClearTextAllowed then
+      Add('the required client certificate mode needs cleartext off');
+  end;
+  if (FMaxFrameSize < MinAllowedFrameSize) or
+     (FMaxFrameSize > MaxAllowedFrameSize) then
+    Add('the maximum frame size is outside ' + IntToStr(MinAllowedFrameSize) +
+      ' to ' + IntToStr(MaxAllowedFrameSize));
+  if FInitialStreamWindow > LongWord(MaxWindowSize) then
+    Add('the initial stream window is above ' + IntToStr(MaxWindowSize));
+  if FInitialConnectionWindow > LongWord(MaxWindowSize) then
+    Add('the initial connection window is above ' + IntToStr(MaxWindowSize));
+  if FInitialStreamWindow < 1 then
+    Add('the initial stream window is below 1');
+  if FInitialConnectionWindow < 1 then
+    Add('the initial connection window is below 1');
+  if FMaxConcurrentStreams < 1 then
+    Add('the concurrent stream limit is below 1');
+  if FHeaderTableSize > cMaxHeaderTableSize then
+    Add('the header table size is above ' + IntToStr(cMaxHeaderTableSize));
+  CheckBucket('reset', FResetBucket);
+  CheckBucket('ping', FPingBucket);
+  CheckBucket('settings', FSettingsBucket);
+  CheckBucket('empty-data', FEmptyDataBucket);
+  CheckBucket('window-update', FWindowUpdateBucket);
+  CheckBucket('continuation', FContinuationBucket);
+  if FIdleTimeoutMs < 0 then
+    Add('the idle timeout is below 0');
+  if FHeaderTimeoutMs < 0 then
+    Add('the header timeout is below 0');
+  if FGracefulStopTimeoutMs < 0 then
+    Add('the graceful stop timeout is below 0');
+  if FMaxConnectionAgeMs < 0 then
+    Add('the maximum connection age is below 0');
+  if FMaxStreamsPerConnection < 0 then
+    Add('the maximum streams per connection is below 0');
+  if FHandler = nil then
+    Add('the handler is not assigned');
+
+  AProblems := Problems;
+  Result := Length(AProblems) = 0;
+end;
+
+end.
