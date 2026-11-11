@@ -713,3 +713,20 @@ close or an explicit connection reset. The response must have no HTTP
 status or body, the accepted-count delta must remain zero, and the existing
 capacity, recovery, timeout, and descriptor checks still apply. Other TLS
 failures remain failures. The complete four-case matrix validates the change.
+
+## LV-38: Limit mapping test still asserts the replaced dependency gate
+
+The complete a3298bd Linux server suite ran 724 tests with zero errors and
+one failure. TAsyncCapsTest.TestMaxConnectionsMapping still expects the old
+mapping from a configured limit of two to mORMot MaxConnections of one.
+The new combined admission guard deliberately sets both dependency gates to
+MaxInt. The existing assertion therefore describes the replaced design.
+
+The server owner updates this test in its worktree. The revised checks
+establish that the redundant dependency gates are disabled and that the
+configured bound is enforced by the new admission guard. The zero-limit
+setting retains its unlimited meaning. Tests must retain exact-capacity,
+release, and failed-creation checks; deleting the old assertion alone is
+not sufficient. Source checks, focused limit tests, and the complete Linux
+server suite validate the repair. Root reviews and merges the test change,
+then resumes affected acceptance and all performance stages.
