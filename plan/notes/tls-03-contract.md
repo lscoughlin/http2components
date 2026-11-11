@@ -192,3 +192,11 @@ buffer bounds, partial acceptance and drain, exact-once plaintext under
 backpressure, absolute deadlines, held handshake progress, fatal alerts,
 EOF, close-notify, and terminal behavior. The fake session is contract
 support; it is not provider conformance evidence.
+
+## Output credit review, 2026-11-11
+
+The server review found that an empty ciphertext queue alone cannot prove that all accepted plaintext is encrypted. OpenSSL can retain queued plaintext or a fixed write buffer across a native retry. `TTlsProgress.PendingPlaintextOutput` now counts accepted bytes that do not yet have complete encrypted output. A transport can release plaintext credit only after that count is zero, provider and adapter ciphertext are drained, and the raw transport queue is empty. Failed or aborted sessions do not establish successful delivery.
+
+OpenSSL reports the sum of its queued and in-flight plaintext. TlsLib protects accepted plaintext synchronously in `TTlsEngine.Write`; its count is zero. The fake session also encodes synchronously and its default progress count is zero. The shared contract checks the count against accepted credit and requires zero after complete delivery. The OpenSSL test also fills the pending queue, observes a positive count after partial encryption, and checks that Abort clears it.
+
+Main bounded checks passed: OpenSSL 90 cases in 0.585 seconds (`bin/tls-coordinator/tls-progress-openssl-03.log`), TlsLib 84 cases in 1.011 seconds (`bin/tls-coordinator/tls-progress-tlslib.log`). The first new OpenSSL assertion failed because the test assumed a full write instead of the permitted 16 KiB prefix. The corrected test retains and submits the suffix. This is not a forced native WANT_READ/WANT_WRITE test.

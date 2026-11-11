@@ -486,13 +486,16 @@ begin
 end;
 
 procedure OpenSessions(const AContext: ITLSContext; const AHost, AServerName: string;
-  out AClientInfo, AServerInfo: TTlsNegotiatedInfo);
+  out AClientInfo, AServerInfo: TTlsNegotiatedInfo;
+  const ACheckPendingPlaintext: Boolean = False);
 var
   ClientOptions: TTlsClientSessionOptions;
   ServerOptions: TTlsServerSessionOptions;
   Client, Server: ITLSSession;
   ToClient, ToServer: TBytes;
-  I, N: Integer;
+  I, N, Accepted: Integer;
+  Payload: TBytes;
+  Progress: TTlsProgress;
 begin
   ClientOptions := Default(TTlsClientSessionOptions).WithAlpns(['h2']);
   ClientOptions.HostName := AHost;
@@ -515,6 +518,24 @@ begin
       'TLS session pair did not open');
     AClientInfo := Client.NegotiatedInfo;
     AServerInfo := Server.NegotiatedInfo;
+    if ACheckPendingPlaintext then
+    begin
+      SetLength(Payload, TlsMaxPlaintextBuffer);
+      FillChar(Payload[0], Length(Payload), 42);
+      Accepted := 0;
+      repeat
+        N := Client.WritePlaintext(Payload, Accepted, Length(Payload) - Accepted);
+        Inc(Accepted, N);
+      until (N = 0) or (Accepted = Length(Payload));
+      Progress := Client.Advance(GetTickCount64);
+      Check((Accepted = Length(Payload)) and
+        (Progress.PendingPlaintextOutput > 0) and
+        (Progress.PendingPlaintextOutput < Accepted),
+        'queued plaintext is absent from TLS progress');
+      Client.Abort;
+      Check(Client.Advance(0).PendingPlaintextOutput = 0,
+        'abort retained pending plaintext credit');
+    end;
   finally
     Client.Abort; Server.Abort;
   end;
@@ -736,6 +757,7 @@ end;
 procedure Run;
 var ClientOptions: TTlsClientSessionOptions; ServerOptions: TTlsServerSessionOptions;
   N: Integer;
+  ClientInfo, ServerInfo: TTlsNegotiatedInfo;
 begin
   Cases := 0;
   MakeFixtures;
@@ -744,6 +766,7 @@ begin
   LoadIdentities;
   CheckLegacyIdentityInputs;
   BuildContext;
+  OpenSessions(Context, 'localhost', 'localhost', ClientInfo, ServerInfo, True);
   ClientOptions := Default(TTlsClientSessionOptions);
   ClientOptions.HostName := 'localhost';
   ClientOptions.ServerName := 'localhost';
