@@ -67,21 +67,17 @@ parsing assertions remain assigned to the OpenSSL provider suite.
   failed with `EThreadError` during the trickle-deadline case. The lock issue
   was corrected and covered by the passing coordinator run. No worker-side
   executable was run after centralized execution was requested.
-- The complete `Http2.Client.RunTests` source still needs compilation and
-  runtime validation after legacy TLS tests migrate to provider-owned fixtures.
-  Earlier compilation stopped in `Http2.Client.MutualTls.Support` on removed
-  role-native `TClientIdentity` loaders. Those assertions are preserved for
-  migration to `Http2.OpenSSL` APIs after the provider merge.
+- The complete `Http2.Client.RunTests` source compiles after the legacy TLS
+  tests migrated to provider-owned fixtures. Only bounded test groups have run;
+  the complete client suite remains deferred.
 
 ## Remaining coverage
 
 The fake runner exercises client session and selected tunnel routes. Existing
 client tests retain detailed CONNECT, SOCKS, HTTPS-proxy, WebSocket, SSE,
-HTTP/1.1 fallback, and mutual-TLS routing assertions. Several of those tests
-still call removed role-native TLS loaders or setters and must be migrated to
-the provider facade before the broad client test runner can compile. The pool
-fake verifies context-key isolation; it does not run two complete HTTPS
-requests through distinct contexts.
+HTTP/1.1 fallback, and mutual-TLS routing assertions. The pool fake verifies
+context-key isolation; it does not run two complete HTTPS requests through
+distinct contexts. The broad client suite remains deferred.
 
 ## Provider-backed legacy test migration
 
@@ -104,9 +100,30 @@ removed CA-file and insecure setters. The live context helper uses a configured
 trust anchor when present and system trust only when no anchor is supplied and
 verification remains enabled.
 
-The full `Http2.Client.RunTests` program now compiles with
-`-Fu tls/openssl/src -dUSE_OPENSSL`. No broad client test executable has run.
-The registered bounded mutual-TLS groups are
-`TMutualTlsRoutingTest`, `TMutualTlsOtherTest`, `TMutualTlsAcceptTest`,
-`TMutualTlsRejectTest`, and `TMutualTlsRequestTest`. Proxy transport groups are
-`TProxyTransportTest` and `TProxyTransportAdditionalTest`.
+The full `Http2.Client.RunTests` program compiles with
+`-Fu tls/openssl/src -dUSE_OPENSSL`. The coordinator ran bounded mutual-TLS
+groups rather than the broad client suite. Routing, acceptance, and rejection
+assertions pass after the provider-neutral peer-alert mapping was added. The
+registered groups are `TMutualTlsRoutingTest`, `TMutualTlsOtherTest`,
+`TMutualTlsAcceptTest`, `TMutualTlsRejectTest`, and `TMutualTlsRequestTest`.
+Proxy transport groups are `TProxyTransportTest` and
+`TProxyTransportAdditionalTest`.
+
+## Final coordinator checks
+
+The final client session fake runner passed 17 cases in 0.473 seconds
+(`tls07-coordinator-17.log`). The bounded `TMutualTlsRoutingTest` passed 28
+cases in 18.197 seconds (`tls07-legacy-routing-02.log`), and
+`TMutualTlsRejectTest` passed 10 cases in 1.568 seconds
+(`tls07-legacy-reject-01.log`). Earlier, `TMutualTlsAcceptTest` passed 9 cases
+in 1.834 seconds (`tls07-legacy-accept-01.log`). All had zero errors,
+failures, or ignored cases. The TLS 1.2 and TLS 1.3 client-auth rejection
+assertions remain intact. TLS alert strings use provider-neutral wire alert
+codes; ambiguous TLS 1.2 `handshake_failure` maps to client-auth rejection only
+when the provider reports an observed CertificateRequest. The first routing
+run failed three rejection assertions because the role had not restored alert
+classification; the provider-neutral mapping fixed those failures.
+
+The coordinator still holds the full legacy runner while it runs the smaller
+`TMutualTlsOtherTest` and `TMutualTlsRequestTest` groups. No broad client suite
+or external proxy suite was run.
