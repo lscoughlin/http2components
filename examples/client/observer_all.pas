@@ -4,7 +4,7 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: the tracing, metrics and logging adapters together.
+/// http2components client example: the tracing, metrics and logging adapters together.
 // - build: `make examples`
 // - run:   against the reference fixtures in tools/validate (cleartext, so the
 //          h2c-upgrade policy is enabled for http:// and ws:// URLs):

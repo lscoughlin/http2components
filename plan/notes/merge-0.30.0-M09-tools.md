@@ -51,18 +51,8 @@ host.
 All 17 shell scripts pass syntax checks with their declared shells. All 14
 Python tool files parse. `git diff --check` passes.
 
-`python3 tools/build.py examples` compiled all client and server example
-programs with Free Pascal 3.2.4 and the pinned mORMot2 checkout from the
-integration worktree. The command did not run the programs. Its captured output
-is at `/tmp/m09-examples.log` on the build host.
+`MORMOT=/Users/liamcoughlin/Source/lscoughlin/.http2components-worktrees/integration/third_party/mORMot2/src OPENSSL_LIBPATH=/opt/homebrew/opt/openssl@3/lib python3 tools/build.py examples` compiled all client and server example programs after the role source layout merge. The command did not run the programs. Its captured output is at `/tmp/m09-examples-final2.log` on the build host.
 
-The four client validation Pascal programs `h2probe.pas`,
-`autobahn_client.pas`, `cleartext_probe.pas`, and `proxy_real_client.pas`
-compiled. The activated server TLS and mTLS integration programs also compiled
-with the pre-layout source tree. No live, Docker, load, external, or Linux gate
-ran.
+The four client validation Pascal programs `h2probe.pas`, `autobahn_client.pas`, `cleartext_probe.pas`, and `proxy_real_client.pas` compiled with `src/common`, `src/client`, and `src/server` paths. The active server TLS and mTLS integration programs also compiled with those role paths and the test integration directories on the compiler path. No live, Docker, load, external, or Linux gate ran.
 
-The source checker reports existing client source issues in the pre-layout
-branch: 21 files exceed the line limit and `Http2.Client.Sse` imports the
-facade. The activated integration files have no unresolved project-unit names.
-The source checker must run again after the source layout merge.
+The source checker reports 13 existing client files above the line limit and the client SSE implementation importing the facade. The active integration files have no unresolved project-unit names. These are client source issues, not M09 paths.

@@ -4,7 +4,7 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: send JSON and read JSON directly into TJSONObject.
+/// http2components client example: send JSON and read JSON directly into TJSONObject.
 // - build: `task examples`
 // - run:   bin/json_request https://nghttp2.org/httpbin/post
 // - shows: Http2.Readers.pas. WithJsonBody serializes a TJSONData request body

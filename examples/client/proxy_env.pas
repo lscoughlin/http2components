@@ -4,7 +4,7 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: a GET routed by the proxy environment variables.
+/// http2components client example: a GET routed by the proxy environment variables.
 // - build: `make examples`
 // - run:   bin/proxy_env https://nghttp2.org/ [no-proxy-list]
 //   e.g.   https_proxy=http://proxy.corp:3128 bin/proxy_env https://nghttp2.org/

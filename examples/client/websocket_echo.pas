@@ -4,7 +4,7 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: open a WebSocket, send a text message, print the echo.
+/// http2components client example: open a WebSocket, send a text message, print the echo.
 // - build: `make examples`
 // - run:   bin/websocket_echo wss://echo.websocket.org/ "hello"
 //   or against the reference server:

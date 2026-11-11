@@ -4,7 +4,7 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: what the request observers cost on loopback.
+/// http2components client example: what the request observers cost on loopback.
 // - build and run: `make measure-observer`
 //   or by hand:    bin/observer_overhead [requests-per-round [rounds]]
 //   (defaults: 3000 requests in each of 3 rounds; the traffic is cleartext

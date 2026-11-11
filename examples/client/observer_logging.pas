@@ -7,7 +7,7 @@ notes:
   - this preserves a client test from the source project
 ---
 }
-/// http2client example adapter: structured logging over IHttpClientObserver.
+/// http2components client example adapter: structured logging over IHttpClientObserver.
 // - this unit is NOT part of the library.  It shows how a consumer writes one
 //   line per callback, as `key=value` pairs, to a logger of its own.  The sink
 //   is the library's own IHttpLogger interface, so a real adapter forwards to

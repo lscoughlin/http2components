@@ -4,7 +4,7 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 ---
 }
-/// http2client example: consume a Server-Sent Events stream.
+/// http2components client example: consume a Server-Sent Events stream.
 // - build: `task examples` (or see examples/README.md for a raw fpc command)
 // - run:   bin/sse_stream https://example.com/events
 //          bin/sse_stream http://127.0.0.1:8091/events   (also works: an

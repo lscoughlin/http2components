@@ -1,6 +1,6 @@
 # Examples
 
-Eleven small programs and three adapter units showing how to use `http2client`.
+Eleven small programs and three adapter units showing use of the client API in `http2components`.
 They are smoke builds: the build compiles them, it does not run them.
 
 ## Build
