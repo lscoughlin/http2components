@@ -17,6 +17,7 @@ interface
 uses
   SysUtils, SyncObjs, Classes, fpcunit, testregistry,
   Http2.Common.Frames, Http2.Common.Hpack, Http2.Client.Connection,
+  Http2.Client.Connection.SendCredit,
   Http2.Client.MockSocket.Support, Http2.Client.MockSocket.TestSupport,
   Http2.Client.MockSocket.Frames, Http2.Client;
 
@@ -27,9 +28,81 @@ type
     procedure TestPooledConnectionCreatesEncoderLock;
     procedure TestHeaderTableSettingPreservesOtherPeerSettings;
     procedure TestSettingsFailureReleasesEncoderLock;
+    procedure TestEveryFlowCreditWaiterReceivesItsOwnWake;
   end;
 
 implementation
+
+type
+  TSendCreditWorker = class(TThread)
+  private
+    FConnection: TConnection;
+    FStreamId: LongWord;
+    FStarted: PRTLEvent;
+    FDone: PRTLEvent;
+    FStartedFlag: Boolean;
+    FDoneFlag: Boolean;
+    FGranted: LongWord;
+    FErrorText: string;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AConnection: TConnection;
+      const AStreamId: LongWord);
+    destructor Destroy; override;
+    function WaitStarted(const ATimeoutMs: Integer): Boolean;
+    function WaitDone(const ATimeoutMs: Integer): Boolean;
+    property Granted: LongWord read FGranted;
+    property ErrorText: string read FErrorText;
+  end;
+
+constructor TSendCreditWorker.Create(const AConnection: TConnection;
+  const AStreamId: LongWord);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FConnection := AConnection;
+  FStreamId := AStreamId;
+  FStarted := RTLEventCreate;
+  FDone := RTLEventCreate;
+  FStartedFlag := False;
+  FDoneFlag := False;
+  FGranted := 0;
+  FErrorText := '';
+end;
+
+destructor TSendCreditWorker.Destroy;
+begin
+  RTLEventDestroy(FStarted);
+  RTLEventDestroy(FDone);
+  inherited Destroy;
+end;
+
+procedure TSendCreditWorker.Execute;
+begin
+  FStartedFlag := True;
+  RTLEventSetEvent(FStarted);
+  try
+    FGranted := FConnection.AcquireSendCredit(FStreamId, 100, 2000, nil);
+  except
+    on E: Exception do
+      FErrorText := E.ClassName + ': ' + E.Message;
+  end;
+  FDoneFlag := True;
+  RTLEventSetEvent(FDone);
+end;
+
+function TSendCreditWorker.WaitStarted(const ATimeoutMs: Integer): Boolean;
+begin
+  RTLEventWaitFor(FStarted, ATimeoutMs);
+  Result := FStartedFlag;
+end;
+
+function TSendCreditWorker.WaitDone(const ATimeoutMs: Integer): Boolean;
+begin
+  RTLEventWaitFor(FDone, ATimeoutMs);
+  Result := FDoneFlag;
+end;
 
 procedure TConnectionSettingsRegressionTest.TestHeaderDecoderUsesLocalSettings;
 var
@@ -172,6 +245,77 @@ begin
     Conn.Free;
     Encoder.Free;
     EncoderLock.Free;
+  end;
+end;
+
+procedure TConnectionSettingsRegressionTest.TestEveryFlowCreditWaiterReceivesItsOwnWake;
+const
+  WaiterCount = 4;
+  StreamIds: array[0..WaiterCount - 1] of LongWord = (1, 3, 5, 7);
+var
+  I: Integer;
+  Started: QWord;
+  Registry: ISendCreditWaiterRegistry;
+  Waiters: array[0..WaiterCount - 1] of ISendCreditWaiter;
+  Sock: TMockSocket;
+  Conn: TConnection;
+  Workers: array[0..WaiterCount - 1] of TSendCreditWorker;
+  Deadline: QWord;
+begin
+  Registry := NewSendCreditWaiterRegistry;
+  for I := 0 to High(Waiters) do
+  begin
+    Waiters[I] := Registry.NewWaiter;
+    Waiters[I].Register;
+  end;
+  Registry.WakeAll;
+  for I := 0 to High(Waiters) do
+  begin
+    Started := GetTickCount64;
+    Waiters[I].Wait(250);
+    AssertTrue('waiter has its own pending wake ' + IntToStr(I),
+      GetTickCount64 - Started < 100);
+    Waiters[I] := nil;
+  end;
+  Registry := nil;
+
+  FillChar(Workers, SizeOf(Workers), 0);
+  Sock := TMockSocket.Create;
+  Conn := TConnection.Create(Sock);
+  try
+    for I := 0 to High(StreamIds) do
+      Conn.RegisterStream(StreamIds[I], nil);
+    for I := 0 to High(Workers) do
+    begin
+      Workers[I] := TSendCreditWorker.Create(Conn, StreamIds[I]);
+      Workers[I].Start;
+    end;
+    for I := 0 to High(Workers) do
+      AssertTrue('credit sender started ' + IntToStr(I),
+        Workers[I].WaitStarted(1000));
+    Deadline := GetTickCount64 + 2000;
+    while (Conn.SendCreditWaiterCount < WaiterCount) and
+          (GetTickCount64 < Deadline) do
+      Sleep(1);
+    AssertEquals('all senders parked before peer SETTINGS', WaiterCount,
+      Conn.SendCreditWaiterCount);
+    Conn.ApplyPeerSettingsValue(TConnectionSettings.Defaults);
+    for I := 0 to High(Workers) do
+    begin
+      AssertTrue('credit sender woke after peer SETTINGS ' + IntToStr(I),
+        Workers[I].WaitDone(500));
+      AssertEquals('no sender error ' + IntToStr(I), '', Workers[I].ErrorText);
+      AssertEquals('each sender reserves its requested credit ' + IntToStr(I),
+        100, Workers[I].Granted);
+    end;
+  finally
+    for I := 0 to High(Workers) do
+      if Workers[I] <> nil then
+      begin
+        Workers[I].WaitFor;
+        Workers[I].Free;
+      end;
+    Conn.Free;
   end;
 end;
 
