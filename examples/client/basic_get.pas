@@ -6,7 +6,7 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 }
 /// http2components client example: one GET request.
 // - build: `task examples` (or see examples/README.md for a raw fpc command)
-// - run:   bin/basic_get https://nghttp2.org/
+// - run:   bin/<target>/<profile>/examples-client/programs/basic_get https://nghttp2.org/
 // - shows: the fluent factory, Send, StatusCode, a response header, and
 //   reading the whole body as text with ReadText (src/client/Http2.Client.pas).
 program example_basic_get;

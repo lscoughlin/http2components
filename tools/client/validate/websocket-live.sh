@@ -20,7 +20,13 @@ set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BIN="${BIN:-$ROOT/bin}"
+FPC="${FPC:-fpc}"
+if [ -z "${TARGET:-}" ]; then TARGET=$("$FPC" -iTP)-$("$FPC" -iTO); fi
+if [ -z "${PROFILE:-}" ]; then
+  PROFILE=default
+  [ -n "${DEBUG:-}" ] && PROFILE=debug
+fi
+BIN="${BIN:-$ROOT/bin/$TARGET/$PROFILE/client-test/programs}"
 BASE="${WS_BASE:-8601}"
 PBASE=$((BASE + 10))
 MODE="${1:-live}"
@@ -164,7 +170,8 @@ JSON
   python3 "$HERE/autobahn_report.py" "$WORK/reports/clients/index.json" "http2client" \
     "$HERE/autobahn-expected.txt"
   RC2=$?
-  mkdir -p "$ROOT/bin/autobahn/$CONTAINER" && cp -R "$WORK/reports/clients" "$ROOT/bin/autobahn/$CONTAINER/" 2>/dev/null
+  mkdir -p "$ROOT/bin/$TARGET/$PROFILE/validation/autobahn-$CONTAINER" \
+    && cp -R "$WORK/reports/clients" "$ROOT/bin/$TARGET/$PROFILE/validation/autobahn-$CONTAINER/" 2>/dev/null
   if [ "$RC" -ne 0 ] || [ "$RC2" -ne 0 ]; then
     echo "websocket-live: autobahn FAILED (client rc=$RC, report rc=$RC2)"
     exit 1

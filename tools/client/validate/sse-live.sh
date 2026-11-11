@@ -16,7 +16,13 @@ set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-BIN="${BIN:-$ROOT/bin}"
+FPC="${FPC:-fpc}"
+if [ -z "${TARGET:-}" ]; then TARGET=$("$FPC" -iTP)-$("$FPC" -iTO); fi
+if [ -z "${PROFILE:-}" ]; then
+  PROFILE=default
+  [ -n "${DEBUG:-}" ] && PROFILE=debug
+fi
+BIN="${BIN:-$ROOT/bin/$TARGET/$PROFILE/client-test/programs}"
 SSE_HOST="${SSE_HOST:-127.0.0.1}"
 SSE_PORT="${SSE_PORT:-8399}"
 RUNNER="$BIN/Http2.Client.RunTests"

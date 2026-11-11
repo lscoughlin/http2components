@@ -3,7 +3,7 @@
 # Start the validation server on a free port and print the port.
 #
 # The caller sources this file.  The function `start_interop_server` starts
-# `bin/interop_server` with port zero, reads the port the program printed,
+# the server example program with port zero, reads the port the program printed,
 # and leaves the process id in the variable INTEROP_PID.  The function
 # `stop_interop_server` ends the program.  The program stops when its
 # standard input closes, so the shell holds a pipe open to it.
@@ -17,7 +17,7 @@ EXAMPLE_PORT=''
 # Start the server and set INTEROP_PID and INTEROP_PORT.
 # A missing binary is not an error here; the caller checks the result.
 start_interop_server() {
-  interop_bin="${1:-bin/interop_server}"
+  interop_bin="${1:-${SERVER_BIN:-bin}/interop_server}"
   shift 2>/dev/null || true
   if [ ! -x "$interop_bin" ]; then
     return 1

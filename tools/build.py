@@ -194,6 +194,95 @@ def run_integration_tests() -> None:
         run_suite(binary, True, env)
 
 
+def run_server_live(kind: str) -> None:
+    sources = {
+        "tls-live": ROOT / "test/integration/server/tls/Http2.Server.TlsLive.pas",
+        "mtls-live": ROOT / "test/integration/server/mtls/Http2.Server.MtlsLive.pas",
+    }
+    if kind not in sources:
+        raise SystemExit(f"Unknown server live gate: {kind}")
+    build("common")
+    build("client")
+    build("server")
+    binary = compile_file(sources[kind], "integration-test", tests=True)
+    generated = binary.parent / f"{kind}-pki"
+    generated.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="pki-", dir=generated) as directory:
+        env = open_ssl_env()
+        run(["sh", "tools/server/certs/make_mtls_pki.sh", directory],
+            env=env, timeout=30)
+        run([str(binary), directory], env=env, timeout=180)
+
+
+def validate_fast() -> None:
+    for component in ("common", "client", "server"):
+        run_tests(component)
+    run_api_tests()
+    run_integration_tests()
+    for kind in ("source", "docs", "version"):
+        check(kind)
+    packages_check()
+
+
+CLIENT_GATES = {
+    "sanity": ("tools/client/validate/h2probe-sanity.sh",),
+    "interop": ("tools/client/validate/interop.sh",),
+    "harness": ("tools/client/validate/harness.sh",),
+    "sse": ("tools/client/validate/sse-live.sh",),
+    "proxy": ("tools/client/validate/proxy-live.sh",),
+    "proxy:real": ("tools/client/validate/proxy-real.sh",),
+    "websocket": ("tools/client/validate/websocket-live.sh", "live"),
+    "websocket:autobahn": ("tools/client/validate/websocket-live.sh", "autobahn"),
+    "cleartext": ("tools/client/validate/cleartext-live.sh",),
+    "mtls": ("tools/client/validate/mtls-live.sh",),
+    "mtls:real": ("tools/client/validate/mtls-real.sh",),
+}
+
+SERVER_GATES = {
+    "conformance": ("tools/server/validate/run.sh", "conformance"),
+    "fast": ("tools/server/validate/run.sh", "fast"),
+    "tls:live": None,
+    "mtls:live": None,
+    "websocket": ("tools/server/validate/run.sh", "websocket"),
+    "websocket:h2": ("tools/server/validate/run.sh", "websocket:h2"),
+    "sse": ("tools/server/validate/run.sh", "sse"),
+    "abuse": ("tools/server/validate/run.sh", "abuse"),
+}
+
+
+def run_validation_gate(role: str, gate: str) -> None:
+    if role == "client":
+        mapping = CLIENT_GATES
+    elif role == "server":
+        mapping = SERVER_GATES
+    else:
+        raise SystemExit(f"Unknown validation role: {role}")
+    if gate not in mapping:
+        raise SystemExit(f"Unknown {role} validation gate: {gate}")
+    entry = mapping[gate]
+    if role == "server" and gate in ("tls:live", "mtls:live"):
+        run_server_live(gate.replace(":", "-"))
+    else:
+        assert entry is not None
+        script = ROOT / entry[0]
+        required(script, f"{role} validation script")
+        if role == "server":
+            env = dict(os.environ)
+            env["SERVER_BIN"] = str(ROOT / "bin" / target_name() / profile()
+                                    / "examples-server" / "programs")
+            run(["sh", str(script), *entry[1:]], env=env)
+        else:
+            run(["bash", str(script), *entry[1:]])
+
+
+def validate_all() -> None:
+    validate_fast()
+    for gate in CLIENT_GATES:
+        run_validation_gate("client", gate)
+    for gate in SERVER_GATES:
+        run_validation_gate("server", gate)
+
+
 def run_suite(binary: Path, needs_openssl: bool = False,
               env_override: dict[str, str] | None = None) -> None:
     env = open_ssl_env() if needs_openssl else dict(os.environ)
@@ -329,10 +418,6 @@ def examples() -> None:
         compile_file(source, f"examples-{role}")
 
 
-def incomplete(label: str, detail: str) -> None:
-    raise SystemExit(f"{label} is not ready: {detail}")
-
-
 def main() -> int:
     if len(sys.argv) != 2:
         raise SystemExit("Usage: python3 tools/build.py <target>")
@@ -376,10 +461,14 @@ def main() -> int:
         run_api_tests()
     elif target == "test:integration":
         run_integration_tests()
-    elif target in ("validate:fast", "validate"):
-        incomplete(target, "required integration and API probes are supplied by later stories")
-    elif target.startswith("validate:"):
-        incomplete(target, "the source validation gates arrive with M09")
+    elif target == "validate:fast":
+        validate_fast()
+    elif target == "validate":
+        validate_all()
+    elif target.startswith("validate:client:"):
+        run_validation_gate("client", target.removeprefix("validate:client:"))
+    elif target.startswith("validate:server:"):
+        run_validation_gate("server", target.removeprefix("validate:server:"))
     elif target == "clean":
         shutil.rmtree(ROOT / "bin", ignore_errors=True)
     else:

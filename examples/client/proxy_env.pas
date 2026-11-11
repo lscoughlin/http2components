@@ -6,9 +6,9 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 }
 /// http2components client example: a GET routed by the proxy environment variables.
 // - build: `make examples`
-// - run:   bin/proxy_env https://nghttp2.org/ [no-proxy-list]
-//   e.g.   https_proxy=http://proxy.corp:3128 bin/proxy_env https://nghttp2.org/
-//          all_proxy=socks5://user:pw@127.0.0.1:1080 bin/proxy_env https://nghttp2.org/
+// - run:   bin/<target>/<profile>/examples-client/programs/proxy_env https://nghttp2.org/ [no-proxy-list]
+//   e.g.   https_proxy=http://proxy.corp:3128 bin/<target>/<profile>/examples-client/programs/proxy_env https://nghttp2.org/
+//          all_proxy=socks5://user:pw@127.0.0.1:1080 bin/<target>/<profile>/examples-client/programs/proxy_env https://nghttp2.org/
 // - shows: WithProxyEnvironmentVars (http_proxy, https_proxy, all_proxy and
 //   no_proxy are read when the client is built) and WithNoProxy (hosts that
 //   always connect directly).  Without any variable set the request is

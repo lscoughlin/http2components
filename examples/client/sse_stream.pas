@@ -6,8 +6,8 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 }
 /// http2components client example: consume a Server-Sent Events stream.
 // - build: `task examples` (or see examples/README.md for a raw fpc command)
-// - run:   bin/sse_stream https://example.com/events
-//          bin/sse_stream http://127.0.0.1:8091/events   (also works: an
+// - run:   bin/<target>/<profile>/examples-client/programs/sse_stream https://example.com/events
+//          bin/<target>/<profile>/examples-client/programs/sse_stream http://127.0.0.1:8091/events   (also works: an
 //          http:// URL enables the h2c-upgrade cleartext policy, which is
 //          what tools/client/validate/sse_server.py speaks)
 // - shows: SseRequest, TSseSource reading one event at a time, and

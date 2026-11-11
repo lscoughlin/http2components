@@ -32,6 +32,13 @@ set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
+FPC="${FPC:-fpc}"
+if [ -z "${TARGET:-}" ]; then TARGET=$("$FPC" -iTP)-$("$FPC" -iTO); fi
+if [ -z "${PROFILE:-}" ]; then
+  PROFILE=default
+  [ -n "${DEBUG:-}" ] && PROFILE=debug
+fi
+VALIDATION_BIN="$ROOT/bin/$TARGET/$PROFILE/validation"
 HOST="${PROXY_REAL_HOST:-lscoughlin@liam-rzbox.local}"
 # the remote tree remote-run.sh uses for this checkout (same derivation)
 RDIR="${HTTP2_REMOTE_DIR:-http2client-ci/run-$(printf '%s' "$ROOT" | cksum | cut -d' ' -f1)}"
@@ -54,7 +61,7 @@ fi
 # ----------------------------------------------------- build (in the dev image)
 if [ "$1" = "--build" ]; then
   M="${MORMOT:-$ROOT/third_party/mORMot2/src}"
-  BUILD_DIR="${PROXY_REAL_BUILD_DIR:-$ROOT/bin/proxy-real}"
+  BUILD_DIR="${PROXY_REAL_BUILD_DIR:-$VALIDATION_BIN/proxy-real-build}"
   mkdir -p "$BUILD_DIR"
   exec fpc -O2 -vewn -Mdelphi -Fu"$ROOT/src/common" -Fu"$ROOT/src/client" -Fu"$ROOT/src/server" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" \
     -Fu"$M/crypt" -FE"$BUILD_DIR" -FU"$BUILD_DIR" \
@@ -64,13 +71,14 @@ fi
 # ------------------------------------------------------------------ on the host
 cd "$ROOT" || exit 2
 BASE="${PR_BASE:-18400}"
-WORK="$ROOT/bin/proxy-real-work-$$"
+WORK="$VALIDATION_BIN/proxy-real-work-$$"
+RESULTS_DIR="$VALIDATION_BIN/proxy-real-results-$$"
 CERTS="$ROOT/test/fixtures/client/certs"
 MT="$WORK/certs"
-CA_C="/src/bin/proxy-real-work-$$/ca.pem"   # the same files as the client container sees them
-MTC="/src/bin/proxy-real-work-$$/certs"
+CA_C="/src/bin/$TARGET/$PROFILE/validation/proxy-real-work-$$/ca.pem"   # the same files as the client container sees them
+MTC="/src/bin/$TARGET/$PROFILE/validation/proxy-real-work-$$/certs"
 export LC_ALL=C
-rm -rf "$WORK"; mkdir -p "$WORK/apache" "$WORK/squid"
+rm -rf "$WORK"; mkdir -p "$WORK/apache" "$WORK/squid" "$RESULTS_DIR"
 
 # origins
 O_H2=$((BASE + 1)); O_H1=$((BASE + 2)); O_PL=$((BASE + 3)); O_WS=$((BASE + 4))
@@ -84,12 +92,20 @@ S_OPEN=$((BASE + 30)); S_AUTH=$((BASE + 31)); S_TLS=$((BASE + 32))
 ALLOWED="$O_H2 $O_H1 $O_PL $O_WS $O_WSS $O_SSE $O_MT $O_MT2 $O_DOWN"   # O_DENY is not
 
 TOOLS="pr-tools-$$"; APACHE="pr-apache-$$"; SQUID="pr-squid-$$"
-RESULTS="$WORK/results.tsv"; : > "$RESULTS"
+RESULTS="$RESULTS_DIR/results.tsv"; : > "$RESULTS"
 FAILS=0
 
 cleanup() {
+  mkdir -p "$RESULTS_DIR"
+  for container in "$TOOLS" "$APACHE" "$SQUID"; do
+    docker logs "$container" >"$RESULTS_DIR/$container-docker.log" 2>&1 || true
+  done
   docker rm -f "$TOOLS" "$APACHE" "$SQUID" >/dev/null 2>&1
+  for diagnostic in "$WORK"/*.log "$WORK"/*.out "$WORK"/*.err; do
+    [ -f "$diagnostic" ] && cp -p "$diagnostic" "$RESULTS_DIR/"
+  done
   rm -rf "$WORK"
+  echo "proxy-real: diagnostic results are in $RESULTS_DIR"
 }
 trap cleanup EXIT INT TERM
 bash "$ROOT/tools/client/validate/make-mtls-certs.sh" "$MT" \
@@ -110,16 +126,16 @@ tx() { docker exec -w /src "$TOOLS" "$@"; }
 
 echo "proxy-real: building the client driver"
 mkdir -p "$WORK/build"
-docker exec -w /src -e PROXY_REAL_BUILD_DIR="/src/bin/proxy-real-work-$$/build" "$TOOLS" \
+docker exec -w /src -e PROXY_REAL_BUILD_DIR="/src/bin/$TARGET/$PROFILE/validation/proxy-real-work-$$/build" "$TOOLS" \
   bash tools/client/validate/proxy-real.sh --build >"$WORK/build.log" 2>&1 \
   || { tail -20 "$WORK/build.log"; echo "proxy-real: build failed" >&2; exit 2; }
-CLIENT="bin/proxy-real-work-$$/build/proxy_real_client"
+CLIENT="bin/$TARGET/$PROFILE/validation/proxy-real-work-$$/build/proxy_real_client"
 
 # ----------------------------------------------------------------- the origins
 CA_BUNDLE="$WORK/ca.pem"     # trusts the origin (other.example) and the https proxies (localhost)
 cat "$CERTS/other.crt" "$CERTS/localhost.crt" > "$CA_BUNDLE"
 mkdir -p "$WORK/htdocs"; echo origin-h2 > "$WORK/htdocs/index.html"
-WORKC="/src/bin/proxy-real-work-$$"
+WORKC="/src/bin/$TARGET/$PROFILE/validation/proxy-real-work-$$"
 
 bg() { # name command...   (a background process in the tools container)
   local n="$1"; shift

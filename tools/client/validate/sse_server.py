@@ -24,7 +24,8 @@ it. This is the opt-in live gate described in doc/design/server-sent-events.md
     # terminal 1
     python3 tools/client/validate/sse_server.py --port 8091
     # terminal 2
-    bin/sse_stream http://127.0.0.1:8091/events
+    bin/<target>/<profile>/examples-client/programs/sse_stream \
+        http://127.0.0.1:8091/events
 """
 
 import argparse

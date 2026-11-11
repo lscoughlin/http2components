@@ -59,6 +59,13 @@ if [ "$NATIVE" != 1 ] && [ "${MTLS_REAL_LOCAL:-0}" != 1 ] && [ "$HOST" != local 
     MTLS_REPEAT=${MTLS_REPEAT:-5} bash tools/client/validate/mtls-real.sh"
 fi
 
+FPC="${FPC:-fpc}"
+if [ -z "${TARGET:-}" ]; then TARGET=$("$FPC" -iTP)-$("$FPC" -iTO); fi
+if [ -z "${PROFILE:-}" ]; then
+  PROFILE=default
+  [ -n "${DEBUG:-}" ] && PROFILE=debug
+fi
+VALIDATION_BIN="$ROOT/bin/$TARGET/$PROFILE/validation"
 BASE="${MTLS_REAL_BASE:-9440}"
 REPEAT="${MTLS_REPEAT:-5}"
 IMAGE="${HTTP2_IMAGE:-http2client-dev}"
@@ -67,7 +74,8 @@ HTTPD_IMAGE="${HTTPD_IMAGE:-httpd:2.4}"
 CADDY_IMAGE="${CADDY_IMAGE:-caddy:2}"
 WORK="$(mktemp -d)"
 TAG="mtls-real-$$"
-CERTS="$ROOT/bin/$TAG/certs"
+RUN_DIR="$VALIDATION_BIN/$TAG"
+CERTS="$RUN_DIR/certs"
 RUN_TIMEOUT=20
 POST_BYTES="${MTLS_POST_BYTES:-8388608}"
 ID="$(id -u):$(id -g)"
@@ -79,7 +87,7 @@ KNOWN=()
 
 cleanup() {
   docker rm -f "$TAG-client" "$TAG-nginx" "$TAG-httpd" "$TAG-caddy" >/dev/null 2>&1
-  rm -rf "$ROOT/bin/$TAG"
+  rm -rf "$RUN_DIR"
   rm -rf "$WORK"
 }
 trap cleanup EXIT INT TERM
@@ -90,20 +98,20 @@ bash "$HERE/make-mtls-certs.sh" "$CERTS" >"$WORK/certs.log" 2>&1 \
   || { cat "$WORK/certs.log" >&2; echo "mtls-real: could not generate its test PKI" >&2; exit 2; }
 
 # the client, built with the dev image's Free Pascal (or the host's, NATIVE)
-mkdir -p "$ROOT/bin/$TAG/client"
+mkdir -p "$RUN_DIR/client"
 if [ "$NATIVE" = 1 ]; then
   CD="$CERTS"
   M="${MORMOT:-$ROOT/third_party/mORMot2/src}"
   export OPENSSL_LIBPATH="${OPENSSL_LIBPATH:-/opt/homebrew/opt/openssl@3/lib}"
   ${FPC:-fpc} -O2 -vw -Mdelphi -Fu"$ROOT/src/common" -Fu"$ROOT/src/client" -Fu"$ROOT/src/server" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
-    -FE"$ROOT/bin/$TAG/client" -FU"$WORK" "$ROOT/examples/client/mtls_get.pas" >"$WORK/fpc.log" 2>&1 \
+    -FE"$RUN_DIR/client" -FU"$WORK" "$ROOT/examples/client/mtls_get.pas" >"$WORK/fpc.log" 2>&1 \
     || { cat "$WORK/fpc.log"; echo "mtls-real: could not build examples/client/mtls_get.pas" >&2; exit 2; }
 else
-  CD="/src/bin/$TAG/certs"
+  CD="/src/bin/$TARGET/$PROFILE/validation/$TAG/certs"
   M=/src/third_party/mORMot2/src
   docker run --rm --user "$ID" -e HOME=/tmp -v "$ROOT:/src" -w /src "$IMAGE" \
     fpc -O2 -vw -Mdelphi -Fu/src/common -Fu/src/client -Fu/src/server -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
-    -FE"/src/bin/$TAG/client" -FU/tmp examples/client/mtls_get.pas >"$WORK/fpc.log" 2>&1 \
+    -FE"/src/bin/$TARGET/$PROFILE/validation/$TAG/client" -FU/tmp examples/client/mtls_get.pas >"$WORK/fpc.log" 2>&1 \
     || { cat "$WORK/fpc.log"; echo "mtls-real: could not build examples/client/mtls_get.pas" >&2; exit 2; }
   docker run -d --rm --name "$TAG-client" --network host --user "$ID" -e HOME=/tmp \
     -v "$ROOT:/src:ro" "$IMAGE" sleep 3600 >/dev/null || exit 2
@@ -159,10 +167,10 @@ run_get() {
     local envs=() e
     for e in "$@"; do [ "$e" = -e ] || envs+=("$e"); done
     OUT="$(env MTLS_PRINT_BODY=1 ${envs[@]+"${envs[@]}"} timeout "$RUN_TIMEOUT" \
-      "$ROOT/bin/$TAG/client/mtls_get" "$url" "$cert" "$key" "$CD/ca.crt" 2>&1)"
+      "$RUN_DIR/client/mtls_get" "$url" "$cert" "$key" "$CD/ca.crt" 2>&1)"
   else
     OUT="$(timeout $((RUN_TIMEOUT + 15)) docker exec -e MTLS_PRINT_BODY=1 "$@" "$TAG-client" \
-      timeout "$RUN_TIMEOUT" "/src/bin/$TAG/client/mtls_get" "$url" "$cert" "$key" "$CD/ca.crt" 2>&1)"
+      timeout "$RUN_TIMEOUT" "/src/bin/$TARGET/$PROFILE/validation/$TAG/client/mtls_get" "$url" "$cert" "$key" "$CD/ca.crt" 2>&1)"
   fi
   RC=$?
 }

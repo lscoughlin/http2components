@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Load run: idle WebSocket sessions and open event streams with steady requests.
 
-The script starts nothing but the two clients of the load. A caller starts
-`bin/ws_echo HOST WSPORT load` and `bin/sse_replay HOST SSEPORT` first, and raises
+The script starts nothing but the two clients of the load. A caller starts the
+`ws_echo` and `sse_replay` example programs first, and raises
 the file limit (`ulimit -n 60000`).
 
 It opens N WebSocket sessions on the first server and N event streams on the second

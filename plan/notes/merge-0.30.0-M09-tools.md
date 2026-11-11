@@ -46,10 +46,31 @@ The client real-proxy script owns its build container. The root driver calls
 that script once. It does not call the script's internal `--build` mode on the
 host.
 
+The client live runners default to the role-specific client test output path
+and accept `BIN` as an override. The server validation runner defaults to the
+role-specific server examples output path and accepts `SERVER_BIN` as an
+override. The client probe scripts include `test/client` when they compile
+`h2probe.pas`, because that unit uses `Http2.Client.ProbeOutcome`.
+
+The real-proxy runner writes each run's result table and diagnostic logs below
+`bin/<target>/<profile>/validation/`. It captures logs from its three owned
+containers before it removes them. It removes the temporary run directory,
+which contains generated private keys and build outputs. Missing tools remain
+optional skips in full conformance. A missing required tool or package in a
+specific server gate produces a failure.
+
+The shared build driver maps each client and server validation target to its
+role script. Server script runs receive `SERVER_BIN` for the server example
+output directory. The TLS and mTLS server targets compile and run their
+dedicated integration programs with a private PKI directory. `validate:fast`
+runs the bounded unit, API, and local integration suites, then the source,
+documentation, version, and package checks. `validate` adds every explicit
+client and server validation gate after the fast checks.
+
 ## Checks
 
-All 17 shell scripts pass syntax checks with their declared shells. All 14
-Python tool files parse. `git diff --check` passes.
+All shell scripts pass syntax checks with their declared shells. All Python
+tool files parse. `git diff --check` passes.
 
 `MORMOT=/Users/liamcoughlin/Source/lscoughlin/.http2components-worktrees/integration/third_party/mORMot2/src OPENSSL_LIBPATH=/opt/homebrew/opt/openssl@3/lib python3 tools/build.py examples` compiled all client and server example programs after the role source layout merge. The command did not run the programs. Its captured output is at `/tmp/m09-examples-final2.log` on the build host.
 
