@@ -4,6 +4,8 @@
 #
 #   docker build --progress=plain -f tools/server/container/Dockerfile \
 #     -t http2components-amd64 .
+#   docker build --build-arg FULL_SUITE_TIMEOUT=1500 \
+#     -f tools/server/container/Dockerfile -t http2components-amd64 .
 #
 # Stage "toolchain" holds every tool and every dependency. It does not read the
 # project sources, so Docker keeps its layers in the cache until a build
@@ -99,6 +101,7 @@ FROM toolchain AS build
 
 ARG FPC_PREFIX=/opt/fpc
 ARG MORMOT_DIR=/opt/mormot2
+ARG FULL_SUITE_TIMEOUT=1200
 
 # The Makefile reads these variables from the environment.
 ENV MORMOT=${MORMOT_DIR}/src \
@@ -115,6 +118,7 @@ RUN tools/validation/prepare-linux.sh "${MORMOT_DIR}"
 RUN set -e; \
     export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)"; \
     echo "unit directory: ${FPC_UNITS}"; \
+    TEST_TIMEOUT="${FULL_SUITE_TIMEOUT}" HTTP2_TEST_TRACE=1 \
     make setup-deps setup-harness all examples test test-api test-integration \
       test-tls-contract test-tls-openssl test-tls-tlslib test-tls-client \
       test-tls-server test-tls-integration packages-check source-check \
