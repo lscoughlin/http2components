@@ -51,7 +51,10 @@ def exchange(server, client, env, pki=None):
 
 
 def main():
-    server = build.compile_file(ROOT / 'examples/server/interop_server.pas', 'examples-server')
+    build.build('openssl')
+    server = build.compile_file(ROOT / 'examples/server/interop_server.pas',
+                                'examples-server',
+                                extra_flags=build.example_provider_flags(('openssl',)))
     client = build.compile_file(ROOT / 'tools/client/h2probe.pas', 'client-test', tests=True)
     env = build.open_ssl_env()
     openssl_bin = Path(env.get('OPENSSL_LIBPATH', '')).parent / 'bin'
