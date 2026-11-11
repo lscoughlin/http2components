@@ -27,15 +27,15 @@ def run(command, *, timeout=30, **kwargs):
     return result
 
 
-def compile_probe():
-    supplied = os.environ.get("PROVIDER_LIVE_BINARY")
-    if supplied:
-        binary = Path(supplied).resolve()
+def provider_binary():
+    override = os.environ.get("PROVIDER_LIVE_BINARY")
+    if override:
+        binary = Path(override).expanduser()
+        if not binary.is_absolute():
+            binary = ROOT / binary
         if not binary.is_file():
-            raise RuntimeError(f"provider probe binary does not exist: {binary}")
+            raise RuntimeError(f"PROVIDER_LIVE_BINARY does not exist: {binary}")
         return binary
-    run([sys.executable, "tools/build.py", "compile:server-probe", SOURCE],
-        cwd=ROOT, timeout=180)
     target = os.environ.get("TARGET")
     if not target:
         cpu = run([os.environ.get("FPC", "fpc"), "-iTP"], text=True).stdout.strip()
@@ -43,6 +43,15 @@ def compile_probe():
         target = f"{cpu}-{os_name}"
     profile = os.environ.get("PROFILE", "debug" if os.environ.get("DEBUG") else "default")
     binary = ROOT / "bin" / target / profile / "integration-test" / "programs" / Path(SOURCE).stem
+    return binary
+
+
+def compile_probe():
+    if os.environ.get("PROVIDER_LIVE_BINARY"):
+        return provider_binary()
+    run([sys.executable, "tools/build.py", "compile:server:probe", SOURCE],
+        cwd=ROOT, timeout=180)
+    binary = provider_binary()
     if not binary.is_file():
         raise RuntimeError(f"probe compiler did not produce {binary}")
     return binary
