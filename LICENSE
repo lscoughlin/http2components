@@ -1,0 +1,16 @@
+http2components
+Copyright 2026 Liam Seamus Coughlin
+
+Project-owned code and documentation in this repository are licensed under
+the following choice of terms:
+
+    Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+
+You may use the Apache License, Version 2.0, in LICENSES/Apache-2.0.txt, or
+the GNU Lesser General Public License, version 2.1, with the Free Pascal
+Independent Modules exception in
+LICENSES/LGPL-2.1-only-with-Independent-modules-exception.txt.
+
+The historical license and NOTICE records in LICENSES/ identify the terms
+declared by each source project before this merge. They remain as source
+provenance. Third-party works and specification text keep their own terms.

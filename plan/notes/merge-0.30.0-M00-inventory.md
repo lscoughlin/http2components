@@ -19,10 +19,18 @@ Free Pascal linking exception. The full texts are preserved in `LICENSES/`.
 The source NOTICE files are also preserved. Common implementation inputs
 have separate rows for each source so that both origins remain visible.
 
-The license relationship for the combined distribution is unresolved. No
-combined license is asserted. The inventory records the license of the
-source project for each input. Technical merge work can continue while this
-question remains open.
+## License authorization
+
+The user confirmed ownership of the copyright and authorized this license
+choice for project-owned code and documentation:
+
+`Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)`
+
+The root `LICENSE` records this choice. The source license texts and NOTICE
+files remain as historical provenance. The inventory's `source_license`
+field records the source project's declared terms before the merge. It does
+not override the current license choice for project-owned work. Third-party
+works and specification text keep their own terms.
 
 ## Reference reading
 
