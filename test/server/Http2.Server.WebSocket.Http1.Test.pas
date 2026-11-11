@@ -21,7 +21,7 @@ interface
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Classes, fpcunit, testregistry,
+  SysUtils, Classes, SyncObjs, fpcunit, testregistry,
   Http2.Server, Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam,
   Http2.Server.WebSocket.Handshake, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Types,
   Http2.Server.Http1.RawClient, Http2.Server.WebSocket.TestKit;
@@ -83,6 +83,54 @@ type
 function WaitUntilText(const AHandler: TRecordingHandler; const AText: string): Boolean;
 
 implementation
+
+type
+  /// reads the shutdown notice while the server drains the connection
+  TStopFrameReader = class(TThread)
+  private
+    FClient: TRawHttp;
+    FData: string;
+    FError: string;
+    FStarted: TEvent;
+    FFinished: TEvent;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AClient: TRawHttp);
+    destructor Destroy; override;
+    property Data: string read FData;
+    property Error: string read FError;
+    property Started: TEvent read FStarted;
+    property Finished: TEvent read FFinished;
+  end;
+
+constructor TStopFrameReader.Create(const AClient: TRawHttp);
+begin
+  FClient := AClient;
+  FStarted := TEvent.Create(nil, True, False, '');
+  FFinished := TEvent.Create(nil, True, False, '');
+  inherited Create(False);
+end;
+
+destructor TStopFrameReader.Destroy;
+begin
+  WaitFor;
+  FFinished.Free;
+  FStarted.Free;
+  inherited Destroy;
+end;
+
+procedure TStopFrameReader.Execute;
+begin
+  FStarted.SetEvent;
+  try
+    FData := FClient.ReadSome(1500);
+  except
+    on E: Exception do
+      FError := E.ClassName + ': ' + E.Message;
+  end;
+  FFinished.SetEvent;
+end;
 
 function WaitUntilText(const AHandler: TRecordingHandler; const AText: string): Boolean;
 var
@@ -561,12 +609,20 @@ var
   C: TRawHttp;
   H: TRawResponse;
   L: TStringList;
+  Reader: TStopFrameReader;
 begin
   StartServer(LiveFactory(FRouterRef));
   AssertTrue(Open(C, H));
+  Reader := TStopFrameReader.Create(C);
   try
+    AssertEquals('the peer reads while Stop drains output', Ord(wrSignaled),
+      Ord(Reader.Started.WaitFor(5000)));
     FServer.Stop;
-    L := Frames(C.ReadSome(500));
+    AssertEquals('the peer finishes its bounded read', Ord(wrSignaled),
+      Ord(Reader.Finished.WaitFor(2000)));
+    Reader.WaitFor;
+    AssertEquals('', Reader.Error);
+    L := Frames(Reader.Data);
     try
       AssertTrue('Close 1001 reached the client: ' + L.Text, Pos('C:1001:', L.Text) > 0);
     finally
@@ -574,6 +630,7 @@ begin
     end;
     AssertTrue(WaitUntilText(FRecording, 'closed 1001'));
   finally
+    Reader.Free;
     C.Free;
   end;
 end;
