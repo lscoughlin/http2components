@@ -288,3 +288,17 @@ Apache and Caddy, including large POST cases; they remain required failures.
 The real proxy compiler has a separate mount issue: the candidate dependency
 symlink resolves outside the nested compiler container mount. The owner maps
 the resolved mORMot root, including static objects, into that container.
+
+## LV-15: Disabled session resumption acceptance contract
+
+The server live mTLS gate passes 38 checks and fails two old requirements that
+saved TLS 1.2 and TLS 1.3 sessions resume. The approved replacement contract
+explicitly disables session resumption in its first implementation. The
+OpenSSL design document and context configuration state this policy.
+The server owner replaces the two obsolete positive resumption checks with
+positive evidence for the approved disabled policy: valid independent full
+handshakes succeed for both versions, no connection reports reuse, and a
+saved session attempt cannot bypass a fresh identity/trust check. The tests
+record whether a ticket/session was issued; missing output or a failed first
+handshake is a failure, not evidence that resumption is disabled. The result
+record names this requirement change and keeps the initial failures.
