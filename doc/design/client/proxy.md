@@ -20,7 +20,7 @@ related:
   - "[errors-redirects](errors-redirects.md)"
   - "[open-questions](open-questions.md)"
   - "[toolchain](../../verification/source/client/toolchain.md)"
-updated: 2026-10-13
+updated: 2026-11-11
 notes:
   - Imported from http2client/doc/design/proxy.md at the source commit recorded in the source inventory.
 ---
@@ -55,9 +55,11 @@ the route.
 
 ## Types
 
-The proxy types live in a unit that depends on the RTL and `Http2.Common.Errors`
-only. `Http2.Client.Proxy` is an explicit feature unit. Consumers name it in
-their `uses` clause. The client facade does not promise to re-export every feature.
+The proxy types live in `Http2.Client.Proxy`, a unit that depends on the RTL
+and `Http2.Common.Errors` only. `Http2.Client` aliases the proxy interfaces,
+classes, and kind values, including `pkHttp`, `pkHttps`, and `pkSocks5`.
+Applications can use these public types from the facade. The implementation
+unit remains available for proxy-specific constructors and helpers.
 
 ```pascal
 type
@@ -268,8 +270,8 @@ before sending `CONNECT`. The origin's own TLS (or h2c, or HTTP/1.1) then runs
 inside the tunnel, so a proxied `https` request carries two TLS layers.
 
 - The proxy certificate is verified against the **proxy's host name**, never
-  the origin's, using the trust settings of the client (`WithCACertFile`,
-  `WithInsecureTls`).
+  the origin's, using the provider context set by `WithProxyTlsContext`. This policy is
+  separate from the origin context set by `WithTlsContext`.
 - No ALPN is offered to the proxy; the `CONNECT` exchange is HTTP/1.1.
 - A proxy that requires a client certificate is answered with
   `WithProxyClientIdentity`. That identity is presented on this leg only: the
@@ -371,8 +373,9 @@ for `ws` as well.
   origin behind a proxy follows the same cleartext policy, and a request is
   sent once.
 - A TLS layer carried over another byte stream (an `https` origin behind an
-  `https://` proxy) runs OpenSSL on a pair of memory BIOs; the bytes are moved
-  between OpenSSL and the lower stream by the TLS socket itself. A socket
+  `https://` proxy) uses the selected provider session over the tunnel stream.
+  The OpenSSL provider uses memory BIOs internally; the proxy and client role
+  units use only the common buffer-session contract. A socket
   that can return what is available instead of insisting on a full read says so
   through `IPartialReader`; the HTTP/1.1 codec reads through it, so a
   keep-alive connection is not held until the server closes it.
@@ -383,8 +386,8 @@ for `ws` as well.
 ## mORMot2 as a reference
 
 > [!info] mORMot2 is the reference implementation for most of the pieces
-> The library already depends on mORMot2 for TLS and ALPN
-> (`mormot.lib.openssl11`). The pinned checkout also contains small, careful
+> The provider package uses the pinned mORMot2 OpenSSL bindings. The proxy
+> routing units do not select or load a TLS provider. The pinned checkout also contains small, careful
 > implementations of nearly every parser and matcher that proxy routing needs.
 > `Http2.Client.Proxy` and `Http2.Client.Socks` take **no** dependency on it: they are
 > self-contained units that mirror these designs, with mORMot2's behaviour
@@ -400,7 +403,7 @@ for `ws` as well.
 | `IsLocalHost` (`mormot.core.os`) | the loopback test (`127.x.x.x`, `::1`) | the always-direct loopback rule |
 | `GetSystemEnv` (`mormot.core.os`) | one cross-platform path to environment variables | the environment snapshot |
 | `TCrtSocket.DoOpenTunnel` (`mormot.net.sock`) | the `CONNECT` exchange: `Proxy-Authorization: Basic`, success on a `2xx` status line, headers read to the blank line | `CONNECT` tunnel establishment |
-| `BIO_s_mem`, `BIO_read`, `BIO_write`, `BIO_ctrl`, `SSL_set_bio` (`mormot.lib.openssl11`) | the memory-BIO functions already bound for the TLS layer | TLS carried over another byte stream (`Http2.Client.Tls`, which already uses this unit) |
+| OpenSSL memory-BIO functions (`Http2.OpenSSL`) | the provider-local TLS buffer adapter | TLS carried over a proxy tunnel through `ITLSSession` |
 
 Behaviour of the reference code that shapes the design:
 
@@ -416,11 +419,10 @@ Behaviour of the reference code that shapes the design:
   in uppercase only. This client reads the lowercase names first and ignores
   uppercase `HTTP_PROXY` (as described in "Environment variables").
 - `TIp4SubNet` covers IPv4 only. IPv6 CIDR ranges are matched here.
-- `TCrtSocket.DoOpenTunnel` accepts an `https://` proxy only when the
-  destination itself is not TLS; it raises `unsupported dual TLS layers`
-  otherwise. TLS inside TLS, as needed for an `https` origin behind an
-  `https://` proxy, therefore has no mORMot2 counterpart and is built here
-  on the memory-BIO functions.
+- The reference `TCrtSocket.DoOpenTunnel` accepts an `https://` proxy only
+  when the destination itself is not TLS. The current client supports an
+  origin TLS session inside the proxy tunnel through the provider-neutral
+  session contract.
 - mORMot2 has no SOCKS client; SOCKS5 is implemented from RFC 1928 and
   RFC 1929.
 

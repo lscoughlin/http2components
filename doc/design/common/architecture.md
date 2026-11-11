@@ -10,10 +10,11 @@ notes:
 
 ## Public entry units
 
-The combined library has three public entry units. `Http2.Common` provides
+The combined library has five public entry units. `Http2.Common` provides
 shared protocol types and operations. `Http2.Client` provides client factories,
 requests, responses, and the client API. `Http2.Server` provides server
-factories, handlers, requests, and responses.
+factories, handlers, requests, and responses. `Http2.OpenSSL` and
+`Http2.TlsLib` provide separate TLS implementations of the common context.
 
 The common implementation has no dependency on client or server units. Client
 units depend on common units and client units. Server units depend on common
@@ -25,15 +26,20 @@ flowchart TD
   Common[Http2.Common]
   Client[Http2.Client and Http2.Client.*]
   Server[Http2.Server and Http2.Server.*]
+  OpenSSL[Http2.OpenSSL]
+  TlsLib[Http2.TlsLib]
   Client --> Common
   Server --> Common
+  OpenSSL --> Common
+  TlsLib --> Common
 ```
 
-The library source directories are `common/src`, `client/src`, and
-`server/src`. Each directory contains the units with its matching namespace.
-No library unit is directly under `src/`. A client build uses the common
-and client search paths; a server build uses the common and server search
-paths. A combined build uses all three directories.
+The five production source roots are `common/src`, `client/src`,
+`server/src`, `tls/openssl/src`, and `tls/tlslib/src`. Each root contains units
+with its matching namespace. A common-only build has no role or provider
+dependency. Client and server core builds do not load a TLS provider. Provider
+packages depend on common, and applications select a provider through the
+common context interface.
 
 ## Shared protocol ownership
 
@@ -43,8 +49,13 @@ the header compression codec and records. `Http2.Common.Frames` owns frame
 formats and shared settings operations. `Http2.Common.FlowControl` owns
 connection and stream credit operations.
 
-The client and server retain separate transport, connection, HTTP/1.1, TLS,
-WebSocket, and event-stream behavior. Similar names do not make these role
+The client and server retain separate transport, connection, HTTP/1.1,
+WebSocket, and event-stream behavior. Common owns `ITLSContext`,
+`ITLSSession`, TLS policy, identity metadata, peer metadata, and negotiated
+metadata. OpenSSL and TlsLib implement the same common contract. A context can
+be shared by client and server roles and threads; every connection owns a
+separate serialized session. Client trust of a server is separate from server
+trust of a client. Session resumption and early data are disabled. Similar names do not make these role
 contracts identical. The client and server `IBodyWriter` contracts remain
 distinct. A consumer that uses both roles names the role-qualified type.
 

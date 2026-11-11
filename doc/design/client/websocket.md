@@ -308,8 +308,8 @@ All derive from `EHttpError`.
 | RFC 6455 sections 4, 5, 7, 8 and 10 | the normative handshake, framing, close codes, error handling and masking security |
 
 > [!info] mORMot2 as a reference
-> The pinned checkout contains a complete WebSocket stack, and the library
-> already depends on mORMot2 for TLS (`mormot.lib.openssl11`). `Http2.Client.WebSocket`
+> The pinned checkout contains a complete WebSocket stack. TLS selection is
+> owned by the provider-neutral context, not by the WebSocket unit. `Http2.Client.WebSocket`
 > and `Http2.Client.WebSocket.Connection` take **no** dependency on it: they are
 > self-contained units that mirror its designs. Names below are from the
 > checkout recorded in [toolchain](../../verification/source/client/toolchain.md).
@@ -327,9 +327,8 @@ Behaviour of the reference code that shapes the design:
 - mORMot2 layers its own sub-protocols on top of RFC 6455 (for example
   `synopsejson`) and binds the connection to its server framework. Its frame
   handling and handshake are a reference; the client API follows the JDK.
-- The reference draws the masking key of each outgoing frame from
-  `NetRandom32`, so a key per frame is the model here as well; the key comes
-  from OpenSSL's generator and a failing generator raises.
+- Each outgoing frame uses a fresh masking key. The client obtains this key
+  from the operating system random source; a read failure raises an error.
 - The reference treats a masking key of zero as "not masked" when it reads a
   frame header. RFC 6455 allows a zero key, so the mask bit alone decides
   here.

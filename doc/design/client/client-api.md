@@ -16,9 +16,9 @@ related:
   - "[mtls](mtls.md)"
   - "[messages](messages.md)"
   - "[open-questions](open-questions.md)"
-updated: 2026-10-13
+updated: 2026-11-11
 notes:
-  - Imported from http2client/doc/design/client-api.md at the source commit recorded in the source inventory.
+  - The current TLS API selects provider contexts through the common interface.
 ---
 
 # Client API
@@ -40,8 +40,6 @@ type
     FProxyHost: string;
     FProxyPort: Word;
     FSocketFactory: IHttp2SocketFactory;   // test seam / custom transport
-    FCACertFile: string;                   // trust anchor bundle
-    FInsecure: Boolean;                    // skip certificate verification
     FObserver: IHttp2Observer;
     FRequestObservers: TArray<IHttpClientObserver>;
     FLogger: IHttpLogger;
@@ -65,8 +63,8 @@ type
     function WithHeaderTimeout(const AMs: Integer): THttpClientFactory;
     function WithIdleTimeout(const AMs: Integer): THttpClientFactory;
     function WithSocketFactory(const AFactory: IHttp2SocketFactory): THttpClientFactory;
-    function WithCACertFile(const AFileName: string): THttpClientFactory;
-    function WithInsecureTls(const AInsecure: Boolean = True): THttpClientFactory;
+    function WithTlsContext(const AContext: ITLSContext): THttpClientFactory;
+    function WithProxyTlsContext(const AContext: ITLSContext): THttpClientFactory;
     function WithClientIdentity(const AIdentity: IClientIdentity): THttpClientFactory;
     function WithClientCertificateFiles(const ACertFile, AKeyFile: string;
       const APassphrase: string = ''): THttpClientFactory;
@@ -82,7 +80,7 @@ type
     // read-only accessors: MaxConnections, MaxConnectionsPerHost,
     // MaxTotalConnections, MaxStreamsPerConnection, FollowRedirects,
     // MaxRedirects, ConnectTimeoutMs, HeaderTimeoutMs, IdleTimeoutMs,
-    // CACertFile, Http1Fallback, Observer, RequestObservers, Logger
+    // Http1Fallback, Observer, RequestObservers, Logger
   end;
 ```
 
@@ -148,29 +146,24 @@ The three timeout setters take a single value each — `WithConnectTimeout`,
 below for every request on the built client. Details are in [errors-redirects](errors-redirects.md).
 
 `WithSocketFactory` replaces the transport wholesale. It is the seam the
-test suite uses (`IHttp2SocketFactory` with an in-memory socket) and the
-hook for a caller who must supply their own TLS stack. `WithCACertFile`
-points certificate verification at a specific trust bundle;
-`WithInsecureTls` disables verification (test/development only, never a
-default). `WithClientIdentity` presents a client certificate on every TLS
-connection to an origin (mutual TLS), and `WithClientCertificateFiles` loads
-one from PEM files; `Build` raises `EHttpTlsConfigError` for an identity that
-cannot be used, and a server that refuses the certificate raises
-`EHttpTlsClientAuthError`. `WithClientIdentitySelector` asks an
-`IClientIdentitySelector` for the identity of each new TLS connection (once per
-dial, outside the pool lock, with an expired answer refused before dialling),
-which gives a different identity per origin and certificate rotation; with it
-installed the pool key carries the identity fingerprint, while
-`MaxConnectionsPerHost` still counts the origin across identities and an idle
-connection of another identity is closed to make room at a cap.
-An identity or selector with an injected `WithSocketFactory` that cannot
-present identities (no `IIdentitySocketFactory`) raises `EHttpTlsConfigError`
-at `Build`, or at `Send` for a request identity. `WithProxyClientIdentity` answers an `https://` proxy that
-requires a client certificate, and the identity goes to that proxy only; the
-origin identity goes to the origin on every route. A request can carry its own
-origin identity with `THttpRequest.WithClientIdentity` (and
-`IWebSocketRequest.WithClientIdentity`), which wins over the selector and the
-fixed identity. Details are in [mtls](mtls.md). `WithObserver` installs an `IHttp2Observer` for connection,
+suite uses for an in-memory transport and the hook for a caller who supplies a
+custom TLS stack. The default socket factory uses the context from
+`WithTlsContext` for HTTPS origins. `WithProxyTlsContext` selects a separate
+context for an HTTPS proxy. The proxy and origin contexts do not inherit each
+other's trust policy. HTTPS without a client context fails before DNS or
+socket creation. A nonempty `WithCACertFile` or `WithInsecureTls(True)` raises
+a configuration error; trust and verification
+are configured on the provider context.
+
+`WithClientIdentity` accepts the common `IClientIdentity` alias for
+`ITLSIdentity`. `WithClientCertificateFiles` is a compatibility method that
+raises a configuration error. Identities are loaded through the selected
+provider facade. `WithClientIdentitySelector` asks an
+`IClientIdentitySelector` for each new origin connection. A nil result
+suppresses the context default identity. `WithProxyClientIdentity` selects
+identity for the HTTPS proxy leg only. Pool keys include origin and proxy
+context identity and the selected identity. See [TLS context](../common/tls-context.md),
+[provider docs](../tls/openssl.md) and [mTLS](mtls.md). `WithObserver` installs an `IHttp2Observer` for connection,
 stream, and frame-level events — as described in [testing-observability](testing-observability.md).
 
 `WithRequestObserver` installs an `IHttpClientObserver`, the request-level
@@ -189,14 +182,19 @@ in [request-observability](request-observability.md).
 
 ### TLS and trust
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `SocketFactory` | `TDefaultSocketFactory` | the socket/TLS implementation; overridable for tests |
-| `CACertFile` | empty (system store) | PEM trust anchor bundle used to verify the peer |
-| `Insecure` | `False` | when true, skip certificate and hostname verification |
+The default socket factory uses `ITLSContext` for TLS. The secure client
+policy verifies the certificate path and the expected server name. Trust
+anchors and the optional system trust setting belong to that context. The
+TLS provider is selected by constructing an OpenSSL or TlsLib context and
+passing it to `WithTlsContext`. HTTPS proxy trust uses
+`WithProxyTlsContext` independently. A context may contain client and server
+policies and is safe to share; each connection creates its own session.
 
-`Insecure` is exposed for tests and local servers only. It is not set by
-any example and is not reachable through the plain `Create` defaults.
+`WithCACertFile` with a nonempty path and `WithInsecureTls(True)` raise
+configuration errors. They no longer configure peer trust. Explicit insecure
+operation is available through `TTlsClientPolicy.WithInsecure` before the
+provider factory builds the context. The provider capability list reports
+features supported by each implementation.
 
 Fluent use:
 

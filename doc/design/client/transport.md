@@ -17,7 +17,7 @@ related:
   - "[fallback](fallback.md)"
   - "[proxy](proxy.md)"
   - "[open-questions](open-questions.md)"
-updated: 2026-10-13
+updated: 2026-11-11
 notes:
   - Imported from http2client/doc/design/transport.md at the source commit recorded in the source inventory.
 ---
@@ -212,34 +212,27 @@ idempotent methods (no body writer), and only on `ecRefusedStream` or a
 
 ## TLS and ALPN
 
-- The default is TLS only. The client uses `https` origins with ALPN `h2`.
-- ALPN must offer `h2`. If the server does not select `h2`, the client
-  raises `EHttpProtocolError` by default. It does not fall back to HTTP/1.1
-  without the caller's consent. `NPN` is not required.
-- Cleartext `h2c` (prior knowledge and upgrade), cleartext HTTP/1.1 without
-  a probe, and HTTP/1.1 fallback are available when the caller enables them.
-  The default stays strict. Details are in [fallback](fallback.md).
-- Certificate validation/trust configuration is a factory concern (hostname
-  verification on by default).
-- Client identity: when the factory holds a client certificate, `TTlsSocket`
-  installs its leaf, chain and key on the per-dial context before the
-  handshake, on every TLS dial to an origin (direct, through a tunnel, the
-  HTTP/1.1-only dial and the fallback dial) and never on the leg to an
-  `https` proxy. That leg takes the separate proxy identity, and the origin
-  never sees it. The origin identity is the request's, else the selector's,
-  else the client's. A server that rejects it surfaces as `EHttpTlsClientAuthError`
-  (on the handshake under TLS 1.2, on the first read under TLS 1.3), which is
-  final: it is not retried and does not trigger the HTTP/1.1 fallback. See
-  [mtls](mtls.md).
-- Proxy: when a request is routed through a proxy (`WithProxy`, the proxy
-  environment variables or an `IProxySelector`; as described in [proxy](proxy.md), including the
-  SOCKS5 variant), TLS/`h2` is negotiated over a caller-supplied
-  forward proxy via an HTTP `CONNECT` tunnel to the origin. The TCP
-  connection goes to the proxy; the `CONNECT` is negotiated on the plain
-  socket before TLS, so SNI, certificate verification and ALPN still target
-  the origin host and the h2c/HTTP/1.1 paths tunnel identically. A non-2xx
-  `CONNECT` response raises `EHttpConnectionError` (`proxy CONNECT failed`);
-  the client never silently falls back to a direct connection.
+- HTTPS requires a client-capable `ITLSContext` selected with
+  `WithTlsContext`. Without one, a library-owned HTTPS dial fails before DNS
+  or socket creation.
+- The client offers ALPN `h2`. If the server does not select `h2`, the client
+  raises `EHttpProtocolError` by default. HTTP/1.1 fallback requires explicit
+  caller policy. `NPN` is not required.
+- Cleartext `h2c`, cleartext HTTP/1.1, and HTTP/1.1 fallback remain separate
+  transport settings. The strict default remains unchanged. Details are in
+  [fallback](fallback.md).
+- The context owns trust and hostname verification policy. The secure client
+  policy verifies both by default. A nonempty `WithCACertFile` or
+  `WithInsecureTls(True)` raises a configuration error.
+- Each connection owns a provider-neutral buffer session. The session moves
+  ciphertext and plaintext through bounded queues and performs no socket I/O.
+  OpenSSL and TlsLib provide the same session contract. A client identity is
+  selected as common `ITLSIdentity` metadata; a nil selector result suppresses
+  the context default.
+- HTTPS proxy TLS uses `WithProxyTlsContext`. Proxy trust and proxy identity
+  are separate from the origin context and identity. A `CONNECT` tunnel then
+  carries the origin TLS layer. See [proxy](proxy.md) and [mutual TLS](mtls.md).
+
 
 ## WebSocket connections
 
