@@ -31,7 +31,7 @@ uses
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Client.Tls, Http2.Client.Stream,
   Http2.Client.Messages,
   Http2.Client, Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.Redirects.Test,
-  Http2.Client.ClearText.Test, Http2.Client.Http1, Http2.Client.Http1.Test, Http2.Client.Sse;
+  Http2.Client.ClearText.Support, Http2.Client.Http1, Http2.Client.Http1.Test, Http2.Client.Sse;
 
 type
   /// a thread-safe ordered log shared by several observers

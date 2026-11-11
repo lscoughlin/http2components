@@ -15,7 +15,7 @@ notes:
 //   behind an https proxy is TLS inside TLS, which exercises the memory-BIO
 //   mode of TTlsSocket).
 // - no network beyond 127.0.0.1 and no real proxy is involved.
-unit Http2.Client.ProxyTransport.Test;
+unit Http2.Client.ProxyTransport.Tls.Test;
 
 {$mode delphi}{$H+}
 {$modeswitch advancedrecords}
@@ -72,7 +72,7 @@ type
     constructor Create(const AListenFd: Integer; const AMode: TProxyMode);
   end;
 
-  TProxyTransportTest = class(TTestCase)
+  TProxyTransportAdditionalTest = class(TTestCase)
   private
     FListenFd: Integer;
     FPort: Word;
@@ -84,19 +84,6 @@ type
   protected
     procedure TearDown; override;
   published
-    // HTTP CONNECT
-    procedure TestHttpConnectWithCredentialsSendsBasicHeader;
-    procedure TestHttpConnectWithoutCredentialsSendsNoAuthHeader;
-    procedure TestHttpConnect407DoesNotLeakCredentials;
-    procedure TestHttpConnectBracketsAnIpv6Target;
-    // SOCKS5
-    procedure TestSocks5NoAuthSendsTheNameUnresolved;
-    procedure TestSocks5UserPassAuthenticates;
-    procedure TestSocks5WrongPasswordIsAConnectionError;
-    procedure TestSocks5RefusedReplyNamesTheReason;
-    procedure TestSocks5TunnelsAnHttpsOrigin;
-    procedure TestSocks5IpLiteralUsesAnAddressType;
-    // https proxy (TLS to the proxy)
     procedure TestHttpsProxyCarriesCredentialsOnlyInsideTls;
     procedure TestHttpsProxyThenCleartextOrigin;
     procedure TestHttpsProxyThenTlsOriginIsTlsInsideTls;
@@ -105,10 +92,13 @@ type
     procedure TestHttpsProxyHostNameMismatchFailsNamingTheProxy;
     procedure TestHttpsProxyAgainstAPlainServerFails;
     procedure TestHttpsProxyConnectRefusedIsAConnectionError;
-    // factory dispatch
     procedure TestDialProtocolViaDispatchesOnProxyKind;
     procedure TestNilProxyDialsDirectly;
     procedure TestAFactoryBuiltWithAProxyKeepsUsingItWhenNothingIsRouted;
+    // HTTP CONNECT
+    // SOCKS5
+    // https proxy (TLS to the proxy)
+    // factory dispatch
   end;
 
 implementation
@@ -589,7 +579,7 @@ begin
   Result := True;
 end;
 
-procedure TProxyTransportTest.StartServer(const AMode: TProxyMode);
+procedure TProxyTransportAdditionalTest.StartServer(const AMode: TProxyMode);
 begin
   if not OpenSslIsAvailable then
     Exit;
@@ -598,7 +588,7 @@ begin
   FServer := TProxyScriptServer.Create(FListenFd, AMode);
 end;
 
-procedure TProxyTransportTest.StopServer;
+procedure TProxyTransportAdditionalTest.StopServer;
 begin
   if (FServer <> nil) and FServer.Suspended then
     FreeAndNil(FServer);          // never started: nothing to wait for
@@ -621,18 +611,18 @@ begin
   end;
 end;
 
-procedure TProxyTransportTest.TearDown;
+procedure TProxyTransportAdditionalTest.TearDown;
 begin
   StopServer;
   inherited TearDown;
 end;
 
-function TProxyTransportTest.Secure: Boolean;
+function TProxyTransportAdditionalTest.Secure: Boolean;
 begin
   Result := OpenSslIsAvailable;
 end;
 
-procedure TProxyTransportTest.EchoRoundTrip(const ASock: IHttp2Socket;
+procedure TProxyTransportAdditionalTest.EchoRoundTrip(const ASock: IHttp2Socket;
   const ACount: Integer);
 var
   Out_, In_: TBytes;
@@ -668,190 +658,8 @@ end;
 
 { HTTP CONNECT }
 
-procedure TProxyTransportTest.TestHttpConnectWithCredentialsSendsBasicHeader;
-var
-  Sock: IHttp2Socket;
-begin
-  if not Secure then Exit;
-  StartServer(pmHttp);
-  FServer.RequireAuthHeader := 'Basic ' + ProxyBasicCredentials('bob', 'pw');
-  FServer.Start;
-  Sock := TTlsSocket.DialCleartextVia('origin.example', 80, 2000,
-    TProxy.Create(pkHttp, cLocalhost, FPort, 'bob', 'pw'));
-  EchoRoundTrip(Sock, 500);
-  Sock.Close;
-  FServer.WaitFor;
-  AssertTrue(Pos('CONNECT origin.example:80 HTTP/1.1', string(FServer.Request)) = 1);
-  AssertTrue('Basic credential header',
-    Pos('Proxy-Authorization: Basic ' + ProxyBasicCredentials('bob', 'pw'),
-      string(FServer.Request)) > 0);
-  AssertEquals('server error', '', FServer.Failure);
-end;
 
-procedure TProxyTransportTest.TestHttpConnectWithoutCredentialsSendsNoAuthHeader;
-var
-  Sock: IHttp2Socket;
-begin
-  if not Secure then Exit;
-  StartServer(pmHttp);
-  FServer.Start;
-  Sock := TTlsSocket.DialCleartextVia('origin.example', 80, 2000,
-    TProxy.Create(pkHttp, cLocalhost, FPort));
-  EchoRoundTrip(Sock, 100);
-  Sock.Close;
-  FServer.WaitFor;
-  AssertEquals('no auth header', 0,
-    Pos('Proxy-Authorization', string(FServer.Request)));
-end;
-
-procedure TProxyTransportTest.TestHttpConnect407DoesNotLeakCredentials;
-var
-  Msg: string;
-begin
-  if not Secure then Exit;
-  StartServer(pmHttp);
-  FServer.RequireAuthHeader := 'Basic ' + ProxyBasicCredentials('bob', 'right');
-  FServer.Start;
-  Msg := '';
-  try
-    TTlsSocket.DialCleartextVia('origin.example', 80, 2000,
-      TProxy.Create(pkHttp, cLocalhost, FPort, 'bob', 'TOPSECRET'));
-  except
-    on E: EHttpConnectionError do
-      Msg := E.Message;
-  end;
-  AssertTrue('raised', Msg <> '');
-  AssertTrue('names the status', Pos('407', Msg) > 0);
-  AssertEquals('no password', 0, Pos('TOPSECRET', Msg));
-  AssertEquals('no base64 of it', 0,
-    Pos(ProxyBasicCredentials('bob', 'TOPSECRET'), Msg));
-end;
-
-procedure TProxyTransportTest.TestHttpConnectBracketsAnIpv6Target;
-var
-  Sock: IHttp2Socket;
-begin
-  if not Secure then Exit;
-  StartServer(pmHttp);
-  FServer.Start;
-  Sock := TTlsSocket.DialCleartextVia('2001:db8::7', 8080, 2000,
-    TProxy.Create(pkHttp, cLocalhost, FPort));
-  Sock.Close;
-  FServer.WaitFor;
-  AssertTrue(Pos('CONNECT [2001:db8::7]:8080 HTTP/1.1', string(FServer.Request)) = 1);
-end;
-
-{ SOCKS5 }
-
-procedure TProxyTransportTest.TestSocks5NoAuthSendsTheNameUnresolved;
-var
-  Sock: IHttp2Socket;
-begin
-  if not Secure then Exit;
-  StartServer(pmSocks5);
-  FServer.Start;
-  Sock := TTlsSocket.DialCleartextVia('origin.example', 8443, 2000,
-    TProxy.Create(pkSocks5, cLocalhost, FPort));
-  EchoRoundTrip(Sock, 700);
-  Sock.Close;
-  FServer.WaitFor;
-  AssertEquals('ATYP name', 3, FServer.SeenAtyp);
-  AssertEquals('origin.example', FServer.SeenHost);
-  AssertEquals(8443, FServer.SeenPort);
-end;
-
-procedure TProxyTransportTest.TestSocks5UserPassAuthenticates;
-var
-  Sock: IHttp2Socket;
-begin
-  if not Secure then Exit;
-  StartServer(pmSocks5);
-  FServer.RequireUser := 'bob';
-  FServer.RequirePass := 'pw';
-  FServer.Start;
-  Sock := TTlsSocket.DialCleartextVia('origin.example', 80, 2000,
-    TProxy.Create(pkSocks5, cLocalhost, FPort, 'bob', 'pw'));
-  EchoRoundTrip(Sock, 300);
-  Sock.Close;
-  FServer.WaitFor;
-  AssertEquals('bob', FServer.SeenUser);
-end;
-
-procedure TProxyTransportTest.TestSocks5WrongPasswordIsAConnectionError;
-var
-  Msg: string;
-begin
-  if not Secure then Exit;
-  StartServer(pmSocks5);
-  FServer.RequireUser := 'bob';
-  FServer.RequirePass := 'right';
-  FServer.Start;
-  Msg := '';
-  try
-    TTlsSocket.DialCleartextVia('origin.example', 80, 2000,
-      TProxy.Create(pkSocks5, cLocalhost, FPort, 'bob', 'TOPSECRET'));
-  except
-    on E: EHttpConnectionError do
-      Msg := E.Message;
-  end;
-  AssertTrue('raised', Msg <> '');
-  AssertEquals('no password', 0, Pos('TOPSECRET', Msg));
-end;
-
-procedure TProxyTransportTest.TestSocks5RefusedReplyNamesTheReason;
-var
-  Msg: string;
-begin
-  if not Secure then Exit;
-  StartServer(pmSocks5);
-  FServer.SocksRep := 5;
-  FServer.Start;
-  Msg := '';
-  try
-    TTlsSocket.DialCleartextVia('origin.example', 80, 2000,
-      TProxy.Create(pkSocks5, cLocalhost, FPort));
-  except
-    on E: EHttpConnectionError do
-      Msg := E.Message;
-  end;
-  AssertTrue('connection refused', Pos('connection refused', Msg) > 0);
-end;
-
-procedure TProxyTransportTest.TestSocks5TunnelsAnHttpsOrigin;
-var
-  Sock: IHttp2Socket;
-begin
-  if not Secure then Exit;
-  StartServer(pmSocks5);
-  FServer.OriginTls := True;
-  FServer.Start;
-  Sock := TTlsSocket.DialWithAlpnVia('localhost', 443, nil, True, 3000, '',
-    TProxy.Create(pkSocks5, cLocalhost, FPort));
-  EchoRoundTrip(Sock, 2000);
-  Sock.Close;
-  FServer.WaitFor;
-  AssertEquals('localhost', FServer.SeenHost);
-  AssertEquals('server error', '', FServer.Failure);
-end;
-
-procedure TProxyTransportTest.TestSocks5IpLiteralUsesAnAddressType;
-var
-  Sock: IHttp2Socket;
-begin
-  if not Secure then Exit;
-  StartServer(pmSocks5);
-  FServer.Start;
-  Sock := TTlsSocket.DialCleartextVia('10.9.8.7', 80, 2000,
-    TProxy.Create(pkSocks5, cLocalhost, FPort));
-  Sock.Close;
-  FServer.WaitFor;
-  AssertEquals('ATYP ipv4', 1, FServer.SeenAtyp);
-  AssertEquals('10.9.8.7', FServer.SeenHost);
-end;
-
-{ https proxy }
-
-procedure TProxyTransportTest.TestHttpsProxyCarriesCredentialsOnlyInsideTls;
+procedure TProxyTransportAdditionalTest.TestHttpsProxyCarriesCredentialsOnlyInsideTls;
 var
   Sock: IHttp2Socket;
 begin
@@ -871,7 +679,7 @@ begin
   AssertEquals('server error', '', FServer.Failure);
 end;
 
-procedure TProxyTransportTest.TestHttpsProxyThenCleartextOrigin;
+procedure TProxyTransportAdditionalTest.TestHttpsProxyThenCleartextOrigin;
 var
   Sock: IHttp2Socket;
 begin
@@ -886,7 +694,7 @@ begin
   AssertTrue(Pos('CONNECT origin.example:80 HTTP/1.1', string(FServer.Request)) = 1);
 end;
 
-procedure TProxyTransportTest.TestHttpsProxyThenTlsOriginIsTlsInsideTls;
+procedure TProxyTransportAdditionalTest.TestHttpsProxyThenTlsOriginIsTlsInsideTls;
 var
   Sock: IHttp2Socket;
 begin
@@ -903,7 +711,7 @@ begin
   AssertTrue(Pos('CONNECT localhost:443 HTTP/1.1', string(FServer.Request)) = 1);
 end;
 
-procedure TProxyTransportTest.TestTlsInsideTlsLargePayloadSpansManyRecords;
+procedure TProxyTransportAdditionalTest.TestTlsInsideTlsLargePayloadSpansManyRecords;
 var
   Sock: IHttp2Socket;
 begin
@@ -920,7 +728,7 @@ begin
   AssertEquals('server error', '', FServer.Failure);
 end;
 
-procedure TProxyTransportTest.TestHttpsProxyWithTrustedCertificateForLocalhost;
+procedure TProxyTransportAdditionalTest.TestHttpsProxyWithTrustedCertificateForLocalhost;
 var
   Sock: IHttp2Socket;
 begin
@@ -950,7 +758,7 @@ begin
   FServer.WaitFor;
 end;
 
-procedure TProxyTransportTest.TestHttpsProxyHostNameMismatchFailsNamingTheProxy;
+procedure TProxyTransportAdditionalTest.TestHttpsProxyHostNameMismatchFailsNamingTheProxy;
 var
   Msg: string;
 begin
@@ -975,7 +783,7 @@ begin
   AssertTrue('names host:port', Pos(cLocalhost + ':' + IntToStr(FPort), Msg) > 0);
 end;
 
-procedure TProxyTransportTest.TestHttpsProxyAgainstAPlainServerFails;
+procedure TProxyTransportAdditionalTest.TestHttpsProxyAgainstAPlainServerFails;
 var
   Msg: string;
 begin
@@ -994,7 +802,7 @@ begin
   AssertTrue('raised', Msg <> '');
 end;
 
-procedure TProxyTransportTest.TestHttpsProxyConnectRefusedIsAConnectionError;
+procedure TProxyTransportAdditionalTest.TestHttpsProxyConnectRefusedIsAConnectionError;
 var
   Msg: string;
 begin
@@ -1015,7 +823,7 @@ end;
 
 { factory dispatch }
 
-procedure TProxyTransportTest.TestDialProtocolViaDispatchesOnProxyKind;
+procedure TProxyTransportAdditionalTest.TestDialProtocolViaDispatchesOnProxyKind;
 var
   F: TProtocolSocketFactory;
   Ref: IProxySocketFactory;
@@ -1044,7 +852,7 @@ begin
   AssertTrue(Pos('CONNECT origin.example:80', string(FServer.Request)) = 1);
 end;
 
-procedure TProxyTransportTest.TestNilProxyDialsDirectly;
+procedure TProxyTransportAdditionalTest.TestNilProxyDialsDirectly;
 var
   Sock: IHttp2Socket;
   Direct: TProxyScriptServer;
@@ -1065,7 +873,7 @@ begin
     Copy(string(Direct.Request), 1, 1));
 end;
 
-procedure TProxyTransportTest.TestAFactoryBuiltWithAProxyKeepsUsingItWhenNothingIsRouted;
+procedure TProxyTransportAdditionalTest.TestAFactoryBuiltWithAProxyKeepsUsingItWhenNothingIsRouted;
 var
   F: IProxySocketFactory;
   Sock: IHttp2Socket;
@@ -1085,5 +893,5 @@ begin
 end;
 
 initialization
-  RegisterTest(TProxyTransportTest);
+  RegisterTest(TProxyTransportAdditionalTest);
 end.
