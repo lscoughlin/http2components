@@ -26,3 +26,9 @@
 - Factory validation, context/engine creation, session adaptation, credential loading, trust parsing, metadata conversion, and resource counters are in separate provider units. The factory rejects foreign identities before reading provider credential data.
 - The compatible preset's versioned cipher registry offers TLS 1.2 ECDHE RSA/ECDSA AES-GCM and ChaCha20 suites, and TLS 1.3 AEAD suites. The negotiated names are reported from IANA cipher-suite identifiers. Local identity chain DER is limited to 32 KiB. The engine has a separate handshake reassembly limit of 64 KiB per message and 128 KiB total; this is protocol state, not queued application ciphertext.
 - System trust, configurable verification depth, resumption, early data, DER identity loading, and separate SNI from verification name are unsupported. The adapter rejects explicit depth, including zero. No Linux, load, or full integration validation has been run.
+
+## Main acceptance review
+
+- Coordinator run 13 passed all 84 checks in 0.983 seconds after the counter correction. The implementation was merged at `a7daf73`. The merged `make test-tls-tlslib` run passed 84 checks in 1.185 seconds on 2026-11-11. Both runs exited 0 under the 30-second test limit.
+- The generated TlsLib package now lists all eight source units. `make -C tls/tlslib check` passed with no failures across 54 documents and 383 Pascal files.
+- The main checkout compiled the pinned crypto dependencies locally before the test. No Linux or load test was run. Loaded-image isolation and the real client/server matrix remain assigned to TLS-10 and TLS-09.

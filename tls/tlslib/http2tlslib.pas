@@ -12,6 +12,13 @@ unit http2tlslib;
 interface
 
 uses
+  Http2.TlsLib.Certificate,
+  Http2.TlsLib.Context,
+  Http2.TlsLib.Diagnostics,
+  Http2.TlsLib.Factory,
+  Http2.TlsLib.Identity,
+  Http2.TlsLib.Session,
+  Http2.TlsLib.Trust,
   Http2.TlsLib;
 
 implementation

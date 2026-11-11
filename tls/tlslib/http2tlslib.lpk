@@ -22,11 +22,39 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="1">
+    <Files Count="8">
       <Item1>
+        <Filename Value="src/Http2.TlsLib.Certificate.pas" />
+        <UnitName Value="Http2.TlsLib.Certificate" />
+      </Item1>
+      <Item2>
+        <Filename Value="src/Http2.TlsLib.Context.pas" />
+        <UnitName Value="Http2.TlsLib.Context" />
+      </Item2>
+      <Item3>
+        <Filename Value="src/Http2.TlsLib.Diagnostics.pas" />
+        <UnitName Value="Http2.TlsLib.Diagnostics" />
+      </Item3>
+      <Item4>
+        <Filename Value="src/Http2.TlsLib.Factory.pas" />
+        <UnitName Value="Http2.TlsLib.Factory" />
+      </Item4>
+      <Item5>
+        <Filename Value="src/Http2.TlsLib.Identity.pas" />
+        <UnitName Value="Http2.TlsLib.Identity" />
+      </Item5>
+      <Item6>
+        <Filename Value="src/Http2.TlsLib.Session.pas" />
+        <UnitName Value="Http2.TlsLib.Session" />
+      </Item6>
+      <Item7>
+        <Filename Value="src/Http2.TlsLib.Trust.pas" />
+        <UnitName Value="Http2.TlsLib.Trust" />
+      </Item7>
+      <Item8>
         <Filename Value="src/Http2.TlsLib.pas" />
         <UnitName Value="Http2.TlsLib" />
-      </Item1>
+      </Item8>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
