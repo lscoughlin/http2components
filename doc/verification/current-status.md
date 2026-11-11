@@ -47,9 +47,10 @@ and no skipped suite. The runtime checks used local buffers or loopback
 sockets. Same-library exchanges establish local integration; independent
 protocol conformance remains untested by these checks.
 
-Additional focused runs passed 78 client mTLS cases and 62 affected server
-unit cases. The full legacy client and server suites were not run for this
-replacement. Earlier source-merge results, including the 805-case client run
+Additional focused macOS runs passed 78 client mTLS cases and 62 affected
+server unit cases. Those bounded checks did not include the complete legacy
+client and server suites. Their Linux results appear above. Earlier
+source-merge results, including the 805-case client run
 and four-package build, describe an earlier implementation. They do not count
 as current TLS replacement results.
 
