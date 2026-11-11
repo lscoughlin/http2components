@@ -10,6 +10,7 @@ greater before adding the next connection.
 
 from __future__ import annotations
 
+import errno
 import os
 import queue
 import re
@@ -190,14 +191,20 @@ def poll_peer(peer: Peer, now: float) -> bool:
         socket_error = peer.sock.getsockopt(socket.SOL_SOCKET, socket.SO_ERROR)
         if socket_error == 0:
             return False
-        peer.close_kind = f"socket_error:{socket_error}"
+        peer.close_kind = (
+            "server_reset" if socket_error == errno.ECONNRESET
+            else f"socket_error:{socket_error}"
+        )
     elif readable:
         try:
             data = peer.sock.recv(65535)
         except BlockingIOError:
             return False
         except OSError as error:
-            peer.close_kind = f"socket_error:{type(error).__name__}"
+            peer.close_kind = (
+                "server_reset" if isinstance(error, ConnectionResetError)
+                else f"socket_error:{type(error).__name__}"
+            )
         else:
             if data:
                 if not peer.first_data_hex:
@@ -434,11 +441,6 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
             )
             accepted_after_excess = server_accepted_count(process, events)
             excess_snapshot = time.monotonic()
-            if accepted_after_excess != accepted_at_limit:
-                raise RuntimeError(
-                    f"listener admitted excess peers at its cap: before={accepted_at_limit} "
-                    f"after={accepted_after_excess}"
-                )
             for peer in peers[excess_start:]:
                 peer.admission_observed_ms = round(
                     (excess_snapshot - peer.started) * 1000
@@ -447,28 +449,33 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                     peer.admission = "tcp_connection_refused"
                 elif not peer.tcp_connected:
                     peer.admission = "peer_error_before_capacity_observation"
-                elif peer.close_kind == "eof" or peer.close_kind.startswith("socket_error:"):
+                elif peer.close_kind in ("eof", "server_reset"):
                     peer.admission = "server_closed_during_capacity_observation"
                 elif peer.sock is None:
                     peer.admission = "peer_error_before_capacity_observation"
                 else:
-                    peer.admission = "not_admitted_during_observation"
-                if peer.sock is not None:
+                    peer.admission = "still_open_at_capacity_observation"
                     peer.close_kind = "client_closed_after_capacity_observation"
-                    peer.close_ms = round((time.monotonic() - peer.started) * 1000)
+                    peer.close_ms = round((excess_snapshot - peer.started) * 1000)
+                if peer.sock is not None:
                     peer.sock.close()
                     peer.sock = None
+            peer_rows(raw_dir / "peers.tsv", peers)
             tcp_connected = sum(peer.tcp_connected for peer in peers)
             not_admitted = len(peers) - admitted
             early_client_refusals = sum(
                 peer.admission == "tcp_connection_refused" for peer in peers
+            )
+            excess_client_refusals = sum(
+                peer.admission == "tcp_connection_refused"
+                for peer in peers[excess_start:]
             )
             server_closed_excess = sum(
                 peer.admission == "server_closed_during_capacity_observation"
                 for peer in peers[excess_start:]
             )
             client_closed_excess = sum(
-                peer.admission == "not_admitted_during_observation"
+                peer.admission == "still_open_at_capacity_observation"
                 for peer in peers[excess_start:]
             )
             peer_error_excess = sum(
@@ -484,6 +491,7 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
             result["not_admitted"] = not_admitted
             result["server_closed_excess"] = server_closed_excess
             result["client_closed_excess"] = client_closed_excess
+            result["excess_client_refusals"] = excess_client_refusals
             result["peer_error_excess"] = peer_error_excess
             result["tcp_connected"] = tcp_connected
             result["early_client_refusals"] = early_client_refusals
@@ -500,6 +508,17 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                     f"tcp_connected={tcp_connected} not_admitted={not_admitted} "
                     f"server_closed_excess={server_closed_excess} "
                     f"early_client_refusals={early_client_refusals}"
+                )
+            if accepted_after_excess != accepted_at_limit:
+                raise RuntimeError(
+                    f"listener admitted excess peers at its cap: before={accepted_at_limit} "
+                    f"after={accepted_after_excess}"
+                )
+            if client_closed_excess:
+                raise RuntimeError(
+                    f"{client_closed_excess} excess peers remained open after the "
+                    f"{ADMISSION_OBSERVE_MS} ms capacity-refusal window; they were "
+                    "closed by the probe and are not counted as server refusals"
                 )
             before_load_request = server_accepted_count(process, events)
             load_outcome, load_request_ms = during_load_request(
@@ -532,7 +551,7 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
             timed_out = [
                 p for p in peers
                 if p.admission == "admitted" and
-                (p.close_kind == "eof" or p.close_kind.startswith("socket_error:")) and
+                p.close_kind in ("eof", "server_reset") and
                 HANDSHAKE_TIMEOUT_MS - 100 <= p.close_ms <=
                 HANDSHAKE_TIMEOUT_MS + SCHEDULER_MARGIN_MS
             ]
@@ -578,6 +597,7 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                 f"admitted={admitted}\nnot_admitted_during_observation={not_admitted}\n"
                 f"server_closed_excess={server_closed_excess}\n"
                 f"client_closed_excess={client_closed_excess}\n"
+                f"excess_client_refusals={excess_client_refusals}\n"
                 f"peer_error_excess={peer_error_excess}\n"
                 f"tcp_connected={tcp_connected}\nearly_client_refusals={early_client_refusals}\n"
                 f"timeout_close_count={len(timed_out)}\n"
