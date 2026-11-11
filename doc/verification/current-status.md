@@ -1,70 +1,54 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: verification, status, integration
+keywords: verification, status, tls, integration
 notes:
-  - Results describe the merged tree and identify the limits of each run.
+  - Results distinguish current bounded checks from historical source checks.
 ---
 
 # Current verification status
 
-This record describes results on macOS arm64 with Free Pascal 3.2.4 and
-OpenSSL 3. It separates completed checks from runs without a final result.
+The current implementation candidate is `15feb54`, checked on 2026-11-11
+on macOS 27.2 arm64 with Free Pascal 3.2.4, Lazarus 4.0, and OpenSSL 3.5.9.
+The [TLS replacement record](tls-replacement-0.30.0.md) contains the commands,
+versions, counts, artifacts, review limits, and cleanup results.
 
 ## Completed checks
 
 | Check | Result |
 | --- | --- |
-| Clean source archive | Candidate `6ac7077` builds common, client, server, and optional Readers from an empty output tree. Source, documentation, and test-accounting checks pass in the extracted archive. |
-| Common unit suite | 229 passed. |
-| API unit suite | 16 passed. |
-| API compile probes | Six passed. The probes cover the common facade, client facade, server facade, combined facades, optional Readers, and connection-lifetime API. |
-| In-process integration | Nine cases passed. The cases cover HTTP/2, HTTP/1.1, TLS, repeated start and stop, concurrency, SSE, and WebSocket. |
-| Separate-process integration | HTTP and TLS checks passed. |
-| Server TLS live gate | 21 checks passed. |
-| Server mTLS live gate | 40 checks passed. The checks include client identity modes, HTTP/1.1, HTTP/2 WebSocket, and the leak counter. |
-| Focused server factory suite | 27 passed. |
-| Focused server TLS-context suite | 10 passed. |
-| Source and package checks | 353 Pascal header and size checks, 337 active Pascal file checks, 135 production unit checks, 54 documentation checks, and 1,780 source test mappings passed. All four Lazarus packages passed. |
+| Common TLS contract | 23 checks passed. |
+| OpenSSL provider | 139 checks passed. |
+| TlsLib provider | 87 checks passed. The process loaded no OpenSSL or LibreSSL library. |
+| Client TLS transport | 17 checks passed. |
+| Server TLS transport | 13 adapter and 12 listener checks passed. |
+| HTTP integration | 29 checks passed across both providers and TLS versions. |
+| Security integration | 200 assertions passed over 152 handshake scenarios. |
+| Public API and isolation | The facade probe and six restricted compiler probes passed. |
+| Examples | All 25 examples compiled. They were not executed. |
+| Lazarus packages and group | All six packages built separately. The Lazarus group reader loaded all six targets. |
+| Source and documentation | 405 Pascal files, one include, 152 production units, and 58 documents passed. |
+| Version and package inventory | Version 0.30.0 and all six package inventories passed. |
+| Test inventory | All 1,780 source records have checked accounting. This is not a runtime case count. |
 
-The integration cases use the merged client and server. They verify local
-peer agreement. They do not establish independent protocol conformance.
+Each named TLS program completed within a 30-second outer limit, with exit 0
+and no skipped suite. The runtime checks used local buffers or loopback
+sockets. Same-library exchanges establish local integration; independent
+protocol conformance remains untested by these checks.
 
-## Unit suite coverage
-
-The full server unit run reached its 60-second deadline. A progress sample
-showed about 149 completed test cases after 45 seconds, including normal
-time in a connection-age wait. This evidence does not prove a hang and does
-not make the whole suite pass.
-
-The default client runner passed 805 registered cases with no errors or
-failures. Thirty-three environment-gated cases did not run: 10 proxy live
-cases, 18 WebSocket live cases, two SSE live cases, one TLS integration case,
-and two lifecycle integration cases. These cases require environment settings
-or an external peer. The source accounting record contains 913 client and 867 server source test
-records. Those source counts include cases that moved to common and API
-suites; they are not the merged client runner total.
+Additional focused runs passed 78 client mTLS cases and 62 affected server
+unit cases. The full legacy client and server suites were not run for this
+replacement. Earlier source-merge results, including the 805-case client run
+and four-package build, describe an earlier implementation. They do not count
+as current TLS replacement results.
 
 ## Deferred checks
 
-Linux builds, load checks, abuse checks, and independent external conformance
-checks remain deferred. Their results are open. No Linux, load, abuse, or
-external conformance pass is stated here.
+Linux, containers, load, abuse, long-duration cleanup, full timed server
+suites, real proxy matrices, independent TLS/HTTP/WebSocket peers, and full
+conformance remain deferred. Release readiness depends on that separate
+validation. No Linux or load run was made for this implementation.
 
-The root `task validate:fast` target includes the bounded unit, API, local
-integration, source, documentation, version, and package checks. The root
-`task validate` target adds the explicit client and server gates. Some of
-those gates use Docker, external peers, or load tools. The command contract
-is in the [repository README](../../README.md).
-
-## Linux container build
-
-The server build context is `tools/server/container/Dockerfile`. From the
-repository root, the build command is:
-
-```sh
-docker build --progress=plain -f tools/server/container/Dockerfile \
-  -t http2components-amd64 .
-```
-
-The build was not run. Linux validation remains deferred.
+The [repository README](../../README.md) describes the build and validation
+commands. The detailed TLS record identifies unsupported provider features
+and the limits of the executed checks.

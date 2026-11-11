@@ -92,6 +92,10 @@ package versions; they do not assert that either version was released.
 
 ## Verification records
 
+The [TLS replacement record](verification/tls-replacement-0.30.0.md) describes
+the current bounded checks, provider isolation, review limits, and deferred
+validation for version 0.30.0.
+
 The [client compiler probes](verification/client-probes/README.md) are
 historical compiler evidence. The source validation and toolchain records
 are grouped by role:
