@@ -42,3 +42,24 @@ Its SHA-256 is
 `8b2a892b47f96160939405aea4135ab1828c5f846aceb9f4a4ba7ec2a3491661`. The
 executable was not run by this worker. The central bounded run remains the
 runtime evidence source.
+
+## Coordinator acceptance
+
+The coordinator reviewed commit `b8f7125` and merged it as `51cb1db` on
+2026-11-11. The review required fatal rejection of an empty client vector,
+constructor-time ALPN encoding, visible case IDs, nontrivial policy-copy
+checks, and server client-auth trust checks. These changes are in the final
+commit. The native callback performs no Pascal string encoding or vector
+allocation. Native handles remain absent from the public facades.
+
+The final worker binary passed 139 cases in 0.504 seconds, exit 0, under a
+30-second limit. The merged `python3 tools/build.py test:tls:openssl` target
+passed the same 139 cases in 0.399 seconds, exit 0. The count is 93 existing
+cases, 21 ALPN cases, and 25 policy/identity cases. Ten lifecycle repetitions
+returned the native counters to X509=6, SSL=0, and SSL_CTX=2.
+
+The logs are `bin/tls-coordinator/tls-alpn-policy-final-worker.log` and
+`bin/tls-coordinator/tls-alpn-policy-main.log`. An earlier reviewed binary
+passed 138 cases before the final mismatched-key assertion and cache cleanup;
+its log remains `bin/tls-coordinator/tls-alpn-policy-worker.log`.
+The worktree and branch were removed after merged acceptance.
