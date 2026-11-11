@@ -33,9 +33,11 @@ uses
   mormot.net.sock,
   mormot.net.async,
   Http2.Server.Errors, Http2.Common.Frames, Http2.Common.Hpack,
-  Http2.Common.Headers, Http2.Server.Config, Http2.Server.Connection,
+  Http2.Common.Headers, Http2.Server.Config, Http2.Server.Config.Limits,
+  Http2.Server.Connection,
   Http2.Server.Seam, Http2.Server.Stream, Http2.Server.Tls.Binding,
-  Http2.Server.Async, Http2.Server.Test.Socket;
+  Http2.Server.Async, Http2.Server.Async.Counters,
+  Http2.Server.Test.Socket;
 
 type
   /// the pure decisions of the TLS plug-in
@@ -47,6 +49,19 @@ type
     procedure TestDeadlineUsesAcceptTime;
     /// an overflowing deadline saturates
     procedure TestDeadlineSaturates;
+  end;
+
+  TConnectionAdmissionTest = class(TTestCase)
+  published
+    procedure TestCapAndSlotReuse;
+    procedure TestFailedCreationReleasesClaim;
+    procedure TestZeroIsUnlimited;
+  end;
+
+  TAdmissionTestServer = class(THttp2AsyncServer)
+  public
+    function TryConnectionNewForTest(
+      const AConnection: THttp2AsyncConnection): Boolean;
   end;
 
   /// an echo handler that answers every request with its path
@@ -193,6 +208,89 @@ procedure TTlsPolicyTest.TestDeadlineSaturates;
 begin
   AssertEquals('overflow saturates at the maximum timestamp', High(Int64),
     TlsHandshakeDeadline(High(Int64) - 5, 10));
+end;
+
+{ TConnectionAdmissionTest }
+
+procedure TConnectionAdmissionTest.TestCapAndSlotReuse;
+var
+  Admission: IConnectionAdmission;
+  First, Second, Reused: IConnectionAdmissionClaim;
+begin
+  Admission := NewConnectionAdmission(2);
+  First := Admission.TryAcquire;
+  Second := Admission.TryAcquire;
+  AssertNotNull('the first slot is reserved', Pointer(First));
+  AssertNotNull('the second slot is reserved', Pointer(Second));
+  AssertNull('the configured cap rejects another slot',
+    Pointer(Admission.TryAcquire));
+  First := nil;
+  Reused := Admission.TryAcquire;
+  AssertNotNull('a released slot accepts the next connection', Pointer(Reused));
+end;
+
+procedure TConnectionAdmissionTest.TestFailedCreationReleasesClaim;
+var
+  Factory: THttp2ServerFactory;
+  Server: TAdmissionTestServer;
+  Connection: THttp2AsyncConnection;
+  Admission: IConnectionAdmission;
+  Claim: IConnectionAdmissionClaim;
+begin
+  Factory := THttp2ServerFactory.Create
+    .WithHost('127.0.0.1')
+    .WithPort(0)
+    .WithClearTextAllowed(True)
+    .WithHandler(TEchoHandler.Create)
+    .WithServerLimits(TServerLimits.Create.WithMaxConnections(1));
+  Server := TAdmissionTestServer.Create(Factory);
+  try
+    Server.Start;
+    Server.Stop;
+    Admission := Server.FAdmission;
+    Connection := THttp2AsyncConnection.Create(Server, default(TNetAddr));
+    try
+      AssertFalse('the stopped listener rejects inherited creation',
+        Server.TryConnectionNewForTest(Connection));
+      Claim := Admission.TryAcquire;
+      AssertNotNull('false return releases the slot before object cleanup',
+        Pointer(Claim));
+      Connection.Free;
+      Connection := nil;
+      AssertNull('later object cleanup does not release the slot twice',
+        Pointer(Admission.TryAcquire));
+    finally
+      Connection.Free;
+    end;
+    Claim := nil;
+    Claim := Admission.TryAcquire;
+    AssertNotNull('the slot is reusable after its claim is released',
+      Pointer(Claim));
+  except
+    Server.Free;
+    raise;
+  end;
+  Server.Free;
+end;
+
+function TAdmissionTestServer.TryConnectionNewForTest(
+  const AConnection: THttp2AsyncConnection): Boolean;
+begin
+  Result := ConnectionNew(nil, AConnection, False);
+end;
+
+procedure TConnectionAdmissionTest.TestZeroIsUnlimited;
+var
+  Admission: IConnectionAdmission;
+  Claims: array[0..2] of IConnectionAdmissionClaim;
+  I: Integer;
+begin
+  Admission := NewConnectionAdmission(0);
+  for I := Low(Claims) to High(Claims) do
+  begin
+    Claims[I] := Admission.TryAcquire;
+    AssertNotNull('zero keeps admission unlimited', Pointer(Claims[I]));
+  end;
 end;
 
 { TEchoHandler }
@@ -681,6 +779,7 @@ end;
 
 initialization
   RegisterTest(TTlsPolicyTest);
+  RegisterTest(TConnectionAdmissionTest);
   RegisterTest(TAsyncServerTest);
   RegisterTest(TThreadRuleTest);
 end.
