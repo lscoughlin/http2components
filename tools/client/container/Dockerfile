@@ -2,7 +2,7 @@
 #
 # FPC 3.2.4 has no published Linux binary and no release tag; the compiler is
 # built from the release_3_2_4_rc2 source tag with the distribution's FPC as
-# the bootstrap.  Build:  docker build -t http2client-dev tools/container
+# the bootstrap.  Build:  docker build -t http2client-dev tools/client/container
 # Run:  docker run --rm -v "$PWD:/src" -w /src http2client-dev make test
 # The tree must include third_party/mORMot2 (the pinned checkout).
 FROM ubuntu:24.04

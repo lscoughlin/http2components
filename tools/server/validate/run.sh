@@ -9,12 +9,13 @@
 # Every tool takes its input from /dev/null, so the script never stops on a
 # terminal that stays open.
 #
-# Usage: run.sh [h2spec-package]
-#   The optional argument names the h2spec package to run.  The default is
-#   the whole `http2` package.  `fast` runs the two short packages only.
+# Usage: run.sh [conformance|fast|tls-live|websocket|websocket:h2|sse|abuse]
+#   `conformance` runs the full h2spec, nghttp, curl, load, TLS, WebSocket,
+#   and SSE checks. `fast` runs the two short h2spec packages. An h2spec
+#   package name can replace the gate name for one package run.
 
 set -u
-here=$(dirname "$0")
+here=$(cd "$(dirname "$0")" && pwd)
 root=$(cd "$here/../../.." && pwd)
 . "$here/lib.sh"
 
@@ -41,6 +42,146 @@ report_fail() {
 
 exit_code=0
 package="${1:-http2}"
+gate="$package"
+work="$(mktemp -d "${TMPDIR:-/tmp}/http2-server-validate.XXXXXX")"
+cleanup() {
+  stop_example_server
+  stop_interop_server
+  rm -rf "$work"
+}
+trap cleanup EXIT INT TERM
+
+case "$gate" in
+  fast)
+    if ! start_interop_server "$root/bin/interop_server" no-http11; then
+      echo "the example server did not report a port" >&2
+      exit 2
+    fi
+    if command -v h2spec >/dev/null 2>&1; then
+      for pkg in http2/4.2 http2/6.5; do
+        if h2spec -h 127.0.0.1 -p "$INTEROP_PORT" "$pkg" >/dev/null 2>&1 </dev/null; then
+          report_pass "h2spec $pkg"
+        else
+          report_fail "h2spec $pkg"
+        fi
+      done
+    else
+      report_skip h2spec "the tool is not installed"
+    fi
+    exit "$exit_code"
+    ;;
+  websocket)
+    if ! start_example_server "$root/bin/ws_echo" 127.0.0.1 0; then
+      report_fail "WebSocket example server did not become ready"
+    elif python3 "$here/../abuse/ws_abuse.py" 127.0.0.1 "$EXAMPLE_PORT"; then
+      report_pass "HTTP/1.1 WebSocket abuse checks"
+    else
+      report_fail "HTTP/1.1 WebSocket abuse checks"
+    fi
+    exit "$exit_code"
+    ;;
+  websocket:h2)
+    ws_python="${WS_PYTHON:-python3}"
+    if ! start_example_server "$root/bin/ws_echo" 127.0.0.1 0 big; then
+      report_fail "WebSocket example server did not become ready"
+    elif "$ws_python" -c 'import h2, wsproto' >/dev/null 2>&1; then
+      if "$ws_python" "$here/ws_h2_client.py" 127.0.0.1 "$EXAMPLE_PORT" </dev/null; then
+        report_pass "WebSocket echo over HTTP/2 with h2 and wsproto (32 checks)"
+      else
+        report_fail "WebSocket echo over HTTP/2 with h2 and wsproto"
+      fi
+    else
+      report_skip "WebSocket over HTTP/2" "the Python packages h2 and wsproto are absent"
+    fi
+    exit "$exit_code"
+    ;;
+  sse)
+    if ! start_example_server "$root/bin/sse_replay" 127.0.0.1 0; then
+      report_fail "SSE example server did not become ready"
+    elif command -v curl >/dev/null 2>&1; then
+      if sh "$here/sse_check.sh" 127.0.0.1 "$EXAMPLE_PORT"; then
+        report_pass "SSE replay over HTTP/1.1 and HTTP/2"
+      else
+        report_fail "SSE replay over HTTP/1.1 and HTTP/2"
+      fi
+    else
+      report_skip SSE "curl is not installed"
+    fi
+    exit "$exit_code"
+    ;;
+  tls-live)
+    if ! command -v openssl >/dev/null 2>&1; then
+      report_skip openssl "the tool is not installed"
+      exit "$exit_code"
+    fi
+    cert_dir=$(ensure_validation_certificate "$work/certs") || {
+      report_fail "the loopback certificate could not be created"
+      exit "$exit_code"
+    }
+    if ! start_interop_server "$root/bin/interop_server" \
+      --cert="$cert_dir/localhost.crt" --key="$cert_dir/localhost.key"; then
+      report_fail "the TLS server did not report a port"
+      exit "$exit_code"
+    fi
+    tls_port=$INTEROP_PORT
+    alpn=$(echo | openssl s_client -connect "127.0.0.1:$tls_port" -alpn h2 2>/dev/null \
+      | sed -n 's/^ *ALPN protocol: *//p' | head -1)
+    if [ "$alpn" = h2 ]; then
+      report_pass "openssl s_client negotiates ALPN h2"
+    else
+      report_fail "openssl s_client ALPN result ($alpn)"
+    fi
+    if command -v curl >/dev/null 2>&1; then
+      tbody1=$(curl -sk -m 10 --http1.1 "https://127.0.0.1:$tls_port/" </dev/null)
+      tbody2=$(curl -sk -m 10 --http2 "https://127.0.0.1:$tls_port/" </dev/null)
+      if [ -n "$tbody1" ] && [ "$tbody1" = "$tbody2" ]; then
+        report_pass "curl --http1.1 and --http2 give the same body (TLS)"
+      else
+        report_fail "curl --http1.1 and --http2 differ over TLS"
+      fi
+    else
+      report_skip curl "the tool is not installed"
+    fi
+    stop_interop_server
+    if command -v curl >/dev/null 2>&1 &&
+       start_interop_server "$root/bin/interop_server" no-http11 \
+         --cert="$cert_dir/localhost.crt" --key="$cert_dir/localhost.key"; then
+      if curl -sk -m 10 --http1.1 "https://127.0.0.1:$INTEROP_PORT/" </dev/null >/dev/null 2>&1; then
+        report_fail "TLS with the fallback off still served HTTP/1.1"
+      elif curl -sk -m 10 --http2 "https://127.0.0.1:$INTEROP_PORT/" </dev/null >/dev/null 2>&1; then
+        report_pass "TLS with the fallback off refuses HTTP/1.1 and serves h2"
+      else
+        report_fail "TLS with the fallback off refused h2 too"
+      fi
+    elif command -v curl >/dev/null 2>&1; then
+      report_fail "the TLS server with the fallback off did not start"
+    fi
+    exit "$exit_code"
+    ;;
+  abuse)
+    if ! start_example_server "$root/bin/interop_server" 0 strict; then
+      report_fail "strict example server did not become ready"
+    elif python3 "$here/../abuse/abuse.py" 127.0.0.1 "$EXAMPLE_PORT"; then
+      report_pass "HTTP/2 abuse checks"
+    else
+      report_fail "HTTP/2 abuse checks"
+    fi
+    stop_example_server
+    if start_example_server "$root/bin/ws_echo" 127.0.0.1 0; then
+      if python3 "$here/../abuse/ws_abuse.py" 127.0.0.1 "$EXAMPLE_PORT"; then
+        report_pass "HTTP/1.1 WebSocket abuse checks"
+      else
+        report_fail "HTTP/1.1 WebSocket abuse checks"
+      fi
+    else
+      report_fail "WebSocket example server did not become ready"
+    fi
+    exit "$exit_code"
+    ;;
+  conformance)
+    package=http2
+    ;;
+esac
 
 if [ ! -x "$root/bin/interop_server" ]; then
   echo "the example server is absent; run the build first: $root/bin/interop_server"
@@ -51,7 +192,6 @@ start_interop_server "$root/bin/interop_server" no-http11 || {
   echo "the example server did not report a port"
   exit 2
 }
-trap 'stop_interop_server' EXIT INT TERM
 echo "the example server listens on port $INTEROP_PORT"
 # --- h2spec ---
 if command -v h2spec >/dev/null 2>&1; then
@@ -148,7 +288,7 @@ fi
 # One listener serves one transport, so the TLS checks start a second server
 # with a certificate.  A certificate that is absent is created here.
 if command -v openssl >/dev/null 2>&1; then
-  cert_dir=$(ensure_validation_certificate "$root/test/fixtures/server/certs")
+  cert_dir=$(ensure_validation_certificate "$work/certs")
   if [ -n "$cert_dir" ]; then
     if start_interop_server "$root/bin/interop_server" \
       --cert="$cert_dir/localhost.crt" --key="$cert_dir/localhost.key"; then
@@ -204,49 +344,35 @@ fi
 # WS_PYTHON names a Python that holds the packages h2 and wsproto.
 ws_python="${WS_PYTHON:-python3}"
 if [ -x "$root/bin/ws_echo" ] && "$ws_python" -c 'import h2, wsproto' >/dev/null 2>&1; then
-  ws_out="${TMPDIR:-/tmp}/http2_ws_out.$$"
-  ( sleep 60 | "$root/bin/ws_echo" 127.0.0.1 0 big >"$ws_out" 2>/dev/null ) &
-  ws_pid=$!
-  ws_port=''
-  i=0
-  while [ "$i" -lt 100 ] && [ -z "$ws_port" ]; do
-    ws_port=$(sed -n 's#.*127\.0\.0\.1:\([0-9][0-9]*\)/.*#\1#p' "$ws_out" 2>/dev/null | head -1)
-    i=$((i + 1))
-    sleep 0.1
-  done
+  if start_example_server "$root/bin/ws_echo" 127.0.0.1 0 big; then
+    ws_port=$EXAMPLE_PORT
+  else
+    report_fail "WebSocket example server did not become ready"
+    ws_port=''
+  fi
+  ws_out="$work/ws"
   if [ -n "$ws_port" ] &&
      "$ws_python" "$here/ws_h2_client.py" 127.0.0.1 "$ws_port" </dev/null >"$ws_out.client" 2>&1; then
     report_pass "WebSocket echo over HTTP/2 with h2 and wsproto (32 checks)"
-  else
+  elif [ -n "$ws_port" ]; then
     report_fail "WebSocket echo over HTTP/2 with h2 and wsproto"
-    cat "$ws_out" "$ws_out.client" 2>/dev/null
+    cat "$EXAMPLE_OUT" "$ws_out.client" 2>/dev/null
   fi
-  kill "$ws_pid" 2>/dev/null
-  pkill -f "$root/bin/ws_echo" 2>/dev/null
-  rm -f "$ws_out" "$ws_out.client"
+  stop_example_server
 else
   report_skip "WebSocket over HTTP/2" "ws_echo or the Python packages h2 and wsproto are absent"
 fi
 
 # --- Server-sent events on both protocols ---
 if [ -x "$root/bin/sse_replay" ] && command -v curl >/dev/null 2>&1; then
-  sse_out="${TMPDIR:-/tmp}/http2_sse_out.$$"
-  ( sleep 60 | "$root/bin/sse_replay" 127.0.0.1 0 >"$sse_out" 2>/dev/null ) &
-  sse_port=''
-  i=0
-  while [ "$i" -lt 100 ] && [ -z "$sse_port" ]; do
-    sse_port=$(sed -n 's#.*127\.0\.0\.1:\([0-9][0-9]*\)/.*#\1#p' "$sse_out" 2>/dev/null | head -1)
-    i=$((i + 1))
-    sleep 0.1
-  done
-  if [ -n "$sse_port" ]; then
+  if start_example_server "$root/bin/sse_replay" 127.0.0.1 0; then
+    sse_port=$EXAMPLE_PORT
     sse_report=$(sh "$here/sse_check.sh" 127.0.0.1 "$sse_port" 2>&1) || exit_code=1
     echo "$sse_report"
   else
     report_fail "SSE: the example server did not start"
   fi
-  pkill -f "$root/bin/sse_replay" 2>/dev/null
-  rm -f "$sse_out"
+  stop_example_server
 else
   report_skip "SSE" "sse_replay or curl is absent"
 fi

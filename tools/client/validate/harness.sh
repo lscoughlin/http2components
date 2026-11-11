@@ -39,7 +39,7 @@ OUT_MD="$REPO_ROOT/bin/validation-results.md"
 RESULTS_TSV="$BUILD/results.tsv"
 
 FPC="${FPC:-fpc}"
-MORMOT="third_party/mORMot2/src"
+MORMOT="${MORMOT:-third_party/mORMot2/src}"
 export OPENSSL_LIBPATH="${OPENSSL_LIBPATH:-/opt/homebrew/opt/openssl@3/lib}"
 export PATH="/Users/liamcoughlin/.rd/bin:$PATH"
 
@@ -96,7 +96,7 @@ wrote_status() { # id -> yes/no
 }
 
 compile_probe() {
-  "$FPC" -O2 -Mdelphi -Fu./src -Fu"$BUILD" \
+  "$FPC" -O2 -Mdelphi -Fu./src/common -Fu./src/client -Fu./src/server -Fu"$BUILD" \
     -Fu"$MORMOT/core" -Fu"$MORMOT/lib" -Fu"$MORMOT/net" -Fu"$MORMOT/crypt" \
     -FU"$BUILD" -FE"$BUILD" tools/client/h2probe.pas >"$BUILD/build.log" 2>&1 || {
     echo "ERROR: h2probe failed to compile; see $BUILD/build.log" >&2

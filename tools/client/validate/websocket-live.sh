@@ -25,6 +25,7 @@ BASE="${WS_BASE:-8601}"
 PBASE=$((BASE + 10))
 MODE="${1:-live}"
 WORK="$(mktemp -d)"
+CONTAINER="ws-autobahn-$$"
 LOG_A="$WORK/a.log"; LOG_B="$WORK/b.log"; LOG_P="$WORK/proxy.log"
 
 PIDS=()
@@ -32,7 +33,7 @@ cleanup() {
   for p in "${PIDS[@]:-}"; do
     [ -n "$p" ] && kill "$p" 2>/dev/null && wait "$p" 2>/dev/null
   done
-  docker rm -f ws-autobahn >/dev/null 2>&1
+  docker rm -f "$CONTAINER" >/dev/null 2>&1
   rm -rf "$WORK"
 }
 trap cleanup EXIT INT TERM
@@ -142,7 +143,7 @@ autobahn() {
 }
 JSON
   chmod -R a+rwx "$WORK/reports"
-  docker run -d --rm --name ws-autobahn -p "$PORT:9001" \
+  docker run -d --rm --name "$CONTAINER" -p "$PORT:9001" \
     -v "$WORK/config:/config" -v "$WORK/reports:/reports" \
     crossbario/autobahn-testsuite wstest -m fuzzingserver -s /config/fuzzingserver.json \
     >/dev/null || { echo "websocket-live: could not start the Autobahn container" >&2; exit 2; }
@@ -150,8 +151,12 @@ JSON
     (exec 3<>/dev/tcp/127.0.0.1/"$PORT") 2>/dev/null && break
     sleep 0.3
   done
-  local M="$ROOT/third_party/mORMot2/src"
-  fpc -O2 -vw -Mdelphi -Fu"$ROOT/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
+  if ! (exec 3<>/dev/tcp/127.0.0.1/"$PORT") 2>/dev/null; then
+    echo "websocket-live: Autobahn server did not open port $PORT" >&2
+    exit 2
+  fi
+  local M="${MORMOT:-$ROOT/third_party/mORMot2/src}"
+  fpc -O2 -vw -Mdelphi -Fu"$ROOT/src/common" -Fu"$ROOT/src/client" -Fu"$ROOT/src/server" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
     -FE"$WORK" -FU"$WORK" "$HERE/autobahn_client.pas" >"$WORK/fpc.log" 2>&1 \
     || { cat "$WORK/fpc.log"; echo "websocket-live: could not build the Autobahn client" >&2; exit 2; }
   "$WORK/autobahn_client" "127.0.0.1:$PORT"
@@ -159,7 +164,7 @@ JSON
   python3 "$HERE/autobahn_report.py" "$WORK/reports/clients/index.json" "http2client" \
     "$HERE/autobahn-expected.txt"
   RC2=$?
-  mkdir -p "$ROOT/bin/autobahn" && cp -R "$WORK/reports/clients" "$ROOT/bin/autobahn/" 2>/dev/null
+  mkdir -p "$ROOT/bin/autobahn/$CONTAINER" && cp -R "$WORK/reports/clients" "$ROOT/bin/autobahn/$CONTAINER/" 2>/dev/null
   if [ "$RC" -ne 0 ] || [ "$RC2" -ne 0 ]; then
     echo "websocket-live: autobahn FAILED (client rc=$RC, report rc=$RC2)"
     exit 1

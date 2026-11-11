@@ -8,8 +8,8 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 // - build: `make examples`
 // - run:   against the reference fixtures in tools/validate (cleartext, so the
 //          h2c-upgrade policy is enabled for http:// and ws:// URLs):
-//            python3 tools/validate/sse_server.py --port 8091 &
-//            python3 tools/validate/ws_servers.py --log /tmp/ws.log --plain-port 8601 &
+//            python3 tools/client/validate/sse_server.py --port 8091 &
+//            python3 tools/client/validate/ws_servers.py --log /tmp/ws.log --plain-port 8601 &
 //            bin/observer_all http://127.0.0.1:8091 ws://127.0.0.1:8601/echo
 //          (both arguments are optional and default to those addresses)
 // - shows: THttpClientFactory.WithRequestObserver installing three adapters

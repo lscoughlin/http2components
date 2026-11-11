@@ -5,12 +5,11 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: http2, example, tls, https
 notes:
   - This example builds a TLS server on port 8443 and serves one page.
-  - The arguments are the server certificate and the server key. The pair
-    test/certs/localhost.crt and test/certs/localhost.key serves for a
-    first run.
-  - A client reads it with the command curl --cacert test/certs/localhost.crt
-    https://127.0.0.1:8443/ or with the command curl --http2 --cacert
-    test/certs/localhost.crt https://127.0.0.1:8443/ for HTTP/2 over TLS.
+  - The arguments are the server certificate and the server key. Both files
+    exist before the program starts.
+  - A client can use the certificate path with curl --cacert CERTIFICATE
+    https://127.0.0.1:8443/ for HTTP/1.1 or with curl --http2 --cacert
+    CERTIFICATE https://127.0.0.1:8443/ for HTTP/2 over TLS.
   - The server runs until the caller presses Enter, then stops.
 ---
 }

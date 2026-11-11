@@ -9,7 +9,7 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 // - run:   bin/sse_stream https://example.com/events
 //          bin/sse_stream http://127.0.0.1:8091/events   (also works: an
 //          http:// URL enables the h2c-upgrade cleartext policy, which is
-//          what tools/validate/sse_server.py speaks)
+//          what tools/client/validate/sse_server.py speaks)
 // - shows: SseRequest, TSseSource reading one event at a time, and
 //   TSseReconnectLoop resuming from `last-event-id` after the stream ends or
 //   the transport drops (src/Http2.Sse.pas).
@@ -45,7 +45,7 @@ begin
     .WithMaxTotalConnections(4)
     .WithMaxStreamsPerConnection(100);
   // the default policy rejects cleartext, which is the right default; the
-  // reference test server (tools/validate/sse_server.py) speaks cleartext, so
+  // reference test server (tools/client/validate/sse_server.py) speaks cleartext, so
   // enable h2c-upgrade for an http:// URL to keep the documented command
   // working
   if Pos('http://', LowerCase(Url)) = 1 then

@@ -8,7 +8,7 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 // - build: `make examples`
 // - run:   bin/websocket_echo wss://echo.websocket.org/ "hello"
 //   or against the reference server:
-//          python3 tools/validate/ws_servers.py --log /tmp/ws.log --plain-port 8601 &
+//          python3 tools/client/validate/ws_servers.py --log /tmp/ws.log --plain-port 8601 &
 //          bin/websocket_echo ws://127.0.0.1:8601/echo "hello"
 // - shows: IWebSocketRequest / IWebSocketListener, IHttpClient.Send, the
 //   demand rule (nothing is delivered until Request), and the closing

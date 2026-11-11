@@ -9,6 +9,9 @@
 # standard input closes, so the shell holds a pipe open to it.
 
 INTEROP_PID=''
+EXAMPLE_PID=''
+EXAMPLE_OUT=''
+EXAMPLE_PORT=''
 
 # start_interop_server [binary] [extra args...]
 # Start the server and set INTEROP_PID and INTEROP_PORT.
@@ -83,5 +86,47 @@ stop_interop_server() {
     kill "$INTEROP_PID" 2>/dev/null || true
     wait "$INTEROP_PID" 2>/dev/null || true
     INTEROP_PID=''
+    rm -f "$interop_out"
   fi
+}
+
+# start_example_server [binary] [arguments...]
+# Start one example server on its requested port and read its bound port.
+start_example_server() {
+  example_bin=${1:?server binary is required}
+  shift
+  if [ ! -x "$example_bin" ]; then
+    return 1
+  fi
+  EXAMPLE_OUT="${TMPDIR:-/tmp}/http2_example_out.$$.${example_bin##*/}"
+  ( sleep 3600 | "$example_bin" "$@" >"$EXAMPLE_OUT" 2>&1 ) &
+  EXAMPLE_PID=$!
+  i=0
+  EXAMPLE_PORT=''
+  while [ "$i" -lt 100 ]; do
+    if [ -s "$EXAMPLE_OUT" ]; then
+      EXAMPLE_PORT=$(sed -n 's#.*127\.0\.0\.1:\([0-9][0-9]*\)/.*#\1#p' "$EXAMPLE_OUT" | head -1)
+      [ -n "$EXAMPLE_PORT" ] && return 0
+    fi
+    i=$((i + 1))
+    sleep 0.1
+  done
+  stop_example_server
+  return 1
+}
+
+# Stop only the example server started by start_example_server.
+stop_example_server() {
+  if [ -n "$EXAMPLE_PID" ]; then
+    children=$(pgrep -P "$EXAMPLE_PID" 2>/dev/null || true)
+    for child in $children; do
+      kill "$child" 2>/dev/null || true
+    done
+    kill "$EXAMPLE_PID" 2>/dev/null || true
+    wait "$EXAMPLE_PID" 2>/dev/null || true
+    EXAMPLE_PID=''
+  fi
+  [ -n "$EXAMPLE_OUT" ] && rm -f "$EXAMPLE_OUT"
+  EXAMPLE_OUT=''
+  EXAMPLE_PORT=''
 }

@@ -30,10 +30,12 @@ BUILD="$(mktemp -d /tmp/h2interop-build.XXXXXX)"
 PROBE="$BUILD/h2probe"
 DOCKER="${DOCKER:-$(command -v docker || echo "$HOME/.rd/bin/docker")}"
 DOCKER_OK=no
+CONTAINER_H2C="http2client-h2c-$$"
+CONTAINER_H1="http2client-h1-$$"
 
 FPC="${FPC:-fpc}"
 FPC_UNITS="${FPC_UNITS:-/usr/local/lib/fpc/3.2.4/units/aarch64-darwin}"
-MORMOT="third_party/mORMot2/src"
+MORMOT="${MORMOT:-third_party/mORMot2/src}"
 export OPENSSL_LIBPATH="${OPENSSL_LIBPATH:-/opt/homebrew/opt/openssl@3/lib}"
 
 NGHTTPD="$(command -v nghttpd || true)"
@@ -46,8 +48,8 @@ cleanup() {
   [ -n "${NGHTTPD_PLAIN_PID:-}" ] && kill "$NGHTTPD_PLAIN_PID" 2>/dev/null
   [ -n "${NGHTTPD_SMALLWIN_PID:-}" ] && kill "$NGHTTPD_SMALLWIN_PID" 2>/dev/null
   [ -n "${SSERVER_PID:-}" ] && kill "$SSERVER_PID" 2>/dev/null
-  if [ "$DOCKER_OK" = yes ]; then
-    "$DOCKER" rm -f http2client-h2c http2client-h1 >/dev/null 2>&1
+  if [ -n "$DOCKER" ]; then
+    "$DOCKER" rm -f "$CONTAINER_H2C" "$CONTAINER_H1" >/dev/null 2>&1
   fi
   rm -rf "$BUILD" "$HTDOCS" 2>/dev/null
 }
@@ -65,7 +67,7 @@ record() { # id case expected actual status
 compile_probe() {
   rm -rf "$BUILD"
   mkdir -p "$BUILD"
-  if ! "$FPC" -O2 -Mdelphi -Fu./src -Fu"$BUILD" \
+  if ! "$FPC" -O2 -Mdelphi -Fu./src/common -Fu./src/client -Fu./src/server -Fu"$BUILD" \
       -Fu"$MORMOT/core" -Fu"$MORMOT/lib" -Fu"$MORMOT/net" -Fu"$MORMOT/crypt" \
       -FU"$BUILD" -FE"$BUILD" tools/client/h2probe.pas >"$BUILD/build.log" 2>&1; then
     echo "ERROR: h2probe failed to compile; see $BUILD/build.log" >&2
@@ -167,10 +169,12 @@ head -c 100000 /dev/urandom > "$HTDOCS/m100.bin"
 if [ "$DOCKER_OK" = yes ]; then
   if require_free_port "$H2C_PORT" A.11 H2C && \
      require_free_port "$H1_PORT" A.12 H1; then
-    if start_apache http2client-h2c "$H2C_PORT" "h2c http/1.1" "H2Upgrade on" && \
-       start_apache http2client-h1  "$H1_PORT"  "http/1.1"     ""; then
-      wait_port 127.0.0.1 "$H2C_PORT" || true
-      wait_port 127.0.0.1 "$H1_PORT"  || true
+    if start_apache "$CONTAINER_H2C" "$H2C_PORT" "h2c http/1.1" "H2Upgrade on" && \
+       start_apache "$CONTAINER_H1" "$H1_PORT"  "http/1.1"     ""; then
+      if ! wait_port 127.0.0.1 "$H2C_PORT" || ! wait_port 127.0.0.1 "$H1_PORT"; then
+        echo "ERROR: an Apache cleartext server did not open its port" >&2
+        exit 2
+      fi
     else
       echo "WARNING: failed to start the Apache cleartext servers" >&2
       DOCKER_OK=no

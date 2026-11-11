@@ -25,7 +25,7 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 //          the origin only, and is dropped on a redirect to another origin)
 //          MTLS_PRINT_BODY=1 also prints each response body on one `body:`
 //          line, so a server that echoes the client certificate subject can be
-//          checked (tools/validate/mtls-real.sh)
+//          checked (tools/client/validate/mtls-real.sh)
 // - shows: WithClientCertificateFiles, WithClientIdentitySelector,
 //   WithProxyClientIdentity, a per-request WithClientIdentity, a bad identity failing at Build, and the
 //   distinct EHttpTlsClientAuthError when the server rejects the certificate.
