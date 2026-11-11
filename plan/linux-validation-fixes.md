@@ -522,3 +522,18 @@ lifecycle. The latter work checks whether the server stops waiting before
 the queued close frame drains. A repair has bounded completion and no fixed
 sleep used as proof. The server owner retains the single remote diagnostic
 slot; the owners coordinate affected files and hand off focused candidates.
+
+The Linux TCP trace reproduced the paced-reader failure with a 4 MiB
+kernel send buffer. The mORMot queue stayed at 2,731,113 bytes while the
+kernel send queue fell from 4,151,472 to 3,398,461 bytes and TCP acknowledged
+bytes rose from 1,515,336 to 2,268,347. This progress continued over more
+than one second. The existing sweep ignored that progress and closed the
+connection. The raw socket samples are in `lv30-tcpinfo7-20261111T211258`.
+
+The repair adds kernel transmission progress to the Linux write-stall
+clock without increasing the timeout. Local send progress remains available
+on other platforms. Queue-budget and HTTP/2 flow-control accounting remain
+separate from timeout progress. The owner checks queue refill and first
+positive backlog behavior and adds a regression that distinguishes a
+continued kernel drain from a stalled peer. The unchanged no-reader close,
+paced full-body, explicit abort, and complete server checks remain required.
