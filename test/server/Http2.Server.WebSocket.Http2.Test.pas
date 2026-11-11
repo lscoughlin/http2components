@@ -115,6 +115,13 @@ begin
     Move(AFrame.Payload[0], Result[FrameHeaderSize], Length(AFrame.Payload));
 end;
 
+function IsGoingAwayClose(const AFrame: TFrame): Boolean;
+begin
+  Result := (AFrame.Header.FrameType = ftData) and
+    (Length(AFrame.Payload) >= 4) and (AFrame.Payload[0] = $88) and
+    (AFrame.Payload[2] = $03) and (AFrame.Payload[3] = $E9);
+end;
+
 { TH2WsClient }
 
 constructor TH2WsClient.Create(const APort: Integer);
@@ -207,10 +214,11 @@ begin
           FStreamWindow.AddOrSetValue(Header.StreamId,
             Credit(Header.StreamId) + ParseWindowUpdate(Frame));
       ftData:
-        if (Header.Length > 0) and not Frame.IsEndStream then
+        if (Header.Length > 0) and not Frame.IsEndStream and
+           not IsGoingAwayClose(Frame) then
         begin
-          // An ended stream needs no more credit. In particular, Stop can
-          // send the WebSocket close frame and close the connection at once.
+          // Ended streams and the terminal going-away close need no more
+          // flow-control credit from this validation peer.
           Write(BuildWindowUpdateFrame(0, Header.Length));
           Write(BuildWindowUpdateFrame(Header.StreamId, Header.Length));
         end;
