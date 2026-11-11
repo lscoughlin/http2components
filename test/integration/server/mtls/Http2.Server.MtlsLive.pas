@@ -25,7 +25,7 @@ program Http2.Server.MtlsLive;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs,
-  Http2.Server,
+  Http2.Server, Http2.Common, Http2.OpenSSL,
   Http2.Client.Errors, Http2.Client.ClientCert, Http2.Client.Stream,
   Http2.Client.Messages, Http2.Client, Http2.Client.WebSocket,
   Http2.Server.Mtls.Live.Server, Http2.Server.Mtls.Live.Raw,
@@ -52,6 +52,7 @@ var
   HandlerRef: IHttp2Handler;
   WsHandler: TMtlsWsHandler;
   WsRef: IWsHandler;
+  ClientTlsContext: ITLSContext;
 
 constructor TSendOnOpen.Create;
 begin
@@ -107,7 +108,7 @@ end;
 
 function Identity(const AName: string): IClientIdentity;
 begin
-  Result := TClientIdentity.FromPemFiles(Pki + '/' + AName + '.crt',
+  Result := TOpenSSLIdentity.FromPemFiles(Pki + '/' + AName + '.crt',
     Pki + '/' + AName + '.key');
 end;
 
@@ -123,11 +124,10 @@ begin
   Result := '';
   try
     Factory := THttpClientFactory.Create
-      .WithInsecureTls
+      .WithTlsContext(ClientTlsContext)
       .WithMaxConnectionsPerHost(1);
     if AName <> '' then
-      Factory := Factory.WithClientCertificateFiles(Pki + '/' + AName + '.crt',
-        Pki + '/' + AName + '.key');
+      Factory := Factory.WithClientIdentity(Identity(AName));
     Client := Factory.Build;
     try
       for i := 1 to ARequests do
@@ -149,16 +149,46 @@ begin
   end;
 end;
 
-/// whether a saved TLS session resumes with a client certificate
-function ResumptionWorks(const APort: Integer; const AVersion: string): Boolean;
+/// check that saved session state cannot resume without fresh authentication
+function SessionTicketPolicy(const APort: Integer; const AVersion,
+  AProtocol: string): Boolean;
 var
-  Common, Cmd: string;
+  Common, NoCertificate, Cmd: string;
 begin
   Common := 'openssl s_client ' + AVersion + ' -connect 127.0.0.1:' + IntToStr(APort) +
-    ' -alpn h2 -cert alice.crt -key alice.key';
-  Cmd := 'cd ' + Pki + ' && rm -f resume.pem && (sleep 1; echo Q) | ' + Common +
-    ' -sess_out resume.pem >/dev/null 2>&1; (sleep 1; echo Q) | ' + Common +
-    ' -sess_in resume.pem 2>&1 | grep -q "^Reused"';
+    ' -alpn h2 -verify_return_error -verify_hostname localhost -CAfile ca.crt';
+  NoCertificate := Common + ' -sess_in ' + AProtocol + '.pem';
+  Common := Common + ' -cert alice.crt -key alice.key';
+  Cmd := 'cd ' + Pki + ' && rm -f ' + AProtocol + '.pem ' + AProtocol +
+    '-full.log ' + AProtocol + '-saved.log ' + AProtocol + '-no-cert.log && ' +
+    '(sleep 1; printf Q) | ' + Common + ' -sess_out ' + AProtocol +
+    '.pem >' + AProtocol + '-full.log 2>&1; ' +
+    'full_status=$?; ' +
+    'if [ "$full_status" -ne 0 ] || ' +
+    '(! grep -q "^New, ' + AProtocol + '" ' + AProtocol + '-full.log) || ' +
+    '(! grep -Eq "Verification: OK|Verify return code: 0 \\(ok\\)" ' +
+    AProtocol + '-full.log); then cat ' + AProtocol + '-full.log; exit 1; fi; ' +
+    'if [ ! -s ' + AProtocol + '.pem ]; then ' +
+    'echo "PASS ' + AProtocol + ' verified full handshake; no resumable session was issued"; ' +
+    'exit 0; fi; ' +
+    '(sleep 1; printf Q) | ' + Common + ' -sess_in ' + AProtocol +
+    '.pem >' + AProtocol + '-saved.log 2>&1; ' +
+    'saved_status=$?; ' +
+    'if [ "$saved_status" -ne 0 ] || ' +
+    '(! grep -q "^New, ' + AProtocol + '" ' + AProtocol + '-saved.log) || ' +
+    'grep -q "^Reused" ' + AProtocol + '-saved.log || ' +
+    '(! grep -Eq "Verification: OK|Verify return code: 0 \\(ok\\)" ' +
+    AProtocol + '-saved.log); then cat ' + AProtocol + '-saved.log; exit 1; fi; ' +
+    '(sleep 1; printf Q) | ' + NoCertificate + ' >' + AProtocol +
+    '-no-cert.log 2>&1; no_cert_status=$?; ' +
+    'if [ "$no_cert_status" -eq 0 ] || ' +
+    'grep -q "^New, ' + AProtocol + '" ' + AProtocol + '-no-cert.log || ' +
+    'grep -q "^Reused" ' + AProtocol + '-no-cert.log || ' +
+    '(! grep -Eiq "alert|handshake failure|certificate required" ' +
+    AProtocol + '-no-cert.log); then cat ' + AProtocol + '-no-cert.log; exit 1; fi; ' +
+    'echo "PASS ' + AProtocol + ' full handshake; saved attempt is full; no-cert attempt refused"; ' +
+    'rm -f ' + AProtocol + '.pem ' + AProtocol + '-full.log ' + AProtocol +
+    '-saved.log ' + AProtocol + '-no-cert.log';
   Result := ExecuteProcess('/bin/sh', ['-c', Cmd]) = 0;
 end;
 
@@ -178,10 +208,9 @@ var
 begin
   Result := False;
   try
-    Factory := THttpClientFactory.Create.WithInsecureTls;
+    Factory := THttpClientFactory.Create.WithTlsContext(ClientTlsContext);
     if AName <> '' then
-      Factory := Factory.WithClientCertificateFiles(Pki + '/' + AName + '.crt',
-        Pki + '/' + AName + '.key');
+      Factory := Factory.WithClientIdentity(Identity(AName));
     Client := Factory.Build;
     try
       Listener := TSendOnOpen.Create;
@@ -212,7 +241,7 @@ begin
   WriteLn('-- mode none');
   Obs := TMtlsObserver.Create;
   ObsRef := Obs;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmNone, '', False, ccpNone);
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthNone, '', False, ccpNone);
   try
     Body := ClientGet(Server.Port, '');
     Check('none: a client without a certificate is served', Body = 'none;principal=', Body);
@@ -245,7 +274,7 @@ begin
   WriteLn('-- mode optional, principal = common name');
   Obs := TMtlsObserver.Create;
   ObsRef := Obs;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmOptional, 'ca.crt', False,
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthRequest, 'ca.crt', False,
     ccpCommonName);
   try
     Body := ClientGet(Server.Port, '');
@@ -299,7 +328,7 @@ begin
   WriteLn('-- mode required, principal = subject DN');
   Obs := TMtlsObserver.Create;
   ObsRef := Obs;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmRequired, 'ca.crt', False,
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthRequire, 'ca.crt', False,
     ccpSubjectDn);
   try
     CallsBefore := Handler.Calls;
@@ -349,10 +378,10 @@ begin
     Body := ClientGet(Server.Port, 'special');
     Check('required: a comma in a DN value is escaped as RFC 4514 says',
       Contains(Body, 'CN=Doe\, Jane') and Contains(Body, 'O=Acme\, Inc'), Body);
-    Check('required: a saved TLS 1.2 session resumes with the certificate',
-      ResumptionWorks(Server.Port, '-tls1_2'));
-    Check('required: a saved TLS 1.3 session resumes with the certificate',
-      ResumptionWorks(Server.Port, '-tls1_3'));
+    Check('required: TLS 1.2 uses fresh client authentication after a saved-session attempt',
+      SessionTicketPolicy(Server.Port, '-tls1_2', 'TLSv1.2'));
+    Check('required: TLS 1.3 uses fresh client authentication after a saved-session attempt',
+      SessionTicketPolicy(Server.Port, '-tls1_3', 'TLSv1.3'));
 
     // HTTP/1.1 over TLS on the same listener
     H1 := RawHttp1Get(Server.Port, Identity('alice'), '/id');
@@ -439,7 +468,7 @@ begin
   ObsRef := Obs;
   // the first server never asks for a certificate, so the reader does not run.
   // Its growth is what the client library and the rest of the process keep
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmNone, '', False, ccpNone);
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthNone, '', False, ccpNone);
   try
     NoneGrowth := Growth(Server.Port);
     WriteLn('  growth over 5 handshakes of a client without a certificate: ',
@@ -447,7 +476,7 @@ begin
   finally
     Server.Stop;
   end;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmRequired, 'ca.crt', False,
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthRequire, 'ca.crt', False,
     ccpSubjectDn);
   try
     RequiredGrowth := Growth(Server.Port);
@@ -472,7 +501,7 @@ begin
   WriteLn('-- required, trust file holds the root and a self-signed client');
   Obs := TMtlsObserver.Create;
   ObsRef := Obs;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmRequired,
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthRequire,
     'trust-selfie.pem', False, ccpNone);
   try
     Body := ClientGet(Server.Port, 'selfie');
@@ -498,7 +527,7 @@ begin
   WriteLn('-- required, operating system store only');
   Obs := TMtlsObserver.Create;
   ObsRef := Obs;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmRequired, '', True, ccpNone);
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthRequire, '', True, ccpNone);
   try
     // the test root is not in the system store of the host, and the live check
     // never changes that store. The client of the test root is refused, which
@@ -518,6 +547,11 @@ begin
     WriteLn(StdErr, 'usage: Http2.Server.MtlsLive <pki-directory>');
     Halt(2);
   end;
+  ClientTlsContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault
+      .WithTrustAnchors([Pki + '/ca.crt']))
+    .Build;
+  SetRawTlsContext(ClientTlsContext);
   WsHandler := TMtlsWsHandler.Create;
   WsRef := WsHandler;
   Handler := TMtlsHandler.Create(WsRef);

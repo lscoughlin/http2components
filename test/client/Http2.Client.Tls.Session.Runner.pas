@@ -614,6 +614,163 @@ begin
   end;
 end;
 
+procedure TestWriteFailureRecoversPeerClientAuthAlert;
+var
+  Raw: TPartialStream;
+  RawSocket, Socket: IHttp2Socket;
+  Context: ITLSContext;
+  Payload, Alert: TBytes;
+  GotAlert: Boolean;
+begin
+  Raw := TPartialStream.Create;
+  RawSocket := Raw;
+  Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 0);
+  Socket := TTlsSocket.Create(RawSocket, 'example.test', Context, nil,
+    ['h2'], 1000);
+  Raw.FailNextWrite;
+  // A benign record fragment arrives before the alert.  The recovery loop
+  // must keep reading within its deadline instead of reporting the write
+  // failure after only the first fragment.
+  Alert := Bytes('ab');
+  SetLength(Alert, Length(Alert) + 1);
+  Alert[High(Alert)] := $FA;
+  Raw.Push(Alert);
+  Payload := Bytes('preface');
+  GotAlert := False;
+  try
+    Socket.Write(Payload[0], Length(Payload));
+  except
+    on E: EHttpTlsClientAuthError do
+      GotAlert := E.Alert = 'certificate required';
+  end;
+  Check(GotAlert,
+    'write failure did not preserve the peer client-certificate alert');
+  Socket.Close;
+  Socket := nil;
+  RawSocket := nil;
+  Context := nil;
+end;
+
+procedure TestWriteFailureWithoutAlertKeepsOriginalError;
+var
+  Raw: TPartialStream;
+  RawSocket, Socket: IHttp2Socket;
+  Context: ITLSContext;
+  Payload: TBytes;
+  Started, Elapsed: QWord;
+  Preserved: Boolean;
+begin
+  Raw := TPartialStream.Create;
+  Raw.EnableReadBlocking;
+  RawSocket := Raw;
+  Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 0);
+  Socket := TTlsSocket.Create(RawSocket, 'example.test', Context, nil,
+    ['h2'], 1000);
+  Socket.ReadTimeoutMs := 100;
+  Raw.FailNextWrite;
+  Payload := Bytes('preface');
+  Started := mormot.core.os.GetTickCount64;
+  Preserved := False;
+  try
+    Socket.Write(Payload[0], Length(Payload));
+  except
+    on E: EHttpConnectionClosed do
+      Preserved := E.Message = 'scripted socket write failed';
+  end;
+  Elapsed := mormot.core.os.GetTickCount64 - Started;
+  Check(Preserved, 'write failure without an alert changed the original error');
+  Check(Raw.WaitForReadStart(100), 'bounded alert read did not start');
+  Check(Elapsed >= 70, 'empty alert read skipped its configured timeout');
+  Check(Elapsed < 500, 'peer-alert recovery exceeded its read deadline');
+  Socket.Close;
+  Socket := nil;
+  RawSocket := nil;
+  Context := nil;
+end;
+
+procedure TestWriteFailureDoesNotDeadlockWithBusyReader;
+var
+  Raw: TPartialStream;
+  RawSocket, Socket: IHttp2Socket;
+  Context: ITLSContext;
+  Reader: TTlsReadWorker;
+  Writer: TTlsWriteWorker;
+  Alert: TBytes;
+begin
+  Raw := TPartialStream.Create;
+  Raw.EnableReadBlocking;
+  RawSocket := Raw;
+  Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 0);
+  Socket := TTlsSocket.Create(RawSocket, 'example.test', Context, nil,
+    ['h2'], 1000);
+  Reader := TTlsReadWorker.Create(Socket);
+  Writer := TTlsWriteWorker.Create(Socket);
+  try
+    Reader.Start;
+    Check(Raw.WaitForReadStart(500), 'TLS reader did not block on peer input');
+    SetLength(Alert, 1);
+    Alert[0] := $FA;
+    Raw.Push(Alert);
+    Raw.FailNextWrite;
+    Writer.Start;
+    Check(Writer.WaitDone(500), 'TLS writer deadlocked behind the reader');
+    Check(Pos('scripted socket write failed', Writer.Error) > 0,
+      'busy-reader write did not retain its transport error');
+    Raw.ReleaseBlockedRead;
+    Check(Reader.WaitDone(500), 'reader did not consume the pending peer alert');
+    Check(Pos('EHttpTlsClientAuthError', Reader.Error) > 0,
+      'reader did not retain the peer client-auth alert');
+  finally
+    Socket.Close;
+    Raw.ReleaseBlockedRead;
+    Reader.Free;
+    Writer.Free;
+    Socket := nil;
+    RawSocket := nil;
+    Context := nil;
+  end;
+end;
+
+procedure TestWriteFailureZeroFeedDoesNotRetryOutput;
+var
+  Raw: TPartialStream;
+  RawSocket, Socket: IHttp2Socket;
+  Context: ITLSContext;
+  Payload, Input: TBytes;
+  BeforeWrites: Integer;
+  Started, Elapsed: QWord;
+  Preserved: Boolean;
+begin
+  Raw := TPartialStream.Create;
+  RawSocket := Raw;
+  Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 0);
+  Socket := TTlsSocket.Create(RawSocket, 'example.test', Context, nil,
+    ['h2'], 1000);
+  BeforeWrites := Raw.WriteCount;
+  Raw.FailAllWrites;
+  SetLength(Input, 1);
+  Input[0] := $FB; // the fake TLS session leaves this input unconsumed
+  Raw.Push(Input);
+  Payload := Bytes('preface');
+  Started := mormot.core.os.GetTickCount64;
+  Preserved := False;
+  try
+    Socket.Write(Payload[0], Length(Payload));
+  except
+    on E: EHttpConnectionClosed do
+      Preserved := E.Message = 'scripted socket write failed';
+  end;
+  Elapsed := mormot.core.os.GetTickCount64 - Started;
+  Check(Preserved, 'zero-feed recovery changed the original write failure');
+  Check(Raw.WriteCount = BeforeWrites + 1,
+    'zero-feed recovery retried encrypted output');
+  Check(Elapsed < 500, 'zero-feed recovery did not remain bounded');
+  Socket.Close;
+  Socket := nil;
+  RawSocket := nil;
+  Context := nil;
+end;
+
 var
   Cases: Integer;
 begin
@@ -652,5 +809,13 @@ begin
   TestReaderFailureWakesWaitingWriter; Inc(Cases);
   WriteLn('RUN backpressured-write-read'); Flush(Output);
   TestBackpressuredWriteAllowsConcurrentRead; Inc(Cases);
+  WriteLn('RUN write-failure-auth-alert'); Flush(Output);
+  TestWriteFailureRecoversPeerClientAuthAlert; Inc(Cases);
+  WriteLn('RUN write-failure-preserved-deadline'); Flush(Output);
+  TestWriteFailureWithoutAlertKeepsOriginalError; Inc(Cases);
+  WriteLn('RUN write-failure-busy-reader'); Flush(Output);
+  TestWriteFailureDoesNotDeadlockWithBusyReader; Inc(Cases);
+  WriteLn('RUN write-failure-zero-feed'); Flush(Output);
+  TestWriteFailureZeroFeedDoesNotRetryOutput; Inc(Cases);
   WriteLn('PASS ', Cases, ' cases');
 end.

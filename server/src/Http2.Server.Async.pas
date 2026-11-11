@@ -885,12 +885,21 @@ begin
 end;
 
 procedure THttp2AsyncServer.Start;
+var
+  Port: Integer;
 begin
   if FStarted then
     exit;
   // Execute binds the port on its own thread; WaitStarted returns once the
   // socket is bound, and it raises when the bind failed
   WaitStarted(cBindWaitSeconds);
+  // mORMot2 uses fSockPort as a numeric port when it opens the temporary
+  // connection that wakes its poll threads during Shutdown. The bind input
+  // includes host:port, so replace it with the actual numeric value.
+  Port := BoundPort;
+  if Port <= 0 then
+    raise EHttpConnectionError.Create('The listener has no bound port');
+  fSockPort := RawUtf8(IntToStr(Port));
   FStarted := True;
 end;
 

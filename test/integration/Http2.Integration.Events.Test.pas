@@ -10,7 +10,7 @@ unit Http2.Integration.Events.Test;
 interface
 uses
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
-  Http2.Client, Http2.Client.Sse, Http2.Server;
+  Http2.Common, Http2.Client, Http2.Client.Sse, Http2.Server, Http2.OpenSSL;
 type
   TCombinedEventsTest = class(TTestCase)
   private
@@ -79,7 +79,11 @@ begin
   Stream.Close;
 end;
 function EventServer(const ATls: Boolean): IHttp2Server;
-var Factory: THttp2ServerFactory; Pki: string;
+var
+  Factory: THttp2ServerFactory;
+  Pki: string;
+  Identity: ITLSIdentity;
+  Policy: TTlsServerPolicy;
 begin
   Factory := THttp2ServerFactory.Create.WithHost('127.0.0.1').WithPort(0)
     .WithClearTextAllowed(not ATls).WithHandlerThreads(2).WithIOThreads(1)
@@ -87,8 +91,10 @@ begin
   if ATls then
   begin
     Pki := GetEnvironmentVariable('HTTP2_TEST_PKI');
-    Factory := Factory.WithTls(TTlsServerOptions.Create
-      .WithCertificateFile(Pki + '/server.crt').WithKeyFile(Pki + '/server.key'));
+    Identity := TOpenSSLIdentity.FromPemFiles(Pki + '/server.crt', Pki + '/server.key');
+    Policy := TTlsServerPolicy.SecureDefault.WithServerIdentity(Identity);
+    Factory := Factory.WithTlsContext(TOpenSSLTlsContextFactory.Create
+      .WithServerPolicy(Policy).Build);
   end;
   Result := Factory.Build;
   Result.Start;
@@ -158,10 +164,18 @@ var
   Listener: TListener;
   KeepListener: IWebSocketListener;
   Scheme: string;
+  TlsContext: ITLSContext;
 begin
   Server := EventServer(ATls);
   Factory := THttpClientFactory.Create;
-  if ATls then Factory := Factory.WithCACertFile(GetEnvironmentVariable('HTTP2_TEST_PKI') + '/ca.crt');
+  if ATls then
+  begin
+    TlsContext := TOpenSSLTlsContextFactory.Create
+      .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithTrustAnchors([
+        GetEnvironmentVariable('HTTP2_TEST_PKI') + '/ca.crt']))
+      .Build;
+    Factory := Factory.WithTlsContext(TlsContext);
+  end;
   Client := Factory.Build;
   Listener := TListener.Create;
   KeepListener := Listener;

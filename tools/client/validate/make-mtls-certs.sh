@@ -24,7 +24,7 @@
 #                                 (client-chain.p12 also carries the intermediate)
 #
 # Env: OPENSSL (the openssl binary; default the Homebrew openssl@3 if present,
-# else the one on PATH; the expired certificate needs -not_before, OpenSSL 3.4+).
+# else the one on PATH).
 set -eu
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -80,8 +80,43 @@ issue intermediate "/O=http2client mtls test/CN=mtls test intermediate" ca "$WOR
 issue server "/O=http2client mtls test/CN=localhost" ca "$WORK/server.ext" -days "$DAYS"
 issue client "/O=http2client mtls test/CN=mtls client" intermediate "$WORK/client.ext" -days "$DAYS"
 issue client2 "/O=http2client mtls test/CN=mtls client two" intermediate "$WORK/client.ext" -days "$DAYS"
-issue expired "/O=http2client mtls test/CN=mtls expired client" ca "$WORK/client.ext" \
-  -not_before 20150101000000Z -not_after 20160101000000Z
+newkey "$OUT/expired.key"
+"$OPENSSL" req -new -key "$OUT/expired.key" \
+  -subj "/O=http2client mtls test/CN=mtls expired client" \
+  -out "$WORK/expired.csr"
+mkdir -p "$WORK/newcerts"
+: >"$WORK/index.txt"
+printf '1000\n' >"$WORK/expired.serial"
+cat >"$WORK/expired-ca.cnf" <<EOF
+[ca]
+default_ca = CA_default
+[CA_default]
+database = $WORK/index.txt
+new_certs_dir = $WORK/newcerts
+certificate = $OUT/ca.crt
+private_key = $OUT/ca.key
+serial = $WORK/expired.serial
+default_md = sha256
+default_days = 365
+policy = policy_any
+unique_subject = no
+[policy_any]
+countryName = optional
+stateOrProvinceName = optional
+localityName = optional
+organizationName = optional
+organizationalUnitName = optional
+commonName = supplied
+emailAddress = optional
+[client]
+basicConstraints = CA:FALSE
+keyUsage = critical,digitalSignature
+extendedKeyUsage = clientAuth
+EOF
+"$OPENSSL" ca -batch -config "$WORK/expired-ca.cnf" \
+  -in "$WORK/expired.csr" -out "$OUT/expired.crt" \
+  -startdate 20150101000000Z -enddate 20160101000000Z \
+  -extensions client >/dev/null 2>&1
 issue other-client "/O=http2client mtls test/CN=mtls other client" other-ca "$WORK/client.ext" -days "$DAYS"
 
 cat "$OUT/client.crt" "$OUT/intermediate.crt" >"$OUT/client-chain.pem"
@@ -118,4 +153,8 @@ for bad in expired other-client; do
     exit 1
   fi
 done
+if "$OPENSSL" x509 -in "$OUT/expired.crt" -noout -checkend 0 >/dev/null 2>&1; then
+  echo "make-mtls-certs: expired.crt is not expired" >&2
+  exit 1
+fi
 echo "make-mtls-certs: wrote $OUT"

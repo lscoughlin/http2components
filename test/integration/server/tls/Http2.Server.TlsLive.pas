@@ -26,7 +26,8 @@ program Http2.Server.TlsLive;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes,
-  Http2.Server, Http2.Client.Tls,
+  Http2.Server, Http2.Common, Http2.Client.Tls,
+  Http2.OpenSSL,
   Http2.Server.Mtls.Live.Raw;
 
 type
@@ -50,6 +51,7 @@ type
 var
   Pki: string;
   Passed, Failed: Integer;
+  ClientTlsContext: ITLSContext;
 
 procedure TOkHandler.Handle(const ARequest: IServerRequest;
   const AResponse: IServerResponse);
@@ -80,14 +82,23 @@ begin
 end;
 
 function Build(const AFallback: Boolean; const AHandler: IHttp2Handler): IHttp2Server;
+var
+  ServerIdentity: ITLSIdentity;
+  ServerPolicy: TTlsServerPolicy;
+  ServerContext: ITLSContext;
 begin
+  ServerIdentity := TOpenSSLIdentity.FromPemFiles(Pki + '/server.crt',
+    Pki + '/server.key');
+  ServerPolicy := TTlsServerPolicy.SecureDefault
+    .WithServerIdentity(ServerIdentity);
+  ServerContext := TOpenSSLTlsContextFactory.Create
+    .WithServerPolicy(ServerPolicy)
+    .Build;
   Result := THttp2ServerFactory.Create
     .WithHost('127.0.0.1')
     .WithPort(0)
     .WithClearTextAllowed(False)
-    .WithTls(TTlsServerOptions.Create
-      .WithCertificateFile(Pki + '/server.crt')
-      .WithKeyFile(Pki + '/server.key'))
+    .WithTlsContext(ServerContext)
     .WithHttp11Fallback(AFallback)
     .WithHandler(AHandler)
     .WithHandlerThreads(2)
@@ -112,7 +123,7 @@ begin
   Result.Line := '';
   try
     Sock := TTlsSocket.DialWithAlpn('127.0.0.1', APort, AlpnProtocolList(AOffer),
-      True, 3000);
+      False, 3000, '', '', 0, nil, ClientTlsContext);
     Sock.ReadTimeoutMs := 3000;
     Result.Selected := TTlsSocket(Sock as TObject).SelectedProtocol;
     if Result.Selected <> 'h2' then
@@ -198,6 +209,11 @@ begin
     Halt(2);
   end;
   HandlerRef := TOkHandler.Create;
+  ClientTlsContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault
+      .WithTrustAnchors([Pki + '/ca.crt']))
+    .Build;
+  SetRawTlsContext(ClientTlsContext);
   // two servers at once: each keeps its own policy
   WithFallback := Build(True, HandlerRef);
   WithoutFallback := Build(False, HandlerRef);

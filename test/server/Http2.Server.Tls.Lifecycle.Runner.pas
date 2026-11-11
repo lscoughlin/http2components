@@ -9,7 +9,7 @@ notes:
 }
 program Http2.Server.Tls.Lifecycle.Runner;
 {$mode delphi}{$H+}{$interfaces com}
-uses {$IFDEF UNIX}cthreads, Sockets,{$ENDIF} SysUtils, SyncObjs, fpcunit,
+uses {$IFDEF UNIX}cthreads, Sockets, BaseUnix,{$ENDIF} SysUtils, SyncObjs, fpcunit,
   testregistry, consoletestrunner, mormot.core.os, mormot.core.base,
   mormot.net.sock, Http2.Server, Http2.Common.Tls.Types,
   Http2.Common.Tls.Context, Http2.Common.Tls.Session, Http2.Common.Tls.Policy,
@@ -386,8 +386,9 @@ begin
   Result := Length(AData) >= AWanted;
 end;
 
-function SocketClosed(const ASocket: TCrtSocket): Boolean;
-var Pending: TCrtSocketPending; Data: RawByteString;
+function SocketClosed(const ASocket: TCrtSocket;
+  const ADrainPendingData: Boolean = False): Boolean;
+var Pending: TCrtSocketPending; Data: RawByteString; B: Byte; N: Integer;
 begin
   Pending := ASocket.SockReceivePending(0);
   Result := Pending in [cspSocketError, cspSocketClosed];
@@ -395,6 +396,28 @@ begin
   begin
     Data := ASocket.SockReceiveString;
     Result := Data = '';
+  end;
+  if Pending = cspDataAvailable then
+  begin
+    if ADrainPendingData then
+    begin
+      Data := ASocket.SockReceiveString;
+      if Data <> '' then
+        Exit(False);
+    end;
+    // A readable socket can hold payload bytes or EOF. Peek so an open
+    // session keeps its TLS bytes for the later protocol assertion.
+    {$IFDEF UNIX}
+    N := fpRecv(ASocket.Sock.Socket, @B, SizeOf(B), MSG_PEEK or MSG_DONTWAIT);
+    if N = 0 then
+      Result := True
+    else if N > 0 then
+      Result := False
+    else
+      Result := not (fpgeterrno in [ESysEAGAIN, ESysEINTR]);
+    {$ELSE}
+    Result := False;
+    {$ENDIF}
   end;
 end;
 
@@ -404,10 +427,10 @@ var Deadline: QWord;
 begin
   Deadline := mormot.core.os.GetTickCount64 + QWord(ATimeoutMs);
   repeat
-    if SocketClosed(ASocket) then Exit(True);
+    if SocketClosed(ASocket, True) then Exit(True);
     Sleep(10);
   until mormot.core.os.GetTickCount64 >= Deadline;
-  Result := SocketClosed(ASocket);
+  Result := SocketClosed(ASocket, True);
 end;
 
 function WaitForServerSession(const AContext: TObservedContext;
@@ -574,7 +597,7 @@ begin
     end;
     AssertTrue('a silent peer expires from accept time', SilentClosed);
     AssertTrue('trickling handshake bytes do not extend the deadline',
-      BusyClosed or SocketClosed(Busy));
+      BusyClosed or WaitForClosed(Busy, 100));
   finally
     Server.Stop;
     Silent.Free;

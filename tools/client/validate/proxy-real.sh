@@ -71,6 +71,8 @@ fi
 
 # ------------------------------------------------------------------ on the host
 cd "$ROOT" || exit 2
+MORMOT_SOURCE="${MORMOT:-$ROOT/third_party/mORMot2/src}"
+MORMOT_ROOT="$(cd "$(dirname "$MORMOT_SOURCE")" && pwd -P)"
 BASE="${PR_BASE:-18400}"
 WORK="$VALIDATION_BIN/proxy-real-work-$$"
 RESULTS_DIR="$VALIDATION_BIN/proxy-real-results-$$"
@@ -122,7 +124,8 @@ done
 HOSTS="--add-host other.example:127.0.0.1"
 ME="$(id -u):$(id -g)"
 docker run -d --rm --name "$TOOLS" --network host $HOSTS --user "$ME" -e HOME=/tmp \
-  -v "$ROOT:/src" -w /src "$IMG" sleep 3600 >/dev/null || exit 2
+  -v "$ROOT:/src" -v "$MORMOT_ROOT:/mormot:ro" -e MORMOT=/mormot/src \
+  -w /src "$IMG" sleep 3600 >/dev/null || exit 2
 tx() { docker exec -w /src "$TOOLS" "$@"; }
 
 echo "proxy-real: building the client driver"
@@ -218,7 +221,7 @@ Listen 127.0.0.1:$A_TLS
   SSLEngine on
   SSLCertificateFile /certs/localhost.crt
   SSLCertificateKeyFile /certs/localhost.key
-  SSLCACertificateFile /certs/mtls/ca.crt
+  SSLCACertificateFile /mtls/ca.crt
   SSLVerifyClient require
   SSLVerifyDepth 3
 </VirtualHost>
@@ -234,7 +237,7 @@ EOF
   cat <<EOF
 http_port 127.0.0.1:$S_OPEN
 http_port 127.0.0.1:$S_AUTH
-https_port 127.0.0.1:$S_TLS tls-cert=/certs/localhost.crt tls-key=/certs/localhost.key tls-cafile=/certs/mtls/ca.crt
+https_port 127.0.0.1:$S_TLS tls-cert=/certs/localhost.crt tls-key=/certs/localhost.key tls-cafile=/mtls/ca.crt
 auth_param basic program /usr/lib/squid/basic_ncsa_auth /conf/htpasswd
 auth_param basic realm proxy
 acl authed proxy_auth REQUIRED
@@ -255,7 +258,10 @@ via off
 EOF
 } > "$WORK/squid/squid.conf"
 
-MOUNTS=(-v "$WORK/htpasswd:/conf/htpasswd:ro" -v "$CERTS:/certs:ro")
+# The proxy server leaf is a checked-in fixture; client identities and their
+# CA are generated for this run.  Keep those PKIs on separate mount paths.
+MOUNTS=(-v "$WORK/htpasswd:/conf/htpasswd:ro" -v "$CERTS:/certs:ro" \
+  -v "$MT:/mtls:ro")
 docker run -d --name "$APACHE" --network host $HOSTS "${MOUNTS[@]}" \
   -v "$WORK/apache/httpd.conf:/usr/local/apache2/conf/httpd.conf:ro" "$HTTPD_IMG" >/dev/null || exit 2
 docker run -d --name "$SQUID" --network host $HOSTS "${MOUNTS[@]}" \

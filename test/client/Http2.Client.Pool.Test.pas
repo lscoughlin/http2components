@@ -172,9 +172,9 @@ begin
   AssertEquals('the pool holds per-host + total connections', 2,
     Pool.ConnectionCount);
   AssertEquals('a.example opened exactly one connection', 1,
-    Pool.ConnectionCountForOrigin('a.example'));
+    Pool.ConnectionCountForOrigin('a.example tls= protocol=0:0'));
   AssertEquals('b.example opened exactly one connection', 1,
-    Pool.ConnectionCountForOrigin('b.example'));
+    Pool.ConnectionCountForOrigin('b.example tls= protocol=0:0'));
   AssertEquals('one stream fits each host slot', 2, Succeeded);
   AssertEquals('the extra request per host waits and times out', 2, TimedOut);
   AssertEquals('the waits time out with EHttpTimeout', 2, Timeouts);

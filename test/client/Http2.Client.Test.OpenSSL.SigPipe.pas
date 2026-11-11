@@ -17,6 +17,8 @@ uses
   mormot.lib.openssl11;
 
 function TestSslAccept(const ASsl: PSSL): Integer;
+function TestSslRead(const ASsl: PSSL; const ABuffer: Pointer;
+  const ACount: Integer): Integer;
 function TestSslWrite(const ASsl: PSSL; const ABuffer: Pointer;
   const ACount: Integer): Integer;
 function TestSslShutdown(const ASsl: PSSL): Integer;
@@ -33,6 +35,19 @@ begin
   SigPipeShieldEnter(Shield);
   try
     Result := SSL_accept(ASsl);
+  finally
+    SigPipeShieldLeave(Shield);
+  end;
+end;
+
+function TestSslRead(const ASsl: PSSL; const ABuffer: Pointer;
+  const ACount: Integer): Integer;
+var
+  Shield: TSigPipeShield;
+begin
+  SigPipeShieldEnter(Shield);
+  try
+    Result := SSL_read(ASsl, ABuffer, ACount);
   finally
     SigPipeShieldLeave(Shield);
   end;

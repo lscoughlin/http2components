@@ -180,7 +180,17 @@ begin
     Client.SendPreface;
     SetLength(Payload, 8);
     for I := 0 to 11 do
-      Client.SendFrame(BuildPingFrame(Payload, False));
+      try
+        Client.SendFrame(BuildPingFrame(Payload, False));
+      except
+        on ENetSock do
+        begin
+          // The server can close on the first over-limit PING before the
+          // remaining flood frames reach it. The GOAWAY check below proves
+          // that this was the expected close.
+          Break;
+        end;
+      end;
     AssertTrue('the PING flood ends in GOAWAY',
       Client.WaitGoAway(Code, Last, ResponseTimeoutMs));
     AssertEquals('the GOAWAY code is ENHANCE_YOUR_CALM',

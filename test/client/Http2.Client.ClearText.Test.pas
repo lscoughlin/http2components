@@ -359,9 +359,9 @@ begin
   // 'http://a.example' and 'a.example': an http origin can never reuse a
   // pooled https connection (doc/design/fallback.md "Pool keys")
   AssertEquals('the http origin has its own connection', 1,
-    Pool.ConnectionCountForOrigin('http://a.example'));
+    Pool.ConnectionCountForOrigin('http://a.example tls= protocol=0:1'));
   AssertEquals('the https origin has its own connection', 1,
-    Pool.ConnectionCountForOrigin('a.example'));
+    Pool.ConnectionCountForOrigin('a.example tls= protocol=0:1'));
   AssertEquals('the pool holds two connections', 2, Pool.ConnectionCount);
   Client.Close;
 end;

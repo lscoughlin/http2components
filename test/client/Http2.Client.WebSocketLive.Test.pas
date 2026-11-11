@@ -120,6 +120,7 @@ end;
 function TWebSocketLiveTest.NewClient(const AFactory: THttpClientFactory): IHttpClient;
 begin
   Result := AFactory.WithTlsContext(OpenSslClientTestContext(FCa))
+    .WithProxyTlsContext(OpenSslClientTestContext(FCa))
     .WithConnectTimeout(5000).Build;
 end;
 

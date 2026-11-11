@@ -75,6 +75,7 @@ CADDY_IMAGE="${CADDY_IMAGE:-caddy:2}"
 TAG="mtls-real-$$"
 RUN_DIR="$VALIDATION_BIN/$TAG"
 mkdir -p "$VALIDATION_BIN"
+RESULTS_DIR="$(mktemp -d "$VALIDATION_BIN/$TAG-results.XXXXXX")"
 WORK="$(mktemp -d "$VALIDATION_BIN/$TAG-work.XXXXXX")"
 CERTS="$RUN_DIR/certs"
 RUN_TIMEOUT=20
@@ -87,9 +88,19 @@ ID="$(id -u):$(id -g)"
 KNOWN=()
 
 cleanup() {
+  mkdir -p "$RESULTS_DIR"
+  [ ! -f "$WORK/rows" ] || cp -p "$WORK/rows" "$RESULTS_DIR/rows.tsv"
+  [ ! -f "$WORK/table.tsv" ] || cp -p "$WORK/table.tsv" "$RESULTS_DIR/table.tsv"
+  for diagnostic in "$WORK"/*.log; do
+    [ -f "$diagnostic" ] && cp -p "$diagnostic" "$RESULTS_DIR/"
+  done
+  for server in nginx httpd caddy; do
+    docker logs "$TAG-$server" >"$RESULTS_DIR/$server-docker.log" 2>&1 || true
+  done
   docker rm -f "$TAG-client" "$TAG-nginx" "$TAG-httpd" "$TAG-caddy" >/dev/null 2>&1
   rm -rf "$RUN_DIR"
   rm -rf "$WORK"
+  echo "mtls-real: diagnostic results are in $RESULTS_DIR"
 }
 trap cleanup EXIT INT TERM
 
@@ -108,13 +119,16 @@ if [ "$NATIVE" = 1 ]; then
     || { cat "$WORK/fpc.log"; echo "mtls-real: could not build examples/client/mtls_get.pas" >&2; exit 2; }
 else
   CD="/src/bin/$TARGET/$PROFILE/validation/$TAG/certs"
-  M=/src/third_party/mORMot2/src
-  docker run --rm --user "$ID" -e HOME=/tmp -v "$ROOT:/src" -w /src "$IMAGE" \
+  MORMOT_SOURCE="${MORMOT:-$ROOT/third_party/mORMot2/src}"
+  MORMOT_ROOT="$(cd "$(dirname "$MORMOT_SOURCE")" && pwd -P)"
+  M=/mormot/src
+  docker run --rm --user "$ID" -e HOME=/tmp -v "$ROOT:/src" \
+    -v "$MORMOT_ROOT:/mormot:ro" -w /src "$IMAGE" \
     fpc -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu/src/common/src -Fu/src/client/src -Fu/src/server/src -Fu/src/tls/openssl/src -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" -Fl"$M/../static/$TARGET" \
     -FE"/src/bin/$TARGET/$PROFILE/validation/$TAG/client" -FU/tmp examples/client/mtls_get.pas >"$WORK/fpc.log" 2>&1 \
     || { cat "$WORK/fpc.log"; echo "mtls-real: could not build examples/client/mtls_get.pas" >&2; exit 2; }
   docker run -d --rm --name "$TAG-client" --network host --user "$ID" -e HOME=/tmp \
-    -v "$ROOT:/src:ro" "$IMAGE" sleep 3600 >/dev/null || exit 2
+    -v "$ROOT:/src:ro" -v "$MORMOT_ROOT:/mormot:ro" "$IMAGE" sleep 3600 >/dev/null || exit 2
 fi
 
 # servers: nginx, httpd, caddy; ports BASE+slot*10 + {0: h2/1.2, 1: h2/1.3, 2: h1/1.3}
@@ -283,7 +297,12 @@ echo "mtls-real: results (rejections repeated ${REPEAT}x)"
 {
   printf 'SERVER\tLISTENER\tSCENARIO\tRESULT\tOBSERVED\n'
   cat "$ROWS"
-} | column -t -s "$(printf '\t')"
+} >"$WORK/table.tsv"
+if command -v column >/dev/null 2>&1; then
+  column -t -s "$(printf '\t')" <"$WORK/table.tsv"
+else
+  cat "$WORK/table.tsv"
+fi
 echo
 echo "mtls-real: images $(docker run --rm --entrypoint "" "$NGINX_IMAGE" nginx -v 2>&1 | head -1)," \
   "$(docker run --rm --entrypoint "" "$HTTPD_IMAGE" httpd -v 2>&1 | head -1 | sed 's/^Server version: //')," \

@@ -91,6 +91,8 @@ type
     FWriteStarted, FWriteRelease: PRTLEvent;
     FBlockRead, FReadHasStarted: Boolean;
     FBlockWrite, FWriteHasStarted: Boolean;
+    FFailNextWrite: Boolean;
+    FFailAllWrites: Boolean;
   public
     constructor Create(const AMaxWrite: Integer = 3);
     destructor Destroy; override;
@@ -99,6 +101,8 @@ type
     procedure EnableTrickleReads(const ADelayMs: Integer);
     function WaitForReadStart(const ATimeoutMs: Integer): Boolean;
     procedure EnableWriteBlocking;
+    procedure FailNextWrite;
+    procedure FailAllWrites;
     function WaitForWriteStart(const ATimeoutMs: Integer): Boolean;
     procedure ReleaseBlockedWrite;
     procedure Push(const ABytes: TBytes);
@@ -153,6 +157,8 @@ begin
   FReadHasStarted := False;
   FBlockWrite := False;
   FWriteHasStarted := False;
+  FFailNextWrite := False;
+  FFailAllWrites := False;
   FTrickleDelayMs := 0;
 end;
 
@@ -190,6 +196,14 @@ begin
   FWriteStarted := RTLEventCreate;
   FWriteRelease := RTLEventCreate;
   FBlockWrite := True;
+end;
+procedure TPartialStream.FailNextWrite;
+begin
+  FFailNextWrite := True;
+end;
+procedure TPartialStream.FailAllWrites;
+begin
+  FFailAllWrites := True;
 end;
 
 function TPartialStream.WaitForWriteStart(const ATimeoutMs: Integer): Boolean;
@@ -293,7 +307,10 @@ begin
   begin
     FReadHasStarted := True;
     RTLEventSetEvent(FReadStarted);
-    RTLEventWaitFor(FReadRelease, 5000);
+    if FReadTimeoutMs > 0 then
+      RTLEventWaitFor(FReadRelease, FReadTimeoutMs)
+    else
+      RTLEventWaitFor(FReadRelease, 5000);
   end;
   if (not FOpen) or (Length(FInput) = 0) or (ACount <= 0) then Exit(0);
   N := Length(FInput);
@@ -315,6 +332,11 @@ var OldLength: Integer;
 begin
   Inc(FWrites);
   if not FOpen then Exit(0);
+  if FFailAllWrites or FFailNextWrite then
+  begin
+    FFailNextWrite := False;
+    raise EHttpConnectionClosed.Create('scripted socket write failed');
+  end;
   if FBlockWrite and not FWriteHasStarted then
   begin
     FWriteHasStarted := True;

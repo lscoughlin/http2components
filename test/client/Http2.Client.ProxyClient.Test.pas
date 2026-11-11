@@ -465,13 +465,13 @@ begin
   AssertEquals('fd00::9', Fake.HostAt(0));
   AssertEquals(8443, Integer(Fake.PortAt(0)));
   AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin(
-    '[fd00::9]:8443'));
+    '[fd00::9]:8443 tls= protocol=0:0'));
   // outside it: through the proxy
   AssertEquals(200, Client.Send(THttpRequest.Create(hmGet,
     'https://[2001:db8::9]/x')).StatusCode);
   AssertEquals('http:proxy.corp:3128', Routes.RouteAt(1));
   AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin(
-    '[2001:db8::9] via proxy.corp:3128'));
+    '[2001:db8::9] via proxy.corp:3128 tls= protocol=0:0'));
   Client.Close;
 end;
 
@@ -502,8 +502,8 @@ begin
   Client := Run(THttpClientFactory.Create, 'https://a.example/x', Routes);
   AssertEquals(1, Routes.Dials);
   AssertEquals('direct', Routes.RouteAt(0));
-  AssertEquals('direct key is the plain origin', 1,
-    (Client as THttpClient).Pool.ConnectionCountForOrigin('a.example'));
+  AssertEquals('direct route retains the origin key', 1,
+    (Client as THttpClient).Pool.ConnectionCountForOrigin('a.example tls= protocol=0:0'));
   Client.Close;
 end;
 
@@ -518,9 +518,9 @@ begin
   Pool := (Client as THttpClient).Pool;
   AssertEquals('http:proxy.corp:3128', Routes.RouteAt(0));
   AssertEquals('proxied route has its own key', 1,
-    Pool.ConnectionCountForOrigin('a.example via proxy.corp:3128'));
+    Pool.ConnectionCountForOrigin('a.example via proxy.corp:3128 tls= protocol=0:0'));
   AssertEquals('the plain key is untouched', 0,
-    Pool.ConnectionCountForOrigin('a.example'));
+    Pool.ConnectionCountForOrigin('a.example tls= protocol=0:0'));
   Client.Close;
 end;
 
@@ -533,13 +533,13 @@ begin
     'https://a.example/x', Routes);
   AssertEquals('socks5:s.corp:1080', Routes.RouteAt(0));
   AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin(
-    'a.example via socks5:u@s.corp:1080'));
+    'a.example via socks5:u@s.corp:1080 tls= protocol=0:0'));
   Client.Close;
   Client := Run(THttpClientFactory.Create.WithAllProxy('https://t.corp'),
     'https://a.example/x', Routes);
   AssertEquals('https:t.corp:443', Routes.RouteAt(0));
   AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin(
-    'a.example via tls:t.corp:443'));
+    'a.example via tls:t.corp:443 tls= protocol=0:0'));
   Client.Close;
 end;
 
@@ -698,8 +698,8 @@ begin
   AssertEquals(200, Client.Send(THttpRequest.Create(hmGet, 'https://a.example/via')).StatusCode);
   Pool := (Client as THttpClient).Pool;
   AssertEquals('two connections, one per route', 2, Routes.Dials);
-  AssertEquals(1, Pool.ConnectionCountForOrigin('a.example'));
-  AssertEquals(1, Pool.ConnectionCountForOrigin('a.example via sel.corp:7'));
+  AssertEquals(1, Pool.ConnectionCountForOrigin('a.example tls= protocol=0:0'));
+  AssertEquals(1, Pool.ConnectionCountForOrigin('a.example via sel.corp:7 tls= protocol=0:0'));
   // and the next request of each kind reuses its own bucket
   AssertEquals(200, Client.Send(THttpRequest.Create(hmGet, 'https://a.example/direct')).StatusCode);
   AssertEquals(200, Client.Send(THttpRequest.Create(hmGet, 'https://a.example/via')).StatusCode);
@@ -730,8 +730,8 @@ begin
   Sel.ProxyHost := 'two.corp';
   AssertEquals(200, Client.Send(THttpRequest.Create(hmGet, 'https://a.example/p2')).StatusCode);
   Pool := (Client as THttpClient).Pool;
-  AssertEquals(1, Pool.ConnectionCountForOrigin('a.example via one.corp:1'));
-  AssertEquals(1, Pool.ConnectionCountForOrigin('a.example via two.corp:1'));
+  AssertEquals(1, Pool.ConnectionCountForOrigin('a.example via one.corp:1 tls= protocol=0:0'));
+  AssertEquals(1, Pool.ConnectionCountForOrigin('a.example via two.corp:1 tls= protocol=0:0'));
   Client.Close;
 end;
 
@@ -802,8 +802,7 @@ begin
   AssertEquals(1, Fake.Dials);
   AssertEquals('a.example', Fake.HostAt(0));
   AssertEquals('the route is still part of the pool key', 1,
-    (Client as THttpClient).Pool.ConnectionCountForOrigin(
-      'a.example via proxy.corp:3128'));
+    (Client as THttpClient).Pool.ConnectionCountForOrigin('a.example via proxy.corp:3128 tls= protocol=0:0'));
   Client.Close;
 end;
 

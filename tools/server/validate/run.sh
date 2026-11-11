@@ -96,10 +96,17 @@ case "$gate" in
   websocket)
     if ! start_example_server "$SERVER_BIN/ws_echo" 127.0.0.1 0; then
       report_fail "WebSocket example server did not become ready"
-    elif python3 "$here/ws_h1_client.py" 127.0.0.1 "$EXAMPLE_PORT"; then
-      report_pass "HTTP/1.1 WebSocket echo (5 checks)"
     else
-      report_fail "HTTP/1.1 WebSocket echo"
+      if python3 "$here/ws_h1_client.py" 127.0.0.1 "$EXAMPLE_PORT"; then
+        report_pass "HTTP/1.1 WebSocket echo (5 checks)"
+      else
+        report_fail "HTTP/1.1 WebSocket echo"
+      fi
+      if python3 "$here/../abuse/ws_abuse.py" 127.0.0.1 "$EXAMPLE_PORT"; then
+        report_pass "HTTP/1.1 WebSocket abuse checks"
+      else
+        report_fail "HTTP/1.1 WebSocket abuse checks"
+      fi
     fi
     exit "$exit_code"
     ;;

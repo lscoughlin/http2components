@@ -193,3 +193,189 @@ The trace does not change assertions, case registration or execution order.
 The build driver streams and retains child output while preserving timeout
 process-group cleanup and nonzero/empty-suite failure checks. Acceptance is
 exact case progress and complete output on pass, failure and timeout.
+
+## LV-10: Client external gate failures
+
+On candidate d270c08, sanity passes five cases, cleartext passes, and SSE
+passes two cases. Interop reports A.11 h2c upgrade failure against Apache:
+connection closes while reading a frame header. A.8 remains an explicit
+historical exclusion because nghttpd has no trigger for mid-flight GOAWAY.
+The WebSocket live gate reports failures in its 18 registered cases.
+The client owner repairs stale explicit TLS policy calls in gated live tests
+and diagnoses A.11 against an independent client and retained peer logs.
+Production client changes require a demonstrated wire or state defect, not a
+weaker expectation. Existing fixed mandatory case IDs stay unchanged.
+
+LV-06 remains open: the complete client suite still exits SIGPIPE after the
+first fixture wrapper repair. A new stack identifies the remaining raw socket
+or SSL call; all fixture operations that can write are covered with scoped
+signal handling. The prior failed rerun is retained as evidence.
+
+### LV-10 evidence, 2026-11-11 18:14 UTC
+
+WebSocket live: one of 18 cases errors because the HTTPS proxy context is
+absent. Proxy live: three of ten cases error (two absent HTTPS proxy contexts,
+one loopback certificate verification failure). The client owner fixes test
+policies and trust inputs while keeping certificate verification meaningful.
+The mTLS PKI script uses x509 -not_before/-not_after, which requires newer
+OpenSSL than Ubuntu 3.0. The client owner generates the same fixed expired
+certificate dates with the compatible CA signing command and verifies expiry.
+
+The first real proxy and mTLS command invocations attempted a nested SSH hop.
+The root coordinator uses their documented local/native mode environment in
+this already-remote Docker container; the failed invocations remain recorded.
+
+## LV-11: General integration TLS migration
+
+The Linux `test:integration` compile on candidate e41fb5e fails in
+Http2.Integration.Http.Test.pas line 73 on removed WithTls and
+TTlsServerOptions symbols. The server owner migrates general integration
+server and client setup to explicit contexts, preserving its nine cases and
+separate-process checks. Scope extends to test/integration/Http2.Integration.*
+and a needed server-side probe setup. Build-driver changes are coordinated
+with the runner owner. This gate remains separate from the 29/200-case TLS
+integration runners that already passed.
+
+## LV-12: SSE encoding time regression on Linux
+
+The full Linux server suite completed 714 cases with one error and 13 failures.
+TSseHardeningTest.TestManyShortLinesEncodeInBoundedTime failed its existing
+linear-time bound and dominated runtime. The runner owner, after LV-09,
+reviews the encoder and fixture for repeated allocation or copying, fixes a
+confirmed cause, and preserves the existing test bound. Scope is
+server/src/Http2.Server.Sse.Encoder.pas and its hardening tests. Acceptance
+includes the original short-line case, output equivalence, and complete-suite
+rerun. Measurement is on the same host with fixed inputs.
+
+## LV-13: Remaining full server suite failures
+
+The server owner diagnoses the other full-suite failures: Async idle/header
+closure, three connection-age closures, connection-cap closure, four abuse
+GOAWAY closures, slow-reader handler progress (503 instead of 200), idle stop
+time, and WebSocket HTTP/2 going-away EPIPE. Linux EOF observation is checked
+first where the failed assertion is socket closure, with real nonblocking
+EOF proof. Production backpressure/lifecycle code is in scope only after a
+reproduced defect. Existing deadlines and error expectations remain intact.
+The initial full log is baseline-test-server.log; runtime was 708.577 seconds,
+exit 3. The earlier API probe link failure is covered by LV-05 and the repaired
+API run already passed.
+
+## LV-14: Complete client suite and external peer repairs
+
+Candidate dc8bbe5 completes all 776 client cases without SIGPIPE, but reports
+one error and eleven failures. Ten pool and routing checks still expect the
+old pool key; the statistics checks expose the added TLS/protocol suffix. The
+client owner verifies the new pool isolation contract before updating those
+expectations. The broken-peer TLS test still supplies a removed legacy trust
+option and needs an explicit context. No pool separation assertion is removed.
+
+The live WebSocket (18) and proxy (10) gates now pass. The mTLS gate still
+reports a generic connection error for a rejected missing identity. The owner
+checks alert propagation against the existing required error contract. The real
+proxy probe fails compilation because its mORMot source search path is absent.
+The owner repairs build paths and checks the real mTLS probe for the same
+problem. Acceptance includes all affected complete gates with retained peer
+logs and counts; failures must not become skips.
+
+### LV-14 evidence, 2026-11-11 18:31 UTC
+
+The real mTLS run completes but its final table fails to print because the
+container has no column utility. Cleanup then removes the detailed rows. The
+client owner makes table formatting portable and preserves the result rows
+and peer logs under the validation output before removing private fixtures.
+The earlier live row sample confirms TLS 1.3 alert propagation failures for
+Apache and Caddy, including large POST cases; they remain required failures.
+The real proxy compiler has a separate mount issue: the candidate dependency
+symlink resolves outside the nested compiler container mount. The owner maps
+the resolved mORMot root, including static objects, into that container.
+
+## LV-15: Disabled session resumption acceptance contract
+
+The server live mTLS gate passes 38 checks and fails two old requirements that
+saved TLS 1.2 and TLS 1.3 sessions resume. The approved replacement contract
+explicitly disables session resumption in its first implementation. The
+OpenSSL design document and context configuration state this policy.
+The server owner replaces the two obsolete positive resumption checks with
+positive evidence for the approved disabled policy: valid independent full
+handshakes succeed for both versions, no connection reports reuse, and a
+saved session attempt cannot bypass a fresh identity/trust check. The tests
+record whether a ticket/session was issued; missing output or a failed first
+handshake is a failure, not evidence that resumption is disabled. The result
+record names this requirement change and keeps the initial failures.
+
+## LV-16: Connection load evidence checks
+
+Review of the preserved connection load tool finds two weak result paths.
+The idle mode returns success when a requested process CPU sample is absent,
+and it counts connections opened without checking that they stay open for
+the requested window. The active mode counts DATA END_STREAM without checking
+the expected response body or rejecting protocol error frames.
+
+The runner owner repairs tools/server/seam/seam.py in its own worktree. An
+explicit process ID requires usable CPU samples. Idle sockets remain open
+through the measured window. Active and delayed results require the expected
+response bytes and reject unexpected resets or GOAWAY errors. Existing load
+parameters, the half-core idle bound, and delayed-response bounds stay fixed.
+The tool reports complete counts and closes its own sockets after every path.
+Acceptance includes valid peer behavior and controlled closed/error responses.
+
+## LV-17: Apache HTTPS proxy client identity rejection
+
+The real proxy gate on e3a8ae6 reports 59 passes, six failures, and three
+explicit Squid/GnuTLS exclusions. All six failures use the Apache HTTPS
+proxy: valid proxy identity, separate proxy/origin identities, identity log,
+keep-alive, ACL rejection, and WebSocket route. They fail before CONNECT with
+a TLS client-authentication error. The client owner checks the preserved
+Apache peer log and fixture certificate chain, then repairs the demonstrated
+configuration or transport cause. Valid and invalid identity cases retain
+their existing expectations. The Squid build limitations stay explicit and
+are not extended to Apache. Acceptance is the complete real proxy matrix.
+
+## LV-18: Client harness evidence retention
+
+The client owner checks the independent harness result path before the full
+Linux run. Per-case reference and client output, the expected ID list, the
+produced rows, and the final summary remain in a run-specific validation
+directory after cleanup. Success requires every expected ID exactly once;
+missing, extra, or duplicate rows fail. Existing outcome classes and expected
+results do not change. Private temporary inputs and containers are removed.
+A controlled incomplete result confirms that the checker fails.
+
+## LV-19: WebSocket and SSE load liveness evidence
+
+The combined load tool currently counts successful opening responses but
+does not prove that all connections remain open through the measured window.
+The runner owner adds checks for valid WebSocket upgrade headers and SSE
+content type, plus connection liveness through the full window. An early
+close fails the run. Readers drain bounded protocol data as needed so buffered
+data cannot hide EOF or prevent liveness checks. WebSocket close frames fail
+the hold requirement. Ordinary request counts and existing success checks
+remain intact. All clients close on failure, and post-disconnect server memory
+and CPU samples are recorded. Controlled early-close peers verify rejection.
+The required final load remains 10,000 WebSocket connections plus 10,000 SSE
+connections with 50 ordinary requests per second for 20 seconds.
+
+## LV-20: Complete server conformance result evidence
+
+The preserved server conformance script discards h2spec and h2load output.
+The h2load process exit alone does not prove that every request succeeded.
+The server owner retains external tool output under a run-specific validation
+directory and checks the h2load summary for exactly 200 completed successful
+requests with zero failed or errored requests. The independent h2spec HTTP/2
+and HPACK packages both run, with counts and original output preserved. Each
+required failure remains a failure. Tools and load parameters stay fixed.
+A controlled incomplete h2load summary confirms failure detection.
+
+## LV-21: Independent TLS server identity checks for both providers
+
+The independent provider server probe currently covers server identity and
+TLS version selection but has no client identity mode. The client owner adds
+optional client-authentication mode and trust-anchor arguments to that probe,
+with the current four-argument use preserved. A Python or OpenSSL peer then
+checks both providers with TLS 1.2 and 1.3: a valid client certificate succeeds;
+missing, expired, and unrelated-CA certificates fail when required; requested
+client authentication accepts a missing certificate but rejects invalid
+certificates. Positive requests require the fixed HTTP/2 response and ALPN h2.
+Negative requests must fail before an HTTP response. The peer verifies the
+server certificate and hostname. Result rows and peer output are retained;
+generated private keys are removed. No provider policy is weakened.

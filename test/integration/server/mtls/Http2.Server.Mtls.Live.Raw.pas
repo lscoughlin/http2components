@@ -28,6 +28,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes,
   mormot.core.base, mormot.core.os,
+  Http2.Common,
   Http2.Client.Tls, Http2.Client.ClientCert,
   Http2.Common.Hpack, Http2.Common.Frames, Http2.Server.WebSocket.Frames;
 
@@ -71,11 +72,22 @@ type
 function RawHttp1Get(const APort: Integer; const AIdentity: IClientIdentity;
   const APath: string): TRawResult;
 
+/// Set the explicit TLS context used by raw TLS peer helpers
+procedure SetRawTlsContext(const AContext: ITLSContext);
+
 implementation
 
 const
   cReadMs = 3000;
   cWaitMs = 5000;
+
+var
+  RawTlsContext: ITLSContext;
+
+procedure SetRawTlsContext(const AContext: ITLSContext);
+begin
+  RawTlsContext := AContext;
+end;
 
 function FrameBytes(const AFrame: TFrame): TBytes;
 begin
@@ -108,7 +120,7 @@ begin
   FDec := THpackCodec.Create;
   FNextStream := 1;
   FSock := TTlsSocket.DialWithAlpn('127.0.0.1', APort,
-    AlpnProtocolList(['h2']), True, cReadMs, '', '', 0, AIdentity);
+    AlpnProtocolList(['h2']), False, cReadMs, '', '', 0, AIdentity, RawTlsContext);
   FSock.ReadTimeoutMs := cReadMs;
   SetLength(Wire, ClientPrefaceSize);
   Move(ClientPreface[0], Wire[0], ClientPrefaceSize);
@@ -353,7 +365,8 @@ begin
   Result.Body := '';
   try
     Sock := TTlsSocket.DialWithAlpn('127.0.0.1', APort,
-      AlpnProtocolList(['http/1.1']), True, cReadMs, '', '', 0, AIdentity);
+      AlpnProtocolList(['http/1.1']), False, cReadMs, '', '', 0, AIdentity,
+      RawTlsContext);
     Sock.ReadTimeoutMs := cReadMs;
     Req := 'GET ' + RawByteString(APath) + ' HTTP/1.1'#13#10 +
       'Host: localhost'#13#10'Connection: close'#13#10#13#10;
