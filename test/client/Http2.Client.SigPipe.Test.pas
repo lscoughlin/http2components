@@ -25,7 +25,7 @@ interface
 uses
   SysUtils, Classes, Sockets, BaseUnix, fpcunit, testregistry,
   mormot.lib.openssl11, Http2.Client.Errors, Http2.Client.SigPipe, Http2.Client.Tls,
-  Http2.Client.Tls.Support;
+  Http2.Client.Tls.Support, Http2.Client.Test.TlsContext;
 
 type
   /// room for the platform's sigset_t (128 bytes on glibc, 4 on Darwin)
@@ -182,7 +182,7 @@ begin
     Snapshot;
     // the fixture server handshakes, waits 100 ms and closes
     Sock := TTlsSocket.DialWithAlpn('localhost', Port, AlpnOfferFor(True),
-      True, 2000);
+      False, 2000, '', '', 0, nil, OpenSslClientTestContext('', True));
     Server.WaitFor;
     Sleep(50);
     for I := 1 to 200 do

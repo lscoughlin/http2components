@@ -71,6 +71,8 @@ fi
 
 # ------------------------------------------------------------------ on the host
 cd "$ROOT" || exit 2
+MORMOT_SOURCE="${MORMOT:-$ROOT/third_party/mORMot2/src}"
+MORMOT_ROOT="$(cd "$(dirname "$MORMOT_SOURCE")" && pwd -P)"
 BASE="${PR_BASE:-18400}"
 WORK="$VALIDATION_BIN/proxy-real-work-$$"
 RESULTS_DIR="$VALIDATION_BIN/proxy-real-results-$$"
@@ -122,7 +124,8 @@ done
 HOSTS="--add-host other.example:127.0.0.1"
 ME="$(id -u):$(id -g)"
 docker run -d --rm --name "$TOOLS" --network host $HOSTS --user "$ME" -e HOME=/tmp \
-  -v "$ROOT:/src" -w /src "$IMG" sleep 3600 >/dev/null || exit 2
+  -v "$ROOT:/src" -v "$MORMOT_ROOT:/mormot:ro" -e MORMOT=/mormot/src \
+  -w /src "$IMG" sleep 3600 >/dev/null || exit 2
 tx() { docker exec -w /src "$TOOLS" "$@"; }
 
 echo "proxy-real: building the client driver"
