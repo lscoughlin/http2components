@@ -20,7 +20,8 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
-  Http2.Server, Http2.Server.Config.Socket, Http2.Server.Duplex,
+  Http2.Server, Http2.Server.Config.Limits, Http2.Server.Config.Socket,
+  Http2.Server.Duplex,
   Http2.Server.Sse.Encoder, Http2.Server.Sse,
   Http2.Server.Http1.RawClient;
 
@@ -571,8 +572,9 @@ var
   Count, LastCount: Integer;
   LastProgress, Started, Deadline: QWord;
 begin
-  StartServer(LiveFactory(FHandlerRef).WithSocketOptions(
-    TSocketOptions.Create.WithSendBufferBytes(8192)));
+  StartServer(LiveFactory(FHandlerRef)
+    .WithServerLimits(TServerLimits.Create.WithWriteTimeoutMs(0))
+    .WithSocketOptions(TSocketOptions.Create.WithSendBufferBytes(8192)));
   C := TRawHttp.Create(FServer.Port);
   Sender := nil;
   try
