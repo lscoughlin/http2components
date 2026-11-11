@@ -3,14 +3,15 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: migration, units, api
 notes:
-  - Target API and package details await final source and build review.
+  - This map describes the merged 0.30.0 source layout.
 ---
 
 # Migration to 0.30.0
 
 This table maps all 102 production units in the client and server source
-projects. A target with two unit paths is a planned split. The table records
-the target map; it does not state that every target has passed compilation.
+projects. A target with several paths records an implemented split. New
+helper units are listed in the target paths. Verification results are in the
+[current status record](verification/current-status.md).
 
 The library source directories are `src/common`, `src/client`, and
 `src/server`. Each directory contains the units with its matching namespace.
@@ -22,30 +23,30 @@ paths. A combined build uses all three directories.
 
 | Source project | Source unit | Target unit path(s) | Change |
 | --- | --- | --- | --- |
-| http2client | `Http2.Client` | `Http2.Client`; `Http2.Client.Core` | split |
+| http2client | `Http2.Client` | `Http2.Client`; `Http2.Client.Api`; `Http2.Client.Attempt`; `Http2.Client.BodyReader`; `Http2.Client.Core`; `Http2.Client.Defaults`; `Http2.Client.Factory`; `Http2.Client.Pool`; `Http2.Client.Pool.State`; `Http2.Client.Pool.Types`; `Http2.Client.Pool.Http1`; `Http2.Client.Pool.Http2`; `Http2.Client.Request`; `Http2.Client.Response`; `Http2.Client.SocketFactory`; `Http2.Client.SocketFactory.Types`; `Http2.Client.Url`; `Http2.Client.Upgrade` | split |
 | http2client | `Http2.ClientCert` | `Http2.Client.ClientCert` | move |
 | http2client | `Http2.Clock` | `Http2.Client.Clock` | move |
-| http2client | `Http2.Connection` | `Http2.Client.Connection` | split |
+| http2client | `Http2.Connection` | `Http2.Client.Connection`; `Http2.Client.Connection.Observer`; `Http2.Client.Connection.Queue`; `Http2.Client.Connection.Thread` | split |
 | http2client | `Http2.Encoding` | `Http2.Client.Encoding` | move |
 | http2client | `Http2.Errors` | `Http2.Common.Errors`; `Http2.Client.Errors` | split-and-merge |
 | http2client | `Http2.FlowControl` | `Http2.Common.FlowControl` | merge |
 | http2client | `Http2.Frames` | `Http2.Common.Frames` | merge |
 | http2client | `Http2.Headers` | `Http2.Common.Headers` | merge |
 | http2client | `Http2.Hpack` | `Http2.Common.Hpack` | merge |
-| http2client | `Http2.Http1` | `Http2.Client.Http1` | split |
+| http2client | `Http2.Http1` | `Http2.Client.Http1`; `Http2.Client.Http1.Body` | split |
 | http2client | `Http2.IdentityHandle` | `Http2.Client.IdentityHandle` | move |
 | http2client | `Http2.Messages` | `Http2.Client.Messages` | move |
 | http2client | `Http2.Observer` | `Http2.Client.Observer` | move |
-| http2client | `Http2.Proxy` | `Http2.Client.Proxy` | split |
+| http2client | `Http2.Proxy` | `Http2.Client.Proxy`; `Http2.Client.Proxy.Environment`; `Http2.Client.Proxy.Match`; `Http2.Client.Proxy.Types` | split |
 | http2client | `Http2.Readers` | `Http2.Client.Readers` | move |
 | http2client | `Http2.RequestObserver` | `Http2.Client.RequestObserver` | move |
 | http2client | `Http2.SigPipe` | `Http2.Client.SigPipe` | move |
 | http2client | `Http2.Socks` | `Http2.Client.Socks` | move |
 | http2client | `Http2.Sse` | `Http2.Client.Sse` | move |
-| http2client | `Http2.Stream` | `Http2.Client.Stream` | split |
-| http2client | `Http2.Tls` | `Http2.Client.Tls` | split |
-| http2client | `Http2.WebSocket` | `Http2.Client.WebSocket` | split |
-| http2client | `Http2.WebSocketClient` | `Http2.Client.WebSocket.Connection` | split |
+| http2client | `Http2.Stream` | `Http2.Client.Stream`; `Http2.Client.Stream.Types`; `Http2.Client.Stream.Exchange`; `Http2.Client.Stream.Send` | split |
+| http2client | `Http2.Tls` | `Http2.Client.Tls`; `Http2.Client.Tls.Types`; `Http2.Client.Tls.Plain`; `Http2.Client.Tls.Socket`; `Http2.Client.Tls.Tunnel` | split |
+| http2client | `Http2.WebSocket` | `Http2.Client.WebSocket`; `Http2.Client.WebSocket.Protocol` | split |
+| http2client | `Http2.WebSocketClient` | `Http2.Client.WebSocket.Connection`; `Http2.Client.WebSocket.Connection.Types`; `Http2.Client.WebSocket.Connection.Open`; `Http2.Client.WebSocket.Connection.Observer` | split |
 | http2client | `Http2` | `Http2.Client` | replace-umbrella |
 | http2server | `Http2Server.AccessLog.Handler` | `Http2.Server.AccessLog.Handler` | move |
 | http2server | `Http2Server.AccessLog` | `Http2.Server.AccessLog` | move |
@@ -127,13 +128,14 @@ paths. A combined build uses all three directories.
 
 ## Umbrella and entry units
 
-The client source unit `Http2` is the retired umbrella. Its planned replacement
+The client source unit `Http2` is the retired umbrella. Its replacement
 is `Http2.Client`. A client that uses features from other groups names those
 units explicitly. The server facade becomes `Http2.Server`; the common facade
 is `Http2.Common`. No wrapper unit preserves every former `uses` clause.
 
-The client public entry unit keeps the name `Http2.Client`. The design splits
-its implementation into the facade and `Http2.Client.Core`. The server
+The client public entry unit keeps the name `Http2.Client`. Its facade
+re-exports public API types while implementation responsibilities live in
+the listed client units. The server
 `Http2Server` facade becomes `Http2.Server`. The former runtime unit
 `Http2Server.Server` becomes `Http2.Server.Runtime`.
 
@@ -152,20 +154,21 @@ its implementation into the facade and `Http2.Client.Core`. The server
 
 ## Package and version map
 
-| Source package/version | Planned target | Status |
+| Source package/version | Target | Status |
 | --- | --- | --- |
-| Client package 0.23.0 | `http2client.lpk`, version 0.30.0 | Package metadata review pending. |
-| Server package 0.29.0 | `http2server.lpk`, version 0.30.0 | Package metadata review pending. |
-| Shared units | `http2common.lpk`, version 0.30.0 | Package membership review pending. |
-| JSON/XML readers | Optional `http2clientreaders.lpk`, version 0.30.0 | Optional package review pending. |
-| Combined release | `VERSION` 0.30.0 | Build and release review pending. |
+| Client package 0.23.0 | `http2client.lpk`, version 0.30.0 | Metadata uses the merged client source layout. |
+| Server package 0.29.0 | `http2server.lpk`, version 0.30.0 | Metadata uses the merged server source layout. |
+| Shared units | `http2common.lpk`, version 0.30.0 | Six shared units use the common package. |
+| Client units | `http2client.lpk`, version 0.30.0 | 55 units use the client package. |
+| Server units | `http2server.lpk`, version 0.30.0 | 73 units use the server package. |
+| JSON/XML readers | Optional `http2clientreaders.lpk`, version 0.30.0 | One optional unit; core client has no reader dependency. |
+| Combined tree | `VERSION` 0.30.0 | Version metadata is 0.30.0; release status is not asserted. |
 
 The source package numbers identify source metadata. They do not establish
 that versions 0.23.0 or 0.29.0 were published. The combined 0.30.0 version
-is the planned target, not a release claim.
+is the merged tree version, not a release claim.
 
-## Review status
+## Verification status
 
-The migration table follows the source unit map. Final API checks, package
-builds, and command availability remain pending. The documented types and
-facades require comparison with the merged source before acceptance.
+Bounded local results and deferred checks are listed in the
+[current status record](verification/current-status.md).

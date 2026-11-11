@@ -5,7 +5,6 @@ keywords: http2, server, limits, token-bucket, reset-flood, abuse
 notes:
   - This document describes the token buckets that bound the work a peer may ask for.
   - Imported from http2server/doc/design/server/limits.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The reason for the limit, the clock, the bucket options, the bucket, the limit set and the defaults.
 primary_types:
   - TTokenBucket
@@ -42,23 +41,23 @@ lists other flood techniques: tiny `WINDOW_UPDATE` increments, and `PING` and
 ## The clock
 
 A bucket refills from an `IMonotonicClock`
-(`src/Http2.Server.Limits.pas`). The interface has one method, `NowMs`,
+(`src/server/Http2.Server.Limits.pas`). The interface has one method, `NowMs`,
 which returns the milliseconds since an unspecified start point.
 
 `TMonotonicClock` is the real implementation
-(`src/Http2.Server.Limits.pas`). It returns `GetTickCount64`. The value
+(`src/server/Http2.Server.Limits.pas`). It returns `GetTickCount64`. The value
 never decreases, and it wraps only after a very long run time.
 
 `TManualMonotonicClock` is the test implementation
-(`src/Http2.Server.Limits.pas`). Its value moves only when `Advance` or
+(`src/server/Http2.Server.Limits.pas`). Its value moves only when `Advance` or
 `SetNowMs` moves it. A test controls every refill, so a test of a long idle
 time needs no real wait.
 
 ## The bucket options
 
 `TTokenBucketOptions` is a fluent record
-(`src/Http2.Server.Limits.pas`). `Create` returns a zeroed record
-(`src/Http2.Server.Limits.pas`). Each `WithX` method returns a new record
+(`src/server/Http2.Server.Limits.pas`). `Create` returns a zeroed record
+(`src/server/Http2.Server.Limits.pas`). Each `WithX` method returns a new record
 with one field changed. The fields are:
 
 | Field | Meaning |
@@ -79,18 +78,18 @@ The configuration unit holds the defaults.
 ## The bucket
 
 `TTokenBucket` is a class with one method, `TryTake`
-(`src/Http2.Server.Limits.pas`). The bucket starts full. `TryTake`
-refills from the clock (`src/Http2.Server.Limits.pas`), then takes
+(`src/server/Http2.Server.Limits.pas`). The bucket starts full. `TryTake`
+refills from the clock (`src/server/Http2.Server.Limits.pas`), then takes
 `ACost` tokens when the bucket holds enough. The method returns `True` on a
 successful take and `False` on an empty bucket.
 
 The refill has two guards. A repeated or lower clock value adds no token, so
 time never runs backwards. A long idle time cannot raise the tokens above
-the capacity (`src/Http2.Server.Limits.pas`).
+the capacity (`src/server/Http2.Server.Limits.pas`).
 
 The trip state is sticky. The first empty-bucket answer sets `Tripped`, and
 every later `TryTake` returns `False` without a refill
-(`src/Http2.Server.Limits.pas`). The connection is closing, so a later token request cannot succeed.
+(`src/server/Http2.Server.Limits.pas`). The connection is closing, so a later token request cannot succeed.
 
 `TTokenBucket` has no lock. The caller holds the connection lock. Every call
 of one bucket runs on one thread at a time.
@@ -98,14 +97,14 @@ of one bucket runs on one thread at a time.
 ## The limit set
 
 `TConnectionLimits` holds the set of buckets of one connection
-(`src/Http2.Server.Limits.pas`). The set holds the reset bucket and one
+(`src/server/Http2.Server.Limits.pas`). The set holds the reset bucket and one
 bucket for each control frame kind. `TLimitKind` names the kinds:
 `lkReset`, `lkPing`, `lkSettings`, `lkEmptyData`, `lkWindowUpdate` and
-`lkContinuation` (`src/Http2.Server.Limits.pas`).
+`lkContinuation` (`src/server/Http2.Server.Limits.pas`).
 
 Each control kind carries its own bucket. `CreateByKind` names the options
 of a kind whose legitimate rate differs from the fallback
-(`src/Http2.Server.Limits.pas`). `ControlOptionsOf` reads back the
+(`src/server/Http2.Server.Limits.pas`). `ControlOptionsOf` reads back the
 options in force for one kind. The caller of `CreateByKind` names only the
 kinds that it distinguishes, and every other kind keeps the fallback
 options.
@@ -120,9 +119,9 @@ size. One shared bucket of the least capacity closes a healthy connection
 that streams a large body.
 
 `Charge(AKind, ACost)` sends a cost to the bucket of `AKind`
-(`src/Http2.Server.Limits.pas`). The reset bucket has two costs, so
+(`src/server/Http2.Server.Limits.pas`). The reset bucket has two costs, so
 `ChargeReset(AAfterDispatch)` selects the cost that matches the dispatch
-state (`src/Http2.Server.Limits.pas`).
+state (`src/server/Http2.Server.Limits.pas`).
 
 The trip state of the set is sticky in the same way as the bucket. The first
 empty-bucket answer sets `Tripped`, and every later `Charge` returns `False`
@@ -217,26 +216,26 @@ streaming pool and uses no token bucket.
 ## The default limits
 
 `THttp2ServerFactory.Create` sets the default of every bucket
-(`src/Http2.Server.Config.pas`). The reset bucket holds 1000 tokens, with
+(`src/server/Http2.Server.Config.pas`). The reset bucket holds 1000 tokens, with
 a refill of 100 tokens a second, a cost of one token before dispatch and
-five tokens after it (`src/Http2.Server.Config.pas`).
+five tokens after it (`src/server/Http2.Server.Config.pas`).
 
 The `SETTINGS`, `empty DATA` and `CONTINUATION` buckets each hold 100 tokens,
-with a refill of 10 tokens a second (`src/Http2.Server.Config.pas` and `454-456`). The
-`PING` bucket holds the same values (`src/Http2.Server.Config.pas`). Each
+with a refill of 10 tokens a second (`src/server/Http2.Server.Config.pas` and `454-456`). The
+`PING` bucket holds the same values (`src/server/Http2.Server.Config.pas`). Each
 of these kinds is a flood signal with no legitimate high rate, so a small
 bucket is the correct default.
 
 The `WINDOW_UPDATE` bucket holds 10000 tokens, with a refill of 4000 tokens
-a second (`src/Http2.Server.Config.pas`). The capacity admits a whole
+a second (`src/server/Http2.Server.Config.pas`). The capacity admits a whole
 burst of a few megabytes, and the refill rate sits above the measured
 rate of 2450 frames a second with headroom. A small bucket of 100 tokens
 closed a healthy connection on a body of less than two megabytes: 107
 control frames arrived before the body ended. The measurement is in
 [validation](../../verification/source/server/validation.md).
 
-The queue depth of 64 (`src/Http2.Server.Config.pas`) and the IO thread
-count of 4 (`src/Http2.Server.Config.pas`) come from the same seam
+The queue depth of 64 (`src/server/Http2.Server.Config.pas`) and the IO thread
+count of 4 (`src/server/Http2.Server.Config.pas`) come from the same seam
 measurement. The listener, stream and timeout values are the chosen protocol
 and operational bounds: RFC 9113 section 6.5.2 sets 100 concurrent streams as
 the customary value, 16384 is the frame size that RFC 9113 section 4.2

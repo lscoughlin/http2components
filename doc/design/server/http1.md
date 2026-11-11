@@ -6,7 +6,6 @@ notes:
   - This document describes the HTTP/1.1 fallback, which serves a client that does not speak HTTP/2 on the same listener and with the same handler.
   - RFC 9112 (HTTP/1.1) and RFC 9110 (HTTP semantics) are the sources. Both were checked on 2026-10-22 at https://www.rfc-editor.org/info/rfc9112 and https://www.rfc-editor.org/info/rfc9110. The plain-text copies are in doc/references/.
   - Imported from http2server/doc/design/server/http1.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The protocol selection, the units of the fallback, the parser and its guard, the framing and persistence rules, the limits, the memory bounds, the shared queue, the detached response and what a handler can see.
 primary_types:
   - TH1Core
@@ -45,7 +44,7 @@ handler serves both protocols. The fallback is on by default. The factory method
 | Clear text | any other first octets | HTTP/1.1 when the fallback is on; otherwise the connection closes |
 
 The choice is made once for each connection. The function
-`SelectCleartextProtocol` (`src/Http2.Server.Http1.Select.pas`) decides the
+`SelectCleartextProtocol` (`src/server/Http2.Server.Http1.Select.pas`) decides the
 clear-text case from the octets alone. A request line `PRI * HTTP/2.0` without the
 rest of the preface is HTTP/1.1, and the guard answers it with status 505.
 
@@ -79,7 +78,7 @@ stopped. A sender that trickles one octet at a time into a long header line ther
 costs one comparison for each octet, and not a scan from the start of the line.
 
 The parser of mORMot2 is lenient in places that matter for request smuggling. The
-probe tests in `test/Http2.Server.Http1.Chunked.Test.pas` record what it accepts
+probe tests in `test/server/Http2.Server.Http1.Chunked.Test.pas` record what it accepts
 alone:
 
 | Input | The parser alone |
@@ -163,13 +162,13 @@ framing refuses them. The refusal is safe, since no request is smuggled.
 
 ## The request cap
 
-`TH1CoreOptions.MaxRequests` (`src/Http2.Server.Http1.Core.pas`) bounds the
+`TH1CoreOptions.MaxRequests` (`src/server/Http2.Server.Http1.Core.pas`) bounds the
 requests of one connection. `BuildH1CoreOptions` sets it from
-`MaxStreamsPerConnection` (`src/Http2.Server.Async.Options.pas`), so the
+`MaxStreamsPerConnection` (`src/server/Http2.Server.Async.Options.pas`), so the
 same factory setting serves both protocols. A value of 0 turns the cap off.
 
 The core counts every admitted request head
-(`src/Http2.Server.Http1.Core.pas`). The exchange that reaches the cap is
+(`src/server/Http2.Server.Http1.Core.pas`). The exchange that reaches the cap is
 served, and its response carries `Connection: close`, as in a drain. The retire
 fires once for the connection, and the server raises `seConnectionRetired` with
 the stream-cap detail (as described in [public-api](public-api.md)). A refused head never
@@ -243,7 +242,7 @@ finishes at once.
 A handler write that sees no progress for the connection write timeout
 aborts the connection, so a peer that never reads cannot hold a handler thread
 for ever. `BuildH1CoreOptions` sets the bound from
-`ServerLimits.WriteTimeoutMs` (`src/Http2.Server.Async.Options.pas`), and a
+`ServerLimits.WriteTimeoutMs` (`src/server/Http2.Server.Async.Options.pas`), and a
 zero turns the check off. The once-per-second sweep judges the connection with
 the idle rule as well, fed with the write timeout (see
 [io-pool](io-pool.md)).

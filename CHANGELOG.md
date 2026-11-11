@@ -1,17 +1,26 @@
 # Changelog
 
-This changelog starts the combined project history. The 0.30.0 entry records
-preparation for source integration. It does not state that version 0.30.0 is
-a published release.
+## 0.30.0 — merged source tree (unreleased)
 
-## 0.30.0 — integration preparation
-
-- The client and server source projects have a shared repository plan.
-- The planned public entry points are `Http2.Common`, `Http2.Client`, and
+- Client and server source now share one repository and the common protocol
+  units.
+- The public entry units are `Http2.Common`, `Http2.Client`, and
   `Http2.Server`.
-- Source unit names have a complete migration table.
-- Source history and reference copies have separate indexes.
-- Final API, build command, and merged validation review remain pending.
+- Client transport, HTTP/1 body, stream types, and API/pool implementation
+  have separate units. The `Http2` client umbrella is removed.
+- Common, client, server, and optional client Readers Lazarus packages use
+  version 0.30.0.
+- The root build driver provides component builds, unit and API tests,
+  in-process integration checks, examples, package checks, source checks,
+  documentation checks, and explicit validation gates.
+- Common, API, facade, local integration, server TLS, and server mTLS results
+  are recorded in the [current verification record](doc/verification/current-status.md).
+- The default client runner passed 805 registered cases. Thirty-three
+  environment-gated client cases did not run. The full server unit suite has no
+  completed run in this record.
+- Linux validation, load checks, independent external conformance checks,
+  and the full server unit result remain open.
 
-Historical source changelogs are indexed in
-[doc/README.md](doc/README.md#references-and-source-history).
+This entry describes the current source tree. It does not state that version
+0.30.0 is a published release. The client 0.23.0 and server 0.29.0 records
+remain historical source package histories at [doc/README.md](doc/README.md).

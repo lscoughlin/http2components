@@ -3,12 +3,8 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: http2, protocol, frames, hpack, flow-control
 notes:
-  - This document describes the wire protocol units of the server.
-  - The units are copies of the sibling HTTP/2 client units, renamed into
-    the Http2.Server namespace and reviewed for server use.
-  - Imported from http2server/doc/design/server/protocol.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
-scope: The five protocol units and the server-specific parts of them.
+  - This document describes the shared wire protocol units.
+scope: The shared protocol units and server-specific behavior.
 primary_types:
   - THttp2ErrorCode
   - TFrameHeader
@@ -28,11 +24,10 @@ invariants:
 ---
 # HTTP/2 Protocol Units
 
-The server carries five protocol units. Each unit holds one concern, uses no
-socket and no thread, and is free of the mORMot2 dependency. The units
-derive from the sibling HTTP/2 client units at a recorded revision. The
-pasdoc header of every such file names its source file and its source
-revision.
+The merged library carries shared HTTP/2 protocol units under
+`Http2.Common.*`. Each unit holds one concern, uses no socket or thread, and
+is free of the mORMot2 dependency. Source notices and origin hashes are
+preserved in the source provenance record.
 
 ## Errors
 
@@ -53,7 +48,7 @@ The server adds four classes to the client set:
 `EStreamCancelled` and `EStreamReset` descend from `EHttpStreamError`, so a
 catch of the stream error class catches both. A caller that requires the
 stream identifier reads the `StreamId` property of the base class
-(`src/Http2.Common.Errors.pas`).
+(`src/common/Http2.Common.Errors.pas`).
 
 ## Frames
 
@@ -62,7 +57,7 @@ stream identifier reads the `StreamId` property of the base class
 
 The unit carries payload builders, payload parsers, and stream operations.
 The `ReadFrame` operation enforces the received-frame limit
-(`src/Http2.Common.Frames.pas`): a frame header that states a length above
+(`src/common/Http2.Common.Frames.pas`): a frame header that states a length above
 the limit raises `EHttpProtocolError` with `ecFrameSizeError` before the
 server reads the payload. This check is what stops a peer from asking the
 server to allocate an unbounded buffer.
@@ -113,7 +108,7 @@ field of 32 octets, plus the name length, plus the value length. A large list
 is a denial-of-service vector, so the decoder stops as soon as the running
 total passes the cap. `THpackCodec.MaxHeaderListSize` holds the cap, and a
 zero value removes it. The check runs inside the append step
-(`src/Http2.Common.Hpack.pas`), so the decoder raises
+(`src/common/Http2.Common.Hpack.pas`), so the decoder raises
 `EHttpProtocolError` with `ecEnhanceYourCalm` part way through a hostile
 block instead of building the full list first.
 
@@ -142,7 +137,7 @@ size, a consumed count and the two directions. `TFlowControl` holds one
 connection window and one window per open stream.
 
 A window never exceeds 2^31-1 octets. The constant `MaxWindowSize` holds that
-value (`src/Http2.Common.FlowControl.pas`), and both `ApplyUpdate` and
+value (`src/common/Http2.Common.FlowControl.pas`), and both `ApplyUpdate` and
 `ApplyInitialWindowDelta` checks the new size against this limit and reports
 a flow-control error when the size is too large.
 

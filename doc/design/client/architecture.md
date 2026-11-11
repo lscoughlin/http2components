@@ -17,7 +17,6 @@ related:
 updated: 2026-10-13
 notes:
   - Imported from http2client/doc/design/architecture.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 ---
 
 # Architecture
@@ -102,7 +101,10 @@ entry unit. It does not replace the feature imports of every former unit.
 
 `Http2.Client.Readers` is optional. It holds JSON and XML helpers and depends
 on the related FCL reader units. The core client package does not require it.
-The final split-unit list and facade aliases remain under source review.
+The current split units are listed in the [migration map](../../migration-0.30.0.md).
+Connection, stream, pool, transport, and WebSocket helpers have separate
+units. Existing declared interface GUIDs remain in use, and shared aliases
+resolve to the common type identities.
 
 Client units depend on common units. Common units have no client or server
 dependencies. Client units have no server dependencies. This keeps both roles

@@ -20,7 +20,6 @@ related:
 updated: 2026-10-09
 notes:
   - Imported from http2client/doc/design/errors-redirects.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 ---
 
 # Errors, Timeouts & Redirects

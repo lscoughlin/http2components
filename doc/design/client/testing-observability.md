@@ -17,7 +17,6 @@ related:
 updated: 2026-10-13
 notes:
   - Imported from http2client/doc/design/testing-observability.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 ---
 
 # Testing & Observability
@@ -27,7 +26,7 @@ notes:
 The suite exercises real behaviour without a network by substituting the
 transport:
 
-- **`IHttp2Socket` mock** — `test/Http2.Client.MockSocket.pas` is an in-memory
+- **`IHttp2Socket` mock** — `test/client/Http2.Client.MockSocket.pas` is an in-memory
 duplex of `TFrame`s. The whole connection loop, HPACK, flow control, and
 the lease state machine run against it.
 - **`IHttp2SocketFactory`** — the factory's `WithSocketFactory` installs a
@@ -39,7 +38,7 @@ the lease state machine run against it.
   https proxy and a SOCKS5 proxy, and acts as the origin inside the tunnel,
   which exercises TLS inside TLS on 127.0.0.1 only. An opt-in live gate,
   `make validate-proxy`, drives the client through reference proxies in
-  `tools/validate/proxy_servers.py` and checks their logs for the route taken;
+  `tools/client/proxy_servers.py` and checks their logs for the route taken;
   with `nghttpd` installed it also runs strict-mode HTTP/2 through each proxy kind.
 - **Pure layers** — `THpackCodec`, `TWindow`, `TFrame`/`TFrameHeader`
   serialization, and the header codec are pure enough to test in isolation.
@@ -58,8 +57,8 @@ flowchart TB
 
 ## Test suite layout
 
-The fpcunit console runner is `test/Http2.Client.TestRunner.pas`; the entry point
-is `test/Http2.Client.RunTests.pas`. One test unit per source area:
+The fpcunit console runner is `test/client/Http2.Client.TestRunner.pas`; the entry point
+is `test/client/Http2.Client.RunTests.pas`. One test unit per source area:
 
 | Test unit | Area |
 |---|---|
@@ -88,7 +87,7 @@ runner uses `make test` or `task test` and exits non-zero on a failure.
 
 ## Observability hooks
 
-`IHttp2Observer` (in `src/Http2.Client.Observer.pas`) is installed with
+`IHttp2Observer` (in `src/client/Http2.Client.Observer.pas`) is installed with
 `THttpClientFactory.WithObserver`:
 
 ```pascal
@@ -186,16 +185,16 @@ masking key per frame. Tests wait on events with a bounded timeout and never
 sleep to wait for another thread.
 
 The opt-in live gate (`task validate:websocket`) starts
-`tools/validate/ws_servers.py` and the proxy servers of `proxy_servers.py`,
+`tools/client/ws_servers.py` and the proxy servers of `proxy_servers.py`,
 runs `Http2.Client.WebSocketLive.Test` over `ws` and `wss`, directly and through an
 HTTP `CONNECT` proxy, an `https://` proxy and a SOCKS5 proxy, and then reads
 the servers' logs: every client frame carries the mask bit, the handshake
 headers are as required, and the close codes and the route are as expected.
 `task validate:cleartext` runs a bodyless `GET`, `POST`, `DELETE` and `HEAD`
-under `ctUpgrade` and `ctHttp1` against `tools/validate/h1_counter_server.py`,
+under `ctUpgrade` and `ctHttp1` against `tools/client/h1_counter_server.py`,
 an HTTP/1.1-only server that logs each request, and checks that each arrived
 once. `task validate:websocket:autobahn` runs the Autobahn|Testsuite fuzzing server
-(Docker) against `tools/validate/autobahn_client.pas` and summarises its
+(Docker) against `tools/client/autobahn_client.pas` and summarises its
 report; cases 12 and 13 (`permessage-deflate`) are excluded because the client
 offers no extension.
 

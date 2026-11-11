@@ -16,7 +16,6 @@ related:
 updated: 2026-10-13
 notes:
   - Imported from http2client/doc/design/fpc-runtime.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 ---
 
 # FPC Runtime & Memory Model

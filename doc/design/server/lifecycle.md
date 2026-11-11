@@ -5,7 +5,6 @@ keywords: http2, server, lifecycle, start, stop, goaway, drain
 notes:
   - This document describes the life of one server.
   - Imported from http2server/doc/design/server/lifecycle.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The life of one server from Bind to Stop — the start path, the graceful stop, the GOAWAY broadcast, the drain wait and the shutdown order.
 primary_types:
   - IHttp2Server
@@ -29,14 +28,14 @@ invariants:
 ---
 # The server lifecycle
 
-The unit `src/Http2.Server.Runtime.pas` holds the life of one server. The class
+The unit `src/server/Http2.Server.Runtime.pas` holds the life of one server. The class
 `THttp2Server` owns one `THttp2AsyncServer`, which owns the IO pools, the
 listening socket and the handler pool.
 
 ## Start
 
-`THttp2Server.Start` (`src/Http2.Server.Runtime.pas`) sets its started flag
-and calls `THttp2AsyncServer.Start` (`src/Http2.Server.Async.pas`).
+`THttp2Server.Start` (`src/server/Http2.Server.Runtime.pas`) sets its started flag
+and calls `THttp2AsyncServer.Start` (`src/server/Http2.Server.Async.pas`).
 
 The async start binds the port on its own thread and waits up to five seconds
 for the bind. A failed bind raises from the wait, so `Start` does not return a
@@ -112,7 +111,7 @@ has left. The exchange that reaches the request cap is served with
 undecided closes at once, because no request has started on it.
 
 The age check runs once per second from the `IdleEverySecond` override
-(`src/Http2.Server.Async.pas`), which walks every connection. The walk is
+(`src/server/Http2.Server.Async.pas`), which walks every connection. The walk is
 needed because the idle rule alone never sees a busy connection (see
 [io-pool](io-pool.md)). The sweep returns at once when the maximum age is 0
 and the connection write timeout is 0. The age starts at accept, and the
@@ -128,8 +127,8 @@ bounds the whole connection (as described in [connection](connection.md)).
 
 The effective age of one connection is the setting minus a random part of up
 to 10 percent, drawn once per connection at accept (`AgeExpired` in
-`src/Http2.Server.Async.Options.pas`, with the decision values in
-`TAgeAction` at `src/Http2.Server.Async.Options.pas`). The effective age is
+`src/server/Http2.Server.Async.Options.pas`, with the decision values in
+`TAgeAction` at `src/server/Http2.Server.Async.Options.pas`). The effective age is
 never longer than the setting, so the setting stays a hard upper bound.
 
 An upgraded connection is exempt from the maximum age. The sweep never
@@ -166,7 +165,7 @@ doc/references/rfc9113.txt.
    identifier in the frame is the highest identifier that the core accepted, so
    a peer keeps the streams below it and expects no new stream. The waker then
    pushes the frame to the socket.
-4. `CloseChannels` (`src/Http2.Server.Async.pas`) closes every detached stream
+4. `CloseChannels` (`src/server/Http2.Server.Async.pas`) closes every detached stream
    gracefully. The queued bytes and END_STREAM leave, so a detached stream does
    not hold the wait of the next step until the timeout. A WebSocket session
    sends Close 1001 instead and waits for the reply; at the final stop the
@@ -176,13 +175,13 @@ doc/references/rfc9113.txt.
    timeout passes. A request that runs on an HTTP/1.1 connection counts as one
    open stream. A quiet server stops at once, and a busy server gets the full
    period.
-6. `THttp2AsyncServer.Stop` (`src/Http2.Server.Async.pas`) aborts the channels that
+6. `THttp2AsyncServer.Stop` (`src/server/Http2.Server.Async.pas`) aborts the channels that
    are still open, stops the handler pool, shuts the IO pools down, and stops
    the streaming pool.
 
 The order matters. The handler pool stops first, so a handler never writes to a
 connection that the IO side already released. `THandlerPool.Stop`
-(`src/Http2.Server.Admission.pas`) ends acceptance, refuses the waiting entries
+(`src/server/Http2.Server.Admission.pas`) ends acceptance, refuses the waiting entries
 per the refusal mode, cancels the work that still runs, and waits up to one
 second for the worker threads. The drain wait of step 5 already used the
 graceful time, so the whole stop keeps one deadline: the graceful timeout plus

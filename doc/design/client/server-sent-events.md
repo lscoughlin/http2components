@@ -25,7 +25,6 @@ related:
 updated: 2026-10-24
 notes:
   - Imported from http2client/doc/design/server-sent-events.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 ---
 
 # Server-Sent Events
@@ -135,12 +134,12 @@ Grammar, exactly:
 | No colon | A line with no `:` is a field name with an empty value. |
 | Comment | A line whose first character is `:` is ignored (valid keep-alive). |
 | `data` | Append the value plus a single `\n` to the data buffer. |
-| `event` | Set the event-type buffer to the value. |
-| `id` | If the value contains no NUL, set the last-event-ID buffer to it; else ignore. |
-| `retry` | If the value is **ASCII digits only**, set the reconnection time; else ignore. |
+| `event` | The value replaces the event-type buffer. |
+| `id` | A value with no NUL replaces the last-event-ID buffer. A value with NUL has no effect. |
+| `retry` | An ASCII-digit value sets the reconnection time. Other values have no effect. |
 | Other fields | Ignored. |
 | End of stream | A partial (unterminated) event is **discarded**, never dispatched: the event fires only on its blank line. A stream that is cut mid-event therefore delivers no half event. |
-| Blank line | **Dispatch**: if the data buffer is empty, reset and fire nothing. Otherwise strip one trailing `\n`, use the event-type buffer or `message` when empty, fire with `lastEventId`, then reset the data and event-type buffers. |
+| Blank line | **Dispatch**: an empty data buffer causes a reset with no event. Otherwise one trailing `\n` is removed, the event type is the buffer or `message` when empty, and the event uses `lastEventId`; the data and event-type buffers are then reset. |
 
 The dispatch condition is the subtle one: `id:`, `retry:`, and `event:`
 lines **update state** but must not, by themselves, fire a message event.
@@ -153,7 +152,7 @@ wait before reconnecting after the stream ends.
 The parser's public shape:
 
 ```pascal
-// src/Http2.Client.Sse.pas
+// src/client/Http2.Client.Sse.pas
 type
   TSseEvent = record
     /// event type; 'message' when the stream sent no event: field
@@ -232,7 +231,7 @@ header-wait loop (`THttpConnection.AcquireCancellable`,
 slice length, so "cancelled" means the same thing at both points of an
 exchange.
 
-- `ICancellationToken`/`TCancellationToken` live in `src/Http2.Client.Stream.pas`,
+- `ICancellationToken`/`TCancellationToken` live in `src/client/Http2.Client.Stream.pas`,
   so the lease's body read polls the token directly. `Http2.Client`
   re-exports them.
 - `TStreamLease.ReadBody` calls `WaitForBodyFrame`, which honours the
@@ -342,7 +341,7 @@ default.
 ## Public API
 
 ```pascal
-// src/Http2.Client.Sse.pas
+// src/client/Http2.Client.Sse.pas
 type
   IHttpSseSource = interface
     ['{8B1C2D3E-4F50-4A61-9C72-00000000E001}']
@@ -456,17 +455,17 @@ SSE-specific type for the retry bound:
 
 | Unit | Content |
 | --- | --- |
-| `src/Http2.Client.Sse.pas` | `TSseEvent`, `TSseEventParser`, `IHttpSseSource`, `TSseSource`, `TSseReconnectLoop`, `SseRequest` |
-| `src/Http2.Client.Stream.pas` | body read timeout + read-side cancellation |
-| `src/Http2.Client.pas` | `WithSseReadTimeout` request setter; threads the token and the body deadline to the lease's body read |
-| `src/Http2.Common.Headers.pas` | `HeaderLastEventId` constant |
-| `src/Http2.Client.pas` | public client facade; any SSE aliases await final API review |
-| `test/Http2.Client.Sse.Test.pas` | parser, validation, source, reconnect |
+| `src/client/Http2.Client.Sse.pas` | `TSseEvent`, `TSseEventParser`, `IHttpSseSource`, `TSseSource`, `TSseReconnectLoop`, `SseRequest` |
+| `src/client/Http2.Client.Stream.pas` | body read timeout + read-side cancellation |
+| `src/client/Http2.Client.pas` | `WithSseReadTimeout` request setter; threads the token and the body deadline to the lease's body read |
+| `src/common/Http2.Common.Headers.pas` | `HeaderLastEventId` constant |
+| `src/client/Http2.Client.pas` | public client facade; SSE features use the explicit `Http2.Client.Sse` unit |
+| `test/client/Http2.Client.Sse.Test.pas` | parser, validation, source, reconnect |
 | `examples/sse_stream.pas` | runnable demo against the test server |
-| `tools/validate/sse_server.py` | a minimal live SSE server for interop (as described in "Testing") |
+| `tools/client/sse_server.py` | a minimal live SSE server for interop (as described in "Testing") |
 
 `Http2.Client.Sse` is a client feature unit. It has no `fcl-json` or
-`fcl-xml` dependency. Its import and facade alias details await final API review.
+`fcl-xml` dependency. The facade does not re-export this feature unit.
 
 ## Testing
 
@@ -488,7 +487,7 @@ SSE-specific type for the retry bound:
   `Cancel` during a blocked read raises `ecCancel` within one poll slice.
 - **Flow-control case:** slow reader over a mock socket still sees
   `WINDOW_UPDATE` and never deadlocks.
-- **Live case (opt-in, `SSE_TEST_URL`):** `pytest`-free: `tools/validate/sse_server.py`
+- **Live case (opt-in, `SSE_TEST_URL`):** `pytest`-free: `tools/client/sse_server.py`
   serves `text/event-stream` and emits a scripted sequence (comment
   keep-alive, multi-line data, `event:`, `id:`, `retry:`), then closes; the
   example and one integration test consume it. This mirrors the opt-in

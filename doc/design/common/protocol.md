@@ -3,8 +3,7 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: http2, protocol, rfc
 notes:
-  - Protocol statements describe the approved target design.
-  - Final source and test review is pending.
+  - Protocol statements describe the shared implementation and its RFC basis.
 ---
 
 # Shared protocol design
@@ -33,14 +32,9 @@ omitted values keep their prior state. Each DATA byte follows one accounting
 path.
 
 HTTP/2 error handling, directional HPACK settings, frame sequencing, and flow
-control require independent tests in both roles. Final test evidence is not
-part of this document. Resource-intensive and Linux checks remain deferred.
-
-## Review status
-
-The protocol ownership and directional rules follow the approved design.
-The final merged call sequence and public signatures remain subject to source
-review.
+control have common and role-specific test coverage. The current verification
+record lists completed local tests and deferred Linux, load, and external
+conformance checks.
 
 ## RFC references
 

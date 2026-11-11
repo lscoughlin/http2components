@@ -5,7 +5,6 @@ keywords: http2, server, output, drain, frames, flow-control, wake-up
 notes:
   - This document describes the response path and the drain.
   - Imported from http2server/doc/design/server/output.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The response path, the turn of the drain, the flow-control share, the header encoding and the frame building.
 primary_types:
   - TOutputDrain
@@ -27,7 +26,7 @@ invariants:
 
 The outbound path turns the bytes a handler writes into DATA frames that
 obey the flow-control windows of the peer and the frame size the peer
-accepts. The unit `src/Http2.Server.Output.pas` holds this path.
+accepts. The unit `src/server/Http2.Server.Output.pas` holds this path.
 
 ## The drain
 
@@ -66,7 +65,7 @@ connection raises no wake-up.
 ## Headers
 
 The HPACK encoder stays with the connection
-(`src/Http2.Server.HpackConnection.pas`), so one encoder serves one connection
+(`src/server/Http2.Server.HpackConnection.pas`), so one encoder serves one connection
 and the encoder state follows wire order. `THpackConnection.BuildHeaderRun`
 splits an encoded block into one HEADERS frame and the CONTINUATION frames
 that follow it. No other frame can appear between the frames of one run,

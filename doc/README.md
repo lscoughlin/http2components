@@ -3,7 +3,7 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: documentation, index, map
 notes:
-  - Imported topic records need final merged API review.
+  - Current combined-tree results are in verification/current-status.md.
 ---
 
 # Documentation map
@@ -21,9 +21,8 @@ commits. They do not report results for the combined source tree.
 
 ## Client design
 
-The client topic documents came from the client source project. Their unit
-names now use the planned `Http2.Client.*` and `Http2.Common.*` names. Details
-that depend on final merged source remain under API review.
+The client topic documents describe the merged `Http2.Client.*` and
+`Http2.Common.*` units.
 
 | Document | Subject |
 | --- | --- |
@@ -45,9 +44,8 @@ that depend on final merged source remain under API review.
 
 ## Server design
 
-The server topic documents came from the server source project. Their unit
-names now use the planned `Http2.Server.*` and `Http2.Common.*` names. Details
-that depend on final merged source remain under API review.
+The server topic documents describe the merged `Http2.Server.*` and
+`Http2.Common.*` units.
 
 | Document | Subject |
 | --- | --- |
@@ -108,8 +106,8 @@ The source-record files are listed below for direct access.
 - `verification/source/server/toolchain.md`
 - `verification/source/server/validation.md`
 
-These records do not validate the combined tree. Merged API review, root
-command review, and final validation remain separate work.
+These source records describe their pinned source revisions. Combined-tree
+results are in the [current verification record](verification/current-status.md).
 
 ## RFC references
 

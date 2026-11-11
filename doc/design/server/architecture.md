@@ -6,7 +6,6 @@ notes:
   - This document holds the shape of the whole library and the growth of the
     code. It points at the documents that hold each part in full.
   - Imported from http2server/doc/design/server/architecture.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: The layers of the library, the two thread pools with the cancel workers, the seam between the sides, the unit layout and the growth of the code.
 primary_types:
   - THttp2ServerFactory
@@ -35,7 +34,7 @@ invariants:
 
 The library is an HTTP/2 server for Free Pascal and mORMot2. It speaks HTTP/2
 over clear text with prior knowledge (`h2c`) and over TLS with the ALPN name
-`h2` (RFC 9113 section 3). The unit `src/Http2.Server.pas` is the facade.
+`h2` (RFC 9113 section 3). The unit `src/server/Http2.Server.pas` is the facade.
 
 The design rests on one separation. A few IO threads run the protocol of many
 connections and never block. A larger set of handler threads runs the code of
@@ -110,7 +109,7 @@ The path shows how the layers cooperate.
 
 1. An IO thread accepts the socket and the connection core consumes the
    preface. The core sends the server SETTINGS frame
-   (`src/Http2.Server.Connection.pas`).
+   (`src/server/Http2.Server.Connection.pas`).
 2. A `HEADERS` frame starts a header block and `CONTINUATION` frames extend
    it. The HPACK decoder runs on the IO thread under the connection lock.
 3. The core validates the request fields against RFC 9113 section 8.1. An
@@ -207,8 +206,8 @@ together with no name clash.
 | `Http2.Server.RequestValidation.pas` | 204 | protocol | the RFC 9113 section 8.1 field rules |
 | `Http2.Common.Errors.pas` | 135 | foundation | the error codes and the exception classes |
 
-The five units `Errors`, `Frames`, `Hpack`, `Headers` and `FlowControl` derive
-from the sibling client. The server adds to them at the edges only, and the
+The five units `Errors`, `Frames`, `Hpack`, `Headers` and `FlowControl` are
+shared protocol units. The server adds behavior at the role edges, and the
 document [protocol](protocol.md) records the server-specific parts.
 
 The core of the library holds no socket. `TServerConnectionCore`,

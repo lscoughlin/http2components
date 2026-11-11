@@ -7,7 +7,6 @@ notes:
   - "The route is option A: the mORMot2 INetTls interface plus one ALPN
     select callback, installed on the server context after the socket binds."
   - Imported from http2server/doc/design/server/tls.md at the source commit recorded in the source inventory.
-  - API and architecture details await final merged-source review.
 scope: How the server reaches ALPN, the TLS plug-in of a connection, and the mORMot2 TLS facts the route rests on.
 primary_types:
   - TAlpnSelectCb
@@ -114,9 +113,9 @@ the platform library names `LIB_SSL4`, `LIB_SSL3` and `LIB_SSL1`
 same handle, so no second copy of the library enters the process.
 
 `Http2AlpnBindingAvailable` reports whether the symbol resolved
-(`src/Http2.Server.Alpn.pas`). `Http2AlpnAttachCtx` installs the
+(`src/server/Http2.Server.Alpn.pas`). `Http2AlpnAttachCtx` installs the
 callback on a server context, and `Http2AlpnAttach` reads that context from a
-bound `TCrtSocket` (`src/Http2.Server.Alpn.pas`).
+bound `TCrtSocket` (`src/server/Http2.Server.Alpn.pas`).
 
 ## The select rule
 
@@ -129,36 +128,36 @@ alert. A malformed list — a zero length entry, or an entry that claims more
 octets than remain — is refused in the same way.
 
 The decision is a pure function, `Http2AlpnSelectOffset`, which returns the
-offset of the chosen entry or `-1` (`src/Http2.Server.Alpn.pas`). The
+offset of the chosen entry or `-1` (`src/server/Http2.Server.Alpn.pas`). The
 OpenSSL callback is a thin wrapper over it, so a test reaches every branch of
 the rule with no handshake and no socket.
 
 The callback argument is a record with a process lifetime, because the OpenSSL
 manual page requires that the argument outlive the handshake
-(`src/Http2.Server.Alpn.pas`).
+(`src/server/Http2.Server.Alpn.pas`).
 
 ## The negotiated name
 
 `Http2AlpnSelected` reads the negotiated name with `SSL_get0_alpn_selected`
 through the `PSSL` returned by `INetTls.GetRawTls`
-(`src/Http2.Server.Alpn.pas`). An empty result means that no protocol
+(`src/server/Http2.Server.Alpn.pas`). An empty result means that no protocol
 was selected.
 
 ## The TLS plug-in of a connection
 
-The unit `src/Http2.Server.Tls.pas` applies the policy to a bound socket. It
+The unit `src/server/Http2.Server.Tls.pas` applies the policy to a bound socket. It
 keeps every decision in a pure function, so a test reaches each branch with no
 socket and no OpenSSL.
 
 | Function | Decision |
 | --- | --- |
-| `TransportFor` | Which transport a policy offers: TLS, cleartext or a refusal (`src/Http2.Server.Tls.pas`). |
-| `HandshakeExpired` | Whether a handshake has used up a deadline; a zero deadline never expires (`src/Http2.Server.Tls.pas`). |
-| `EffectiveHandshakeTimeoutMs` | The deadline the server applies, clamped to the mORMot2 bound (`src/Http2.Server.Tls.pas`). |
-| `NegotiatedH2` and `NegotiatedAlpnName` | Whether the finished handshake selected `h2`; a nil TLS instance answers False (`src/Http2.Server.Tls.pas`). |
+| `TransportFor` | Which transport a policy offers: TLS, cleartext or a refusal (`src/server/Http2.Server.Tls.pas`). |
+| `HandshakeExpired` | Whether a handshake has used up a deadline; a zero deadline never expires (`src/server/Http2.Server.Tls.pas`). |
+| `EffectiveHandshakeTimeoutMs` | The deadline the server applies, clamped to the mORMot2 bound (`src/server/Http2.Server.Tls.pas`). |
+| `NegotiatedH2` and `NegotiatedAlpnName` | Whether the finished handshake selected `h2`; a nil TLS instance answers False (`src/server/Http2.Server.Tls.pas`). |
 
 `ApplyTls` carries out the policy on a bound socket
-(`src/Http2.Server.Tls.pas`). The order is fixed: mORMot2 creates the
+(`src/server/Http2.Server.Tls.pas`). The order is fixed: mORMot2 creates the
 server `SSL_CTX` inside `AfterBind`, so the server records the certificate and
 the key, calls `DoTlsAfter(cstaBind)`, and only then installs the ALPN
 callback on the context that `AfterBind` stored in `AcceptCert`. The protocol
@@ -176,18 +175,18 @@ https://www.rfc-editor.org/info/rfc9113. The plain-text copy is
 doc/references/rfc9113.txt. The factory holds the accepted range in
 `MinTlsVersion` and `MaxTlsVersion` (1.2 to 1.3 by default), and the factory
 refuses a minimum above the maximum at build time. `BuildTlsPolicy`
-(`src/Http2.Server.Async.Options.pas`) copies the range to `MinProtocol`
-and `MaxProtocol` of `TTlsPolicy` (`src/Http2.Server.Tls.pas`) as the
+(`src/server/Http2.Server.Async.Options.pas`) copies the range to `MinProtocol`
+and `MaxProtocol` of `TTlsPolicy` (`src/server/Http2.Server.Tls.pas`) as the
 OpenSSL version numbers `TLS1_2_VERSION` and `TLS1_3_VERSION`. `ApplyTls` sets
 the range on the server context with `SSL_CTX_set_min_proto_version` and
-`SSL_CTX_set_max_proto_version` (`src/Http2.Server.Tls.pas`), after the
+`SSL_CTX_set_max_proto_version` (`src/server/Http2.Server.Tls.pas`), after the
 ALPN callback and before the client trust call. A zero bound keeps the context
 value, so a policy that names no range leaves the mORMot2 defaults in place. A
 refused range makes `ApplyTls` answer False, and `Start` then raises instead of
-serving (`THttp2AsyncServer.Start` in `src/Http2.Server.Async.pas`), so the
+serving (`THttp2AsyncServer.Start` in `src/server/Http2.Server.Async.pas`), so the
 server never runs with an unset range. The fpcunit suite holds the mapping test
 and the loopback handshake tests of the range in
-`test/Http2.Server.TlsProtocols.Test.pas`.
+`test/server/Http2.Server.TlsProtocols.Test.pas`.
 
 ## The handshake deadline
 
@@ -195,24 +194,24 @@ mORMot2 runs the server handshake at the first read of each connection, inside
 `INetTls.AfterAccept`, and it bounds the `SSL_accept` loop with a 5000 ms
 deadline (`mormot.lib.openssl11.pas`). A larger factory value can
 never take effect, so `EffectiveHandshakeTimeoutMs` clamps the factory value to
-that bound (`EffectiveHandshakeTimeoutMs` in `src/Http2.Server.Tls.pas`). The
+that bound (`EffectiveHandshakeTimeoutMs` in `src/server/Http2.Server.Tls.pas`). The
 server also sets the socket send and receive deadlines to the clamped value
 before the handshake runs (`SetHandshakeDeadline` in
-`src/Http2.Server.Async.Options.pas`). A client that opens a socket and sends
+`src/server/Http2.Server.Async.Options.pas`). A client that opens a socket and sends
 nothing holds one IO thread for a bounded time only, and other clients still
 complete their handshakes on other threads.
 
 After the handshake the connection checks the negotiated name. The name `h2`
 starts the HTTP/2 core. Any other name starts the HTTP/1.1 core when the fallback
 is on, and the connection is refused when the fallback is off
-(`THttp2AsyncConnection.OnFirstRead` in `src/Http2.Server.Async.pas`).
+(`THttp2AsyncConnection.OnFirstRead` in `src/server/Http2.Server.Async.pas`).
 
 ## Open verification
 
 The unit tests cover the pure select rule and symbol resolution
-of `test/Http2.Server.Alpn.Test.pas`, which run in the normal test suite. The
+of `test/server/Http2.Server.Alpn.Test.pas`, which run in the normal test suite. The
 pure TLS decisions and the h2c loopback are verified by
-`test/Http2.Server.Async.Test.pas`.
+`test/server/Http2.Server.Async.Test.pas`.
 
 **Live handshake coverage.** The fpcunit suite has no live TLS handshake loopback because the mORMot2
 client socket offers no ALPN list. The source client TLS socket offers any
