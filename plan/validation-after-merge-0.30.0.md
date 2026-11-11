@@ -146,22 +146,22 @@ The stale factory source paths found during that run are corrected; its
 part of the comparison record and require classification if they recur.
 
 
-## Execution status at 2026-11-11 19:30 UTC
+## Execution status at 2026-11-11 20:41 UTC
 
 | IDs | Status |
 | --- | --- |
-| V00 | Each candidate has an immutable Git archive and command/result records. |
-| V01 | The complete 146-case harness is running alone on candidate 500eeaf. |
-| V02, V12 | Short server checks passed; full server conformance remains pending. |
-| V03 | Client Autobahn and independent server HTTP/2 WebSocket checks passed; final server gates remain pending. |
-| V04, V13 | Real mTLS passed 54 rows; real proxy passed 65 rows with three existing Squid build limitations. |
-| V05, V07, V11 | Performance and long-lived connection runs remain pending. |
-| V06 | All five builds, six packages, 25 examples, and complete client suite passed; the final complete server rerun remains pending. |
-| V09, V10 | Bounded provider/security matrices and independent client checks passed; independent server identity and performance probes are ready. |
-| V14 | The 13-case TLS adapter and 12-case listener suites passed; later server repairs require the final rerun. |
+| V00 | Each candidate has an immutable Git archive and command/result records. Candidate 610a86b is in the complete final acceptance batch. |
+| V01 | All 146 expected harness rows are present: MATCH 30, BETTER 39, WORSE 0, CLASS-DIFF 15, UNKNOWN 62. Non-matching outcomes have source and trace classifications. |
+| V02, V12 | Full server conformance passed 94 HTTP/2 and eight HPACK cases, with no skips. The affected gate runs again after the socket-close repair. |
+| V03 | Client Autobahn, independent server HTTP/2 WebSocket, HTTP/1 WebSocket, and SSE checks passed. |
+| V04, V13 | Real mTLS passed 54 rows; real proxy passed 65 rows with three explicit Squid build limitations. |
+| V05, V07, V11 | Abuse passed all required cases. Performance, long-lived connections, and concurrent incomplete handshakes remain pending. |
+| V06 | Five builds, six packages, 25 examples, and the complete client suite passed. The final complete server run is pending. Focused slow-reader and explicit abort checks passed after the socket-close repair. |
+| V09, V10 | Bounded provider/security matrices, independent client checks, and 32 independent server identity rows passed. The affected server checks run again. |
+| V14 | The 13 adapter and 13 listener cases, 40 live mTLS cases, and 20 repeated shutdown cases passed after the EOF repair. |
 | V08 | Release review remains incomplete. No release is published. |
 
-The evidence record is `doc/verification/linux-tls-2026-11-11.md`. The
-initial failures remain in the run artifacts. Local focused passes do not
-replace the final Linux server run. The original TLS replacement planning
-input remains unchanged and outside the tested source archives.
+The evidence record is `doc/verification/linux-tls-2026-11-11.md`. Initial
+failures remain in the artifacts. Focused passes do not replace the complete
+Linux server run. The original TLS replacement input remains unchanged and
+outside the tested source archives.
