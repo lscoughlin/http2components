@@ -13,7 +13,7 @@ uses cthreads, SysUtils, Classes, Process, Http2.Common.Tls.Types,
   Http2.Common.Tls.Policy, Http2.Common.Tls.Context,
   Http2.Common.Tls.Session, Http2.Common.Tls.Identity,
   Http2.OpenSSL, Http2.OpenSSL.Identity, Http2.OpenSSL.Live.Resources,
-  Http2.Test.Tls.SessionContract;
+  Http2.Test.Tls.SessionContract, Http2.Test.Tls.AlertContract;
 
 type
   TCreateRole = (crClient, crServer);
@@ -775,6 +775,25 @@ begin
     'require mode rejects an invalid client certificate');
 end;
 
+procedure CheckPeerClientAuthAlerts;
+var V: TTlsVersion; CP: TTlsClientPolicy; SP: TTlsServerPolicy;
+  C: ITLSContext; ExpectedAlert: Integer;
+begin
+  for V := Low(TTlsVersion) to High(TTlsVersion) do
+  begin
+    CP := TTlsClientPolicy.SecureDefault.WithTrustAnchors([RootCert])
+      .WithVersions(V, V);
+    SP := TTlsServerPolicy.SecureDefault.WithServerIdentity(ServerIdentity)
+      .WithTrustAnchors([RootCert]).WithClientAuth(tlsAuthRequire)
+      .WithVersions(V, V);
+    C := TOpenSSLTlsContextFactory.Create.WithClientPolicy(CP)
+      .WithServerPolicy(SP).Build;
+    if V = tls12 then ExpectedAlert := 40 else ExpectedAlert := 116;
+    RequireTlsClientAuthAlert(C, ExpectedAlert);
+    Check(True, 'peer client-authentication alert and request context are retained');
+  end;
+end;
+
 procedure Run;
 var ClientOptions: TTlsClientSessionOptions; ServerOptions: TTlsServerSessionOptions;
   N: Integer;
@@ -804,6 +823,7 @@ begin
   CheckAbortReleasesNativeBuffers;
   CheckRepeatedLifecycle;
   CheckHandshakeMaterialBounds;
+  CheckPeerClientAuthAlerts;
   CheckConcurrentCreation;
   WriteLn('PASS ', Cases, ' cases');
 end;

@@ -26,6 +26,8 @@ type
     FInFlightWrite: TBytes;
     FFailureMessage: string;
     FFailureCategory: TTlsErrorCategory;
+    FPeerAlertDescription: Integer;
+    FClientCertificateRequested: Boolean;
     FDeadline: Int64;
     FVerifyPeer: Boolean;
     FAlpns: TArray<string>;
@@ -65,6 +67,9 @@ type
   TSSLSetAlpnSelect = procedure(ctx: PSSL_CTX; cb: TSSLAlpnSelectCallback;
     arg: Pointer); cdecl;
   TSSLSetVerifyDepth = procedure(ctx: PSSL_CTX; depth: Integer); cdecl;
+  TSSLMessageCallback = procedure(AWrite, AVersion, AContentType: Integer;
+    ABuffer: Pointer; ALength: NativeUInt; ASsl: PSSL; AArg: Pointer); cdecl;
+  TSSLSetMessageCallback = procedure(ssl: PSSL; cb: TSSLMessageCallback); cdecl;
   TSSLCTXSetNumber = function(ctx: PSSL_CTX; value: Cardinal): Integer; cdecl;
   TSSLVersion = function(ssl: PSSL): Integer; cdecl;
 const
@@ -74,6 +79,7 @@ var
   SetAlpnProtos: TSSLSetAlpnProtos;
   SetAlpnSelect: TSSLSetAlpnSelect;
   SetVerifyDepth: TSSLSetVerifyDepth;
+  SetMessageCallback: TSSLSetMessageCallback;
   SetNumTickets, SetMaxEarlyData: TSSLCTXSetNumber;
   GetSslVersion: TSSLVersion;
   AlpnDataIndex: Integer = -1;
@@ -81,7 +87,7 @@ function EnsureAlpnFunctions: Boolean;
 var Dir, Err: string;
 begin
   Result := Assigned(SetAlpnProtos) and Assigned(SetAlpnSelect) and
-    (AlpnDataIndex >= 0);
+    Assigned(SetMessageCallback) and (AlpnDataIndex >= 0);
   if Result then Exit;
   GlobalLock;
   try
@@ -98,8 +104,11 @@ begin
       AlpnLib.Resolve(_PU, 'SSL_set_alpn_protos', @@SetAlpnProtos, nil, @Err);
     if not Assigned(SetAlpnSelect) then
       AlpnLib.Resolve(_PU, 'SSL_CTX_set_alpn_select_cb', @@SetAlpnSelect, nil, @Err);
+    if not Assigned(SetMessageCallback) then
+      AlpnLib.Resolve(_PU, 'SSL_set_msg_callback', @@SetMessageCallback, nil, @Err);
     if AlpnDataIndex < 0 then AlpnDataIndex := SSL_get_ex_new_index(0, nil, nil, nil, nil);
-    Result := Assigned(SetAlpnProtos) and Assigned(SetAlpnSelect) and (AlpnDataIndex >= 0);
+    Result := Assigned(SetAlpnProtos) and Assigned(SetAlpnSelect) and
+      Assigned(SetMessageCallback) and (AlpnDataIndex >= 0);
   finally
     GlobalUnLock;
   end;
@@ -203,6 +212,21 @@ begin
   if AVersion = tls12 then Result := TLS1_2_VERSION else Result := TLS1_3_VERSION;
 end;
 
+procedure OpenSSLSessionMessage(AWrite, AVersion, AContentType: Integer;
+  ABuffer: Pointer; ALength: NativeUInt; ASsl: PSSL; AArg: Pointer); cdecl;
+var S: TOpenSSLSession; B: PByte;
+begin
+  if (AWrite <> 0) or (AArg = nil) or (ABuffer = nil) then Exit;
+  S := TOpenSSLSession(AArg);
+  B := PByte(ABuffer);
+  { OpenSSL supplies decrypted protocol messages to this callback. }
+  if (AContentType = 21) and (ALength >= 2) and (B[1] <> 0) then
+    S.FPeerAlertDescription := B[1];
+  if (S.FRole = trClient) and (AContentType = 22) and
+     (ALength >= 4) and (B[0] = 13) then
+    S.FClientCertificateRequested := True;
+end;
+
 constructor TOpenSSLSession.Create(const AOwner: ITLSContext; const ACtx: PSSL_CTX;
   const ARole: TTlsRole; const AHost, AServerName: string;
   const AAlpns: TArray<string>; const AStartMs, ADeadlineMs: Int64;
@@ -216,6 +240,7 @@ begin
   FAlpns := Copy(AAlpns);
   FIdentity := AIdentity;
   FState := tssNew;
+  FPeerAlertDescription := -1;
   FDeadline := ADeadlineMs;
   if (AStartMs < 0) or (ADeadlineMs < 0) then
     raise ETlsContextError.Create('handshake times must not be negative');
@@ -232,6 +257,10 @@ begin
   end;
   FSsl := SSL_new(ACtx);
   if FSsl = nil then raise ETlsContextError.Create('SSL_new failed');
+  if not EnsureAlpnFunctions then
+    raise ETlsContextError.Create('OpenSSL session message functions are not available');
+  SetMessageCallback(FSsl, @OpenSSLSessionMessage);
+  SSL_ctrl(FSsl, 16, 0, Self); // SSL_CTRL_SET_MSG_CALLBACK_ARG
   OpenSSLIdentityInstallSession(FSsl, AIdentity);
   FRbio := BIO_new(BIO_s_mem());
   FWbio := BIO_new(BIO_s_mem());
@@ -299,13 +328,16 @@ begin
 end;
 procedure TOpenSSLSession.Fail(const AMessage: string; const ACategory: TTlsErrorCategory);
 begin
+  if FState = tssFailed then Exit;
+  if ACategory <> tecAlert then FPeerAlertDescription := -1;
   FState := tssFailed;
   FFailureMessage := AMessage;
   FFailureCategory := ACategory;
 end;
 procedure TOpenSSLSession.RaiseFailure;
 begin
-  raise ETlsSessionError.Create(FFailureMessage, FFailureCategory);
+  raise ETlsSessionError.Create(FFailureMessage, FFailureCategory, '',
+    FPeerAlertDescription, FClientCertificateRequested);
 end;
 function TOpenSSLSession.FeedEncrypted(const ABuffer: TBytes;
   const AOffset, ACount: SizeInt): SizeInt;
@@ -517,7 +549,9 @@ begin
       else
       begin
         E := SSL_get_error(FSsl, N);
-        if E = SSL_ERROR_ZERO_RETURN then FState := tssClosed
+        { A peer close still needs our close_notify. The next advance drains
+          accepted writes and completes SSL_shutdown before the terminal state. }
+        if E = SSL_ERROR_ZERO_RETURN then FState := tssClosing
         else if not (E in [SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE]) then
           Fail('OpenSSL record processing failed', tecAlert);
         Break;

@@ -29,6 +29,7 @@ type
     FCipher: TBytes;
   FErrorMessage: string;
   FErrorCategory: TTlsErrorCategory;
+    FPeerAlertDescription: Integer;
     FCounted: Boolean;
     FEngineCounted: Boolean;
     FInfo: TTlsNegotiatedInfo;
@@ -144,12 +145,17 @@ begin
   FState := tssFailed;
   FErrorMessage := AMessage;
   FErrorCategory := ACategory;
+  FPeerAlertDescription := -1;
+  if (FEngine <> nil) and (FEngine.LastError.Origin = TTlsErrorOrigin.Peer) then
+    FPeerAlertDescription := FEngine.LastError.AlertByte;
 end;
 
 procedure TTlsLibSession.RaiseFailure;
 begin
   if FState = tssFailed then
-    raise ETlsSessionError.Create(FErrorMessage, FErrorCategory);
+    raise ETlsSessionError.Create(FErrorMessage, FErrorCategory, '',
+      FPeerAlertDescription, (FRole = trClient) and (FEngine <> nil) and
+      (Length(FEngine.ConnectionInfo.RequestedSignatureSchemes) > 0));
 end;
 
 procedure TTlsLibSession.Pump;
@@ -163,6 +169,12 @@ begin
         Fail('TlsLib handshake failed', EngineFailureCategory(FEngine.LastError))
       else begin FState := tssOpen; RefreshInfo; end;
     end;
+  if FEngine.IsInboundClosed and not FEngine.IsTerminal then
+  begin
+    { The common session closes both directions. SendClose is idempotent. }
+    FEngine.SendClose;
+    FState := tssClosed;
+  end;
   while (Length(FCipher) < TlsMaxEncryptedOutput) and FEngine.WantsWrite do
   begin
     Cap := TlsMaxEncryptedOutput - Length(FCipher);
@@ -311,7 +323,7 @@ begin
   if Result > 0 then
   begin Move(FPlain[0], ABuffer[AOffset], Result); Delete(FPlain, 0, Result); Exit; end;
   if FState = tssFailed then
-    raise ETlsSessionError.Create(FErrorMessage, FErrorCategory);
+    RaiseFailure;
   if (FEngine <> nil) and FEngine.IsInboundClosed then FState := tssClosed;
 end;
 

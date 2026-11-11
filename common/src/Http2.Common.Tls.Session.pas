@@ -39,7 +39,8 @@ type
     function FeedEncrypted(const ABuffer: TBytes; const AOffset, ACount: SizeInt): SizeInt;
     { Copies queued ciphertext into the existing destination range. The method
       does not resize ABuffer. The caller owns copied bytes after return.
-      Pending fatal-alert output remains drainable in failed state until Abort. }
+      Pending fatal-alert output remains drainable in failed state until Abort.
+      Closed sessions can retain the response to a peer close_notify. }
     function DrainEncrypted(var ABuffer: TBytes; const AOffset, ACapacity: SizeInt): SizeInt;
     { Accepts up to ACount plaintext bytes. Accepted bytes must not be submitted
       again. A zero result means no capacity or the session is not open. A bad
@@ -48,7 +49,8 @@ type
     { Copies available plaintext into the existing destination range. Zero means
       no plaintext is ready; State distinguishes open, authenticated close, and
       failure. Buffered plaintext is returned before a terminal error. On close,
-      zero means authenticated close. On failure, zero available bytes raises the
+      zero means authenticated close. The session queues a close_notify response
+      when the peer starts an orderly close. On failure, zero available bytes raises the
       stored ETlsSessionError. }
     function ReadPlaintext(var ABuffer: TBytes; const AOffset, ACapacity: SizeInt): SizeInt;
     { Advances without waiting. AMonotonicMs is an absolute monotonic time.

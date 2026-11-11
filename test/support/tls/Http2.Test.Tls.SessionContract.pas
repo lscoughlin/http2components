@@ -263,6 +263,28 @@ begin
   Pair := TSessionPair.Create(AContext, AClientOptions, AServerOptions);
   try
     Pair.Open;
+    Buffer := [41, 42, 43, 44, 45];
+    Check(Pair.Server.WritePlaintext(Buffer, 0, Length(Buffer)) = Length(Buffer),
+      'final plaintext was not accepted');
+    Pair.Server.BeginShutdown;
+    while (Pair.Client.State <> tssClosed) or
+          (Pair.Server.State <> tssClosed) do Pair.Pump;
+    Check(Pair.Client.ReadPlaintext(Buffer, 0, Length(Buffer)) = Length(Buffer),
+      'peer close discarded final authenticated plaintext');
+    for I := 0 to High(Buffer) do
+      Check(Buffer[I] = 41 + I, 'peer close changed final plaintext');
+    Check(Pair.Client.ReadPlaintext(Buffer, 0, Length(Buffer)) = 0,
+      'peer close does not report authenticated end of input');
+    Pair.Client.NotifyTransportEof;
+    Pair.Server.NotifyTransportEof;
+    Pass('one-sided close response preserves final plaintext');
+  finally
+    Pair.Free;
+  end;
+
+  Pair := TSessionPair.Create(AContext, AClientOptions, AServerOptions);
+  try
+    Pair.Open;
     SetLength(Buffer, 5);
     for I := 0 to 4 do Buffer[I] := I + 31;
     Check(Pair.Server.WritePlaintext(Buffer, 0, 5) = 5,
