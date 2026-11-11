@@ -578,3 +578,19 @@ hand, because that could erase real concurrent activity. The existing idle,
 first-header, stalled-reader, and steady-reader tests keep their expectations.
 Focused checks precede another complete server run. Root reviews and merges
 the repair; the current acceptance batch continues alone on Linux.
+
+## LV-33: Concurrent integration request timed out
+
+Candidate 475db3d completed the nine integration cases with one failure.
+TCombinedHttpTest.TestConcurrentHttp2Requests reported that worker two timed
+out waiting for response headers. Earlier complete integration batches
+passed. This result remains open; a later pass alone does not explain it.
+
+The client owner checks the test's concurrency, deadlines, and request/server
+lifetime without changing expected responses or increasing the timeout.
+The next candidate includes the idle-safe sampler repair. The integration
+check runs early on that candidate and repeats within a finite bound to
+check whether the sampling lock caused the failure. A recurrence receives
+request/stream traces before a narrow repair. Root reviews any change, and
+required integration and complete server acceptance remain in the matrix.
+No remote investigation overlaps the current acceptance batch.
