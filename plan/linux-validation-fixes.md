@@ -143,3 +143,15 @@ The setup owner reviews generated compiler/linker arguments and adds the
 appropriate target-specific static library search path without a macOS path
 or reliance on the caller's working directory. Acceptance is executable links
 for role, provider, integration, examples and Lazarus package consumers.
+
+## LV-06: Linux client suite SIGPIPE termination
+
+The complete client suite terminated by SIGPIPE at 18:02:44 UTC after 23.628
+runtime seconds, before it printed a final case count. This is a failure, not
+an empty-suite pass. The client owner identifies the active test and signal
+stack, then fixes the socket or fixture boundary that permits the signal.
+Production client transport files and directly related tests are added to
+this owner's scope only for this defect. A global signal override must not
+conceal a transport error. Acceptance includes the reproduced broken-peer
+case and the complete combined client suite, with normal error reporting and
+no process signal termination. Earlier logs remain unchanged.
