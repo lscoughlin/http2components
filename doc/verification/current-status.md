@@ -11,10 +11,13 @@ notes:
 Native Linux Docker validation is in progress on 2026-11-11. The
 [Linux verification record](linux-tls-2026-11-11.md) contains the current
 candidates, repairs, executed checks, failures, and peer limitations.
-Candidate `475db3d` passed its builds and packages. Its complete server
-suite ran 721 tests with zero errors and two failures in idle and first-header
-timeouts. The subsequent repair is awaiting Linux acceptance. Performance
-validation remains pending. There is no release approval.
+Candidate `5ecf0fc` passed all 777 client tests, five production builds,
+25 example builds, seven idle/header cases, and two general integration
+runs. The package-only update in `97aca1d` passed all six packages and the
+complete server suite: 721 tests, zero errors, and zero failures. Server TLS,
+independent identities, conformance, abuse, and repeated shutdown checks also
+passed. The remaining client peer checks and performance are in progress.
+There is no release approval.
 
 The earlier bounded implementation candidate was `15feb54`, checked on
 macOS 27.2 arm64 with Free Pascal 3.2.4, Lazarus 4.0, and OpenSSL 3.5.9.
@@ -52,13 +55,13 @@ as current TLS replacement results.
 
 ## Linux validation status
 
-Linux builds, packages, examples, the full client suite, provider matrices,
-independent peers, real proxy and mTLS matrices, conformance, and abuse have
-recorded results. The full server suite now passes HTTP/1 WebSocket shutdown, the slow reader,
-and the reset-flood peer. Idle and first-header repairs await acceptance.
-Performance and
-long-duration resource checks remain pending. The Linux record distinguishes
-strict passes from explicit peer limitations and classified harness rows.
+Linux builds, packages, examples, both full unit suites, provider matrices,
+independent server peers, conformance, and abuse have passing results. The
+real proxy matrix passed 65 cases with three documented Squid limitations.
+The client mTLS upload matrix and final client interoperation run continue.
+Performance and long-duration resource checks remain pending. The Linux
+record distinguishes strict passes from explicit peer limitations and
+classified harness rows.
 
 The [repository README](../../README.md) describes the build and validation
 commands. The detailed TLS record identifies unsupported provider features
