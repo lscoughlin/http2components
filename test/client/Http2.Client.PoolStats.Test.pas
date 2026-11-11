@@ -470,8 +470,8 @@ begin
     THttpRequest.Create(hmGet, 'https://a.example/via')).StatusCode);
   S := (Client as THttpClient).PoolStats;
   AssertEquals('two entries', 2, Length(S.PerOrigin));
-  AssertEquals('a.example', S.PerOrigin[0].Origin);
-  AssertEquals('a.example via sel.corp:7', S.PerOrigin[1].Origin);
+  AssertEquals('a.example tls= protocol=0:0', S.PerOrigin[0].Origin);
+  AssertEquals('a.example via sel.corp:7 tls= protocol=0:0', S.PerOrigin[1].Origin);
   AssertEquals(1, S.PerOrigin[0].Connections);
   AssertEquals(1, S.PerOrigin[1].Connections);
   AssertEquals('totals add up', 2, S.Connections);
