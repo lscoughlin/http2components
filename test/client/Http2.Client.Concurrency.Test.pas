@@ -33,7 +33,8 @@ interface
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Connection, Http2.Client.Stream, Http2.Client.Observer,
-  Http2.Client.MockSocket;
+  Http2.Client.MockSocket.Support, Http2.Client.MockSocket.TestSupport,
+  Http2.Client.MockSocket.Frames;
 
 type
   /// one thread runs N independent stream leases over the shared connection;

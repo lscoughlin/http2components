@@ -357,7 +357,7 @@ var
 begin
   L := TStringList.Create;
   try
-    L.LoadFromFile('src/Http2.Client.WebSocket.pas');
+    L.LoadFromFile('src/client/Http2.Client.WebSocket.Protocol.pas');
     InUses := False;
     Uses_ := '';
     for I := 0 to L.Count - 1 do
