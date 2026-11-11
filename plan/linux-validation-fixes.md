@@ -560,3 +560,21 @@ that complete path and a small controlled local probe before claiming an
 effective limit of public limit minus one. The tool must use the verified
 public limit and actual accepted counts; it must not call client-closed
 excess sockets server refusals. No remote jobs overlap the acceptance batch.
+
+## LV-32: Progress sampling changes idle activity
+
+The pristine full run on 475db3d reports failures in
+TAsyncServerTest.TestIdleConnectionIsClosed and TestFirstHeaderBlockTimeout,
+each after approximately 8.14 seconds. The new sampler calls mORMot
+TPollAsyncConnection.TryLock even when the application backlog is zero.
+The pinned implementation sets fWasActive when that lock succeeds. Sampling
+therefore makes an idle connection appear active and delays idle callbacks.
+
+The server owner makes the no-output sample return without acquiring that
+activity-marking connection lock or querying the socket. Idle sampling still
+clears stale queue comparison state and permits the next positive backlog to
+start a new write-progress period. The repair must not clear fWasActive by
+hand, because that could erase real concurrent activity. The existing idle,
+first-header, stalled-reader, and steady-reader tests keep their expectations.
+Focused checks precede another complete server run. Root reviews and merges
+the repair; the current acceptance batch continues alone on Linux.
