@@ -2,9 +2,40 @@
 """Check retained source tests against their exact merged methods."""
 import csv
 import re
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT))
+from tools.check.repository import strip_pascal  # noqa: E402
+
+
+def routine_source(source, method):
+    """Select an implementation body, excluding interface declarations."""
+    code = strip_pascal(source)
+    if method == 'program-main':
+        if not re.search(r'(?im)^\s*program\s+', code):
+            return None
+        blocks = list(re.finditer(r'\b(begin|end|case|try|record|object|class)\b',
+                                  code, re.IGNORECASE))
+        if not blocks or blocks[-1].group().lower() != 'end':
+            return None
+        depth = 1
+        for block in reversed(blocks[:-1]):
+            depth += 1 if block.group().lower() == 'end' else -1
+            if depth == 0:
+                return (source[block.start():blocks[-1].end()]
+                        if block.group().lower() == 'begin' else None)
+        return None
+    implementation = re.search(r'\bimplementation\b', code, re.IGNORECASE)
+    offset = implementation.end() if implementation else 0
+    matches = list(re.finditer(
+        r'(?im)^\s*(?:procedure|function)\s+' + re.escape(method) +
+        r'\b[\s\S]*?(?=^\s*(?:procedure|function)\s+|\Z)', code[offset:]))
+    for match in matches:
+        if re.search(r'\bbegin\b', match.group(), re.IGNORECASE):
+            return source[offset + match.start():offset + match.end()]
+    return None
 
 
 def check(path, count, unit_key, method_key, suite_key, removed_key=None):
@@ -51,12 +82,7 @@ def check(path, count, unit_key, method_key, suite_key, removed_key=None):
                 errors.append(f'{path}: invalid program case mapping for {origin}')
                 continue
             source = file.read_text()
-            if method == 'program-main':
-                routine = re.search(r'(?is)\bbegin\b[\s\S]*\bend\.', source)
-            else:
-                routine = re.search(
-                    r'(?im)^\s*(?:procedure|function)\s+' + re.escape(method) +
-                    r'\b[\s\S]*?(?=^\s*(?:procedure|function)\s+|\Z)', source)
+            routine = routine_source(source, method)
             if not routine:
                 errors.append(f'{path}: missing program routine {method} for {origin}')
                 continue
@@ -64,7 +90,7 @@ def check(path, count, unit_key, method_key, suite_key, removed_key=None):
             if not markers or method in markers:
                 errors.append(f'{path}: program mapping needs assertion markers for {origin}')
             for marker in markers:
-                if not re.search(r"'" + re.escape(marker) + r"'", routine.group()):
+                if not re.search(r"'" + re.escape(marker) + r"'", routine):
                     errors.append(f'{path}: missing program assertion {marker!r} in {method} for {origin}')
             continue
         # Standalone live programs have explicit program-level dispositions.

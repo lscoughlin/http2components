@@ -46,3 +46,29 @@ the old assertion remains covered, moved to provider ownership, or changed
 with the API. The checker fails any row with an uncovered disposition. A
 program case target names an assertion marker in the target routine. A provider
 handshake or a general TLS test is not evidence for an unrelated old assertion.
+
+## Coordinator acceptance
+
+The merged checker passed all 1,780 records on 2026-11-11. The ordered origin
+pairs are identical to the pre-migration inventory: 913 client and 867 server
+records. The 34 client migrations contain 28 provider program mappings,
+3 neutral ALPN mappings, and 3 neutral Build mappings. The 53 server migrations
+contain 43 provider program mappings, 8 neutral methods, and 2 explicitly
+obsolete native API assertions. No row has an uncovered disposition.
+
+The obsolete rows are the native no-auth context flag snapshot and the
+nil-native-TLS ALPN accessor. The new API tests no-auth policy defaults and
+guards negotiated metadata before an open session. These are recorded as
+replacement contract checks, not as equivalent native accessor coverage.
+
+The coordinator corrected program-routine lookup to skip unit interface
+declarations and restrict program-main mappings to the final program body.
+The six static controls passed: implementation lookup, missing marker
+rejection, uncovered-row rejection, missing routine rejection, exclusion of
+helper-only markers from program-main, and acceptance of an actual main-body
+marker. The logs are `bin/tls-coordinator/tls-accounting-negative-controls.log`
+and `bin/tls-coordinator/tls-accounting-source-main.log`.
+
+The full source check passed with 401 Pascal files, one include, 152 production
+units, and 54 documents. These are source-accounting results, not 1,780
+executed runtime tests. Runtime evidence is recorded separately.
