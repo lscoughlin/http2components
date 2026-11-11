@@ -464,12 +464,14 @@ begin
   AssertEquals('direct', Routes.RouteAt(0));
   AssertEquals('fd00::9', Fake.HostAt(0));
   AssertEquals(8443, Integer(Fake.PortAt(0)));
-  AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin('[fd00::9]:8443 tls= protocol=0:0'));
+  AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin(
+    '[fd00::9]:8443 tls= protocol=0:0'));
   // outside it: through the proxy
   AssertEquals(200, Client.Send(THttpRequest.Create(hmGet,
     'https://[2001:db8::9]/x')).StatusCode);
   AssertEquals('http:proxy.corp:3128', Routes.RouteAt(1));
-  AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin('[2001:db8::9] via proxy.corp:3128 tls= protocol=0:0'));
+  AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin(
+    '[2001:db8::9] via proxy.corp:3128 tls= protocol=0:0'));
   Client.Close;
 end;
 
@@ -500,7 +502,7 @@ begin
   Client := Run(THttpClientFactory.Create, 'https://a.example/x', Routes);
   AssertEquals(1, Routes.Dials);
   AssertEquals('direct', Routes.RouteAt(0));
-  AssertEquals('direct key is the plain origin', 1,
+  AssertEquals('direct route retains the origin key', 1,
     (Client as THttpClient).Pool.ConnectionCountForOrigin('a.example tls= protocol=0:0'));
   Client.Close;
 end;
@@ -530,12 +532,14 @@ begin
   Client := Run(THttpClientFactory.Create.WithAllProxy('socks5://u:pw@s.corp'),
     'https://a.example/x', Routes);
   AssertEquals('socks5:s.corp:1080', Routes.RouteAt(0));
-  AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin('a.example via socks5:u@s.corp:1080 tls= protocol=0:0'));
+  AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin(
+    'a.example via socks5:u@s.corp:1080 tls= protocol=0:0'));
   Client.Close;
   Client := Run(THttpClientFactory.Create.WithAllProxy('https://t.corp'),
     'https://a.example/x', Routes);
   AssertEquals('https:t.corp:443', Routes.RouteAt(0));
-  AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin('a.example via tls:t.corp:443 tls= protocol=0:0'));
+  AssertEquals(1, (Client as THttpClient).Pool.ConnectionCountForOrigin(
+    'a.example via tls:t.corp:443 tls= protocol=0:0'));
   Client.Close;
 end;
 
