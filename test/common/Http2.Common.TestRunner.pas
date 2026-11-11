@@ -21,7 +21,12 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   Http2.Common.Errors.Test,
   Http2.Common.Headers.ClientOrigin.Test,
-  Http2.Common.Headers.ServerOrigin.Test;
+  Http2.Common.Headers.ServerOrigin.Test,
+  Http2.Common.Hpack.ClientOrigin.Test,
+  Http2.Common.Hpack.ServerOrigin.Test,
+  Http2.Common.HpackProps.ClientOrigin.Test,
+  Http2.Common.HpackProps.ServerOrigin.Test,
+  Http2.Common.Hpack.Directions.Test;
 
 procedure RegisterTests;
 begin
