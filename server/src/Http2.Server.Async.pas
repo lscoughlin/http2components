@@ -628,7 +628,7 @@ begin
       Exit;
     end;
     case FH1.IdleAction(Cardinal(ANowMs div 1000), fLastOperation,
-      Cardinal(ATimeoutMs div 1000), ANowMs,
+      FIdleSeconds, ANowMs,
       FServer.Factory.HeaderTimeoutMs) of
       iaFlush: SendPendingOutput;
       iaClose: fOwner.ConnectionRemove(Handle);
