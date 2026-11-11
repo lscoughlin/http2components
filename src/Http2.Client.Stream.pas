@@ -753,8 +753,15 @@ end;
 
 function TStreamLease.AcquireCredit(const AWant: LongWord): LongWord;
 begin
-  Result := FConnection.AcquireSendCredit(FStreamId, AWant, FTimeoutMs,
-    @FPeerDone);
+  // The caller can hold the client lock while starting an exchange. Release it
+  // while waiting for SETTINGS or WINDOW_UPDATE, so the reader can apply them.
+  if FWaitLock <> nil then FWaitLock.Release;
+  try
+    Result := FConnection.AcquireSendCredit(FStreamId, AWant, FTimeoutMs,
+      @FPeerDone);
+  finally
+    if FWaitLock <> nil then FWaitLock.Acquire;
+  end;
   if (Result = 0) and (InterlockedExchangeAdd(FPeerDone, 0) <> 0) then
     Exit(0);   // the caller stops the upload; the response is already queued
   if Result = 0 then
