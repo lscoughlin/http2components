@@ -23,6 +23,10 @@ type
     FInner: ITLSContext;
     FLock: TCriticalSection;
     FServerSessions: Integer;
+    FTransportEofCount: Integer;
+    FInjectedEofCount: Integer;
+    FEofOnNextWrite: Boolean;
+    FPlainWriteCount: Integer;
     FMaxPlainWrite: SizeInt;
     FZeroWriteCall, FWriteCalls: Integer;
     FPendingOutputHold, FPendingOutputActive: Boolean;
@@ -37,6 +41,13 @@ type
     function CreateClientSession(const AOptions: TTlsClientSessionOptions): ITLSSession;
     function CreateServerSession(const AOptions: TTlsServerSessionOptions): ITLSSession;
     function ServerSessionCount: Integer;
+    function TransportEofCount: Integer;
+    function InjectedEofCount: Integer;
+    function PlainWriteCount: Integer;
+    procedure NoteTransportEof;
+    procedure ArmEofOnNextWrite;
+    function ShouldInjectEof: Boolean;
+    procedure NotePlainWrite;
     procedure SetPlainWritePolicy(const AMaxBytes: SizeInt;
       const AZeroCall: Integer);
     function PlainWriteLimit(const ARequested: SizeInt): SizeInt;
@@ -92,6 +103,7 @@ type
     procedure PeerCloseDrainsItsResponseBeforeClose;
     procedure PartialTlsPlaintextRetriesAfterLaterRead;
     procedure PendingProviderOutputBlocksGracefulCloseDrain;
+    procedure PeerEofDuringStopDoesNotBreakHealthyConnection;
   end;
 
 constructor TObservedContext.Create(const AInner: ITLSContext);
@@ -129,10 +141,11 @@ function TObservedContext.CreateServerSession(
   const AOptions: TTlsServerSessionOptions): ITLSSession;
 begin
   Result := FInner.CreateServerSession(AOptions);
-  Result := TObservedSession.Create(Result, Self);
   FLock.Acquire;
-  try Inc(FServerSessions);
+  try
+    Inc(FServerSessions);
   finally FLock.Release; end;
+  Result := TObservedSession.Create(Result, Self);
 end;
 function TObservedContext.ServerSessionCount: Integer;
 begin
@@ -141,6 +154,51 @@ begin
   finally FLock.Release; end;
 end;
 
+function TObservedContext.TransportEofCount: Integer;
+begin
+  FLock.Acquire;
+  try Result := FTransportEofCount;
+  finally FLock.Release; end;
+end;
+function TObservedContext.InjectedEofCount: Integer;
+begin
+  FLock.Acquire;
+  try Result := FInjectedEofCount;
+  finally FLock.Release; end;
+end;
+function TObservedContext.PlainWriteCount: Integer;
+begin
+  FLock.Acquire;
+  try Result := FPlainWriteCount;
+  finally FLock.Release; end;
+end;
+procedure TObservedContext.NoteTransportEof;
+begin
+  FLock.Acquire;
+  try Inc(FTransportEofCount);
+  finally FLock.Release; end;
+end;
+procedure TObservedContext.ArmEofOnNextWrite;
+begin
+  FLock.Acquire;
+  try FEofOnNextWrite := True;
+  finally FLock.Release; end;
+end;
+function TObservedContext.ShouldInjectEof: Boolean;
+begin
+  FLock.Acquire;
+  try
+    Result := FEofOnNextWrite;
+    FEofOnNextWrite := False;
+    if Result then Inc(FInjectedEofCount);
+  finally FLock.Release; end;
+end;
+procedure TObservedContext.NotePlainWrite;
+begin
+  FLock.Acquire;
+  try Inc(FPlainWriteCount);
+  finally FLock.Release; end;
+end;
 procedure TObservedContext.SetPlainWritePolicy(const AMaxBytes: SizeInt;
   const AZeroCall: Integer);
 begin
@@ -229,10 +287,13 @@ function TObservedSession.WritePlaintext(const ABuffer: TBytes;
   const AOffset, ACount: SizeInt): SizeInt;
 var Limit: SizeInt;
 begin
+  if FContext.ShouldInjectEof then
+    NotifyTransportEof;
   Limit := FContext.PlainWriteLimit(ACount);
   if Limit = 0 then Exit(0);
   Result := FInner.WritePlaintext(ABuffer, AOffset, Limit);
   FContext.RecordPlaintext(ABuffer, AOffset, Result);
+  if Result > 0 then FContext.NotePlainWrite;
 end;
 function TObservedSession.ReadPlaintext(var ABuffer: TBytes;
   const AOffset, ACapacity: SizeInt): SizeInt;
@@ -244,7 +305,10 @@ begin
     Result.PendingPlaintextOutput := 1;
 end;
 procedure TObservedSession.NotifyTransportEof;
-begin FInner.NotifyTransportEof; end;
+begin
+  try FInner.NotifyTransportEof;
+  finally FContext.NoteTransportEof; end;
+end;
 procedure TObservedSession.BeginShutdown;
 begin
   FInner.BeginShutdown;
@@ -796,6 +860,47 @@ begin
   end;
 end;
 
+procedure TTlsRawLifecycleTest.PeerEofDuringStopDoesNotBreakHealthyConnection;
+var Context: ITLSContext; Observed: TObservedContext; Server: IHttp2Server;
+    FailedPeer, Healthy: TCrtSocket; Data: RawByteString; Deadline: QWord;
+begin
+  Context := NewContext(2500, True, Observed, 'h2');
+  Server := Factory(Context, 0, False).Build;
+  Server.Start;
+  FailedPeer := OpenRaw(Server.Port);
+  Healthy := nil;
+  try
+    CompleteFakeHandshake(FailedPeer, Observed);
+    FailedPeer.SockSendFlush('PRI * HTTP/2.0'#13#10#13#10'SM'#13#10#13#10+
+      #$00#$00#$00#$04#$00#$00#$00#$00#$00);
+    Deadline := mormot.core.os.GetTickCount64 + 1000;
+    while (Observed.PlainWriteCount = 0) and
+          (mormot.core.os.GetTickCount64 < Deadline) do Sleep(5);
+    AssertTrue('the TLS HTTP/2 connection sent initial output',
+      Observed.PlainWriteCount > 0);
+    Healthy := OpenRaw(Server.Port);
+    Healthy.SockSendFlush('PRI * HTTP/2.0'#13#10#13#10'SM'#13#10#13#10+
+      #$00#$00#$00#$04#$00#$00#$00#$00#$00);
+    Data := ReadAtLeast(Healthy, 13, 1000);
+    AssertTrue('the healthy cleartext HTTP/2 connection is active',
+      Length(Data) >= 13);
+    Observed.ArmEofOnNextWrite;
+    Server.Stop;
+    Data := ReadAtLeast(Healthy, 9, 1000);
+    AssertTrue('the healthy connection receives GOAWAY',
+      Pos(#$00#$00#$08#$07#$00, Data) > 0);
+    AssertTrue('the failed TLS session records transport EOF',
+      Observed.TransportEofCount > 0);
+    AssertEquals('the write-path EOF injection runs once', 1,
+      Observed.InjectedEofCount);
+  finally
+    FailedPeer.Free;
+    Healthy.Free;
+    Server.Stop;
+    Server := nil;
+    Context := nil;
+  end;
+end;
 procedure TTlsRawLifecycleTest.PartialTlsPlaintextRetriesAfterLaterRead;
 var Context: ITLSContext; Observed: TObservedContext; Server: IHttp2Server;
     Socket: TCrtSocket; Data, Accepted: RawByteString; Deadline: QWord;
@@ -879,7 +984,6 @@ begin
     Context := nil;
   end;
 end;
-
 var App: TTestRunner;
 begin
   RegisterTest(TTlsRawLifecycleTest);

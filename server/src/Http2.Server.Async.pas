@@ -265,7 +265,16 @@ var
 { THttp2AsyncConnection }
 procedure THttp2AsyncConnection.WakeOutput;
 begin
-  SendPendingOutput;
+  try
+    SendPendingOutput;
+  except
+    on ETlsSessionError do
+      // A socket close can fail the TLS session before a handler or Stop
+      // wakes this connection to drain its final output.  SendPendingOutput
+      // has released its send guard here, so only this failed connection is
+      // removed and the wake caller cannot lose a pool thread or stop sequence.
+      fOwner.ConnectionRemove(Handle);
+  end;
 end;
 procedure THttp2AsyncConnection.AfterCreate;
 begin
