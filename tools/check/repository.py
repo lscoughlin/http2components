@@ -1,0 +1,438 @@
+#!/usr/bin/env python3
+"""Repository checks for http2components."""
+
+from __future__ import annotations
+
+import argparse
+import os
+import re
+import subprocess
+import sys
+import xml.etree.ElementTree as ET
+from pathlib import Path
+
+ROOT = Path(os.environ.get("HTTP2_ROOT", Path(__file__).resolve().parents[2])).resolve()
+LICENSE = "Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)"
+COPYRIGHT = "Copyright 2026 Liam Seamus Coughlin"
+
+
+class Checks:
+    def __init__(self) -> None:
+        self.errors: list[str] = []
+
+    def fail(self, message: str) -> None:
+        self.errors.append(message)
+        print(f"FAIL {message}")
+
+    def done(self) -> int:
+        if self.errors:
+            print(f"{len(self.errors)} check(s) failed")
+            return 1
+        print("All checks passed")
+        return 0
+
+
+def pascal_files() -> list[Path]:
+    result: list[Path] = []
+    for area in ("src", "test", "examples", "tools"):
+        base = ROOT / area
+        if base.exists():
+            result.extend(p for p in base.rglob("*.pas") if p.is_file())
+    return sorted(result)
+
+
+def header_pascal_files() -> list[Path]:
+    result = pascal_files()
+    result.extend(p for p in ROOT.glob("*.pas") if p.is_file())
+    probes = ROOT / "doc/verification/client-probes"
+    if probes.exists():
+        result.extend(p for p in probes.glob("*.pas") if p.is_file())
+    return sorted(set(result))
+
+
+def strip_pascal(text: str) -> str:
+    """Replace Pascal comments and string literals with spaces."""
+    out = list(text)
+    i = 0
+    n = len(text)
+    while i < n:
+        if text.startswith("//", i):
+            j = text.find("\n", i)
+            if j < 0:
+                j = n
+            for k in range(i, j):
+                out[k] = " "
+            i = j
+        elif text.startswith("(*", i) or text[i] == "{":
+            end = "*)" if text.startswith("(*", i) else "}"
+            start_len = 2 if end == "*)" else 1
+            depth = 1
+            j = i + start_len
+            while j < n and depth:
+                if end == "*)" and text.startswith("(*", j):
+                    depth += 1
+                    j += 2
+                elif end == "*)" and text.startswith("*)", j):
+                    depth -= 1
+                    j += 2
+                elif end == "}" and text[j] == "{":
+                    depth += 1
+                    j += 1
+                elif end == "}" and text[j] == "}":
+                    depth -= 1
+                    j += 1
+                else:
+                    j += 1
+            j = min(j, n)
+            for k in range(i, j):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+        elif text[i] == "'":
+            j = i + 1
+            while j < n:
+                if text[j] == "'":
+                    if j + 1 < n and text[j + 1] == "'":
+                        j += 2
+                        continue
+                    j += 1
+                    break
+                j += 1
+            for k in range(i, min(j, n)):
+                if out[k] != "\n":
+                    out[k] = " "
+            i = j
+        else:
+            i += 1
+    return "".join(out)
+
+
+def tokens(code: str) -> list[str]:
+    return re.findall(r"[A-Za-z_][A-Za-z0-9_.]*|:=|<=|>=|<>|[^\s]", code)
+
+
+def parse_pascal(path: Path) -> tuple[str | None, list[tuple[str, str]]]:
+    toks = tokens(strip_pascal(path.read_text(errors="replace")))
+    lower = [t.lower() for t in toks]
+    unit = None
+    for i in range(len(toks) - 1):
+        if lower[i] == "unit":
+            unit = toks[i + 1]
+            break
+        if lower[i] == "program":
+            break
+    try:
+        interface = lower.index("interface")
+    except ValueError:
+        edges: list[tuple[str, str]] = []
+        i = 0
+        while i < len(toks):
+            if lower[i] == "uses":
+                i += 1
+                while i < len(toks) and toks[i] != ";":
+                    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", toks[i]):
+                        edges.append((toks[i], "implementation"))
+                        i += 1
+                        if i < len(toks) and lower[i] == "in":
+                            i += 1
+                        continue
+                    i += 1
+            i += 1
+        return unit, edges
+    try:
+        implementation = lower.index("implementation", interface + 1)
+    except ValueError:
+        implementation = len(toks)
+    edges: list[tuple[str, str]] = []
+    for lo, hi, section in ((interface, implementation, "interface"),
+                            (implementation, len(toks), "implementation")):
+        i = lo
+        while i < hi:
+            if lower[i] != "uses":
+                i += 1
+                continue
+            i += 1
+            while i < hi and toks[i] != ";":
+                if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", toks[i]):
+                    name = toks[i]
+                    edges.append((name, section))
+                    i += 1
+                    if i < hi and lower[i] == "in":
+                        # The quoted file name was removed by the lexer.
+                        # Keep the unit edge and skip the `in` marker.
+                        i += 1
+                        continue
+                    if i < hi and toks[i] == ".":
+                        i += 1
+                    continue
+                i += 1
+            i += 1
+    return unit, edges
+
+
+def version_check(c: Checks) -> None:
+    version_file = ROOT / "VERSION"
+    if not version_file.exists():
+        c.fail("VERSION is missing")
+        return
+    version = version_file.read_text().strip()
+    if version != "0.30.0" or version_file.read_text() != "0.30.0\n":
+        c.fail("VERSION must contain exactly 0.30.0 followed by one newline")
+    lpk_files = sorted(ROOT.glob("*.lpk"))
+    for package in lpk_files:
+        try:
+            tree = ET.parse(package)
+            version = tree.find(".//Version[@Major]")
+            actual = ".".join(version.get(key, "") for key in ("Major", "Minor", "Release")) if version is not None else ""
+            if version is not None and version.get("Build", "0") not in ("", "0"):
+                actual += "." + version.get("Build", "")
+        except ET.ParseError as error:
+            c.fail(f"{package.name} is invalid XML: {error}")
+            continue
+        if actual != "0.30.0":
+            c.fail(f"{package.name} declares version {actual or '<missing>'}; expected 0.30.0")
+    print(f"Checked VERSION and {len(lpk_files)} package file(s)")
+
+
+def source_check(c: Checks) -> None:
+    files = pascal_files()
+    header_files = header_pascal_files()
+    if not header_files:
+        c.fail("no maintained Pascal files exist")
+        return
+    units: dict[str, tuple[str, Path]] = {}
+    parsed: dict[str, tuple[str, Path, str, list[tuple[str, str]]]] = {}
+    for path in header_files:
+        rel = path.relative_to(ROOT).as_posix()
+        lines = path.read_text(errors="replace").splitlines()
+        if len(lines) >= 1000:
+            c.fail(f"{rel} has {len(lines)} lines; the maximum is 999")
+    for path in files:
+        rel = path.relative_to(ROOT).as_posix()
+        code = strip_pascal(path.read_text(errors="replace"))
+        kind_match = re.search(r"(?i)\b(unit|program)\s+([A-Za-z_][A-Za-z0-9_.]*)", code)
+        if not kind_match:
+            c.fail(f"{rel} has no unit or program declaration")
+            continue
+        kind, declared = kind_match.group(1).lower(), kind_match.group(2)
+        if kind == "unit" and Path(rel).stem.casefold() != declared.casefold():
+            c.fail(f"{rel} declares {kind} {declared}; file name does not match")
+        key = declared.casefold() if kind == "unit" else f"program:{rel.casefold()}"
+        if kind == "unit":
+            if key in units:
+                c.fail(f"unit {declared} duplicates {units[key][0]} in {units[key][1].relative_to(ROOT)}")
+            else:
+                units[key] = (declared, path)
+        parsed[key] = (declared, path, kind, parse_pascal(path)[1])
+    if not any(path.relative_to(ROOT).parts[0] == "src" for _, path in units.values()):
+        c.fail("src/ has no production units; source dependency checks cannot pass")
+    names = set(units)
+    json_prefixes = ("fpjson", "json", "system.json")
+    xml_prefixes = ("xml", "dom")
+    interface_graph: dict[str, list[str]] = {}
+    for key, (declared, source_path, kind, edges) in parsed.items():
+        rel = source_path.relative_to(ROOT).as_posix()
+        rel_parts = Path(rel).parts
+        interface_graph[key] = []
+        group = declared.casefold()
+        for dep, section in edges:
+            d = dep.casefold()
+            if section == "interface" and d in names:
+                interface_graph[key].append(d)
+            if (d == "http2" or d.startswith("http2.")) and d not in names:
+                c.fail(f"{rel} uses unknown project unit {dep}")
+            role = "integration" if "integration" in rel_parts else next(
+                (part for part in rel_parts if part in ("common", "client", "server")), None)
+            if role == "common" and d.startswith(("http2.client", "http2.server")):
+                c.fail(f"{rel} has common-to-role dependency on {dep}")
+            if role == "client" and d.startswith("http2.server"):
+                c.fail(f"{rel} has client-to-server dependency on {dep}")
+            if role == "server" and d.startswith("http2.client"):
+                c.fail(f"{rel} has server-to-client dependency on {dep}")
+            source_unit = rel_parts[0] == "src"
+            test_file = rel_parts[0] == "test"
+            readers_unit = group == "http2.client.readers" or group.startswith("http2.client.readers.")
+            json_xml = d.startswith(json_prefixes + xml_prefixes)
+            if source_unit and json_xml and not readers_unit:
+                c.fail(f"{rel} has JSON/XML dependency outside the optional Readers group: {dep}")
+            if test_file and role == "common" and json_xml:
+                c.fail(f"{rel} has common-test dependency on JSON/XML unit {dep}")
+            if test_file and role == "client" and json_xml and not readers_unit:
+                c.fail(f"{rel} has client-test JSON/XML dependency outside Readers: {dep}")
+            if test_file and role == "server" and json_xml:
+                c.fail(f"{rel} has server-test dependency on JSON/XML unit {dep}")
+            if group.startswith("http2.common"):
+                if d.startswith(("http2.client", "http2.server", "mormot.", "fpjson", "jsonparser", "xml")):
+                    c.fail(f"{rel} has prohibited {section} dependency on {dep}")
+            if source_unit and group.startswith("http2.client") and d.startswith("http2.client.readers") and not readers_unit:
+                c.fail(f"{rel} has optional Readers dependency from client core: {dep}")
+            if rel_parts[0] == "src" and group.startswith("http2.client.") and not readers_unit and d == "http2.client":
+                c.fail(f"client implementation unit {rel} imports its facade {dep}")
+            if rel_parts[0] == "src" and group.startswith("http2.server.") and d == "http2.server":
+                c.fail(f"server implementation unit {rel} imports its facade {dep}")
+            if rel_parts[0] == "src" and group.startswith("http2.common.") and d == "http2.common":
+                c.fail(f"common implementation unit {rel} imports its facade {dep}")
+    visiting: set[str] = set()
+    visited: set[str] = set()
+
+    def visit(node: str, chain: list[str]) -> None:
+        if node in visiting:
+            cycle = chain[chain.index(node):] + [node] if node in chain else chain + [node]
+            c.fail("interface dependency cycle: " + " -> ".join(parsed[n][0] for n in cycle))
+            return
+        if node in visited:
+            return
+        visiting.add(node)
+        for child in interface_graph.get(node, []):
+            visit(child, chain + [child])
+        visiting.remove(node)
+        visited.add(node)
+
+    for node in interface_graph:
+        visit(node, [node])
+    production_units = sum(1 for _, path in units.values()
+                           if path.relative_to(ROOT).parts[0] == "src")
+    print(f"Checked {len(header_files)} Pascal headers/sizes, {len(files)} active files, "
+          f"{production_units} production units, and {len(units)} total unit declarations")
+    run_yaml(c)
+
+
+def run_yaml(c: Checks) -> None:
+    script = ROOT / "tools/check/yaml_headers.rb"
+    if not script.exists():
+        c.fail("tools/check/yaml_headers.rb is missing")
+        return
+    try:
+        result = subprocess.run(["ruby", str(script)], cwd=ROOT, text=True,
+                                stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
+    except FileNotFoundError:
+        c.fail("Ruby YAML parser is required for document and Pascal headers")
+        return
+    if result.returncode:
+        for line in result.stdout.splitlines():
+            c.fail(line)
+    else:
+        print(result.stdout.rstrip())
+
+
+def docs_check(c: Checks) -> None:
+    docs = sorted(p for p in (ROOT / "doc").rglob("*.md") if p.is_file())
+    if not docs:
+        c.fail("doc/ has no Markdown documents")
+        return
+    if not (ROOT / "doc/README.md").exists():
+        c.fail("doc/README.md is missing; the document index is required")
+    run_yaml(c)
+    for path in docs:
+        rel = path.relative_to(ROOT).as_posix()
+        text = path.read_text(errors="replace")
+        if re.search(r"\bplan/|\.ai/|\bstory\b", text, re.I):
+            c.fail(f"{rel} refers to plan/, .ai/, or a story")
+        if path.name != "README.md" or path.parent != ROOT / "doc/references":
+            body = re.sub(r"\A---\n.*?\n---\n", "", text, count=1, flags=re.S)
+            prose = re.sub(r"```.*?```", " ", body, flags=re.S)
+            prose = re.sub(r"`[^`]*`", " code ", prose)
+            imperative = re.search(
+                r"(?i)(?:^|[.!?]\s+|\n)\s*(?:[-*+]\s+|\d+[.)]\s+)?(?:Add|Write|Use|Set|Call|Read|Make|Check|Keep|Put|Run|Build|Hold|Avoid|See|Take|Give|Move|Remove|Ensure|Replace|Change|Report|Fix|Do not)\s+[A-Za-z]",
+                prose)
+            if imperative:
+                line = prose.count("\n", 0, imperative.start()) + 1
+                c.fail(f"{rel}:{line} may use the imperative mood")
+            if rel != "doc/README.md" and not (ROOT / "doc/README.md").exists():
+                c.fail("doc/README.md is missing; the document index is required")
+            elif rel != "doc/README.md" and (ROOT / "doc/README.md").exists():
+                index = (ROOT / "doc/README.md").read_text(errors="replace")
+                if rel.removeprefix("doc/") not in index:
+                    c.fail(f"{rel} is not listed in doc/README.md")
+            for match in re.finditer(r"\[[^\]]*\]\(([^)]+)\)", body):
+                target = match.group(1).split("#", 1)[0].strip()
+                if not target or target.startswith(("http://", "https://", "mailto:")):
+                    continue
+                target_path = (path.parent / target).resolve()
+                if not target_path.exists():
+                    c.fail(f"{rel} links to missing path {target}")
+    print(f"Checked {len(docs)} documentation file(s)")
+
+
+def packages_check(c: Checks) -> None:
+    version_check(c)
+    packages = {p.name for p in ROOT.glob("*.lpk")}
+    expected = {"http2common.lpk", "http2client.lpk", "http2server.lpk"}
+    for missing in sorted(expected - packages):
+        c.fail(f"required package {missing} is missing")
+    sources = sorted((ROOT / "src").glob("*.pas")) if (ROOT / "src").exists() else []
+    if not sources:
+        c.fail("src/ has no production units; package inventory cannot pass")
+    else:
+        listed: dict[str, list[str]] = {}
+        output_dirs: dict[str, str] = {}
+        for package in sorted(ROOT.glob("*.lpk")):
+            try:
+                tree = ET.parse(package)
+            except ET.ParseError as error:
+                c.fail(f"{package.name} is invalid XML: {error}")
+                continue
+            for item in tree.iter("Filename"):
+                name = item.get("Value", "")
+                if not name.lower().endswith(".pas"):
+                    continue
+                source_path = (ROOT / name).resolve()
+                if ROOT not in source_path.parents:
+                    c.fail(f"{package.name} names a source outside the repository: {name}")
+                elif not source_path.exists():
+                    c.fail(f"{package.name} names missing source {name}")
+                listed.setdefault(Path(name).as_posix(), []).append(package.name)
+            unit_out = tree.find(".//UnitOutputDirectory")
+            unit_out_value = unit_out.get("Value", "") if unit_out is not None else ""
+            out_parts = Path(unit_out_value).parts
+            if (not unit_out_value.startswith("bin/") or Path(unit_out_value).is_absolute()
+                    or ".." in out_parts):
+                c.fail(f"{package.name} must write compiler units under bin/")
+            folded_out = unit_out_value.casefold()
+            if folded_out in output_dirs:
+                c.fail(f"{package.name} shares compiler output with {output_dirs[folded_out]}")
+            elif folded_out:
+                output_dirs[folded_out] = package.name
+            declared_count = tree.find(".//Files")
+            entries = sum(1 for item in tree.iter("Filename"))
+            if declared_count is not None:
+                try:
+                    expected_count = int(declared_count.get("Count", "-1"))
+                except ValueError:
+                    expected_count = -1
+                if expected_count != entries:
+                    c.fail(f"{package.name} lists {expected_count} files but has {entries} entries")
+        for source in sources:
+            rel = source.relative_to(ROOT).as_posix()
+            owners = listed.get(rel, [])
+            if len(owners) != 1:
+                c.fail(f"{rel} is listed by {len(owners)} package files; expected one")
+                continue
+            stem = source.stem.casefold()
+            if stem.startswith("http2.common"):
+                expected = "http2common.lpk"
+            elif stem.startswith("http2.client.readers"):
+                expected = "http2clientreaders.lpk"
+            elif stem.startswith("http2.client"):
+                expected = "http2client.lpk"
+            elif stem.startswith("http2.server"):
+                expected = "http2server.lpk"
+            else:
+                expected = None
+            if expected and owners[0].casefold() != expected:
+                c.fail(f"{rel} belongs in {expected}, not {owners[0]}")
+    print(f"Checked {len(packages)} package file(s) and {len(sources)} source file(s)")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument("check", choices=("version", "source", "docs", "packages"))
+    args = parser.parse_args()
+    c = Checks()
+    {"version": version_check, "source": source_check,
+     "docs": docs_check, "packages": packages_check}[args.check](c)
+    return c.done()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

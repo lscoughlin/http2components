@@ -1,0 +1,185 @@
+version: '3'
+
+tasks:
+  setup:deps:
+    desc: Fetch the pinned mORMot2 build dependency
+    cmds:
+      - python3 tools/build.py setup:deps
+
+  setup:harness:
+    desc: Fetch the pinned client validation harness
+    cmds:
+      - python3 tools/build.py setup:harness
+
+  build:
+    desc: Build common, client, and server
+    cmds:
+      - python3 tools/build.py build
+
+  build:common:
+    desc: Build common protocol units without mORMot2
+    cmds:
+      - python3 tools/build.py build:common
+
+  build:client:
+    desc: Build the client
+    cmds:
+      - python3 tools/build.py build:client
+
+  build:server:
+    desc: Build the server
+    cmds:
+      - python3 tools/build.py build:server
+
+  build:readers:
+    desc: Build optional JSON and XML readers
+    cmds:
+      - python3 tools/build.py build:readers
+
+  test:common:
+    desc: Run common unit tests
+    cmds:
+      - python3 tools/build.py test:common
+
+  test:client:
+    desc: Run client unit tests
+    cmds:
+      - python3 tools/build.py test:client
+
+  test:server:
+    desc: Run server unit tests
+    cmds:
+      - python3 tools/build.py test:server
+
+  test:
+    desc: Run common, client, and server unit tests
+    cmds:
+      - python3 tools/build.py test
+
+  test:integration:
+    desc: Run local integration tests
+    cmds:
+      - python3 tools/build.py test:integration
+
+  test:api:
+    desc: Compile API identity and generic-reader probes
+    cmds:
+      - python3 tools/build.py test:api
+
+  packages:check:
+    desc: Check package files, source inventory, and versions
+    cmds:
+      - python3 tools/build.py packages:check
+
+  source:check:
+    desc: Check Pascal headers, sizes, names, and dependencies
+    cmds:
+      - python3 tools/build.py source:check
+
+  docs:check:
+    desc: Check documentation rules, links, index, and YAML
+    cmds:
+      - python3 tools/build.py docs:check
+
+  version:check:
+    desc: Check current version agreement
+    cmds:
+      - python3 tools/build.py version:check
+
+  examples:
+    desc: Compile client, server, and combined examples
+    cmds:
+      - python3 tools/build.py examples
+
+  validate:fast:
+    desc: Run bounded required validation gates
+    cmds:
+      - python3 tools/build.py validate:fast
+
+  "validate:client:sanity":
+    desc: Run the client sanity gate
+    cmds:
+      - python3 tools/build.py validate:client:sanity
+  "validate:client:interop":
+    desc: Run the client interop gate
+    cmds:
+      - python3 tools/build.py validate:client:interop
+  "validate:client:harness":
+    desc: Run the client conformance harness
+    cmds:
+      - python3 tools/build.py validate:client:harness
+  "validate:client:sse":
+    desc: Run the client SSE gate
+    cmds:
+      - python3 tools/build.py validate:client:sse
+  "validate:client:proxy":
+    desc: Run the client proxy gate
+    cmds:
+      - python3 tools/build.py validate:client:proxy
+  "validate:client:proxy:real":
+    desc: Run the client live proxy gate
+    cmds:
+      - python3 tools/build.py validate:client:proxy:real
+  "validate:client:websocket":
+    desc: Run the client WebSocket gate
+    cmds:
+      - python3 tools/build.py validate:client:websocket
+  "validate:client:websocket:autobahn":
+    desc: Run the client Autobahn gate
+    cmds:
+      - python3 tools/build.py validate:client:websocket:autobahn
+  "validate:client:cleartext":
+    desc: Run the client cleartext gate
+    cmds:
+      - python3 tools/build.py validate:client:cleartext
+  "validate:client:mtls":
+    desc: Run the client mTLS gate
+    cmds:
+      - python3 tools/build.py validate:client:mtls
+  "validate:client:mtls-real":
+    desc: Run the client live mTLS gate
+    cmds:
+      - python3 tools/build.py validate:client:mtls-real
+
+  "validate:server:conformance":
+    desc: Run the server conformance gate
+    cmds:
+      - python3 tools/build.py validate:server:conformance
+  "validate:server:fast":
+    desc: Run the server fast gate
+    cmds:
+      - python3 tools/build.py validate:server:fast
+  "validate:server:tls-live":
+    desc: Run the server TLS live gate
+    cmds:
+      - python3 tools/build.py validate:server:tls-live
+  "validate:server:mtls-live":
+    desc: Run the server mTLS live gate
+    cmds:
+      - python3 tools/build.py validate:server:mtls-live
+  "validate:server:websocket":
+    desc: Run the server WebSocket gate
+    cmds:
+      - python3 tools/build.py validate:server:websocket
+  "validate:server:websocket:h2":
+    desc: Run the server HTTP/2 WebSocket gate
+    cmds:
+      - python3 tools/build.py validate:server:websocket:h2
+  "validate:server:sse":
+    desc: Run the server SSE gate
+    cmds:
+      - python3 tools/build.py validate:server:sse
+  "validate:server:abuse":
+    desc: Run the server abuse gate
+    cmds:
+      - python3 tools/build.py validate:server:abuse
+
+  validate:
+    desc: Run the documented validation sequence
+    cmds:
+      - python3 tools/build.py validate
+
+  clean:
+    desc: Remove generated files under bin
+    cmds:
+      - python3 tools/build.py clean
