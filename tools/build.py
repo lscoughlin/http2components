@@ -243,8 +243,9 @@ def build(component: str) -> None:
             flags = ["-O2", "-vw", "-Mdelphi", "-dUSE_OPENSSL",
                      f"-Fu{COMPONENTS['common']['source']}", f"-Fu{COMPONENTS['openssl']['source']}"]
             flags.extend(f"-Fu{mormot / part}" for part in ("core", "lib", "net", "crypt"))
+            flags.extend(shlex.split(os.environ.get("FPCFLAGS", "")))
             run([compiler(), *flags, f"-FU{units}", f"-FE{programs}",
-                 str(source.relative_to(ROOT))], env=open_ssl_env(), timeout=30)
+                 str(source.relative_to(ROOT))], env=open_ssl_env(), timeout=300)
         else:
             for name in ("HashLib4Pascal", "SimpleBaseLib4Pascal", "CryptoLib4Pascal", "TlsLib4Pascal"):
                 verify_dependency(name)
@@ -274,7 +275,8 @@ def compile_provider_tlslib(source: Path) -> Path:
     units, programs = output("tlslib")
     package_units = output("tlslib")[0] / "bootstrap"
     package_units.mkdir(parents=True, exist_ok=True)
-    flags = ["-O2", "-vw", "-Mdelphi", *tlslib_flags()]
+    flags = ["-O2", "-vw", "-Mdelphi", *tlslib_flags(),
+             *shlex.split(os.environ.get("FPCFLAGS", ""))]
     packages = [dependency_root("HashLib4Pascal") / "HashLib/src/Packages/FPC/HashLib4PascalPackage.pas",
                 dependency_root("SimpleBaseLib4Pascal") / "SimpleBaseLib/src/Packages/FPC/SimpleBaseLib4PascalPackage.pas",
                 dependency_root("CryptoLib4Pascal") / "CryptoLib/src/Packages/FPC/CryptoLib4PascalPackage.pas"]

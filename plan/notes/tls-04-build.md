@@ -20,8 +20,9 @@ HashLib, SimpleBaseLib, CryptoLib. The compiled TlsLib facade follows those
 package units. This order avoids the source cycle through
 `ClpMultipliers`, `ClpWnafUtilities`, and `ClpECAlgorithms`. Every unit file
 and program output is under `bin/<target>/<profile>/tlslib/`; bootstrap units
-are under its `units/bootstrap/` subdirectory. Each compile has a 300-second
-limit. A timed command stops only its own process group.
+are under its `units/bootstrap/` subdirectory. Provider compilation has a
+300-second limit. Bounded TLS programs have a 30-second limit. A timed command
+stops only its own process group.
 
 The TLS-02 capability record remains the implementation boundary. TlsLib
 client and server support for TLS 1.2, TLS 1.3, ALPN, explicit trust anchors,
@@ -41,7 +42,8 @@ with `TLS_DEPENDENCY_CACHE_ROOT`; setup clones with independent object stores
 and sets each clone's origin to its recorded public URL. Normal builds do not
 fetch. They check revision, origin, local source status, and license evidence.
 Build tools accept absolute or repository-relative source overrides through
-`MORMOT_ROOT`, `TLSLIB4PASCAL_ROOT`, `CRYPTOLIB4PASCAL_ROOT`,
+`MORMOT2_ROOT` (or the compatible `MORMOT_ROOT` and `MORMOT` names),
+`TLSLIB4PASCAL_ROOT`, `CRYPTOLIB4PASCAL_ROOT`,
 `HASHLIB4PASCAL_ROOT`, and `SIMPLEBASELIB4PASCAL_ROOT`.
 
 The six packages use version 0.30.0. The Lazarus group order is common,
@@ -75,3 +77,9 @@ or network test ran because its owning runner is not part of TLS-04. Opening
 the group in the graphical IDE, real provider sessions, Linux builds, and
 provider integration remain future checks. Provider closure is not proved by
 the current empty facades.
+
+The direct TlsLib Lazarus package build has not compiled provider engine
+imports. Its bootstrap and search paths need a separate check with real engine
+units in TLS-10. The metadata path list is generated from the installed pinned
+dependency source tree; it is not proof that Lazarus resolves every engine
+unit through the package manifest.
