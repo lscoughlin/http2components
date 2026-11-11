@@ -89,6 +89,13 @@ var
   SocketBytesSent, KernelQueueBytes: Int64;
   KernelQueueAvailable, TransportSample: Boolean;
 begin
+  if ABacklog <= 0 then
+  begin
+    ALastBacklog := 0;
+    ALastKernelQueueBytes := 0;
+    AHasKernelQueueSample := False;
+    Exit(True);
+  end;
   SocketBytesSent := ALastSocketBytesSent;
   KernelQueueBytes := ALastKernelQueueBytes;
   KernelQueueAvailable := False;
