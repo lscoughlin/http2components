@@ -6,7 +6,7 @@ The inspected client commit is `709336f542cbedf9ce1ab67d83bddcfd560eb1c0`.
 The inspected server commit is `16e2003a9f31648005c5565d118bbd42acf935a8`.
 Both source working trees were clean when inspected on 2026-11-11. The
 inventory has one row for each tracked client and server input: 196 client
-entries and 244 server files, for 440 entries. The client count includes a
+files and 244 server entries, for 440 entries. The server count includes a
 tracked symbolic link. It records the source commit, path, SHA-256 hash,
 target path, source-project declared license, action, disposition, and story.
 The license field records project metadata; it does not determine the license
