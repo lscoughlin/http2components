@@ -32,7 +32,8 @@ type
     FCa: string;
     FOpen, FAuth: Integer;      // base ports of the two server instances
     function Enabled: Boolean;
-    function Get(const AFactory: THttpClientFactory; const AUrl: string): string;
+    function Get(const AFactory: THttpClientFactory; const AUrl: string;
+      const ATlsContext: ITLSContext = nil): string;
     function Base(const AFactory: THttpClientFactory): THttpClientFactory;
     procedure CheckHttp2(const AProxyUrl: string);
   published
@@ -84,18 +85,23 @@ begin
   // bundle (it names other.example and localhost)
   Result := AFactory.WithHttp1Fallback(True).WithClearText(ctUpgrade)
     .WithTlsContext(OpenSslClientTestContext(FCa))
+    .WithProxyTlsContext(OpenSslClientTestContext(FCa))
     .WithConnectTimeout(5000).WithHeaderTimeout(8000);
 end;
 
 function TProxyLiveTest.Get(const AFactory: THttpClientFactory;
-  const AUrl: string): string;
+  const AUrl: string; const ATlsContext: ITLSContext): string;
 var
+  Factory: THttpClientFactory;
   Client: IHttpClient;
   R: IHttpResponse;
   B: TBytes;
   I: Integer;
 begin
-  Client := Base(AFactory).Build;
+  Factory := Base(AFactory);
+  if ATlsContext <> nil then
+    Factory := Factory.WithTlsContext(ATlsContext);
+  Client := Factory.Build;
   try
     R := Client.Send(THttpRequest.Create(hmGet, AUrl));
     AssertEquals(AUrl + ' status', 200, R.StatusCode);
@@ -193,9 +199,9 @@ begin
   // the proxy here refuses everything but other.example, so success proves the
   // request never went through it
   AssertEquals('origin-tls', Get(THttpClientFactory.Create
-    .WithProxy('127.0.0.1', FOpen + 2)
-    .WithTlsContext(OpenSslClientTestContext('', True)),
-    'https://localhost:' + IntToStr(FOpen) + '/'));
+    .WithProxy('127.0.0.1', FOpen + 2),
+    'https://localhost:' + IntToStr(FOpen) + '/',
+    OpenSslClientTestContext('', True)));
 end;
 
 procedure TProxyLiveTest.CheckHttp2(const AProxyUrl: string);
@@ -212,6 +218,7 @@ begin
   // strict: no WithHttp1Fallback, so anything but ALPN h2 raises
   Client := THttpClientFactory.Create
     .WithTlsContext(OpenSslClientTestContext(FCa))
+    .WithProxyTlsContext(OpenSslClientTestContext(FCa))
     .WithConnectTimeout(5000).WithHeaderTimeout(10000)
     .WithAllProxy(StringReplace(AProxyUrl, '%d', IntToStr(H2Base), [])).Build;
   try
