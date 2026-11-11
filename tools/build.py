@@ -656,6 +656,8 @@ def main() -> int:
         build("common")
         build("client")
         build("server")
+        build("openssl")
+        build("tlslib")
     elif target.startswith("test:") and target.split(":", 1)[1] in ("common", "client", "server"):
         run_tests(target.split(":", 1)[1])
     elif target == "test":
