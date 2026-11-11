@@ -259,3 +259,20 @@ reproduced defect. Existing deadlines and error expectations remain intact.
 The initial full log is baseline-test-server.log; runtime was 708.577 seconds,
 exit 3. The earlier API probe link failure is covered by LV-05 and the repaired
 API run already passed.
+
+## LV-14: Complete client suite and external peer repairs
+
+Candidate dc8bbe5 completes all 776 client cases without SIGPIPE, but reports
+one error and eleven failures. Ten pool and routing checks still expect the
+old pool key; the statistics checks expose the added TLS/protocol suffix. The
+client owner verifies the new pool isolation contract before updating those
+expectations. The broken-peer TLS test still supplies a removed legacy trust
+option and needs an explicit context. No pool separation assertion is removed.
+
+The live WebSocket (18) and proxy (10) gates now pass. The mTLS gate still
+reports a generic connection error for a rejected missing identity. The owner
+checks alert propagation against the existing required error contract. The real
+proxy probe fails compilation because its mORMot source search path is absent.
+The owner repairs build paths and checks the real mTLS probe for the same
+problem. Acceptance includes all affected complete gates with retained peer
+logs and counts; failures must not become skips.
