@@ -11,7 +11,7 @@ program Http2TlsIntegrationTests;
 {$mode delphi}{$H+}{$interfaces com}{$modeswitch advancedrecords}
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Classes, Http2.Common.Tls.Types, Http2.Common.Tls.Policy,
+  SysUtils, Classes, SyncObjs, Http2.Common.Tls.Types, Http2.Common.Tls.Policy,
   Http2.Common.Tls.Context, Http2.Common.Tls.Identity,
   Http2.Common.Tls.Session, Http2.Common, Http2.Client, Http2.Server,
   Http2.OpenSSL, Http2.TlsLib;
@@ -46,6 +46,9 @@ type
 var
   CaseCount: Integer;
   V: TTlsVersion;
+  GConcurrentGate: TEvent;
+  GConcurrentActive: LongInt;
+  GConcurrentObserved: Boolean;
 
 procedure Check(const AValue: Boolean; const AMessage: string); forward;
 
@@ -78,6 +81,16 @@ end;
 function ProviderName(const AProvider: TProvider): string;
 begin
   if AProvider = prOpenSSL then Result := 'OpenSSL' else Result := 'TlsLib';
+end;
+
+function VersionName(const AVersion: TTlsVersion): string;
+begin
+  if AVersion = tls12 then Result := 'TLS1.2' else Result := 'TLS1.3';
+end;
+
+function ProviderCode(const AProvider: TProvider): string;
+begin
+  if AProvider = prOpenSSL then Result := 'O' else Result := 'T';
 end;
 
 function LoadIdentity(const AProvider: TProvider; const AClient: Boolean): ITLSIdentity;
@@ -172,8 +185,28 @@ end;
 
 procedure TEchoHandler.Handle(const ARequest: IServerRequest;
   const AResponse: IServerResponse);
-var Data: TBytes;
+var Data: TBytes; ClientCertificate: IClientCertificate;
 begin
+  if GConcurrentGate <> nil then
+  begin
+    if InterlockedIncrement(GConcurrentActive) >= 2 then
+    begin
+      GConcurrentObserved := True;
+      GConcurrentGate.SetEvent;
+    end;
+    try
+      if GConcurrentGate.WaitFor(cTimeoutMs) <> wrSignaled then
+        raise Exception.Create('concurrent HTTP/2 handlers did not overlap');
+    finally
+      InterlockedDecrement(GConcurrentActive);
+    end;
+  end;
+  if ARequest.StreamId = 0 then
+    raise Exception.Create('the handler received no HTTP/2 stream');
+  ClientCertificate := ARequest.ClientCertificate;
+  if (ClientCertificate = nil) or (ClientCertificate.SubjectDn = '') or
+     (ClientCertificate.PrincipalText <> ClientCertificate.CommonName) then
+    raise Exception.Create('the request has no verified client certificate principal');
   Data := TEncoding.UTF8.GetBytes(cBody);
   AResponse.SendHeaders(200, nil, False);
   AResponse.Write(Data);
@@ -187,6 +220,7 @@ begin
   AContext := ServerContext(AProvider, AVersion);
   Factory := THttp2ServerFactory.Create.WithHost('127.0.0.1').WithPort(0)
     .WithTlsContext(AContext).WithClearTextAllowed(False)
+    .WithHttp11Fallback(False).WithClientCertPrincipal(ccpCommonName)
     .WithHandler(TEchoHandler.Create).WithHandlerThreads(2).WithIOThreads(1);
   Result := Factory.Build;
   Result.Start;
@@ -197,6 +231,7 @@ var Factory: THttp2ServerFactory;
 begin
   Factory := THttp2ServerFactory.Create.WithHost('127.0.0.1').WithPort(0)
     .WithTlsContext(AContext).WithClearTextAllowed(False)
+    .WithHttp11Fallback(False).WithClientCertPrincipal(ccpCommonName)
     .WithHandler(TEchoHandler.Create).WithHandlerThreads(2).WithIOThreads(1);
   Result := Factory.Build;
   Result.Start;
@@ -256,10 +291,13 @@ var
   Progress: TTlsProgress;
   Deadline: QWord;
   Subject, Fingerprint: string;
+  CaseName: string;
   Names: TArray<string>;
   I: Integer;
   HasLocalhost: Boolean;
 begin
+  CaseName := ProviderCode(AClientProvider) + '-' + ProviderCode(AServerProvider) +
+    '-' + VersionName(AVersion);
   if AClientProvider = AServerProvider then
   begin
     ClientContextRef := DualRoleContext(AClientProvider, AVersion);
@@ -320,6 +358,10 @@ begin
     Check((ClientInfo.PeerCertificate.Leaf.Subject = Subject) and
       (ClientInfo.PeerCertificate.Leaf.FingerprintSha256 = Fingerprint),
       'copied peer metadata survives session teardown');
+    WriteLn('CASE A03-', CaseName, '-META: version=', VersionName(ClientInfo.Version),
+      ', alpn=', ClientInfo.SelectedAlpn, ', cipher=', ClientInfo.CipherName,
+      ', server=', Subject, ', client=', ServerInfo.PeerCertificate.Leaf.Subject,
+      ', both peers verified');
     Inc(CaseCount);
   finally
     if ClientSession <> nil then ClientSession.Abort;
@@ -336,9 +378,12 @@ var
   Response: IHttpResponse;
   Url: string;
   PairName: string;
+  CaseName: string;
 begin
   RunSessionMetadata(AClientProvider, AServerProvider, AVersion);
   PairName := ProviderName(AClientProvider) + '/' + ProviderName(AServerProvider);
+  CaseName := ProviderCode(AClientProvider) + '-' + ProviderCode(AServerProvider) +
+    '-' + VersionName(AVersion);
   Server := nil;
   Client := nil;
   ServerTls := nil;
@@ -362,6 +407,8 @@ begin
     Response := Client.Send(THttpRequest.Create(hmGet, Url));
     Check(Response.StatusCode = 200, PairName + ' returned a non-200 status');
     Check(ReadText(Response) = cBody, PairName + ' returned a different response body');
+    WriteLn('CASE A03-', CaseName, '-HTTP2',
+      ': status=200, h2 stream, verified client principal, body ok');
     Inc(CaseCount);
   finally
     if Client <> nil then Client.Close;
@@ -381,47 +428,44 @@ begin
   Check(ReadText(Response) = cBody, ALabel + ' returned a different response body');
 end;
 
+procedure CheckFreshResponse(const AProvider: TProvider; const APort: Integer;
+  const ALabel: string);
+var Client: IHttpClient; Context: ITLSContext;
+begin
+  Client := NewClient(AProvider, tls13, Context);
+  Context := nil;
+  try
+    CheckResponse(Client, APort, ALabel);
+  finally
+    Client.Close;
+    Context := nil;
+  end;
+end;
+
 procedure RunInterleavedListeners;
 var
   OpenSslServer, TlsLibServer: IHttp2Server;
-  OpenSslClient, TlsLibClient: IHttpClient;
   OpenSslServerTls, TlsLibServerTls: ITLSContext;
-  OpenSslClientTls, TlsLibClientTls: ITLSContext;
-  TlsLibSecondClient: IHttpClient;
-  TlsLibContextRef: ITLSContext;
 begin
   OpenSslServer := nil; TlsLibServer := nil;
-  OpenSslClient := nil; TlsLibClient := nil;
-  TlsLibSecondClient := nil;
-  TlsLibContextRef := nil;
   try
     OpenSslServer := NewServer(prOpenSSL, tls13, OpenSslServerTls);
     TlsLibServer := NewServer(prTlsLib, tls13, TlsLibServerTls);
-    TlsLibContextRef := TlsLibServerTls;
-    OpenSslClient := NewClient(prOpenSSL, tls13, OpenSslClientTls);
-    TlsLibClient := NewClient(prTlsLib, tls13, TlsLibClientTls);
     OpenSslServerTls := nil; TlsLibServerTls := nil;
-    OpenSslClientTls := nil; TlsLibClientTls := nil;
-    CheckResponse(OpenSslClient, OpenSslServer.Port, 'OpenSSL listener first accept');
-    CheckResponse(TlsLibClient, TlsLibServer.Port, 'TlsLib listener first accept');
-    CheckResponse(TlsLibClient, TlsLibServer.Port, 'TlsLib listener interleaved accept');
+    CheckFreshResponse(prOpenSSL, OpenSslServer.Port, 'OpenSSL listener first accept');
+    CheckFreshResponse(prTlsLib, TlsLibServer.Port, 'TlsLib listener first accept');
+    CheckFreshResponse(prOpenSSL, OpenSslServer.Port, 'OpenSSL listener interleaved accept');
     OpenSslServer.Stop;
     OpenSslServer := nil;
-    CheckResponse(TlsLibClient, TlsLibServer.Port,
+    CheckFreshResponse(prTlsLib, TlsLibServer.Port,
       'TlsLib listener after OpenSSL listener stop');
     Inc(CaseCount, 4);
-    TlsLibSecondClient := NewClientWithContext(TlsLibContextRef);
-    TlsLibContextRef := nil;
-    CheckResponse(TlsLibSecondClient, TlsLibServer.Port,
+    CheckFreshResponse(prTlsLib, TlsLibServer.Port,
       'TlsLib listener accepts a new connection after OpenSSL listener stop');
     Inc(CaseCount);
   finally
-    if OpenSslClient <> nil then OpenSslClient.Close;
-    if TlsLibClient <> nil then TlsLibClient.Close;
-    if TlsLibSecondClient <> nil then TlsLibSecondClient.Close;
     if OpenSslServer <> nil then OpenSslServer.Stop;
     if TlsLibServer <> nil then TlsLibServer.Stop;
-    TlsLibContextRef := nil;
   end;
 end;
 
@@ -436,6 +480,9 @@ begin
   Context := DualRoleContext(AProvider, AVersion);
   Server := nil; ClientA := nil; ClientB := nil;
   ThreadA := nil; ThreadB := nil;
+  GConcurrentActive := 0;
+  GConcurrentObserved := False;
+  GConcurrentGate := TEvent.Create(nil, True, False, '');
   try
     Server := NewServerWithContext(Context);
     ClientA := NewClientWithContext(Context);
@@ -447,6 +494,7 @@ begin
     ThreadB.Start;
     ThreadA.WaitFor;
     ThreadB.WaitFor;
+    Check(GConcurrentObserved, 'two live handler calls overlapped');
     Check(ThreadA.ErrorText = '', 'first concurrent request: ' + ThreadA.ErrorText);
     Inc(CaseCount);
     Check(ThreadB.ErrorText = '', 'second concurrent request: ' + ThreadB.ErrorText);
@@ -458,6 +506,7 @@ begin
     if ClientB <> nil then ClientB.Close;
     if Server <> nil then Server.Stop;
     Context := nil;
+    FreeAndNil(GConcurrentGate);
   end;
 end;
 

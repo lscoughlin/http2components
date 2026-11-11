@@ -43,9 +43,12 @@ verified client and server peer identities, distinct client and server
 identity summaries, copied metadata after session teardown, HTTP status, and
 response content. Same-provider cases pass one context reference to both role
 factories. Concurrent request cases use two clients and one listener, all
-using that context. The listener cases use OpenSSL and TlsLib in one process,
-interleave requests, stop one listener, and verify a fresh connection to the
-other. The expected count is 29 cases. The run limit is 30 seconds. The worker
-compiled this program at base `f52bdf7` with the pinned providers; it did not
-execute the program. Runtime results remain pending the coordinator's bounded
-run.
+using that context. A handler barrier checks that both concurrent requests
+are active at the same time. Server handlers require an HTTP/2 stream and a
+client certificate principal. Server ALPN fallback is off. Listener requests
+use new clients so each request creates a new connection. The listener cases
+use OpenSSL and TlsLib in one process, interleave requests, stop one listener,
+and verify fresh connections to the other. The expected count is 29 cases.
+The run limit is 30 seconds. The worker compiled this program at base `f52bdf7`
+with the pinned providers; it did not execute the program. Runtime results
+remain pending the coordinator's bounded run.
