@@ -330,3 +330,27 @@ Apache peer log and fixture certificate chain, then repairs the demonstrated
 configuration or transport cause. Valid and invalid identity cases retain
 their existing expectations. The Squid build limitations stay explicit and
 are not extended to Apache. Acceptance is the complete real proxy matrix.
+
+## LV-18: Client harness evidence retention
+
+The client owner checks the independent harness result path before the full
+Linux run. Per-case reference and client output, the expected ID list, the
+produced rows, and the final summary remain in a run-specific validation
+directory after cleanup. Success requires every expected ID exactly once;
+missing, extra, or duplicate rows fail. Existing outcome classes and expected
+results do not change. Private temporary inputs and containers are removed.
+A controlled incomplete result confirms that the checker fails.
+
+## LV-19: WebSocket and SSE load liveness evidence
+
+The combined load tool currently counts successful opening responses but
+does not prove that all connections remain open through the measured window.
+The runner owner adds checks for valid WebSocket upgrade headers and SSE
+content type, plus connection liveness through the full window. An early
+close fails the run. Readers drain bounded protocol data as needed so buffered
+data cannot hide EOF or prevent liveness checks. WebSocket close frames fail
+the hold requirement. Ordinary request counts and existing success checks
+remain intact. All clients close on failure, and post-disconnect server memory
+and CPU samples are recorded. Controlled early-close peers verify rejection.
+The required final load remains 10,000 WebSocket connections plus 10,000 SSE
+connections with 50 ordinary requests per second for 20 seconds.
