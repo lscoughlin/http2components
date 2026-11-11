@@ -12,8 +12,10 @@ import signal
 import subprocess
 import sys
 import tempfile
+import time
 import fcntl
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -473,6 +475,9 @@ def run_suite(binary: Path, needs_openssl: bool = False,
             raise ValueError
     except ValueError:
         raise SystemExit("TEST_TIMEOUT must be a positive number of seconds")
+    print(f"Test start (UTC): {datetime.now(timezone.utc).isoformat()}; "
+          f"limit: {timeout_seconds}s", flush=True)
+    started = time.monotonic()
     proc = subprocess.Popen(args, cwd=cwd, env=env, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             start_new_session=True)
@@ -487,8 +492,11 @@ def run_suite(binary: Path, needs_openssl: bool = False,
             stdout, _ = proc.communicate()
         if stdout:
             print(stdout, end="", flush=True)
+        print(f"Test elapsed: {time.monotonic() - started:.3f}s (timeout)", flush=True)
         raise SystemExit(f"Test run exceeded TEST_TIMEOUT={timeout_seconds}s; process group stopped")
     print(stdout, end="", flush=True)
+    print(f"Test elapsed: {time.monotonic() - started:.3f}s; "
+          f"child exit: {proc.returncode}", flush=True)
     if proc.returncode:
         if proc.returncode < 0:
             signum = -proc.returncode
