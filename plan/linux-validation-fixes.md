@@ -235,3 +235,27 @@ separate-process checks. Scope extends to test/integration/Http2.Integration.*
 and a needed server-side probe setup. Build-driver changes are coordinated
 with the runner owner. This gate remains separate from the 29/200-case TLS
 integration runners that already passed.
+
+## LV-12: SSE encoding time regression on Linux
+
+The full Linux server suite completed 714 cases with one error and 13 failures.
+TSseHardeningTest.TestManyShortLinesEncodeInBoundedTime failed its existing
+linear-time bound and dominated runtime. The runner owner, after LV-09,
+reviews the encoder and fixture for repeated allocation or copying, fixes a
+confirmed cause, and preserves the existing test bound. Scope is
+server/src/Http2.Server.Sse.Encoder.pas and its hardening tests. Acceptance
+includes the original short-line case, output equivalence, and complete-suite
+rerun. Measurement is on the same host with fixed inputs.
+
+## LV-13: Remaining full server suite failures
+
+The server owner diagnoses the other full-suite failures: Async idle/header
+closure, three connection-age closures, connection-cap closure, four abuse
+GOAWAY closures, slow-reader handler progress (503 instead of 200), idle stop
+time, and WebSocket HTTP/2 going-away EPIPE. Linux EOF observation is checked
+first where the failed assertion is socket closure, with real nonblocking
+EOF proof. Production backpressure/lifecycle code is in scope only after a
+reproduced defect. Existing deadlines and error expectations remain intact.
+The initial full log is baseline-test-server.log; runtime was 708.577 seconds,
+exit 3. The earlier API probe link failure is covered by LV-05 and the repaired
+API run already passed.
