@@ -26,3 +26,10 @@ copyright ownership. Maintained code and documentation use the SPDX
 expression `Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)`.
 This supersedes the plan's unresolved project-license gate. Source license
 records remain historical. Third-party and specification terms remain intact.
+
+Independent source, build, and document preparation can run at the same time.
+The dependency matrix controls acceptance and integration. A prepared story
+is not complete until its dependencies and acceptance checks are satisfied.
+This permits common-source preparation while build tools are prepared, and
+source-document migration before final API review. It does not permit
+unreviewed shared API changes or overlapping file ownership.
