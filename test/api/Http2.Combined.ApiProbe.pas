@@ -10,14 +10,13 @@ program Http2.Combined.ApiProbe;
 {$modeswitch typehelpers}
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, TypInfo, Http2.Common, Http2.Client, Http2.Server,
-  Http2.Client.Stream, Http2.Client.Messages;
+  SysUtils, TypInfo, Http2.Common, Http2.Client, Http2.Server;
 var
   Fields: Http2.Common.THeaderBlock;
   ServerFields: Http2.Server.THeaderBlock;
   Request: Http2.Client.THttpRequest;
-  Response: Http2.Client.Messages.IHttpResponse;
-  ClientWriter: Http2.Client.Stream.IBodyWriter;
+  Response: Http2.Client.IHttpResponse;
+  ClientWriter: Http2.Client.IBodyWriter;
   ServerWriter: Http2.Server.IBodyWriter;
   Headers: Http2.Common.IHttpHeaders;
   Caught: Boolean;
@@ -38,6 +37,6 @@ begin
     on E: Http2.Common.EHttpError do Caught := True;
   end;
   if not Caught then Halt(4);
-  if GUIDToString(GetTypeData(TypeInfo(IHttpResponse))^.Guid) <>
+  if GUIDToString(GetTypeData(TypeInfo(Http2.Client.IHttpResponse))^.Guid) <>
      '{8B1C2D3E-4F50-4A61-9C72-0123456789AB}' then Halt(5);
 end.

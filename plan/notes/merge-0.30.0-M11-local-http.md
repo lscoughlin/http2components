@@ -29,8 +29,9 @@ reached its 90-second deadline. This result remains under investigation;
 it is not a pass. Earlier client baseline and pre-fix import passes remain
 separate evidence. No resource-intensive tests or Linux checks ran.
 
-Further M11 cases remain: retained TLS/mTLS programs, protocol range tests,
-SSE/WebSocket cases, and separate-process peer checks.
+The later sections record the retained TLS/mTLS programs, event protocols,
+and separate-process peer checks. Independent protocol range and external
+peer matrices remain in the deferred validation plan.
 
 ## Local event protocols
 
@@ -45,3 +46,26 @@ On macOS aarch64, all nine integration cases passed in 3.938 seconds on
 2026-11-11. The log is `bin/review-events-integration.log`. This is local
 agreement between the merged roles. It is not independent conformance
 proof. Independent peers, load, and Linux remain deferred.
+
+
+## TLS and separate processes
+
+The migrated root TLS gate passes all 21 local ALPN and fallback checks.
+The migrated root mTLS gate passes all 40 checks, including optional and
+required identities, HTTP/1.1 and HTTP/2 WebSocket identity propagation,
+unknown authorities, explicit self-signed trust, and X509 reference counts.
+The runtime is OpenSSL 3 on macOS aarch64. Logs are
+`bin/review-server-tls-live.log` and `bin/review-server-mtls-live.log`.
+
+The separate-process check compiles the merged `interop_server` and
+`h2probe`, then exchanges one cleartext HTTP/2 request and one TLS HTTP/2
+request. Both return status 200 and the server stops cleanly after standard
+input closes. The TLS probe uses the insecure option for this process
+boundary check; the other local integration cases check the test CA.
+Readiness, request, and stop deadlines are five, ten, and five seconds.
+Generated PKI is removed. The check passes both cases and is included in
+`test:integration`. Its log is `bin/review-separate-process.log`.
+
+The combined API probe now imports only the three public facades. Qualified
+client and server body-writer names and shared header types compile and the
+probe runs successfully (`bin/review-facade-only-probe.log`).
