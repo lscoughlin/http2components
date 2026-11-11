@@ -2,7 +2,7 @@ version: '3'
 
 tasks:
   setup:deps:
-    desc: Fetch the pinned mORMot2 build dependency
+    desc: Fetch the exact pinned build and TLS provider dependencies
     cmds:
       - python3 tools/build.py setup:deps
 
@@ -65,6 +65,26 @@ tasks:
     desc: Compile API identity and generic-reader probes
     cmds:
       - python3 tools/build.py test:api
+
+  test:tls-contract:
+    desc: Run the bounded common TLS contract suite
+    cmds:
+      - python3 tools/build.py test:tls:contract
+
+  test:tls-openssl:
+    desc: Run the bounded OpenSSL TLS suite
+    cmds:
+      - python3 tools/build.py test:tls:openssl
+
+  test:tls-tlslib:
+    desc: Run the bounded TlsLib TLS suite
+    cmds:
+      - python3 tools/build.py test:tls:tlslib
+
+  test:tls-integration:
+    desc: Run the bounded TLS integration suite
+    cmds:
+      - python3 tools/build.py test:tls:integration
 
   packages:check:
     desc: Check package files, source inventory, and versions

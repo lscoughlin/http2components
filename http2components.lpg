@@ -7,6 +7,16 @@
           <Mode Name="Default" />
         </BuildModes>
       </Target>
+      <Target FileName="tls/openssl/http2openssl.lpk">
+        <BuildModes>
+          <Mode Name="Default" />
+        </BuildModes>
+      </Target>
+      <Target FileName="tls/tlslib/http2tlslib.lpk">
+        <BuildModes>
+          <Mode Name="Default" />
+        </BuildModes>
+      </Target>
       <Target FileName="client/http2client.lpk">
         <BuildModes>
           <Mode Name="Default" />

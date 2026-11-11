@@ -1,0 +1,20 @@
+http2openssl
+Copyright 2026 Liam Seamus Coughlin
+
+Owned source in this component retains the project's dual-license choice:
+Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception). The
+repository LICENSE and LICENSES files hold the license texts.
+
+Third-party components
+----------------------
+
+1. mORMot2 (synopse/mORMot2)
+   Revision: b2b195da1e0580058672a88620ef71bb47283eb1.
+   Origin: https://github.com/synopse/mORMot2.git
+   License choices and copyright notices are retained in the upstream
+   LICENCE.md file. The project notice in NOTICE-http2client.txt records the
+   same license choice.
+
+2. OpenSSL
+   The provider uses the system OpenSSL 3 library at run time. It does not
+   include OpenSSL source code.

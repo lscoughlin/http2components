@@ -275,13 +275,22 @@ def source_check(c: Checks) -> None:
             if (d == "http2" or d.startswith("http2.")) and d not in names:
                 c.fail(f"{rel} uses unknown project unit {dep}")
             role = "integration" if "integration" in rel_parts else next(
-                (part for part in rel_parts if part in ("common", "client", "server")), None)
+                (part for part in rel_parts if part in ("common", "client", "server", "openssl", "tlslib")), None)
+            production_component = rel_parts[0] in ("common", "client", "server", "tls")
             if role == "common" and d.startswith(("http2.client", "http2.server")):
                 c.fail(f"{rel} has common-to-role dependency on {dep}")
             if role == "client" and d.startswith("http2.server"):
                 c.fail(f"{rel} has client-to-server dependency on {dep}")
             if role == "server" and d.startswith("http2.client"):
                 c.fail(f"{rel} has server-to-client dependency on {dep}")
+            if production_component and role in ("client", "server") and d.startswith(("http2.openssl", "http2.tlslib")):
+                c.fail(f"{rel} has role-to-provider dependency on {dep}")
+            if production_component and role == "common" and d.startswith(("http2.openssl", "http2.tlslib")):
+                c.fail(f"{rel} has common-to-provider dependency on {dep}")
+            if production_component and role == "openssl" and d.startswith(("http2.client", "http2.server", "http2.tlslib")):
+                c.fail(f"{rel} has OpenSSL provider dependency outside its package: {dep}")
+            if production_component and role == "tlslib" and d.startswith(("http2.client", "http2.server", "http2.openssl")):
+                c.fail(f"{rel} has TlsLib provider dependency outside its package: {dep}")
             source_unit = rel_parts[0] in ("common", "client", "server", "tls")
             test_file = rel_parts[0] == "test"
             readers_unit = group == "http2.client.readers" or group.startswith("http2.client.readers.")
@@ -410,7 +419,8 @@ def packages_check(c: Checks) -> None:
         except ET.ParseError as error:
             c.fail(f"http2components.lpg is invalid XML: {error}")
     packages = {p.name for p in package_paths}
-    expected = {"http2common.lpk", "http2client.lpk", "http2server.lpk"}
+    expected = {"http2common.lpk", "http2client.lpk", "http2clientreaders.lpk",
+                "http2server.lpk", "http2openssl.lpk", "http2tlslib.lpk"}
     for missing in sorted(expected - packages):
         c.fail(f"required package {missing} is missing")
     sources = sorted(source for base in source_dirs() for source in base.rglob("*.pas"))

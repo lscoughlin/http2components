@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <Package Version="5">
+    <PathDelim Value="/" />
+    <Name Value="http2openssl" />
+    <Type Value="RunTimeOnly" />
+    <Author Value="Liam Seamus Coughlin" />
+    <Description Value="HTTP/2 openssl library for Free Pascal" />
+    <Version Major="0" Minor="30" Release="0" Build="0" />
+    <License Value="Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)" />
+    <CompilerOptions>
+      <Version Value="11" />
+      <Other>
+        <CustomOptions Value="-dUSE_OPENSSL" />
+      </Other>
+      <SearchPaths>
+        <IncludeFiles Value="../../common/src;src" />
+        <UnitOutputDirectory Value="../../bin/$(TargetCPU)-$(TargetOS)/default/package-http2openssl/units" />
+        <OtherUnitFiles Value="../../common/src;src;../../third_party/mORMot2/src/core;../../third_party/mORMot2/src/lib;../../third_party/mORMot2/src/net;../../third_party/mORMot2/src/crypt" />
+      </SearchPaths>
+      <Parsing>
+        <SyntaxOptions>
+          <SyntaxMode Value="Delphi" />
+          <IncludeAssertionCode Value="True" />
+        </SyntaxOptions>
+      </Parsing>
+    </CompilerOptions>
+    <Files Count="1">
+      <Item1>
+        <Filename Value="src/Http2.OpenSSL.pas" />
+        <UnitName Value="Http2.OpenSSL" />
+      </Item1>
+    </Files>
+    <RequiredPkgs Count="2">
+      <Item1>
+        <PackageName Value="FCL" />
+      </Item1>
+      <Item2>
+        <PackageName Value="http2common" />
+      </Item2>
+    </RequiredPkgs>
+    <UsageOptions>
+      <UnitPath Value="$(PkgOutDir)" />
+    </UsageOptions>
+  </Package>
+</CONFIG>

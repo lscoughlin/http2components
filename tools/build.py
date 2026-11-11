@@ -13,6 +13,7 @@ import subprocess
 import sys
 import tempfile
 import fcntl
+import json
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -20,19 +21,34 @@ sys.path.insert(0, str(ROOT))
 from tools.check.repository import strip_pascal  # noqa: E402
 from tools.components import COMPONENTS, PACKAGE_COMPONENT  # noqa: E402
 
-MORMOT_REV = "b2b195da1e0580058672a88620ef71bb47283eb1"
 HARNESS_REV = "0bc075cc21e5a247dfd222e005d1e7e5679d2bff"
+DEPENDENCY_RECORDS = json.loads(
+    (ROOT / "tools" / "dependencies.json").read_text())["dependencies"]
+MORMOT_REV = DEPENDENCY_RECORDS["mORMot2"]["revision"]
+DEPENDENCIES = {name: (record["origin"], record["revision"])
+                for name, record in DEPENDENCY_RECORDS.items()}
 
 
 def run(args: list[str], *, env: dict[str, str] | None = None, cwd: Path = ROOT,
         timeout: int | None = None) -> None:
-    print("+ " + shlex.join(args), flush=True)
+    command = shlex.join(args)
+    if len(command) > 1200:
+        print("+ " + command[:900] + f" ... [{len(args)} arguments, {len(command)} characters]", flush=True)
+    else:
+        print("+ " + command, flush=True)
+    proc = subprocess.Popen(args, cwd=cwd, env=env, start_new_session=timeout is not None)
     try:
-        result = subprocess.run(args, cwd=cwd, env=env, timeout=timeout)
+        result = proc.wait(timeout=timeout)
     except subprocess.TimeoutExpired:
-        raise SystemExit(f"Command exceeded its {timeout}s deadline: {shlex.join(args)}")
-    if result.returncode:
-        raise SystemExit(result.returncode)
+        os.killpg(proc.pid, signal.SIGTERM)
+        try:
+            proc.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.wait()
+        raise SystemExit(f"Command exceeded its {timeout}s deadline; process group stopped")
+    if result:
+        raise SystemExit(result)
 
 
 def required(path: Path, label: str) -> Path:
@@ -82,47 +98,107 @@ def fpc_unit_root() -> str:
 
 def base_flags(component: str, *, tests: bool = False) -> list[str]:
     role = component.removesuffix("-test")
+    tls_integration = role == "tls-integration"
+    if tls_integration:
+        role = "integration"
     if role.startswith("examples-"):
         role = "examples"
     flags = ["-O2", "-vw", "-Mdelphi", f"-Fu{COMPONENTS['common']['source']}"]
+    if role in ("openssl", "tlslib"):
+        flags.append(f"-Fu{COMPONENTS[role]['source']}")
+    if role == "openssl":
+        verify_mormot()
+        mormot = dependency_root("mORMot2") / "src"
+        flags.extend(("-dUSE_OPENSSL", *(f"-Fu{mormot / part}" for part in ("core", "lib", "net", "crypt"))))
+    if role == "tlslib":
+        for name in ("HashLib4Pascal", "SimpleBaseLib4Pascal", "CryptoLib4Pascal", "TlsLib4Pascal"):
+            verify_dependency(name)
+        flags.extend(tlslib_flags())
+        bootstrap = ROOT / "bin" / target_name() / profile() / "tlslib" / "units" / "bootstrap"
+        if bootstrap.exists():
+            flags.append(f"-Fu{bootstrap}")
+        flags.append(f"-Fu{ROOT / 'bin' / target_name() / profile() / 'tlslib' / 'units'}")
     if role in ("client", "readers", "examples", "api", "integration"):
         flags.append(f"-Fu{COMPONENTS['client']['source']}")
     if role in ("server", "examples", "api", "integration"):
         flags.append(f"-Fu{COMPONENTS['server']['source']}")
     if role in ("client", "server", "readers", "examples", "api", "integration"):
         verify_mormot()
-        mormot = Path(os.environ.get("MORMOT", "third_party/mORMot2/src"))
+        mormot = dependency_root("mORMot2") / "src"
         for part in ("core", "lib", "net", "crypt"):
             flags.append(f"-Fu{mormot / part}")
         flags.append(f"-Fu{ROOT / 'bin' / target_name() / profile() / 'common' / 'units'}")
+    if tls_integration:
+        for provider in ("openssl", "tlslib"):
+            flags.extend((f"-Fu{COMPONENTS[provider]['source']}",
+                          f"-Fu{ROOT / 'bin' / target_name() / profile() / provider / 'units'}"))
+        flags.extend(tlslib_flags())
+        flags.append(f"-Fu{ROOT / 'bin' / target_name() / profile() / 'tlslib' / 'units' / 'bootstrap'}")
+        flags.append("-dUSE_OPENSSL")
     if role == "examples":
         flags.extend(("-Fu./examples", "-Fu./examples/client", "-Fu./examples/server",
                       "-Fu./examples/integration"))
     if tests:
         unit_root = fpc_unit_root()
         flags.append(f"-Fu{Path(unit_root) / 'fcl-fpcunit'}")
-        flags.extend(("-Fu./test", "-Fu./test/common", "-Fu./test/client",
-                      "-Fu./test/server", "-Fu./test/api", "-Fu./test/integration", "-Fu./examples", "-Fu./examples/client",
-                      "-Fu./examples/server", "-Fu./test/integration/server/tls",
-                      "-Fu./test/integration/server/mtls"))
+        if component == "common-test":
+            flags.extend(("-Fu./test/common", "-Fu./test/support/tls"))
+        else:
+            flags.extend(("-Fu./test", "-Fu./test/common", "-Fu./test/client",
+                          "-Fu./test/server", "-Fu./test/api", "-Fu./test/integration",
+                          "-Fu./test/support/tls", "-Fu./examples", "-Fu./examples/client",
+                          "-Fu./examples/server", "-Fu./test/integration/server/tls",
+                          "-Fu./test/integration/server/mtls"))
     flags.extend(shlex.split(os.environ.get("FPCFLAGS", "")))
     return flags
 
 
 def verify_mormot() -> None:
-    source = Path(os.environ.get("MORMOT", "third_party/mORMot2/src"))
-    if not source.is_absolute():
-        source = ROOT / source
-    repo = source if (source / ".git").exists() else source.parent
+    verify_dependency("mORMot2")
+
+
+def dependency_root(name: str) -> Path:
+    override = os.environ.get(name.upper() + "_ROOT")
+    if name == "mORMot2" and not override:
+        override = os.environ.get("MORMOT_ROOT") or os.environ.get("MORMOT")
+    path = Path(override) if override else ROOT / "third_party" / name
+    if not path.is_absolute():
+        path = ROOT / path
+    if name == "mORMot2" and path.name == "src":
+        path = path.parent
+    return path.resolve()
+
+
+def verify_dependency(name: str) -> Path:
+    url, revision = DEPENDENCIES[name]
+    repo = dependency_root(name)
+    if name == "mORMot2" and repo.name == "src":
+        repo = repo.parent
     if not (repo / ".git").exists():
-        raise SystemExit("Pinned mORMot2 is missing; run setup:deps or set MORMOT to a pinned read-only checkout")
+        raise SystemExit(f"Pinned {name} is missing; run make setup-deps (expected {revision})")
     try:
         current = subprocess.check_output(["git", "-C", str(repo), "rev-parse", "HEAD"],
                                           cwd=ROOT, text=True).strip()
+        origin = subprocess.check_output(["git", "-C", str(repo), "remote", "get-url", "origin"],
+                                         cwd=ROOT, text=True).strip()
     except (OSError, subprocess.CalledProcessError):
-        raise SystemExit(f"Cannot read mORMot2 revision at {repo}")
-    if current != MORMOT_REV:
-        raise SystemExit(f"mORMot2 revision is {current}; expected {MORMOT_REV}")
+        raise SystemExit(f"Cannot verify {name} checkout at {repo}")
+    if current != revision:
+        raise SystemExit(f"{name} revision is {current}; expected {revision}")
+    if origin.rstrip("/") != url.rstrip("/"):
+        raise SystemExit(f"{name} origin is {origin}; expected {url}")
+    status = subprocess.check_output(["git", "-C", str(repo), "status", "--porcelain",
+                                      "--untracked-files=all"], cwd=ROOT, text=True)
+    if status.strip():
+        raise SystemExit(f"{name} checkout has local changes; restore it to the pinned revision")
+    license_record = DEPENDENCY_RECORDS[name]["license_file"]
+    license_path = repo / license_record
+    if not license_path.is_file():
+        raise SystemExit(f"{name} license notice is missing: {license_path}")
+    project_notice = DEPENDENCY_RECORDS[name].get("project_notice")
+    if project_notice and not (ROOT / project_notice).is_file():
+        raise SystemExit(f"{name} project license notice is missing: {ROOT / project_notice}")
+    return repo
 
 
 def compile_file(source: Path, component: str, *, tests: bool = False) -> Path:
@@ -130,7 +206,7 @@ def compile_file(source: Path, component: str, *, tests: bool = False) -> Path:
     units, programs = output(component)
     args = [compiler(), *base_flags(component, tests=tests),
             f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))]
-    uses_tls = component in ("client", "server", "readers", "examples", "api-test", "integration-test") or component.startswith("examples-")
+    uses_tls = component in ("client", "server", "readers", "examples", "api-test", "integration-test", "openssl", "openssl-test", "tls-integration-test") or component.startswith("examples-")
     run(args, env=open_ssl_env() if uses_tls else None)
     return programs / source.stem
 
@@ -148,16 +224,69 @@ def open_ssl_env() -> dict[str, str]:
 
 
 def build(component: str) -> None:
-    facade = ("client/src/Http2.Client.Readers.pas" if component == "readers"
-              else COMPONENTS[component]["facade"])
+    facade = ("client/src/Http2.Client.Readers.pas" if component == "readers" else
+              str(Path(COMPONENTS[component]["package_dir"]) /
+                  ("http2openssl.pas" if component == "openssl" else "http2tlslib.pas"))
+              if component in ("openssl", "tlslib") else COMPONENTS[component]["facade"])
     if component == "common":
         lock_path = ROOT / "bin" / target_name() / profile() / "common" / "build.lock"
         lock_path.parent.mkdir(parents=True, exist_ok=True)
         with lock_path.open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             compile_file(ROOT / facade, component)
+    elif component in ("openssl", "tlslib"):
+        source = ROOT / facade
+        if component == "openssl":
+            verify_mormot()
+            units, programs = output("openssl")
+            mormot = dependency_root("mORMot2") / "src"
+            flags = ["-O2", "-vw", "-Mdelphi", "-dUSE_OPENSSL",
+                     f"-Fu{COMPONENTS['common']['source']}", f"-Fu{COMPONENTS['openssl']['source']}"]
+            flags.extend(f"-Fu{mormot / part}" for part in ("core", "lib", "net", "crypt"))
+            flags.extend(shlex.split(os.environ.get("FPCFLAGS", "")))
+            run([compiler(), *flags, f"-FU{units}", f"-FE{programs}",
+                 str(source.relative_to(ROOT))], env=open_ssl_env(), timeout=300)
+        else:
+            for name in ("HashLib4Pascal", "SimpleBaseLib4Pascal", "CryptoLib4Pascal", "TlsLib4Pascal"):
+                verify_dependency(name)
+            # The pinned dependency graph has a compiler cycle unless the FPC
+            # package units are seeded in the order declared by TLS-02.
+            binary = compile_provider_tlslib(source)
+        return
     else:
         compile_file(ROOT / facade, component)
+
+
+def tlslib_flags() -> list[str]:
+    roots = [dependency_root("TlsLib4Pascal") / "TlsLib" / "src",
+             dependency_root("CryptoLib4Pascal") / "CryptoLib" / "src",
+             dependency_root("HashLib4Pascal") / "HashLib" / "src",
+             dependency_root("SimpleBaseLib4Pascal") / "SimpleBaseLib" / "src"]
+    directories = {source.parent for base in roots for source in base.rglob("*.pas")}
+    includes = {source.parent for base in roots for source in base.rglob("*.inc")}
+    preferred = [roots[1] / "Math" / "EC" / "Multiplier", roots[1] / "Math" / "EC"]
+    dirs = [path for path in preferred if path.exists()]
+    dirs.extend(sorted(directories - set(dirs)))
+    includes.update(directories)
+    return [f"-Fu{path}" for path in dirs] + [f"-Fi{path}" for path in sorted(includes)]
+
+
+def compile_provider_tlslib(source: Path) -> Path:
+    units, programs = output("tlslib")
+    package_units = output("tlslib")[0] / "bootstrap"
+    package_units.mkdir(parents=True, exist_ok=True)
+    flags = ["-O2", "-vw", "-Mdelphi", *tlslib_flags(),
+             *shlex.split(os.environ.get("FPCFLAGS", ""))]
+    packages = [dependency_root("HashLib4Pascal") / "HashLib/src/Packages/FPC/HashLib4PascalPackage.pas",
+                dependency_root("SimpleBaseLib4Pascal") / "SimpleBaseLib/src/Packages/FPC/SimpleBaseLib4PascalPackage.pas",
+                dependency_root("CryptoLib4Pascal") / "CryptoLib/src/Packages/FPC/CryptoLib4PascalPackage.pas"]
+    for package in packages:
+        if not package.is_file():
+            raise SystemExit(f"Pinned TlsLib dependency package is missing: {package}")
+        run([compiler(), *flags, f"-FU{package_units}", f"-FE{programs}", str(package)], timeout=300)
+    run([compiler(), *flags, f"-Fu{COMPONENTS['common']['source']}", f"-Fu{package_units}",
+         f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))], timeout=300)
+    return programs / source.stem
 
 
 def run_tests(component: str) -> None:
@@ -326,7 +455,9 @@ def validate_all() -> None:
 
 
 def run_suite(binary: Path, needs_openssl: bool = False,
-              env_override: dict[str, str] | None = None) -> None:
+              env_override: dict[str, str] | None = None,
+              timeout: int | None = None,
+              cwd: Path = ROOT) -> None:
     env = open_ssl_env() if needs_openssl else dict(os.environ)
     if env_override:
         env.update(env_override)
@@ -335,12 +466,12 @@ def run_suite(binary: Path, needs_openssl: bool = False,
             "--format=plain", "--sparse"]
     print("+ " + shlex.join(args), flush=True)
     try:
-        timeout_seconds = int(os.environ.get("TEST_TIMEOUT", "180"))
+        timeout_seconds = timeout if timeout is not None else int(os.environ.get("TEST_TIMEOUT", "180"))
         if timeout_seconds < 1:
             raise ValueError
     except ValueError:
         raise SystemExit("TEST_TIMEOUT must be a positive number of seconds")
-    proc = subprocess.Popen(args, cwd=ROOT, env=env, text=True,
+    proc = subprocess.Popen(args, cwd=cwd, env=env, text=True,
                             stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                             start_new_session=True)
     try:
@@ -359,28 +490,39 @@ def run_suite(binary: Path, needs_openssl: bool = False,
     if proc.returncode:
         raise SystemExit(proc.returncode)
     match = re.search(r"Number of run tests:\s*(\d+)", stdout)
-    if not match or int(match.group(1)) == 0:
+    standalone = re.search(r"(?m)^PASS\s+(\d+)\s+cases?\s*$", stdout)
+    if not ((match and int(match.group(1)) > 0) or
+            (standalone and int(standalone.group(1)) > 0)):
         raise SystemExit("Test runner reported no registered tests; empty suite cannot pass")
 
 
-def setup_checkout(url: str, relpath: str, pin: str) -> None:
+def setup_checkout(url: str, relpath: str, pin: str, local: Path | None = None) -> None:
     path = ROOT / relpath
     resolved = path.resolve()
     if resolved != ROOT and ROOT not in resolved.parents:
         raise SystemExit(f"Setup target must stay inside this worktree: {relpath}")
     path.parent.mkdir(parents=True, exist_ok=True)
     if not (path / ".git").exists():
-        run(["git", "clone", url, str(path)])
+        if local and (local / ".git").exists():
+            run(["git", "clone", "--local", "--no-hardlinks", str(local), str(path)])
+        else:
+            run(["git", "clone", url, str(path)])
     current = subprocess.check_output(["git", "-C", str(path), "rev-parse", "HEAD"],
                                           cwd=ROOT, text=True).strip()
     if current != pin:
         run(["git", "-C", str(path), "fetch", "--all", "--tags"])
         run(["git", "-C", str(path), "checkout", pin])
+    run(["git", "-C", str(path), "remote", "set-url", "origin", url])
     print(f"Pinned {relpath} at {pin}")
 
 
 def setup_deps() -> None:
-    setup_checkout("https://github.com/synopse/mORMot2.git", "third_party/mORMot2", MORMOT_REV)
+    cache = os.environ.get("TLS_DEPENDENCY_CACHE_ROOT")
+    for name, (url, pin) in DEPENDENCIES.items():
+        local = Path(cache).expanduser() / name if cache else None
+        setup_checkout(url, "third_party/" + name, pin, local)
+    for name in DEPENDENCIES:
+        verify_dependency(name)
 
 
 def setup_harness() -> None:
@@ -395,10 +537,12 @@ def check(kind: str) -> None:
 
 
 def packages_check() -> None:
+    for dependency in DEPENDENCIES:
+        verify_dependency(dependency)
     run([sys.executable, "tools/packages.py", "--check"])
     check("packages")
-    packages = sorted(path for component in ("common", "client", "server", "tls/openssl", "tls/tlslib")
-                      for path in (ROOT / component).glob("*.lpk"))
+    packages = sorted(path for component in ("common", "client", "server", "openssl", "tlslib")
+                      for path in (ROOT / COMPONENTS[component]["package_dir"]).glob("*.lpk"))
     if not packages:
         raise SystemExit("No Lazarus packages are present")
     lazbuild = os.environ.get("LAZBUILD", "lazbuild")
@@ -415,27 +559,29 @@ def packages_check() -> None:
     order = {"http2common": 0, "http2openssl": 1, "http2tlslib": 2,
              "http2client": 3, "http2server": 4, "http2clientreaders": 5}
     packages.sort(key=lambda path: order.get(path.stem.casefold(), 10))
-    for package in packages:
-        stem = package.stem
-        component = PACKAGE_COMPONENT[stem]
-        if stem == "http2clientreaders":
-            component = "readers"
-        units, programs = output(f"package-{stem}")
-        common_build_units = f"-Fu{ROOT / 'bin' / target_name() / profile() / 'common' / 'units'}"
-        options = [flag for flag in base_flags(component) if flag != common_build_units]
-        if component != "common":
-            options.insert(1, f"-Fu{ROOT / 'bin' / target_name() / profile() / 'package-http2common' / 'units'}")
-        if component == "readers":
-            options.insert(2, f"-Fu{ROOT / 'bin' / target_name() / profile() / 'package-http2client' / 'units'}")
-        options.extend((f"-FU{units}", f"-FE{programs}"))
-        args = [lazbuild, "--build-all", f"--pcp={pcp}", f"--cpu={cpu}",
-                f"--os={os_name}", f"--compiler={compiler_id}"]
-        args.extend(f"--opt={flag}" for flag in options)
-        args.append(str(package.relative_to(ROOT)))
-        try:
-            run(args, env=open_ssl_env() if component != "common" else None)
-        finally:
-            run([sys.executable, "tools/packages.py"])
+    try:
+        for package in packages:
+            stem = package.stem
+            component = PACKAGE_COMPONENT[stem]
+            if stem == "http2clientreaders":
+                component = "readers"
+            if component == "tlslib":
+                build("tlslib")
+            units, programs = output(f"package-{stem}")
+            common_build_units = f"-Fu{ROOT / 'bin' / target_name() / profile() / 'common' / 'units'}"
+            options = [flag for flag in base_flags(component) if flag != common_build_units]
+            if component != "common":
+                options.insert(1, f"-Fu{ROOT / 'bin' / target_name() / profile() / 'package-http2common' / 'units'}")
+            if component == "readers":
+                options.insert(2, f"-Fu{ROOT / 'bin' / target_name() / profile() / 'package-http2client' / 'units'}")
+            options.extend((f"-FU{units}", f"-FE{programs}"))
+            args = [lazbuild, "--build-all", f"--pcp={pcp}", f"--cpu={cpu}",
+                    f"--os={os_name}", f"--compiler={compiler_id}"]
+            args.extend(f"--opt={flag}" for flag in options)
+            args.append(str(package.relative_to(ROOT)))
+            run(args, env=open_ssl_env() if component in ("client", "server", "readers", "openssl") else None)
+    finally:
+        run([sys.executable, "tools/packages.py"])
 
 def examples() -> None:
     roots = ("examples/client", "examples/server", "examples/integration")
@@ -476,10 +622,7 @@ def main() -> int:
         build(component)
     elif target in ("build:openssl", "build:tlslib"):
         provider = target.split(":", 1)[1]
-        source_dir = ROOT / COMPONENTS[provider]["source"]
-        if not source_dir.is_dir() or not any(source_dir.glob("*.pas")):
-            raise SystemExit(f"TLS provider {provider} is not available yet; TLS-04 adds its package and sources")
-        raise SystemExit(f"TLS provider {provider} build is not configured")
+        build(provider)
     elif target == "build:client":
         build("common")
         build("client")
@@ -513,6 +656,34 @@ def main() -> int:
         run_api_tests()
     elif target == "test:integration":
         run_integration_tests()
+    elif target in ("test:tls:contract", "test:tls:openssl", "test:tls:tlslib", "test:tls:integration"):
+        suite = target.removeprefix("test:tls:")
+        runners = {
+            "contract": ROOT / "test/common/Http2.Common.Tls.Contract.Run.pas",
+            "openssl": ROOT / "test/tls/openssl/Http2.Tls.OpenSSL.Tests.pas",
+            "tlslib": ROOT / "test/tls/tlslib/Http2.Tls.TlsLib.Tests.pas",
+            "integration": ROOT / "test/integration/tls/Http2.Tls.Integration.Tests.pas",
+        }
+        source = runners[suite]
+        required(source, f"bounded TLS {suite} runner (owned by TLS-03/05/06/09)")
+        owners = {"contract": "common-test", "openssl": "openssl-test", "tlslib": "tlslib-test",
+                  "integration": "tls-integration-test"}
+        if suite == "contract":
+            build("common")
+        elif suite == "openssl":
+            build("common")
+            build("openssl")
+        elif suite == "tlslib":
+            build("common")
+            build("tlslib")
+        else:
+            build("common")
+            build("openssl")
+            build("tlslib")
+        binary = compile_file(source, owners[suite], tests=True)
+        run_directory = output(owners[suite])[1]
+        run_suite(binary, suite in ("openssl", "integration"), timeout=30,
+                  cwd=run_directory)
     elif target == "validate:fast":
         validate_fast()
     elif target == "validate":
@@ -528,12 +699,12 @@ def main() -> int:
         if component not in ("common", "client", "server", "readers", "openssl", "tlslib"):
             raise SystemExit(f"Unknown clean component: {component}")
         package_outputs = {
-            "common": ("common", "package-http2common"),
+            "common": ("common", "common-test", "package-http2common"),
             "client": ("client", "readers", "package-http2client", "package-http2clientreaders"),
             "readers": ("readers", "package-http2clientreaders"),
             "server": ("server", "package-http2server"),
-            "openssl": ("openssl", "package-http2openssl"),
-            "tlslib": ("tlslib", "package-http2tlslib"),
+            "openssl": ("openssl", "openssl-test", "package-http2openssl"),
+            "tlslib": ("tlslib", "tlslib-test", "package-http2tlslib"),
         }[component]
         for output_component in package_outputs:
             shutil.rmtree(ROOT / "bin" / target_name() / profile() / output_component,

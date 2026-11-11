@@ -11,9 +11,9 @@ COMPONENTS = {
                "packages": ("http2client", "http2clientreaders")},
     "server": {"source": "server/src", "package_dir": "server", "facade": "server/src/Http2.Server.pas",
                "packages": ("http2server",)},
-    "openssl": {"source": "tls/openssl/src", "package_dir": "tls/openssl", "facade": None,
+    "openssl": {"source": "tls/openssl/src", "package_dir": "tls/openssl", "facade": "tls/openssl/src/Http2.OpenSSL.pas",
                 "packages": ("http2openssl",)},
-    "tlslib": {"source": "tls/tlslib/src", "package_dir": "tls/tlslib", "facade": None,
+    "tlslib": {"source": "tls/tlslib/src", "package_dir": "tls/tlslib", "facade": "tls/tlslib/src/Http2.TlsLib.pas",
                "packages": ("http2tlslib",)},
 }
 
