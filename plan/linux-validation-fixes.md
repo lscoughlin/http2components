@@ -425,3 +425,18 @@ configured timeout and listener scheduling, with an explicit finite margin.
 The run preserves raw results and does not reduce existing handshake checks.
 The owner prepares and checks the tool locally. Root reviews it and runs it
 alone on the Linux validation host after the functional acceptance batch.
+
+## LV-25: HTTP/1 slow reader still holds the only handler on Linux
+
+The full Linux run on candidate 609ab70 completed 716 cases with zero errors
+and one failure. TestAClientThatNeverReadsDoesNotPinTheOnlyHandlerThread still
+received HTTP 503 for the second request after 6.277 seconds. The earlier
+output-progress repair did not resolve this case. The server owner preserves
+this result and traces the stalled write, timer callback, socket queue, and
+handler completion on Linux. A narrow repair must release the stalled handler
+within the configured write timeout and let the original single second request
+receive HTTP 200. Retries, a weaker expected status, or a larger test timeout
+do not satisfy this requirement. A focused native Linux check precedes another
+complete server run; the full run remains required to detect shared-state
+failures. Affected general integration and server peer checks run again after
+a production repair. Performance waits for this failure to be resolved.
