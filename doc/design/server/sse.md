@@ -20,7 +20,7 @@ related_docs:
 # Server-sent events
 
 A handler turns a response into an event stream with `StartSse`
-(`src/server/Http2.Server.Sse.pas`). The handler returns at once. Any thread then sends
+(`server/src/Http2.Server.Sse.pas`). The handler returns at once. Any thread then sends
 events to the `ISseStream`. An event stream holds no handler thread and no
 thread of its own.
 
@@ -48,7 +48,7 @@ is one write to the channel, so two events never interleave.
 
 ## The encoder
 
-The encoder (`src/server/Http2.Server.Sse.Encoder.pas`) holds no socket and no thread.
+The encoder (`server/src/Http2.Server.Sse.Encoder.pas`) holds no socket and no thread.
 The format has no escape for a line break, so the encoder splits or rejects.
 
 | Value | Rule |

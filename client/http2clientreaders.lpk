@@ -11,9 +11,9 @@
     <CompilerOptions>
       <Version Value="11" />
       <SearchPaths>
-        <IncludeFiles Value="src/common;src/client;src/server" />
-        <UnitOutputDirectory Value="bin/$(TargetCPU)-$(TargetOS)/default/package-http2clientreaders/units" />
-        <OtherUnitFiles Value="src/common;src/client;third_party/mORMot2/src/core;third_party/mORMot2/src/lib;third_party/mORMot2/src/net;third_party/mORMot2/src/crypt" />
+        <IncludeFiles Value="../common/src;src" />
+        <UnitOutputDirectory Value="../bin/$(TargetCPU)-$(TargetOS)/default/package-http2clientreaders/units" />
+        <OtherUnitFiles Value="../common/src;src;../third_party/mORMot2/src/core;../third_party/mORMot2/src/lib" />
       </SearchPaths>
       <Parsing>
         <SyntaxOptions>
@@ -24,7 +24,7 @@
     </CompilerOptions>
     <Files Count="1">
       <Item1>
-        <Filename Value="src/client/Http2.Client.Readers.pas" />
+        <Filename Value="src/Http2.Client.Readers.pas" />
         <UnitName Value="Http2.Client.Readers" />
       </Item1>
     </Files>

@@ -26,7 +26,7 @@ line and the test harness rely on. The facts were verified on `fpc 3.2.4`
 ## Compiler modes
 
 Every unit and program opens with the same directives
-(`src/server/Http2.Server.pas`, `test/server/Http2.Server.TestRunner.pas`,
+(`server/src/Http2.Server.pas`, `test/server/Http2.Server.TestRunner.pas`,
 `test/server/Http2.Server.RunTests.pas`):
 
 ```pascal
@@ -83,7 +83,7 @@ compiler version in the merged tree is Free Pascal 3.2.4.
 ## The build line
 
 The Makefile and Taskfile call `tools/build.py`. The driver compiles library
-units from `src/common` and `src/server`; it stores compiler outputs and
+units from `common/src` and `server/src`; it stores compiler outputs and
 programs in `bin/<cpu>-<os>/<profile>/`. The server unit test command is
 `task test:server`. It compiles and runs the server test runner with the
 common and server source paths. The full command contract is in the root
@@ -91,8 +91,8 @@ README.
 
 ## The facade unit
 
-`src/server/Http2.Server.pas` is the public facade of the library
-(`src/server/Http2.Server.pas`). The unit declares type aliases for the public types of the library and the
+`server/src/Http2.Server.pas` is the public facade of the library
+(`server/src/Http2.Server.pas`). The unit declares type aliases for the public types of the library and the
 helper that turns a factory into a server. The build line and the test runner
 link this unit. The units of the library are recorded in `doc/design/server/`.
 

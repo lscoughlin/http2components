@@ -351,8 +351,8 @@ end;
 procedure TWsRequestTest.TestUnitDependsOnRtlOnly;
 const
   Paths: array[0..1] of string = (
-    'src/client/Http2.Client.WebSocket.pas',
-    'src/client/Http2.Client.WebSocket.Protocol.pas');
+    'client/src/Http2.Client.WebSocket.pas',
+    'client/src/Http2.Client.WebSocket.Protocol.pas');
 var
   L: TStringList;
   I, J: Integer;

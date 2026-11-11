@@ -9,7 +9,7 @@ notes:
 }
 /// http2components client example adapter: tracing over IHttpClientObserver.
 // - this unit is NOT part of the library.  It shows how a consumer turns the
-//   request observer seam (src/client/Http2.Client.RequestObserver.pas) into spans for a
+//   request observer seam (client/src/Http2.Client.RequestObserver.pas) into spans for a
 //   tracer of its own (OpenTelemetry, say).  The tracer here is a small
 //   in-memory stand-in: ids come from counters, spans are kept in a list, and
 //   nothing is exported.

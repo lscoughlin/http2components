@@ -30,13 +30,13 @@ invariants:
 
 A request that the IO side completes does not run on an IO thread. The IO side
 offers the stream to a queue, and a handler thread takes the stream from the
-queue. The unit `src/server/Http2.Server.Admission.pas` holds the queue and the pool.
-The unit `src/server/Http2.Server.StreamAdapters.pas` holds the request and response
+queue. The unit `server/src/Http2.Server.Admission.pas` holds the queue and the pool.
+The unit `server/src/Http2.Server.StreamAdapters.pas` holds the request and response
 adapters (`TServerStreamRequest` at line 37 and `TServerStreamResponse` at line
 59), which the pool builds for each dispatch.
 
 An HTTP/1.1 request enters the same queue as a job. A job is an `IHandlerJob`
-(`src/server/Http2.Server.HandlerJob.pas`): the pool runs it with `Run`, answers a refusal
+(`server/src/Http2.Server.HandlerJob.pas`): the pool runs it with `Run`, answers a refusal
 with `Refuse` (queue full, wait limit passed, pool stopped) and cancels it at
 `Stop` with `Cancel`. A job counts against the depth and the wait limit like a
 stream, and the refusal is a 503 with `Retry-After: 1` followed by a close. The
@@ -49,20 +49,20 @@ messages and the credit rule (as described in [websocket](websocket.md)).
 
 ## The bounded queue
 
-`TRequestQueue` (`src/server/Http2.Server.Admission.pas`) is a FIFO of entries. An
+`TRequestQueue` (`server/src/Http2.Server.Admission.pas`) is a FIFO of entries. An
 entry holds one `TServerStream` and the value of the monotonic clock at the
-enqueue instant (`src/server/Http2.Server.Admission.pas`). The queue takes its depth
-and its wait limit from `TQueueOptions` (`src/server/Http2.Server.Config.pas`).
+enqueue instant (`server/src/Http2.Server.Admission.pas`). The queue takes its depth
+and its wait limit from `TQueueOptions` (`server/src/Http2.Server.Config.pas`).
 
-`TryEnqueue` answers `asQueued` or `asRefused` (`src/server/Http2.Server.Admission.pas`).
+`TryEnqueue` answers `asQueued` or `asRefused` (`server/src/Http2.Server.Admission.pas`).
 A refused answer comes from two states: the queue no longer accepts work, or the
-queue holds its full depth (`src/server/Http2.Server.Admission.pas`). The count test
+queue holds its full depth (`server/src/Http2.Server.Admission.pas`). The count test
 is the whole bound, so the queue never holds more entries than its depth.
 
 The queue guards its entry list with a `TCriticalSection` and an `RTLEvent`
-(`src/server/Http2.Server.Admission.pas`). FPC 3.2.4 has no `TThreadedQueue` and no
+(`server/src/Http2.Server.Admission.pas`). FPC 3.2.4 has no `TThreadedQueue` and no
 `TMonitor`, and a `TEvent` fails on macOS. A consumer that finds an empty queue
-parks on the event for a short bound (`src/server/Http2.Server.Admission.pas`), so
+parks on the event for a short bound (`server/src/Http2.Server.Admission.pas`), so
 the wait limit and the stop path take effect quickly.
 
 ## Occupancy
@@ -78,26 +78,26 @@ bounds the work that runs at one time. A request beyond the free handlers and
 the queue depth is refused, so the memory and the handler count stay bounded
 under a flood.
 
-`THandlerPool` (`src/server/Http2.Server.Admission.pas`) creates `N` worker threads,
+`THandlerPool` (`server/src/Http2.Server.Admission.pas`) creates `N` worker threads,
 where `N` is `THttp2ServerFactory.HandlerThreads`
-(`src/server/Http2.Server.Config.pas`). Each worker takes one entry and calls
+(`server/src/Http2.Server.Config.pas`). Each worker takes one entry and calls
 `IHttp2Handler.Handle` on it. A worker takes no second entry until the first
 handler returns.
 
 ## The queue wait limit
 
 Each entry records the clock value of its enqueue. At dequeue the queue compares
-that value with the current clock value (`src/server/Http2.Server.Admission.pas`).
+that value with the current clock value (`server/src/Http2.Server.Admission.pas`).
 An entry that waited longer than `MaxWaitMs` is a timeout, not a dispatch. The
 caller answers the request as a refusal, so a request that waited too long
 never runs on a handler.
 
 ## The refusal modes
 
-`TQueueRefusalMode` (`src/server/Http2.Server.Config.pas`) holds the two refusal
+`TQueueRefusalMode` (`server/src/Http2.Server.Config.pas`) holds the two refusal
 answers. `rmRefuseStream` resets the stream with `REFUSED_STREAM`.
 `rmHttp503` holds an HTTP 503 response header block for the IO side
-(`src/server/Http2.Server.Admission.pas`). One mode serves both the full-queue
+(`server/src/Http2.Server.Admission.pas`). One mode serves both the full-queue
 refusal and the timed-out refusal.
 
 The handler side never encodes a header block. The HPACK encoder is connection
@@ -109,7 +109,7 @@ encodes the block later. This rule follows the seam note in
 
 A peer can reset a queued stream before a handler takes it. The IO side calls
 `THandlerPool.RemoveStream` with the stream id. The queue removes the matching
-entry at once (`src/server/Http2.Server.Admission.pas`), and the dropped total
+entry at once (`server/src/Http2.Server.Admission.pas`), and the dropped total
 increases. A worker that takes an entry whose stream is already cancelled
 discards the entry without a handler call. In both paths the handler of the
 cancelled stream never runs.
@@ -118,7 +118,7 @@ cancelled stream never runs.
 
 A handler that raises `EStreamCancelled` ends quietly. The cancellation is the
 expected end of a stream that the peer or the connection stopped. Any other
-exception reaches `OnHandlerError` (`src/server/Http2.Server.Admission.pas`). The
+exception reaches `OnHandlerError` (`server/src/Http2.Server.Admission.pas`). The
 hook receives the stream and a flag. The flag is `True` when the handler had
 not sent the response headers, and `False` after a header send. The core later
 answers with a 500 before the headers and with `RST_STREAM` after them. The
@@ -128,7 +128,7 @@ pool records the error and does not build the 500 or the reset itself.
 
 `THandlerPool` exposes five read-only counters: the busy handlers, the queue
 length, the refused total, the timed-out total and the dropped-before-dispatch
-total (`src/server/Http2.Server.Admission.pas`). A test reads them to check the
+total (`server/src/Http2.Server.Admission.pas`). A test reads them to check the
 bound under load.
 
 `THandlerPool.Stop` runs in four steps. The pool stops acceptance, so a later

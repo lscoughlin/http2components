@@ -12,7 +12,7 @@ published release.
 | `Http2.Client` | Client factory, request, response, and client API. |
 | `Http2.Server` | Server factory, handlers, requests, and responses. |
 
-Production units are in `src/common`, `src/client`, and `src/server`. Client
+Production units are in `common/src`, `client/src`, and `server/src`. Client
 and server feature units use their matching `Http2.Client.*` and
 `Http2.Server.*` namespaces. The client and server use shared protocol units
 from `Http2.Common.*`. The old `Http2` client umbrella is removed. Client

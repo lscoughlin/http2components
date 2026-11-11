@@ -36,7 +36,7 @@ server that the caller builds without `WithAccessLogWriter` writes no log.
 
 ## The writer
 
-`IAccessLogWriter` (`src/server/Http2.Server.AccessLog.pas`) has one method,
+`IAccessLogWriter` (`server/src/Http2.Server.AccessLog.pas`) has one method,
 `Write(const ARecord: TAccessLogRecord)`. A caller replaces the writer at
 start-up with `WithAccessLogWriter` on the factory. A writer can send the record
 to a file, to a queue or to a log service.
@@ -88,7 +88,7 @@ an absent header, for another scheme and for a malformed credential.
 ## The moment of the record
 
 The record of a served request is written when the handler returns, on the handler-pool thread. The
-handler decorator `TAccessLoggingHandler` (`src/server/Http2.Server.AccessLog.Handler.pas`)
+handler decorator `TAccessLoggingHandler` (`server/src/Http2.Server.AccessLog.Handler.pas`)
 wraps the handler of the factory and passes the request and the response through
 unchanged.
 

@@ -33,10 +33,10 @@ invariants:
 # The connection core
 
 Two units hold one connection. A class cannot span two units, so the core is
-a base class and a derived class. The unit `src/server/Http2.Server.Connection.Core.pas`
+a base class and a derived class. The unit `server/src/Http2.Server.Connection.Core.pas`
 holds the base class `TConnectionCoreBase`: the fields, the locks, the output
 queue, the write wake-up, the stream table and the connection-level frames
-(`GOAWAY`, `RST_STREAM`). The unit `src/server/Http2.Server.Connection.pas` holds the
+(`GOAWAY`, `RST_STREAM`). The unit `server/src/Http2.Server.Connection.pas` holds the
 class `TServerConnectionCore`, which derives from the base and adds `Feed` and
 the frame handlers. That unit also declares aliases for the public types of the
 base unit, so a caller that uses `Http2.Server.Connection` sees the names it saw
@@ -48,11 +48,11 @@ test drives it without a network.
 
 The IO side calls `Feed` with the bytes a read produced and calls `TakeOutput`
 for the bytes to write. The class `THttp2AsyncConnection`
-(`src/server/Http2.Server.Async.pas`) holds this bridge.
+(`server/src/Http2.Server.Async.pas`) holds this bridge.
 
 ## The input path
 
-`Feed` (`src/server/Http2.Server.Connection.pas`) adds the new bytes to the input
+`Feed` (`server/src/Http2.Server.Connection.pas`) adds the new bytes to the input
 buffer and then walks the frames.
 
 1. The client connection preface comes first. The preface may arrive in
@@ -60,13 +60,13 @@ buffer and then walks the frames.
    the buffer holds `ClientPrefaceSize` bytes. It then calls
    `CheckClientPreface` (`:113`). A mismatch sends GOAWAY with
    `PROTOCOL_ERROR`. The server SETTINGS frame is the first frame the server
-   sends (`src/server/Http2.Server.Connection.pas`).
+   sends (`server/src/Http2.Server.Connection.pas`).
 2. A frame header is nine bytes. A partial frame stays in the input buffer
    and waits for the next call.
 3. A frame whose length is above `SETTINGS_MAX_FRAME_SIZE` is a connection
    error of type `FRAME_SIZE_ERROR`, and the core removes no payload for it
-   (`src/server/Http2.Server.Connection.pas`; RFC 9113 section 4.2).
-4. `ProcessFrame` (`src/server/Http2.Server.Connection.pas`) dispatches on the
+   (`server/src/Http2.Server.Connection.pas`; RFC 9113 section 4.2).
+4. `ProcessFrame` (`server/src/Http2.Server.Connection.pas`) dispatches on the
    frame type.
 
 The input buffer never grows without a bound. `TConnectionCoreOptions`
@@ -87,7 +87,7 @@ The core holds each rule in one place.
 | `RST_STREAM` | The payload is four bytes or the frame is `FRAME_SIZE_ERROR`. A frame on an idle stream is `PROTOCOL_ERROR`. | `ProcessRstStream` (`:519`) |
 | `SETTINGS` | An acknowledged frame with a payload is `FRAME_SIZE_ERROR`. A frame is a delta onto the settings of the peer. | `ProcessSettings` |
 | `PING` | Stream zero is required. The payload is eight bytes. An acknowledged frame adds no frame. | `ProcessPing` (`:551`) |
-| `GOAWAY` | Stream zero is required. The open streams finish, the core answers with its own GOAWAY and takes no new stream. When the count of accepted streams reaches `MaxStreams`, the core retires the connection: it serves that stream and sends GOAWAY with `NO_ERROR` and the last accepted stream id; later header blocks take the refusal path (`src/server/Http2.Server.Connection.pas`). | `ProcessGoAway` |
+| `GOAWAY` | Stream zero is required. The open streams finish, the core answers with its own GOAWAY and takes no new stream. When the count of accepted streams reaches `MaxStreams`, the core retires the connection: it serves that stream and sends GOAWAY with `NO_ERROR` and the last accepted stream id; later header blocks take the refusal path (`server/src/Http2.Server.Connection.pas`). | `ProcessGoAway` |
 | `WINDOW_UPDATE` | A frame on an idle stream is `PROTOCOL_ERROR`. A frame on a closed stream carries no action. A stream window above the maximum is a stream error of type `FLOW_CONTROL_ERROR`. | `ProcessWindowUpdate` (`:605`) |
 | `PUSH_PROMISE` | A server never receives this frame. It is `PROTOCOL_ERROR` (RFC 9113 section 8.2). | `ProcessFrame` |
 
@@ -98,9 +98,9 @@ exception in another thread.
 
 ## The stream state machine
 
-A stream is a `TServerStream` (`src/server/Http2.Server.Stream.pas`). Its state is
+A stream is a `TServerStream` (`server/src/Http2.Server.Stream.pas`). Its state is
 one of `ssIdle`, `ssOpen`, `ssHalfClosedRemote`, `ssHalfClosedLocal`,
-`ssClosed`, `ssResetting` (`TStreamState` in `src/server/Http2.Server.Stream.pas`). The core
+`ssClosed`, `ssResetting` (`TStreamState` in `server/src/Http2.Server.Stream.pas`). The core
 moves the state and the accessor `State` reads the flags.
 
 - `NewStream` (`:740`) creates the stream in `ssOpen`, adds it to `FStreams`
@@ -116,7 +116,7 @@ moves the state and the accessor `State` reads the flags.
   until its last reference is released.
 
 `TServerStream` keeps its own reference count. `AddRef` and `ReleaseRef`
-(`src/server/Http2.Server.Stream.pas`) guard the object. Three holders exist: the
+(`server/src/Http2.Server.Stream.pas`) guard the object. Three holders exist: the
 core, the admission queue and the running handler. The reference count keeps
 a reset that arrives during a handler run from freeing the stream under the
 handler.
@@ -147,7 +147,7 @@ closes the socket at once, and the queued octets are dropped (`Aborted`).
 `MaxOutboundControlFrames` bounds the queued `PING`, `SETTINGS` and
 `RST_STREAM` frames, which are the answers a peer forces without a bound
 (RFC 9113 section 10.5). The core counts each queued frame in
-`TOutboundBudget` (`src/server/Http2.Server.OutboundBudget.pas`) and aborts past a
+`TOutboundBudget` (`server/src/Http2.Server.OutboundBudget.pas`) and aborts past a
 cap with a GOAWAY of `ENHANCE_YOUR_CALM`, as with the octet cap. A limit
 of 0 turns that cap off.
 
@@ -181,11 +181,11 @@ connection, because a frame with a hole cannot continue.
 **The source of the stream timeouts.** The factory sets both deadlines in
 `ServerLimits` (`StreamReadTimeoutMs` and `StreamWriteTimeoutMs`, each 30000 ms
 by default). `BuildConnectionCoreOptions`
-(`src/server/Http2.Server.Async.Options.pas`) maps them to
-`TConnectionCoreOptions` (`src/server/Http2.Server.Connection.Core.pas`), and
-`NewStream` (`src/server/Http2.Server.Connection.Core.pas`) sets them on each
+(`server/src/Http2.Server.Async.Options.pas`) maps them to
+`TConnectionCoreOptions` (`server/src/Http2.Server.Connection.Core.pas`), and
+`NewStream` (`server/src/Http2.Server.Connection.Core.pas`) sets them on each
 new stream. A zero option is unset, so the stream keeps its own default. A bare
-`TServerStream` keeps the stream constants of `src/server/Http2.Server.Stream.pas`,
+`TServerStream` keeps the stream constants of `server/src/Http2.Server.Stream.pas`,
 which agree with the factory defaults; the unit tests guard that agreement.
 
 ## The refusal and reset rules
@@ -199,7 +199,7 @@ core then decodes the block and drops the fields. The stream id counts as used
 for the ordering rule of RFC 9113 section 5.1.1 from the HEADERS frame on, so a
 refused id cannot be opened again. A stream that depends on itself is closed and
 frees its slot. The cap is `MaxStreams` of `TConnectionCoreOptions`
-(`src/server/Http2.Server.Connection.Core.pas`), set from `MaxStreamsPerConnection`;
+(`server/src/Http2.Server.Connection.Core.pas`), set from `MaxStreamsPerConnection`;
 0 turns it off. The counter counts every accepted stream over the life of the
 connection, and a refused stream never reaches it. The cap retire sends one
 GOAWAY with the real last stream id, while the age retire warns first (see
@@ -222,7 +222,7 @@ and checks the declared content length. The request head stays as it was.
 
 A complete request header block passes `ValidateRequestBlock` (`:372`). The
 function calls `ValidateRequestHeaders`
-(`src/server/Http2.Server.RequestValidation.pas`) and reads a verdict.
+(`server/src/Http2.Server.RequestValidation.pas`) and reads a verdict.
 
 The verdict holds a validity flag and a declared content length. An invalid
 block sends `RST_STREAM` with `PROTOCOL_ERROR`, cancels the stream and closes
@@ -244,7 +244,7 @@ is a stream error with `PROTOCOL_ERROR` (RFC 9113 section 8.5). A `CONNECT` with
 ## The HPACK state
 
 One connection owns one `THpackConnection`
-(`src/server/Http2.Server.HpackConnection.pas`). It holds one encoder and one
+(`server/src/Http2.Server.HpackConnection.pas`). It holds one encoder and one
 decoder, and both live for the connection, because the dynamic table of the
 peer depends on every block that was sent and received.
 
@@ -262,8 +262,8 @@ document [seam](seam.md) states that rule.
 ## Flow control and output
 
 `TServerConnectionCore` owns two `TFlowControl` objects
-(`src/common/Http2.Common.FlowControl.pas`) and one `TOutputDrain`
-(`src/server/Http2.Server.Output.pas`). The two objects hold the two directions apart:
+(`common/src/Http2.Common.FlowControl.pas`) and one `TOutputDrain`
+(`server/src/Http2.Server.Output.pas`). The two objects hold the two directions apart:
 
 | Object | Windows | Spent by | Refilled by |
 | --- | --- | --- | --- |
@@ -313,7 +313,7 @@ output of one connection makes no progress (see
 
 The check differs from the stream write timeout. The stream write timeout
 bounds one blocked write call of one handler (`TServerStream.Write` in
-`src/server/Http2.Server.Stream.pas`). The connection write timeout bounds the whole
+`server/src/Http2.Server.Stream.pas`). The connection write timeout bounds the whole
 connection: when the queued output of an HTTP/2 connection makes no progress
 for the period, the sweep closes the connection and drops the queued octets.
 `OnClose` then cancels the streams, as it does for every lost connection.
@@ -328,17 +328,17 @@ reads trips it, because reads are not write progress (see
 ## The connection events
 
 The core reports each state change through the interface `IConnectionEvents`
-(`src/server/Http2.Server.Connection.Core.pas`): a stream that opens, a stream that is
+(`server/src/Http2.Server.Connection.Core.pas`): a stream that opens, a stream that is
 refused, a stream that resets, a stream that completes, a connection that
 closes and a bucket that trips. The class `THttp2ConnectionEvents`
-(`src/server/Http2.Server.Async.Events.pas`) turns each call into an observer event. The
+(`server/src/Http2.Server.Async.Events.pas`) turns each call into an observer event. The
 document [public-api](public-api.md) holds the event list.
 
 ## Detached streams
 
 A stream with a sink delivers its DATA payload to the sink on the IO thread, under
 the connection lock, and keeps no inbound buffer (`TServerStream.DeliverData`,
-`src/server/Http2.Server.Stream.pas`). A reset, a connection error and the loss of the
+`server/src/Http2.Server.Stream.pas`). A reset, a connection error and the loss of the
 socket call `Cancel` on the stream, and `Cancel` tells the sink once. The core
 raises the loss of the socket through `ConnectionLost`, which the async
 connection calls from `OnClose` and the destructor of the core calls again as a
@@ -354,7 +354,7 @@ of its own cannot destroy either object while the pool still uses it
 
 The core holds no socket, no thread and no clock of its own. A test builds a
 core with `TConnectionCoreOptions`, feeds bytes and reads frames. The class
-`TManualMonotonicClock` (`src/server/Http2.Server.Limits.pas`) supplies the time, so
+`TManualMonotonicClock` (`server/src/Http2.Server.Limits.pas`) supplies the time, so
 a limit test controls the bucket state. The test unit
 `test/server/Http2.Server.Connection.Test.pas` and
 `test/server/Http2.Server.Connection.Flow.Test.pas` drive the core this way.

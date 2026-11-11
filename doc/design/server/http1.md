@@ -44,7 +44,7 @@ handler serves both protocols. The fallback is on by default. The factory method
 | Clear text | any other first octets | HTTP/1.1 when the fallback is on; otherwise the connection closes |
 
 The choice is made once for each connection. The function
-`SelectCleartextProtocol` (`src/server/Http2.Server.Http1.Select.pas`) decides the
+`SelectCleartextProtocol` (`server/src/Http2.Server.Http1.Select.pas`) decides the
 clear-text case from the octets alone. A request line `PRI * HTTP/2.0` without the
 rest of the preface is HTTP/1.1, and the guard answers it with status 505.
 
@@ -162,13 +162,13 @@ framing refuses them. The refusal is safe, since no request is smuggled.
 
 ## The request cap
 
-`TH1CoreOptions.MaxRequests` (`src/server/Http2.Server.Http1.Core.pas`) bounds the
+`TH1CoreOptions.MaxRequests` (`server/src/Http2.Server.Http1.Core.pas`) bounds the
 requests of one connection. `BuildH1CoreOptions` sets it from
-`MaxStreamsPerConnection` (`src/server/Http2.Server.Async.Options.pas`), so the
+`MaxStreamsPerConnection` (`server/src/Http2.Server.Async.Options.pas`), so the
 same factory setting serves both protocols. A value of 0 turns the cap off.
 
 The core counts every admitted request head
-(`src/server/Http2.Server.Http1.Core.pas`). The exchange that reaches the cap is
+(`server/src/Http2.Server.Http1.Core.pas`). The exchange that reaches the cap is
 served, and its response carries `Connection: close`, as in a drain. The retire
 fires once for the connection, and the server raises `seConnectionRetired` with
 the stream-cap detail (as described in [public-api](public-api.md)). A refused head never
@@ -242,7 +242,7 @@ finishes at once.
 A handler write that sees no progress for the connection write timeout
 aborts the connection, so a peer that never reads cannot hold a handler thread
 for ever. `BuildH1CoreOptions` sets the bound from
-`ServerLimits.WriteTimeoutMs` (`src/server/Http2.Server.Async.Options.pas`), and a
+`ServerLimits.WriteTimeoutMs` (`server/src/Http2.Server.Async.Options.pas`), and a
 zero turns the check off. The once-per-second sweep judges the connection with
 the idle rule as well, fed with the write timeout (see
 [io-pool](io-pool.md)).

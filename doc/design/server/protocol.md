@@ -48,7 +48,7 @@ The server adds four classes to the client set:
 `EStreamCancelled` and `EStreamReset` descend from `EHttpStreamError`, so a
 catch of the stream error class catches both. A caller that requires the
 stream identifier reads the `StreamId` property of the base class
-(`src/common/Http2.Common.Errors.pas`).
+(`common/src/Http2.Common.Errors.pas`).
 
 ## Frames
 
@@ -57,7 +57,7 @@ stream identifier reads the `StreamId` property of the base class
 
 The unit carries payload builders, payload parsers, and stream operations.
 The `ReadFrame` operation enforces the received-frame limit
-(`src/common/Http2.Common.Frames.pas`): a frame header that states a length above
+(`common/src/Http2.Common.Frames.pas`): a frame header that states a length above
 the limit raises `EHttpProtocolError` with `ecFrameSizeError` before the
 server reads the payload. This check is what stops a peer from asking the
 server to allocate an unbounded buffer.
@@ -108,7 +108,7 @@ field of 32 octets, plus the name length, plus the value length. A large list
 is a denial-of-service vector, so the decoder stops as soon as the running
 total passes the cap. `THpackCodec.MaxHeaderListSize` holds the cap, and a
 zero value removes it. The check runs inside the append step
-(`src/common/Http2.Common.Hpack.pas`), so the decoder raises
+(`common/src/Http2.Common.Hpack.pas`), so the decoder raises
 `EHttpProtocolError` with `ecEnhanceYourCalm` part way through a hostile
 block instead of building the full list first.
 
@@ -137,7 +137,7 @@ size, a consumed count and the two directions. `TFlowControl` holds one
 connection window and one window per open stream.
 
 A window never exceeds 2^31-1 octets. The constant `MaxWindowSize` holds that
-value (`src/common/Http2.Common.FlowControl.pas`), and both `ApplyUpdate` and
+value (`common/src/Http2.Common.FlowControl.pas`), and both `ApplyUpdate` and
 `ApplyInitialWindowDelta` checks the new size against this limit and reports
 a flow-control error when the size is too large.
 

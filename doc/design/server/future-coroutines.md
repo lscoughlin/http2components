@@ -44,7 +44,7 @@ document records the research.
 ## The interface that keeps the option open
 
 Every wait of a stream goes through `IStreamWaiter`
-(`src/server/Http2.Server.Seam.pas`). The interface has four members.
+(`server/src/Http2.Server.Seam.pas`). The interface has four members.
 
 ```pascal
 IStreamWaiter = interface
@@ -55,7 +55,7 @@ IStreamWaiter = interface
 end;
 ```
 
-`TBlockingWaiter` (`src/server/Http2.Server.Waiter.pas`) implements the interface with
+`TBlockingWaiter` (`server/src/Http2.Server.Waiter.pas`) implements the interface with
 an `RTLEvent`. A coroutine scheduler implements the same interface with a
 resume of another coroutine. The surface is small on purpose: the waiter is
 the only place where a stream sleeps, so it is the only place a coroutine

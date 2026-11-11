@@ -12,11 +12,13 @@ import signal
 import subprocess
 import sys
 import tempfile
+import fcntl
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 from tools.check.repository import strip_pascal  # noqa: E402
+from tools.components import COMPONENTS, PACKAGE_COMPONENT  # noqa: E402
 
 MORMOT_REV = "b2b195da1e0580058672a88620ef71bb47283eb1"
 HARNESS_REV = "0bc075cc21e5a247dfd222e005d1e7e5679d2bff"
@@ -82,7 +84,11 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
     role = component.removesuffix("-test")
     if role.startswith("examples-"):
         role = "examples"
-    flags = ["-O2", "-vw", "-Mdelphi", "-Fu./src/common", "-Fu./src/client", "-Fu./src/server"]
+    flags = ["-O2", "-vw", "-Mdelphi", f"-Fu{COMPONENTS['common']['source']}"]
+    if role in ("client", "readers", "examples", "api", "integration"):
+        flags.append(f"-Fu{COMPONENTS['client']['source']}")
+    if role in ("server", "examples", "api", "integration"):
+        flags.append(f"-Fu{COMPONENTS['server']['source']}")
     if role in ("client", "server", "readers", "examples", "api", "integration"):
         verify_mormot()
         mormot = Path(os.environ.get("MORMOT", "third_party/mORMot2/src"))
@@ -105,6 +111,8 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
 
 def verify_mormot() -> None:
     source = Path(os.environ.get("MORMOT", "third_party/mORMot2/src"))
+    if not source.is_absolute():
+        source = ROOT / source
     repo = source if (source / ".git").exists() else source.parent
     if not (repo / ".git").exists():
         raise SystemExit("Pinned mORMot2 is missing; run setup:deps or set MORMOT to a pinned read-only checkout")
@@ -140,13 +148,16 @@ def open_ssl_env() -> dict[str, str]:
 
 
 def build(component: str) -> None:
-    facade = {
-        "common": "src/common/Http2.Common.pas",
-        "client": "src/client/Http2.Client.pas",
-        "server": "src/server/Http2.Server.pas",
-        "readers": "src/client/Http2.Client.Readers.pas",
-    }[component]
-    compile_file(ROOT / facade, component)
+    facade = ("client/src/Http2.Client.Readers.pas" if component == "readers"
+              else COMPONENTS[component]["facade"])
+    if component == "common":
+        lock_path = ROOT / "bin" / target_name() / profile() / "common" / "build.lock"
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with lock_path.open("w") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            compile_file(ROOT / facade, component)
+    else:
+        compile_file(ROOT / facade, component)
 
 
 def run_tests(component: str) -> None:
@@ -386,7 +397,8 @@ def check(kind: str) -> None:
 def packages_check() -> None:
     run([sys.executable, "tools/packages.py", "--check"])
     check("packages")
-    packages = sorted(ROOT.glob("*.lpk"))
+    packages = sorted(path for component in ("common", "client", "server", "tls/openssl", "tls/tlslib")
+                      for path in (ROOT / component).glob("*.lpk"))
     if not packages:
         raise SystemExit("No Lazarus packages are present")
     lazbuild = os.environ.get("LAZBUILD", "lazbuild")
@@ -394,21 +406,20 @@ def packages_check() -> None:
         raise SystemExit("lazbuild is required to build the package files")
     cpu = subprocess.check_output([compiler(), "-iTP"], text=True).strip()
     os_name = subprocess.check_output([compiler(), "-iTO"], text=True).strip()
-    compiler_ids = {"aarch64": "ppca64", "x86_64": "ppcx64", "i386": "ppc386",
-                    "arm": "ppcarm"}
+    compiler_ids = {"aarch64": "ppca64", "x86_64": "ppcx64", "i386": "ppc386", "arm": "ppcarm"}
     compiler_id = compiler_ids.get(cpu.casefold())
     if not compiler_id:
         raise SystemExit(f"No Lazarus compiler ID is configured for CPU {cpu}")
     pcp = ROOT / "bin" / target_name() / profile() / "lazarus-config"
     pcp.mkdir(parents=True, exist_ok=True)
-    order = {"http2common": 0, "http2client": 1, "http2server": 2,
-             "http2clientreaders": 3}
-    packages.sort(key=lambda p: order.get(p.stem.casefold(), 10))
+    order = {"http2common": 0, "http2openssl": 1, "http2tlslib": 2,
+             "http2client": 3, "http2server": 4, "http2clientreaders": 5}
+    packages.sort(key=lambda path: order.get(path.stem.casefold(), 10))
     for package in packages:
         stem = package.stem
-        component = ("common" if "common" in stem else
-                     "server" if "server" in stem else
-                     "readers" if "readers" in stem else "client")
+        component = PACKAGE_COMPONENT[stem]
+        if stem == "http2clientreaders":
+            component = "readers"
         units, programs = output(f"package-{stem}")
         common_build_units = f"-Fu{ROOT / 'bin' / target_name() / profile() / 'common' / 'units'}"
         options = [flag for flag in base_flags(component) if flag != common_build_units]
@@ -424,10 +435,7 @@ def packages_check() -> None:
         try:
             run(args, env=open_ssl_env() if component != "common" else None)
         finally:
-            # Lazarus regenerates package sources without the required header.
-            # Restore the canonical equivalent sources after each build.
             run([sys.executable, "tools/packages.py"])
-
 
 def examples() -> None:
     roots = ("examples/client", "examples/server", "examples/integration")
@@ -461,6 +469,17 @@ def main() -> int:
         setup_harness()
     elif target == "build:common":
         build("common")
+    elif target.startswith("component:build:"):
+        component = target.removeprefix("component:build:")
+        if component not in ("common", "client", "server", "readers"):
+            raise SystemExit(f"Unknown build component: {component}")
+        build(component)
+    elif target in ("build:openssl", "build:tlslib"):
+        provider = target.split(":", 1)[1]
+        source_dir = ROOT / COMPONENTS[provider]["source"]
+        if not source_dir.is_dir() or not any(source_dir.glob("*.pas")):
+            raise SystemExit(f"TLS provider {provider} is not available yet; TLS-04 adds its package and sources")
+        raise SystemExit(f"TLS provider {provider} build is not configured")
     elif target == "build:client":
         build("common")
         build("client")
@@ -504,6 +523,21 @@ def main() -> int:
         run_validation_gate("server", target.removeprefix("validate:server:"))
     elif target == "clean":
         shutil.rmtree(ROOT / "bin", ignore_errors=True)
+    elif target.startswith("clean:component:"):
+        component = target.removeprefix("clean:component:")
+        if component not in ("common", "client", "server", "readers", "openssl", "tlslib"):
+            raise SystemExit(f"Unknown clean component: {component}")
+        package_outputs = {
+            "common": ("common", "package-http2common"),
+            "client": ("client", "readers", "package-http2client", "package-http2clientreaders"),
+            "readers": ("readers", "package-http2clientreaders"),
+            "server": ("server", "package-http2server"),
+            "openssl": ("openssl", "package-http2openssl"),
+            "tlslib": ("tlslib", "package-http2tlslib"),
+        }[component]
+        for output_component in package_outputs:
+            shutil.rmtree(ROOT / "bin" / target_name() / profile() / output_component,
+                          ignore_errors=True)
     else:
         raise SystemExit(f"Unknown build target: {target}")
     return 0

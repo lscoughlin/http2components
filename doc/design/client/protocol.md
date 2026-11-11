@@ -160,7 +160,7 @@ A malformed block raises `EHttpProtocolError` (`ecCompressionError`).
 
 ## Flow control
 
-`src/common/Http2.Common.FlowControl.pas` holds two types: `TWindow` (one window's
+`common/src/Http2.Common.FlowControl.pas` holds two types: `TWindow` (one window's
 arithmetic) and `TFlowControl` (the connection-level aggregate — the shared
 connection window plus one `TWindow` per open stream), plus the pure
 batching predicate `ShouldEmitWindowUpdate`:

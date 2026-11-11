@@ -11,6 +11,9 @@ import sys
 import xml.etree.ElementTree as ET
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from tools.components import COMPONENTS
+
 ROOT = Path(os.environ.get("HTTP2_ROOT", Path(__file__).resolve().parents[2])).resolve()
 LICENSE = "Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)"
 COPYRIGHT = "Copyright 2026 Liam Seamus Coughlin"
@@ -32,18 +35,37 @@ class Checks:
         return 0
 
 
+def source_dirs() -> list[Path]:
+    result = []
+    for role in ("common", "client", "server"):
+        path = ROOT / COMPONENTS[role]["source"]
+        if not path.is_dir():
+            raise SystemExit(f"Required component source directory is missing: {path.relative_to(ROOT)}")
+        result.append(path)
+    return result
+
+
+def package_files() -> list[Path]:
+    return sorted(path for role in ("common", "client", "server", "openssl", "tlslib")
+                  for path in (ROOT / role).glob("*.lpk"))
+
+
 def pascal_files() -> list[Path]:
     result: list[Path] = []
-    for area in ("src", "test", "examples", "tools"):
+    for area in ("test", "examples", "tools"):
         base = ROOT / area
         if base.exists():
             result.extend(p for p in base.rglob("*.pas") if p.is_file())
+    for base in source_dirs():
+        result.extend(p for p in base.rglob("*.pas") if p.is_file())
     return sorted(result)
 
 
 def header_pascal_files() -> list[Path]:
     result = pascal_files()
     result.extend(p for p in ROOT.glob("*.pas") if p.is_file())
+    result.extend(p for role in ("common", "client", "server", "openssl", "tlslib")
+                  for p in (ROOT / role).glob("*.pas") if p.is_file())
     probes = ROOT / "doc/verification/client-probes"
     if probes.exists():
         result.extend(p for p in probes.glob("*.pas") if p.is_file())
@@ -178,7 +200,7 @@ def version_check(c: Checks) -> None:
     version = version_file.read_text().strip()
     if version != "0.30.0" or version_file.read_text() != "0.30.0\n":
         c.fail("VERSION must contain exactly 0.30.0 followed by one newline")
-    lpk_files = sorted(ROOT.glob("*.lpk"))
+    lpk_files = package_files()
     for package in lpk_files:
         try:
             tree = ET.parse(package)
@@ -215,12 +237,13 @@ def source_check(c: Checks) -> None:
             c.fail(f"{rel} has no unit or program declaration")
             continue
         kind, declared = kind_match.group(1).lower(), kind_match.group(2)
-        if Path(rel).parts[0] == "src":
+        if Path(rel).parts[0] in ("common", "client", "server", "tls"):
             role = next((r for r in ("common", "client", "server")
                          if declared.casefold() == "http2." + r or
                          declared.casefold().startswith("http2." + r + ".")), None)
-            if role is None or Path(rel).parent != Path("src") / role:
-                c.fail(f"{rel} must be directly under src/{role or '<role>'}")
+            expected_parent = Path(role) / "src" if role else None
+            if role is None or Path(rel).parent != expected_parent:
+                c.fail(f"{rel} must be directly under {expected_parent or '<component>/src'}")
         if kind == "unit" and Path(rel).stem.casefold() != declared.casefold():
             c.fail(f"{rel} declares {kind} {declared}; file name does not match")
         key = declared.casefold() if kind == "unit" else f"program:{rel.casefold()}"
@@ -230,8 +253,8 @@ def source_check(c: Checks) -> None:
             else:
                 units[key] = (declared, path)
         parsed[key] = (declared, path, kind, parse_pascal(path)[1])
-    if not any(path.relative_to(ROOT).parts[0] == "src" for _, path in units.values()):
-        c.fail("src/ has no production units; source dependency checks cannot pass")
+    if not any(path.relative_to(ROOT).parts[0] in ("common", "client", "server", "tls") for _, path in units.values()):
+        c.fail("component source directories have no production units; source dependency checks cannot pass")
     names = set(units)
     json_prefixes = ("fpjson", "json", "system.json")
     xml_prefixes = ("xml", "dom")
@@ -255,7 +278,7 @@ def source_check(c: Checks) -> None:
                 c.fail(f"{rel} has client-to-server dependency on {dep}")
             if role == "server" and d.startswith("http2.client"):
                 c.fail(f"{rel} has server-to-client dependency on {dep}")
-            source_unit = rel_parts[0] == "src"
+            source_unit = rel_parts[0] in ("common", "client", "server", "tls")
             test_file = rel_parts[0] == "test"
             readers_unit = group == "http2.client.readers" or group.startswith("http2.client.readers.")
             json_xml = d.startswith(json_prefixes + xml_prefixes)
@@ -272,11 +295,11 @@ def source_check(c: Checks) -> None:
                     c.fail(f"{rel} has prohibited {section} dependency on {dep}")
             if source_unit and group.startswith("http2.client") and d.startswith("http2.client.readers") and not readers_unit:
                 c.fail(f"{rel} has optional Readers dependency from client core: {dep}")
-            if rel_parts[0] == "src" and group.startswith("http2.client.") and not readers_unit and d == "http2.client":
+            if source_unit and group.startswith("http2.client.") and not readers_unit and d == "http2.client":
                 c.fail(f"client implementation unit {rel} imports its facade {dep}")
-            if rel_parts[0] == "src" and group.startswith("http2.server.") and d == "http2.server":
+            if source_unit and group.startswith("http2.server.") and d == "http2.server":
                 c.fail(f"server implementation unit {rel} imports its facade {dep}")
-            if rel_parts[0] == "src" and group.startswith("http2.common.") and d == "http2.common":
+            if source_unit and group.startswith("http2.common.") and d == "http2.common":
                 c.fail(f"common implementation unit {rel} imports its facade {dep}")
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -297,7 +320,7 @@ def source_check(c: Checks) -> None:
     for node in interface_graph:
         visit(node, [node])
     production_units = sum(1 for _, path in units.values()
-                           if path.relative_to(ROOT).parts[0] == "src")
+                           if path.relative_to(ROOT).parts[0] in ("common", "client", "server", "tls"))
     print(f"Checked {len(header_files)} Pascal headers/sizes, {len(files)} active files, "
           f"{production_units} production units, and {len(units)} total unit declarations")
     run_yaml(c)
@@ -362,17 +385,37 @@ def docs_check(c: Checks) -> None:
 
 def packages_check(c: Checks) -> None:
     version_check(c)
-    packages = {p.name for p in ROOT.glob("*.lpk")}
+    package_paths = package_files()
+    group_path = ROOT / "http2components.lpg"
+    if not group_path.is_file():
+        c.fail("http2components.lpg is missing")
+    else:
+        try:
+            group_tree = ET.parse(group_path)
+            group_targets = [node.get("FileName", "")
+                             for node in group_tree.findall("./ProjectGroup/Targets/Target")]
+            resolved_targets = [(group_path.parent / name).resolve() for name in group_targets]
+            expected_targets = {path.resolve() for path in package_paths}
+            if len(resolved_targets) != len(set(resolved_targets)):
+                c.fail("http2components.lpg lists a package more than once")
+            if set(resolved_targets) != expected_targets:
+                c.fail("http2components.lpg package targets do not match the available packages")
+            for resolved in resolved_targets:
+                if ROOT not in resolved.parents or not resolved.is_file():
+                    c.fail(f"http2components.lpg names an invalid package target: {resolved}")
+        except ET.ParseError as error:
+            c.fail(f"http2components.lpg is invalid XML: {error}")
+    packages = {p.name for p in package_paths}
     expected = {"http2common.lpk", "http2client.lpk", "http2server.lpk"}
     for missing in sorted(expected - packages):
         c.fail(f"required package {missing} is missing")
-    sources = sorted((ROOT / "src").rglob("*.pas")) if (ROOT / "src").exists() else []
+    sources = sorted(source for base in source_dirs() for source in base.rglob("*.pas"))
     if not sources:
-        c.fail("src/ has no production units; package inventory cannot pass")
+        c.fail("component source directories have no production units; package inventory cannot pass")
     else:
         listed: dict[str, list[str]] = {}
         output_dirs: dict[str, str] = {}
-        for package in sorted(ROOT.glob("*.lpk")):
+        for package in package_paths:
             try:
                 tree = ET.parse(package)
             except ET.ParseError as error:
@@ -382,12 +425,12 @@ def packages_check(c: Checks) -> None:
                 name = item.get("Value", "")
                 if not name.lower().endswith(".pas"):
                     continue
-                source_path = (ROOT / name).resolve()
+                source_path = (package.parent / name).resolve()
                 if ROOT not in source_path.parents:
                     c.fail(f"{package.name} names a source outside the repository: {name}")
                 elif not source_path.exists():
                     c.fail(f"{package.name} names missing source {name}")
-                listed.setdefault(Path(name).as_posix(), []).append(package.name)
+                listed.setdefault(source_path.relative_to(ROOT).as_posix(), []).append(package.name)
             deps = {node.get("Value", "").casefold()
                     for node in tree.findall(".//RequiredPkgs/*/PackageName")}
             role_deps = deps & {"http2common", "http2client", "http2server", "http2clientreaders"}
@@ -409,10 +452,11 @@ def packages_check(c: Checks) -> None:
             unit_out = tree.find(".//UnitOutputDirectory")
             unit_out_value = unit_out.get("Value", "") if unit_out is not None else ""
             out_parts = Path(unit_out_value).parts
-            if (not unit_out_value.startswith("bin/") or Path(unit_out_value).is_absolute()
-                    or ".." in out_parts):
+            resolved_out = (package.parent / unit_out_value).resolve()
+            if (not unit_out_value or Path(unit_out_value).is_absolute()
+                    or ROOT / "bin" not in resolved_out.parents):
                 c.fail(f"{package.name} must write compiler units under bin/")
-            folded_out = unit_out_value.casefold()
+            folded_out = resolved_out.as_posix().casefold()
             if folded_out in output_dirs:
                 c.fail(f"{package.name} shares compiler output with {output_dirs[folded_out]}")
             elif folded_out:
@@ -448,13 +492,61 @@ def packages_check(c: Checks) -> None:
     print(f"Checked {len(packages)} package file(s) and {len(sources)} source file(s)")
 
 
+def component_check(c: Checks, component: str) -> None:
+    if component not in COMPONENTS:
+        c.fail(f"unknown component {component}")
+        return
+    source_dir = ROOT / COMPONENTS[component]["source"]
+    if not source_dir.is_dir():
+        c.fail(f"required component source directory is missing: {COMPONENTS[component]['source']}")
+        return
+    sources = sorted(source_dir.rglob("*.pas"))
+    if not sources:
+        c.fail(f"component {component} has no Pascal source units")
+    packages = [ROOT / component / (name + ".lpk")
+                for name in COMPONENTS[component]["packages"]]
+    listed: dict[Path, int] = {}
+    for package in packages:
+        if not package.is_file():
+            c.fail(f"required component package is missing: {package.relative_to(ROOT)}")
+            continue
+        try:
+            tree = ET.parse(package)
+        except ET.ParseError as error:
+            c.fail(f"{package.relative_to(ROOT)} is invalid XML: {error}")
+            continue
+        for item in tree.iter("Filename"):
+            name = item.get("Value", "")
+            if name.lower().endswith(".pas"):
+                listed[(package.parent / name).resolve()] = listed.get((package.parent / name).resolve(), 0) + 1
+    for source in sources:
+        if listed.get(source.resolve(), 0) != 1:
+            c.fail(f"{source.relative_to(ROOT)} must be listed once in its component package")
+        unit, _ = parse_pascal(source)
+        if unit is None or unit.casefold() != source.stem.casefold():
+            c.fail(f"{source.relative_to(ROOT)} has an invalid unit declaration")
+        if len(source.read_text(errors="replace").splitlines()) >= 1000:
+            c.fail(f"{source.relative_to(ROOT)} has 1000 or more lines")
+    for source_path, count in listed.items():
+        if source_path not in {source.resolve() for source in sources} or count != 1:
+            c.fail(f"component package has an invalid or duplicate source: {source_path}")
+    run_yaml(c)
+    print(f"Checked component {component}: {len(sources)} source unit(s), {len(packages)} package(s)")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("check", choices=("version", "source", "docs", "packages"))
+    parser.add_argument("check", choices=("version", "source", "docs", "packages", "component"))
+    parser.add_argument("--component", choices=tuple(COMPONENTS))
     args = parser.parse_args()
     c = Checks()
-    {"version": version_check, "source": source_check,
-     "docs": docs_check, "packages": packages_check}[args.check](c)
+    if args.check == "component":
+        if not args.component:
+            parser.error("component check needs --component")
+        component_check(c, args.component)
+    else:
+        {"version": version_check, "source": source_check,
+         "docs": docs_check, "packages": packages_check}[args.check](c)
     return c.done()
 
 

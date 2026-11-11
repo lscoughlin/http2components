@@ -87,7 +87,7 @@ runner uses `make test` or `task test` and exits non-zero on a failure.
 
 ## Observability hooks
 
-`IHttp2Observer` (in `src/client/Http2.Client.Observer.pas`) is installed with
+`IHttp2Observer` (in `client/src/Http2.Client.Observer.pas`) is installed with
 `THttpClientFactory.WithObserver`:
 
 ```pascal

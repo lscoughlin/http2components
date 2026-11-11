@@ -152,7 +152,7 @@ wait before reconnecting after the stream ends.
 The parser's public shape:
 
 ```pascal
-// src/client/Http2.Client.Sse.pas
+// client/src/Http2.Client.Sse.pas
 type
   TSseEvent = record
     /// event type; 'message' when the stream sent no event: field
@@ -231,7 +231,7 @@ header-wait loop (`THttpConnection.AcquireCancellable`,
 slice length, so "cancelled" means the same thing at both points of an
 exchange.
 
-- `ICancellationToken`/`TCancellationToken` live in `src/client/Http2.Client.Stream.pas`,
+- `ICancellationToken`/`TCancellationToken` live in `client/src/Http2.Client.Stream.pas`,
   so the lease's body read polls the token directly. `Http2.Client`
   re-exports them.
 - `TStreamLease.ReadBody` calls `WaitForBodyFrame`, which honours the
@@ -341,7 +341,7 @@ default.
 ## Public API
 
 ```pascal
-// src/client/Http2.Client.Sse.pas
+// client/src/Http2.Client.Sse.pas
 type
   IHttpSseSource = interface
     ['{8B1C2D3E-4F50-4A61-9C72-00000000E001}']
@@ -455,11 +455,11 @@ SSE-specific type for the retry bound:
 
 | Unit | Content |
 | --- | --- |
-| `src/client/Http2.Client.Sse.pas` | `TSseEvent`, `TSseEventParser`, `IHttpSseSource`, `TSseSource`, `TSseReconnectLoop`, `SseRequest` |
-| `src/client/Http2.Client.Stream.pas` | body read timeout + read-side cancellation |
-| `src/client/Http2.Client.pas` | `WithSseReadTimeout` request setter; threads the token and the body deadline to the lease's body read |
-| `src/common/Http2.Common.Headers.pas` | `HeaderLastEventId` constant |
-| `src/client/Http2.Client.pas` | public client facade; SSE features use the explicit `Http2.Client.Sse` unit |
+| `client/src/Http2.Client.Sse.pas` | `TSseEvent`, `TSseEventParser`, `IHttpSseSource`, `TSseSource`, `TSseReconnectLoop`, `SseRequest` |
+| `client/src/Http2.Client.Stream.pas` | body read timeout + read-side cancellation |
+| `client/src/Http2.Client.pas` | `WithSseReadTimeout` request setter; threads the token and the body deadline to the lease's body read |
+| `common/src/Http2.Common.Headers.pas` | `HeaderLastEventId` constant |
+| `client/src/Http2.Client.pas` | public client facade; SSE features use the explicit `Http2.Client.Sse` unit |
 | `test/client/Http2.Client.Sse.Test.pas` | parser, validation, source, reconnect |
 | `examples/sse_stream.pas` | runnable demo against the test server |
 | `tools/client/sse_server.py` | a minimal live SSE server for interop (as described in "Testing") |

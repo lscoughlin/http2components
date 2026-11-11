@@ -1,77 +1,41 @@
 PYTHON ?= python3
-DRIVER = $(PYTHON) tools/build.py
-
 .PHONY: all setup-deps setup-harness build build-common build-client build-server build-readers \
-        test test-common test-client test-server test-integration test-api \
+        build-openssl build-tlslib test test-common test-client test-server test-integration test-api \
         packages-check source-check docs-check version-check examples \
         validate-fast validate clean
 
 all: build
-
 setup-deps:
-	$(DRIVER) setup-deps
-
+	$(PYTHON) tools/build.py setup-deps
 setup-harness:
-	$(DRIVER) setup-harness
+	$(PYTHON) tools/build.py setup-harness
 
-build:
-	$(DRIVER) build
-
+build: build-common build-client build-server build-openssl build-tlslib
 build-common:
-	$(DRIVER) build-common
+	$(MAKE) -C common build BUILD_DEPS=0
+build-client: build-common
+	$(MAKE) -C client build BUILD_DEPS=0
+build-server: build-common
+	$(MAKE) -C server build BUILD_DEPS=0
+build-readers: build-common build-client
+	$(MAKE) -C client build-readers BUILD_DEPS=0
+build-openssl: build-common
+	$(MAKE) -C tls/openssl build BUILD_DEPS=0
+build-tlslib: build-common
+	$(MAKE) -C tls/tlslib build BUILD_DEPS=0
 
-build-client:
-	$(DRIVER) build-client
+test test-common test-client test-server test-integration test-api packages-check source-check docs-check version-check examples validate-fast validate:
+	$(PYTHON) tools/build.py $(subst -, :, $@)
 
-build-server:
-	$(DRIVER) build-server
+clean:
+	$(PYTHON) tools/build.py clean
 
-build-readers:
-	$(DRIVER) build-readers
-
-test:
-	$(DRIVER) test
-
-test-common:
-	$(DRIVER) test-common
-
-test-client:
-	$(DRIVER) test-client
-
-test-server:
-	$(DRIVER) test-server
-
-test-integration:
-	$(DRIVER) test-integration
-
-test-api:
-	$(DRIVER) test-api
-
-packages-check:
-	$(DRIVER) packages-check
-
-source-check:
-	$(DRIVER) source-check
-
-docs-check:
-	$(DRIVER) docs-check
-
-version-check:
-	$(DRIVER) version-check
-
-examples:
-	$(DRIVER) examples
-
-validate-fast:
-	$(DRIVER) validate-fast
-
-validate:
-	$(DRIVER) validate
-
+# Existing validation aliases remain available. These targets are explicit;
+# they are not dependencies of the ordinary build.
 define CLIENT_GATE
 .PHONY: validate-client-$(1)
 validate-client-$(1):
-	$(DRIVER) validate:client:$(2)
+	$(PYTHON) tools/build.py validate:client:$(2)
 endef
 $(eval $(call CLIENT_GATE,sanity,sanity))
 $(eval $(call CLIENT_GATE,interop,interop))
@@ -83,21 +47,18 @@ $(eval $(call CLIENT_GATE,websocket,websocket))
 $(eval $(call CLIENT_GATE,websocket-autobahn,websocket:autobahn))
 $(eval $(call CLIENT_GATE,cleartext,cleartext))
 $(eval $(call CLIENT_GATE,mtls,mtls))
-$(eval $(call CLIENT_GATE,mtls-real,mtls-real))
+$(eval $(call CLIENT_GATE,mtls-real,mtls:real))
 
 define SERVER_GATE
 .PHONY: validate-server-$(1)
 validate-server-$(1):
-	$(DRIVER) validate:server:$(2)
+	$(PYTHON) tools/build.py validate:server:$(2)
 endef
 $(eval $(call SERVER_GATE,conformance,conformance))
 $(eval $(call SERVER_GATE,fast,fast))
-$(eval $(call SERVER_GATE,tls-live,tls-live))
-$(eval $(call SERVER_GATE,mtls-live,mtls-live))
+$(eval $(call SERVER_GATE,tls-live,tls:live))
+$(eval $(call SERVER_GATE,mtls-live,mtls:live))
 $(eval $(call SERVER_GATE,websocket,websocket))
 $(eval $(call SERVER_GATE,websocket-h2,websocket:h2))
 $(eval $(call SERVER_GATE,sse,sse))
 $(eval $(call SERVER_GATE,abuse,abuse))
-
-clean:
-	$(DRIVER) clean

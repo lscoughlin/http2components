@@ -121,7 +121,7 @@ needs the CA file and the system store together, and it needs the optional mode,
 which mORMot2 lacks. Its `ClientCertificateAuthentication` flag always adds
 `SSL_VERIFY_FAIL_IF_NO_PEER_CERT`. The server therefore applies both modes
 itself after `AfterBind`, in the same hook that installs the ALPN callback
-(`ApplyTls` in `src/server/Http2.Server.Tls.pas`). The hook runs these calls on the
+(`ApplyTls` in `server/src/Http2.Server.Tls.pas`). The hook runs these calls on the
 `AcceptCert` context, in this order:
 
 1. `SSL_CTX_load_verify_locations` loads `ClientCaFile`, when the file is set.
@@ -140,14 +140,14 @@ itself after `AfterBind`, in the same hook that installs the ALPN callback
 
 mORMot2 declares these entry points in `mormot.lib.openssl11`, except
 `SSL_CTX_set_verify_depth`, `SSL_CTX_get_verify_depth` and
-`SSL_CTX_get_verify_mode`. The unit `src/server/Http2.Server.Tls.Client.pas` resolves those
+`SSL_CTX_get_verify_mode`. The unit `server/src/Http2.Server.Tls.Client.pas` resolves those
 three from libssl with the path rules of the ALPN binding. A second `dlopen` of an
 already loaded library returns the same handle.
 
 The server leaves `ClientCertificateAuthentication` off on the `TNetTlsContext`,
 so `SetupCtx` does not set a verify mode of its own that the hook must undo. The
 server today sets `IgnoreCertificateErrors` to True for the listener
-(`BuildTlsPolicy` in `src/server/Http2.Server.Async.Options.pas`), and that makes `SetupCtx` choose
+(`BuildTlsPolicy` in `server/src/Http2.Server.Async.Options.pas`), and that makes `SetupCtx` choose
 `SSL_VERIFY_NONE`. The hook overrides the mode after `AfterBind`. A test reads
 the verify mode back with `SSL_CTX_get_verify_mode` for each of the three modes,
 so a later mORMot2 change cannot weaken the setting without a test failure.
@@ -230,16 +230,16 @@ of the context, and mORMot2 comments that the main context is shared
 connections run in parallel on one context, so the identity of one connection
 never comes from the shared record. The server reads the peer certificate from
 the `PSSL` that `INetTls.GetRawTls` returns for that connection, the same way
-`NegotiatedAlpnName` reads the ALPN name (`NegotiatedAlpnName` in `src/server/Http2.Server.Tls.pas`).
+`NegotiatedAlpnName` reads the ALPN name (`NegotiatedAlpnName` in `server/src/Http2.Server.Tls.pas`).
 
 ### Where the read happens
 
 `TAsyncConnection.OnFirstRead` finishes the handshake through `inherited
-OnFirstRead` and then checks the ALPN name (`THttp2AsyncConnection.OnFirstRead` in `src/server/Http2.Server.Async.pas`).
+OnFirstRead` and then checks the ALPN name (`THttp2AsyncConnection.OnFirstRead` in `server/src/Http2.Server.Async.pas`).
 The identity read follows the handshake in the same method, before
 `StartHttp2` or `StartHttp1`. The connection object then holds the reference.
 The connection object keeps the reference. It passes it to the connection-events
-object of the protocol (`src/server/Http2.Server.Async.Events.pas`). The HTTP/2 events set
+object of the protocol (`server/src/Http2.Server.Async.Events.pas`). The HTTP/2 events set
 it on each `TServerStream` in `RequestReady`, and the HTTP/1.1 events give it to
 the exchange through `IClientCertificateSink`. A stream or an exchange reads it
 with no lock, because the value never changes.
@@ -267,11 +267,11 @@ of the two new properties, `Principal` and `ClientCertificate`.
 
 The three request implementations carry the property:
 
-- `TServerStreamRequest` (`src/server/Http2.Server.StreamAdapters.pas`) for HTTP/2.
-- `TH1Exchange` (`src/server/Http2.Server.Http1.Exchange.pas`) for HTTP/1.1.
-- `TWsRequestSnapshot` (`src/server/Http2.Server.WebSocket.SessionCore.pas`) for the session.
+- `TServerStreamRequest` (`server/src/Http2.Server.StreamAdapters.pas`) for HTTP/2.
+- `TH1Exchange` (`server/src/Http2.Server.Http1.Exchange.pas`) for HTTP/1.1.
+- `TWsRequestSnapshot` (`server/src/Http2.Server.WebSocket.SessionCore.pas`) for the session.
   The snapshot constructor copies the reference from the source request, as it
-  copies the principal today (`src/server/Http2.Server.WebSocket.SessionCore.pas`).
+  copies the principal today (`server/src/Http2.Server.WebSocket.SessionCore.pas`).
 
 ### The principal
 

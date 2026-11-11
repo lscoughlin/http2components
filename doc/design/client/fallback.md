@@ -290,13 +290,13 @@ The table maps each area to its code and acceptance check:
 
 | Area | Where | Acceptance |
 | --- | --- | --- |
-| `TClearTextPolicy` + factory methods | `src/client/Http2.Client.Tls.pas`, `src/client/Http2.Client.pas` | defaults stay strict (`ctReject`, `Http1Fallback=False`) |
-| h2c prior knowledge | `src/client/Http2.Client.pas` (`TConnectionPool.TryH2cUpgrade` path, preface at once) | a GET against `nghttpd --no-tls` succeeds (A.10) |
-| h2c upgrade | `src/client/Http2.Client.pas` (`AcquireUpgraded`, `BuildH2cUpgradeRequest`, `Http2SettingsBase64Url`) | a GET returns `101` then uses HTTP/2 (A.11) |
-| declined upgrade | `src/client/Http2.Client.pas` (`TConnectionPool.OpenForTxn`, `THttp1PooledConnection.Resume`), `src/client/Http2.Client.Http1.pas` (`ResumeResponse`) | the request reaches the server once and the connection serves the next request (`Http2.Client.ClearText.Test`, `make validate-cleartext`) |
-| HTTP/1.1 without a probe | `src/client/Http2.Client.Tls.pas` (`ctHttp1`), `src/client/Http2.Client.pas` | no `Upgrade` or `HTTP2-Settings` byte on the wire (`Http2.Client.ClearText.Test`, `make validate-cleartext`) |
-| HTTP/1.1 codec | `src/client/Http2.Client.Http1.pas` (`THttp1Connection`) | GET and POST against a plain HTTP/1.1 server succeed (A.12) |
-| ALPN fallback | `src/client/Http2.Client.Http1.pas` + transport selection in `Http2.Client` | an `http/1.1`-only TLS server responds when fallback is on |
+| `TClearTextPolicy` + factory methods | `client/src/Http2.Client.Tls.pas`, `client/src/Http2.Client.pas` | defaults stay strict (`ctReject`, `Http1Fallback=False`) |
+| h2c prior knowledge | `client/src/Http2.Client.pas` (`TConnectionPool.TryH2cUpgrade` path, preface at once) | a GET against `nghttpd --no-tls` succeeds (A.10) |
+| h2c upgrade | `client/src/Http2.Client.pas` (`AcquireUpgraded`, `BuildH2cUpgradeRequest`, `Http2SettingsBase64Url`) | a GET returns `101` then uses HTTP/2 (A.11) |
+| declined upgrade | `client/src/Http2.Client.pas` (`TConnectionPool.OpenForTxn`, `THttp1PooledConnection.Resume`), `client/src/Http2.Client.Http1.pas` (`ResumeResponse`) | the request reaches the server once and the connection serves the next request (`Http2.Client.ClearText.Test`, `make validate-cleartext`) |
+| HTTP/1.1 without a probe | `client/src/Http2.Client.Tls.pas` (`ctHttp1`), `client/src/Http2.Client.pas` | no `Upgrade` or `HTTP2-Settings` byte on the wire (`Http2.Client.ClearText.Test`, `make validate-cleartext`) |
+| HTTP/1.1 codec | `client/src/Http2.Client.Http1.pas` (`THttp1Connection`) | GET and POST against a plain HTTP/1.1 server succeed (A.12) |
+| ALPN fallback | `client/src/Http2.Client.Http1.pas` + transport selection in `Http2.Client` | an `http/1.1`-only TLS server responds when fallback is on |
 | pool keys and limits | `TConnectionPool` selection | stream limit is 1 for HTTP/1.1; origins keep scheme apart |
 | interop A.10–A.13 | `test/h2probe.pas`, `tools/client/interop.sh` | part of the green interop gate |
 

@@ -34,7 +34,7 @@ invariants:
 
 The library is an HTTP/2 server for Free Pascal and mORMot2. It speaks HTTP/2
 over clear text with prior knowledge (`h2c`) and over TLS with the ALPN name
-`h2` (RFC 9113 section 3). The unit `src/server/Http2.Server.pas` is the facade.
+`h2` (RFC 9113 section 3). The unit `server/src/Http2.Server.pas` is the facade.
 
 The design rests on one separation. A few IO threads run the protocol of many
 connections and never block. A larger set of handler threads runs the code of
@@ -109,7 +109,7 @@ The path shows how the layers cooperate.
 
 1. An IO thread accepts the socket and the connection core consumes the
    preface. The core sends the server SETTINGS frame
-   (`src/server/Http2.Server.Connection.pas`).
+   (`server/src/Http2.Server.Connection.pas`).
 2. A `HEADERS` frame starts a header block and `CONTINUATION` frames extend
    it. The HPACK decoder runs on the IO thread under the connection lock.
 3. The core validates the request fields against RFC 9113 section 8.1. An

@@ -111,7 +111,7 @@ hook behaviour of the unit.
 
 ## The streaming pool
 
-`src/server/Http2.Server.StreamPool.pas` holds a pool for work that outlives one
+`server/src/Http2.Server.StreamPool.pas` holds a pool for work that outlives one
 request, such as the callbacks of a long-lived stream. The pool is separate from
 the handler pool. It uses no admission queue and no handler thread, so a burst
 of streaming work cannot delay or refuse an ordinary request. The unit depends

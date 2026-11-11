@@ -168,9 +168,9 @@ var
   Text, Stmt, Path: string;
   L: TStringList;
 begin
-  Names[0] := 'src/client/Http2.Client.Tls.Socket.pas';
-  Names[1] := 'src/client/Http2.Client.Tls.Tunnel.pas';
-  Names[2] := 'src/client/Http2.Client.SocketFactory.pas';
+  Names[0] := 'client/src/Http2.Client.Tls.Socket.pas';
+  Names[1] := 'client/src/Http2.Client.Tls.Tunnel.pas';
+  Names[2] := 'client/src/Http2.Client.SocketFactory.pas';
   Calls[0] := 'TTlsSocket.Create(';
   Calls[1] := 'TTlsSocket.Dial(';
   Calls[2] := 'TTlsSocket.DialWithAlpnVia(';

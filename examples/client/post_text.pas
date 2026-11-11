@@ -7,7 +7,7 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 /// http2components client example: a POST with a plain text body.
 // - build: `task examples`
 // - run:   bin/<target>/<profile>/examples-client/programs/post_text https://nghttp2.org/httpbin/post
-// - shows: WithTextBody (src/client/Http2.Client.pas) attaches the body and defaults
+// - shows: WithTextBody (client/src/Http2.Client.pas) attaches the body and defaults
 //   `content-type: text/plain`; ReadText reads the echoed body back. Set your
 //   own content-type first and WithTextBody leaves it alone.
 program example_post_text;
