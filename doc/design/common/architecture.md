@@ -10,10 +10,11 @@ notes:
 
 ## Public entry units
 
-The combined library has three public entry units. `Http2.Common` provides
+The combined library has five public entry units. `Http2.Common` provides
 shared protocol types and operations. `Http2.Client` provides client factories,
 requests, responses, and the client API. `Http2.Server` provides server
-factories, handlers, requests, and responses.
+factories, handlers, requests, and responses. `Http2.OpenSSL` and
+`Http2.TlsLib` provide separate TLS implementations of the common context.
 
 The common implementation has no dependency on client or server units. Client
 units depend on common units and client units. Server units depend on common
@@ -25,8 +26,12 @@ flowchart TD
   Common[Http2.Common]
   Client[Http2.Client and Http2.Client.*]
   Server[Http2.Server and Http2.Server.*]
+  OpenSSL[Http2.OpenSSL]
+  TlsLib[Http2.TlsLib]
   Client --> Common
   Server --> Common
+  OpenSSL --> Common
+  TlsLib --> Common
 ```
 
 The five production source roots are `common/src`, `client/src`,

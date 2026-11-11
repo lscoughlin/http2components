@@ -14,7 +14,7 @@ on branch `tls/TLS-11-docs`, based on `935cf6e`.
 
 ## Documentation scope
 
-The README describes the five production roots and six packages at version
+The README describes the five public facades, five production roots, and six packages at version
 0.30.0. It records offline normal builds, explicit dependency setup, supported
 tool versions, dependency root overrides, scoped package output and Lazarus
 configuration, the macOS TlsLib RNG overlay and compiler wrapper, and the
@@ -61,7 +61,8 @@ recorded as test limits, not behavior guarantees.
 ## Build and verification limits
 
 The README records FPC 3.2.4 and Lazarus 4.0. The TlsLib build documentation
-records the scoped Lazarus compiler wrapper, ordered pinned bootstrap, and
+records the scoped Lazarus compiler wrapper, which removes only the forced
+`-B` from the TlsLib invocation after the ordered pinned bootstrap, and
 hash-checked macOS/FPC RNG overlay. The dependency checkout remains pinned and
 unchanged. Runtime evidence and package-isolation details remain in the
 accepted TLS-10 isolation record. TLS-09 HTTP and security results are

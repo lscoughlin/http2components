@@ -57,17 +57,21 @@ load checks.
 
 The expected local toolchain is Free Pascal 3.2.4 and Lazarus 4.0 for package
 builds. The OpenSSL provider needs OpenSSL 3 at runtime. The TLS fixture and
-interop tools use the OpenSSL 3 command-line program. The pinned provider and
+interop tools use the OpenSSL command-line program. The pinned provider and
 mORMot sources are local inputs. Dependency path overrides are
 `MORMOT2_ROOT`, `TLSLIB4PASCAL_ROOT`, `CRYPTOLIB4PASCAL_ROOT`,
-`HASHLIB4PASCAL_ROOT`, and `SIMPLEBASELIB4PASCAL_ROOT`.
+`HASHLIB4PASCAL_ROOT`, and `SIMPLEBASELIB4PASCAL_ROOT`. `OPENSSL_LIBPATH`
+selects the OpenSSL runtime library directory when it is outside the system
+loader path.
 
 The TlsLib package uses the pinned TlsLib, CryptoLib, HashLib, and
 SimpleBaseLib sources. On macOS with Free Pascal, a hash-checked CryptoLib
 random-provider overlay is generated under `bin/`; the dependency checkout is
 not modified. Its bootstrap unit order is retained. Lazarus package builds
-use a private configuration and a scoped compiler wrapper to handle the
-upstream source cycle. No user's IDE profile is changed.
+use a private configuration and a scoped compiler wrapper. The wrapper
+removes only the forced `-B` argument from the TlsLib `lazbuild` invocation,
+after the fresh ordered bootstrap, so its PPUs remain available through the
+upstream source cycle. No user's compiler settings or IDE profile are changed.
 
 `make examples` compiles the example programs only. It does not send external
 requests or run network examples. The bounded TLS targets are

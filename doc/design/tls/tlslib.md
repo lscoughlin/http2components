@@ -40,6 +40,10 @@ and threads. The package has no OpenSSL dependency. On macOS with Free Pascal,
 the build uses a hash-checked CryptoLib random-provider overlay in `bin/`;
 the pinned dependency checkout remains unchanged. Package builds use a
 private Lazarus configuration and preserve the ordered CryptoLib bootstrap.
+After that fresh bootstrap, a scoped wrapper removes only the forced `-B`
+argument from the TlsLib `lazbuild` invocation. This keeps the bootstrap PPUs
+available through the upstream source cycle. The wrapper does not change
+global compiler settings.
 
 RFC 8446 sections 4, 5, and 6 define the TLS behavior used by the adapter.
 RFC 5280 sections 4.1 and 6 define path validation. RFC 9525 sections 4
