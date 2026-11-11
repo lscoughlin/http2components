@@ -24,7 +24,7 @@ uses
   Http2.Client.ConnectionSettings.Test,
   Http2.Client.ConnectionThread.Test, Http2.Client.Encoding.Test,
   Http2.Client.HpackOrder.Test, Http2.Client.Http1.Test,
-  Http2.Client.MockSocket, Http2.Client.MutualTls.Test,
+  Http2.Client.MockSocket.Observer.Test, Http2.Client.MockSocket.Capture.Test, Http2.Client.MockSocket.Scenario.Test, Http2.Client.MutualTls.Test,
   Http2.Client.ObserverAdapters.Core.Test, Http2.Client.ObserverAdapters.Sink.Test, Http2.Client.PoolStats.Test,
   Http2.Client.ProbeOutcome.Test, Http2.Client.Proxy.Test,
   Http2.Client.ProxyClient.Builder.Test, Http2.Client.ProxyClient.Test, Http2.Client.ProxyLive.Test,
