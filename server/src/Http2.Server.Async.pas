@@ -384,9 +384,10 @@ end;
 function THttp2AsyncConnection.SendPendingOutput: Boolean;
 var
   Data: TBytes;
-  Again, PendingPlainProgress: Boolean; Before, After: Int64;
+  Again, PendingPlainProgress, OwnsSend: Boolean; Before, After: Int64;
 begin
   result := False;
+  OwnsSend := False;
   if ((FCore = nil) and (FH1 = nil)) or IsClosed then
     exit;
   // a wake-up that arrives while the loop runs is recorded and not dropped,
@@ -398,6 +399,7 @@ begin
     if FInSend then
       exit;   // the running loop owns the send path and will repeat
     FInSend := True;
+    OwnsSend := True;
   finally
     FSendLock.Release;
   end;
@@ -513,6 +515,7 @@ begin
         else
         begin
           FInSend := False;
+          OwnsSend := False;
           Again := False;
         end;
       finally
@@ -521,11 +524,18 @@ begin
       // the loop repeats for a late wake-up or for output a handler just made
     end;
   finally
-    FSendLock.Acquire;
-    try
-      FInSend := False;
-    finally
-      FSendLock.Release;
+    // Exceptional and abort exits still release this invocation's claim.
+    // The normal loop exit already released it atomically with its wake check;
+    // do not clear a new sender's claim after that handoff.
+    if OwnsSend then
+    begin
+      FSendLock.Acquire;
+      try
+        FInSend := False;
+        OwnsSend := False;
+      finally
+        FSendLock.Release;
+      end;
     end;
   end;
   // the close decision of an HTTP/1.1 exchange can come after the last write,
