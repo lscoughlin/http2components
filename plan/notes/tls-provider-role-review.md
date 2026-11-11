@@ -75,3 +75,30 @@ in the client suite. Native loader support in those tests still needs the
 new provider facade. Their presence is not a pass: the affected bounded
 cases must compile and run after provider merge. The general client suite
 and network/container proxy suites are not story checks.
+
+## Follow-up at 12:10 UTC
+
+`tls05-coordinator-08.log` passed 84 checks in 0.679 seconds. The verification
+alert had already been consumed by the test transfer. The corrected test
+counts alert bytes at that transfer. The run includes expired-server and
+wrong-IP rejection. The native baseline after warmup was X509=6, SSL=0,
+SSL_CTX=2; the same counts remained after ten full handshake cycles.
+
+`tls06-coordinator-06.log` passed 61 checks in 0.843 seconds. This count
+includes repeated lifecycle assertions. The first failed chain fixture had
+placed the issuer before the leaf; the corrected leaf-first chain passes.
+The distinguished-name test now preserves a multi-valued RDN and escaped
+comma/backslash values. Concurrent creation and the final unit split remain
+open. The TlsLib counters count provider-owned objects and engine references;
+they do not instrument every allocation inside the pinned engine.
+
+`tls07-coordinator-08.log` passed 11 cases in 0.274 seconds. The earlier late
+application-read assertion expected four bytes from a partial read capped at
+two bytes. The corrected assertion accumulates partial reads. Review still
+requires one transport reader across read and write-retry paths, and safe
+ciphertext ordering while the session lock is released for socket writes.
+
+The pinned TlsLib cipher route is `TTlsPresets.Compatible`, then
+`TCipherSuiteRegistry.CreateDualVersion`, then `AddRunnable(Ecdhe)`. The
+catalog contains only ECDHE RSA/ECDSA with AES-GCM or ChaCha20-Poly1305 for
+that TLS 1.2 route. TLS 1.3 uses its AEAD suites.
