@@ -15,6 +15,8 @@ import tempfile
 import time
 import fcntl
 import json
+import stat
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -98,7 +100,8 @@ def fpc_unit_root() -> str:
     return f"/usr/lib/fpc/{version}/units/{target}"
 
 
-def base_flags(component: str, *, tests: bool = False) -> list[str]:
+def base_flags(component: str, *, tests: bool = False,
+               user_flags: bool = True) -> list[str]:
     role = component.removesuffix("-test")
     if role in ("tls-client", "tls-server"):
         role = role.removeprefix("tls-")
@@ -153,12 +156,52 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
                           "-Fu./test/support/tls", "-Fu./examples", "-Fu./examples/client",
                           "-Fu./examples/server", "-Fu./test/integration/server/tls",
                           "-Fu./test/integration/server/mtls"))
-    flags.extend(shlex.split(os.environ.get("FPCFLAGS", "")))
+        if component == "client-test":
+            # The legacy client TLS tests use the OpenSSL provider explicitly.
+            # Keep these paths out of the production client build above.
+            verify_mormot()
+            flags.extend(("-dUSE_OPENSSL", f"-Fu{COMPONENTS['openssl']['source']}"))
+            for part in ("core", "lib", "net", "crypt"):
+                flags.append(f"-Fu{dependency_root('mORMot2') / 'src' / part}")
+            flags.append(f"-Fu{ROOT / 'bin' / target_name() / profile() / 'openssl' / 'units'}")
+    if user_flags:
+        flags.extend(shlex.split(os.environ.get("FPCFLAGS", "")))
     return flags
 
 
 def verify_mormot() -> None:
     verify_dependency("mORMot2")
+
+
+def prepare_macos_rng_overlay() -> tuple[Path | None, str]:
+    """Prepare the pinned CryptoLib RNG overlay for a Darwin FPC target."""
+    target_os = subprocess.check_output([compiler(), "-iTO"], text=True).strip().casefold()
+    if platform.system() != "Darwin" or target_os != "darwin":
+        return None, "none"
+    from tools.patches.cryptolib.overlay import (
+        PATCHED_UNIT_SHA256,
+        macos_rng_overlay_fingerprint,
+        prepare_macos_rng_overlay as prepare_overlay,
+    )
+
+    original = verify_dependency("CryptoLib4Pascal")
+    profile_root = ROOT / "bin" / target_name() / profile() / "tlslib"
+    compat_root = profile_root / "compat"
+    overlay_root = compat_root / "cryptolib"
+    provider_dir = overlay_root / "CryptoLib" / "src" / "Rngs" / "Providers"
+    marker = compat_root / "cryptolib-rng.fingerprint"
+    fingerprint = macos_rng_overlay_fingerprint()
+    patched_unit = provider_dir / "ClpMacOSRandomProvider.pas"
+    if (marker.is_file() and marker.read_text().strip() == fingerprint
+            and patched_unit.is_file()
+            and hashlib.sha256(patched_unit.read_bytes()).hexdigest() == PATCHED_UNIT_SHA256
+            and (overlay_root / "CryptoLib" / "src" / "Include").is_dir()):
+        return provider_dir, fingerprint
+
+    provider_dir = prepare_overlay(original, overlay_root)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    marker.write_text(fingerprint + "\n")
+    return provider_dir, fingerprint
 
 
 def dependency_root(name: str) -> Path:
@@ -215,6 +258,105 @@ def compile_file(source: Path, component: str, *, tests: bool = False) -> Path:
     return programs / source.stem
 
 
+def compile_isolation_probes() -> None:
+    """Force clean builds for each declared package closure and save traces."""
+    shutil.rmtree(ROOT / "bin" / target_name() / profile() / "tlslib", ignore_errors=True)
+    build("tlslib")
+    cases = [
+        ("common", "CommonOnly.pas", "common"),
+        ("client", "ClientOnly.pas", "client"),
+        ("server", "ServerOnly.pas", "server"),
+        ("openssl", "OpenSSLOnly.pas", "openssl"),
+        ("tlslib", "TlsLibOnly.pas", "tlslib"),
+    ]
+    for component, filename, flag_component in cases:
+        source = ROOT / "tools/studies/tls/tls10" / filename
+        shutil.rmtree(ROOT / "bin" / target_name() / profile() / ("isolation-" + component),
+                      ignore_errors=True)
+        units, programs = output("isolation-" + component)
+        trace = programs / (source.stem + ".trace.txt")
+        flags = base_flags(flag_component, user_flags=False)
+        if component != "tlslib":
+            flags.insert(0, "-B")
+        args = [compiler(), "-vu", *flags,
+                f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))]
+        with trace.open("w") as stream:
+            result = subprocess.run(args, cwd=ROOT,
+                                    env=open_ssl_env() if component == "openssl" else None,
+                                    stdout=stream, stderr=subprocess.STDOUT)
+        if result.returncode:
+            raise SystemExit(f"Isolation compile failed for {component}; see {trace}")
+        forbidden = {
+            "common": r"http2\.(?:client|server|openssl|tlslib)|mormot\.",
+            "client": r"http2\.(?:server|openssl|tlslib)",
+            "server": r"http2\.(?:client|openssl|tlslib)",
+            "openssl": r"http2\.(?:client|server|tlslib)",
+            "tlslib": r"http2\.(?:client|server|openssl)|mormot\.",
+        }[component]
+        trace_text = trace.read_text(errors="replace")
+        if re.search(forbidden, trace_text, re.IGNORECASE):
+            raise SystemExit(f"Forbidden unit appears in {component} compiler trace: {trace}")
+        print(f"Compiled {component} isolation probe; trace: {trace.relative_to(ROOT)}")
+
+    # The pair uses only explicitly named provider paths and a fresh output.
+    source = ROOT / "tools/studies/tls/tls10/BothProviders.pas"
+    shutil.rmtree(ROOT / "bin" / target_name() / profile() / "isolation-both",
+                  ignore_errors=True)
+    units, programs = output("isolation-both")
+    trace = programs / "BothProviders.trace.txt"
+    flags = ["-O2", "-vw", "-Mdelphi", "-dUSE_OPENSSL",
+             f"-Fu{COMPONENTS['common']['source']}",
+             f"-Fu{COMPONENTS['openssl']['source']}",
+             f"-Fu{COMPONENTS['tlslib']['source']}"]
+    verify_mormot()
+    mormot = dependency_root("mORMot2") / "src"
+    flags.extend(f"-Fu{mormot / part}" for part in ("core", "lib", "net", "crypt"))
+    flags.append(f"-Fu{ROOT / 'bin' / target_name() / profile() / 'openssl' / 'units'}")
+    bootstrap = ROOT / "bin" / target_name() / profile() / "tlslib" / "units" / "bootstrap"
+    # Bootstrap unit paths precede dependency source paths to avoid the
+    # pinned CryptoLib multiplier source cycle.
+    flags.extend((f"-Fu{bootstrap}",
+                  f"-Fu{ROOT / 'bin' / target_name() / profile() / 'tlslib' / 'units'}",
+                  *tlslib_flags()))
+    args = [compiler(), "-vu", *flags, f"-FU{units}", f"-FE{programs}",
+            str(source.relative_to(ROOT))]
+    with trace.open("w") as stream:
+        result = subprocess.run(args, cwd=ROOT, env=open_ssl_env(), stdout=stream,
+                                stderr=subprocess.STDOUT)
+    if result.returncode:
+        raise SystemExit(f"Isolation compile failed for both providers; see {trace}")
+    if re.search(r"http2\.(?:client|server)", trace.read_text(errors="replace"),
+                 re.IGNORECASE):
+        raise SystemExit(f"Role unit appears in both-provider compiler trace: {trace}")
+    print(f"Compiled both-providers isolation probe; trace: {trace.relative_to(ROOT)}")
+
+
+def compile_tlslib_runtime_trace() -> Path:
+    """Compile the actual bounded TlsLib exchange runner with a full unit trace."""
+    runner = ROOT / "test/tls/tlslib/Http2.Tls.TlsLib.Tests.pas"
+    required(runner, "TlsLib exchange runner")
+    build("common")
+    build("tlslib")
+    component = "isolation-tlslib-runtime"
+    shutil.rmtree(ROOT / "bin" / target_name() / profile() / component,
+                  ignore_errors=True)
+    units, programs = output(component)
+    trace = programs / "Http2.Tls.TlsLib.Tests.trace.txt"
+    flags = base_flags("tlslib-test", tests=True, user_flags=False)
+    args = [compiler(), "-vu", *flags, f"-FU{units}", f"-FE{programs}",
+            str(runner.relative_to(ROOT))]
+    with trace.open("w") as stream:
+        result = subprocess.run(args, cwd=ROOT, stdout=stream, stderr=subprocess.STDOUT)
+    if result.returncode:
+        raise SystemExit(f"TlsLib exchange runner compile failed; see {trace}")
+    if re.search(r"http2\.openssl|mormot\.", trace.read_text(errors="replace"), re.IGNORECASE):
+        raise SystemExit(f"OpenSSL or mORMot unit appears in TlsLib exchange trace: {trace}")
+    binary = programs / runner.stem
+    print(f"Compiled TlsLib exchange runner: {binary.relative_to(ROOT)}")
+    print(f"Compiler trace: {trace.relative_to(ROOT)}")
+    return binary
+
+
 def open_ssl_env() -> dict[str, str]:
     env = dict(os.environ)
     if "OPENSSL_LIBPATH" not in env and platform.system() == "Darwin":
@@ -262,6 +404,7 @@ def build(component: str) -> None:
 
 
 def tlslib_flags() -> list[str]:
+    overlay_provider, _ = prepare_macos_rng_overlay()
     roots = [dependency_root("TlsLib4Pascal") / "TlsLib" / "src",
              dependency_root("CryptoLib4Pascal") / "CryptoLib" / "src",
              dependency_root("HashLib4Pascal") / "HashLib" / "src",
@@ -270,14 +413,24 @@ def tlslib_flags() -> list[str]:
     includes = {source.parent for base in roots for source in base.rglob("*.inc")}
     preferred = [roots[1] / "Math" / "EC" / "Multiplier", roots[1] / "Math" / "EC"]
     dirs = [path for path in preferred if path.exists()]
+    if overlay_provider is not None:
+        dirs.insert(0, overlay_provider)
     dirs.extend(sorted(directories - set(dirs)))
     includes.update(directories)
+    if overlay_provider is not None:
+        includes.add(overlay_provider.parents[1] / "Include")
     return [f"-Fu{path}" for path in dirs] + [f"-Fi{path}" for path in sorted(includes)]
 
 
 def compile_provider_tlslib(source: Path) -> Path:
     units, programs = output("tlslib")
     package_units = output("tlslib")[0] / "bootstrap"
+    _, overlay_fingerprint = prepare_macos_rng_overlay()
+    fingerprint_file = units.parent / "bootstrap-overlay.fingerprint"
+    if (not fingerprint_file.is_file()
+            or fingerprint_file.read_text().strip() != overlay_fingerprint):
+        shutil.rmtree(units, ignore_errors=True)
+        units.mkdir(parents=True, exist_ok=True)
     package_units.mkdir(parents=True, exist_ok=True)
     flags = ["-O2", "-vw", "-Mdelphi", *tlslib_flags(),
              *shlex.split(os.environ.get("FPCFLAGS", ""))]
@@ -295,6 +448,7 @@ def compile_provider_tlslib(source: Path) -> Path:
     run([compiler(), f"-Fu{package_units}", *flags,
          f"-Fu{COMPONENTS['common']['source']}", f"-Fu{COMPONENTS['tlslib']['source']}",
          f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))], timeout=300)
+    fingerprint_file.write_text(overlay_fingerprint + "\n")
     return programs / source.stem
 
 
@@ -303,6 +457,8 @@ def run_tests(component: str) -> None:
     if component in ("client", "server"):
         build("common")
     build(role)
+    if component == "client":
+        build("openssl")
     output_component = f"{component}-test"
     runner = {
         "common": "test/common/Http2.Common.RunTests.pas",
@@ -372,6 +528,7 @@ def run_server_live(kind: str) -> None:
 def compile_client_test_runner() -> Path:
     build("common")
     build("client")
+    build("openssl")
     return compile_file(ROOT / "test/client/Http2.Client.RunTests.pas",
                         "client-test", tests=True)
 
@@ -573,18 +730,22 @@ def packages_check() -> None:
     compiler_id = compiler_ids.get(cpu.casefold())
     if not compiler_id:
         raise SystemExit(f"No Lazarus compiler ID is configured for CPU {cpu}")
-    pcp = ROOT / "bin" / target_name() / profile() / "lazarus-config"
-    pcp.mkdir(parents=True, exist_ok=True)
-    order = {"http2common": 0, "http2openssl": 1, "http2tlslib": 2,
-             "http2client": 3, "http2server": 4, "http2clientreaders": 5}
+    pcp_root = ROOT / "bin" / target_name() / profile() / "lazarus-config"
+    pcp_root.mkdir(parents=True, exist_ok=True)
+    order = {"http2common": 0, "http2openssl": 1, "http2client": 2,
+             "http2server": 3, "http2clientreaders": 4, "http2tlslib": 5}
     packages.sort(key=lambda path: order.get(path.stem.casefold(), 10))
     try:
         for package in packages:
             stem = package.stem
+            pcp = pcp_root / stem
+            pcp.mkdir(parents=True, exist_ok=True)
             component = PACKAGE_COMPONENT[stem]
             if stem == "http2clientreaders":
                 component = "readers"
             if component == "tlslib":
+                shutil.rmtree(ROOT / "bin" / target_name() / profile() / "tlslib",
+                               ignore_errors=True)
                 build("tlslib")
             units, programs = output(f"package-{stem}")
             common_build_units = f"-Fu{ROOT / 'bin' / target_name() / profile() / 'common' / 'units'}"
@@ -594,8 +755,36 @@ def packages_check() -> None:
             if component == "readers":
                 options.insert(2, f"-Fu{ROOT / 'bin' / target_name() / profile() / 'package-http2client' / 'units'}")
             options.extend((f"-FU{units}", f"-FE{programs}"))
-            args = [lazbuild, "--build-all", f"--pcp={pcp}", f"--cpu={cpu}",
+            shutil.rmtree(ROOT / "bin" / target_name() / profile() / ("package-" + stem),
+                          ignore_errors=True)
+            units, programs = output("package-" + stem)
+            options = [flag for flag in options
+                       if not flag.startswith(("-FU", "-FE"))]
+            options.extend((f"-FU{units}", f"-FE{programs}"))
+            package_links = {
+                "http2client": ("common/http2common.lpk",),
+                "http2server": ("common/http2common.lpk",),
+                "http2openssl": ("common/http2common.lpk",),
+                "http2tlslib": ("common/http2common.lpk",),
+                "http2clientreaders": ("common/http2common.lpk", "client/http2client.lpk"),
+            }.get(stem, ())
+            for link in package_links:
+                run([lazbuild, f"--pcp={pcp}", "--add-package-link", link], cwd=ROOT)
+            args = [lazbuild, f"--pcp={pcp}", f"--cpu={cpu}",
                     f"--os={os_name}", f"--compiler={compiler_id}"]
+            if component == "tlslib":
+                real_compiler = shutil.which(compiler_id)
+                if not real_compiler:
+                    raise SystemExit(f"Cannot resolve Lazarus compiler {compiler_id}")
+                wrapper = pcp / "fpc-tlslib-bootstrap.py"
+                wrapper.write_text(
+                    "#!/usr/bin/env python3\n"
+                    "import os, sys\n"
+                    f"compiler = {real_compiler!r}\n"
+                    "args = [value for value in sys.argv[1:] if value != '-B']\n"
+                    "os.execv(compiler, [compiler, *args])\n")
+                wrapper.chmod(wrapper.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+                args[-1] = f"--compiler={wrapper}"
             args.extend(f"--opt={flag}" for flag in options)
             args.append(str(package.relative_to(ROOT)))
             run(args, env=open_ssl_env() if component in ("client", "server", "readers", "openssl") else None)
@@ -671,6 +860,10 @@ def main() -> int:
         check("version")
     elif target == "packages:check":
         packages_check()
+    elif target == "isolation:compile":
+        compile_isolation_probes()
+    elif target == "isolation:tlslib:runtime":
+        compile_tlslib_runtime_trace()
     elif target == "examples":
         examples()
     elif target == "test:api":

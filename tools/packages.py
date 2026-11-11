@@ -13,6 +13,30 @@ HEADER = ('{**\n---\nlicense: ' + LICENSE +
           '\ncopyright: Copyright 2026 Liam Seamus Coughlin\n---\n}\n')
 ACTIVE_PACKAGES = ('http2common', 'http2client', 'http2server', 'http2openssl',
                    'http2tlslib', 'http2clientreaders')
+DEPENDENCY_LAYOUT = {
+    'TlsLib4Pascal': 'TlsLib/src',
+    'CryptoLib4Pascal': 'CryptoLib/src',
+    'HashLib4Pascal': 'HashLib/src',
+    'SimpleBaseLib4Pascal': 'SimpleBaseLib/src',
+}
+
+
+def dependency_source(name: str) -> tuple[Path, Path]:
+    """Return the active source root and its portable repository-relative path."""
+    override = os.environ.get(name.upper() + '_ROOT')
+    actual_repo = Path(override) if override else ROOT / 'third_party' / name
+    if not actual_repo.is_absolute():
+        actual_repo = ROOT / actual_repo
+    base = DEPENDENCY_LAYOUT[name]
+    return actual_repo.resolve() / base, ROOT / 'third_party' / name / base
+
+
+def dependency_directories(name: str, base: str, suffix: str) -> list[Path]:
+    actual_root, manifest_root = dependency_source(name)
+    search_root = actual_root.parent.parent / base
+    manifest_search_root = manifest_root.parent.parent / base
+    return sorted({manifest_search_root / path.parent.relative_to(search_root)
+                   for path in search_root.rglob('*' + suffix)}) if search_root.exists() else []
 
 
 def package_for(unit: str) -> str:
@@ -50,31 +74,31 @@ def render(name: str, sources: list[Path]) -> dict[Path, str]:
     include_roles = ('common',) if component == 'common' else ('common', component)
     include_paths = [ROOT / COMPONENTS[role]['source'] for role in include_roles]
     if component == 'tlslib':
-        for dependency, base in (('TlsLib4Pascal', 'TlsLib/src'),
-                                 ('CryptoLib4Pascal', 'CryptoLib/src'),
-                                 ('HashLib4Pascal', 'HashLib/src'),
-                                 ('SimpleBaseLib4Pascal', 'SimpleBaseLib/src')):
-            dep_root = ROOT / 'third_party' / dependency / base
-            if dep_root.exists():
-                include_paths.extend(sorted({path.parent for path in dep_root.rglob('*.inc')}))
+        compat_root = (ROOT / 'bin' / '$(TargetCPU)-$(TargetOS)' / 'default' /
+                       'tlslib' / 'compat' / 'cryptolib' / 'CryptoLib' / 'src')
+        include_paths.append(compat_root / 'Include')
+        for dependency, base in DEPENDENCY_LAYOUT.items():
+            include_paths.extend(dependency_directories(dependency, base, '.inc'))
     value(paths, 'IncludeFiles', ';'.join(relative(path) for path in include_paths))
     output = ROOT / 'bin' / '$(TargetCPU)-$(TargetOS)' / 'default' / ('package-' + name) / 'units'
     value(paths, 'UnitOutputDirectory', relative(output))
     search = [relative(ROOT / COMPONENTS['common']['source'])]
-    if component in ('client', 'server', 'openssl', 'tlslib'):
+    if component == 'tlslib':
+        search = [relative(ROOT / 'bin' / '$(TargetCPU)-$(TargetOS)' / 'default' /
+                           'tlslib' / 'units' / 'bootstrap'),
+                  relative(ROOT / 'bin' / '$(TargetCPU)-$(TargetOS)' / 'default' /
+                           'tlslib' / 'compat' / 'cryptolib' / 'CryptoLib' / 'src' /
+                           'Rngs' / 'Providers'),
+                  *search, relative(ROOT / COMPONENTS[component]['source'])]
+    elif component in ('client', 'server', 'openssl'):
         search.append(relative(ROOT / COMPONENTS[component]['source']))
     if component == 'client' and name == 'http2clientreaders':
         search.extend(relative(ROOT / 'third_party/mORMot2/src' / p) for p in ('core', 'lib'))
     elif component in ('client', 'server', 'openssl'):
         search.extend(relative(ROOT / 'third_party/mORMot2/src' / p) for p in ('core', 'lib', 'net', 'crypt'))
     elif component == 'tlslib':
-        for dependency, base in (('TlsLib4Pascal', 'TlsLib/src'),
-                                 ('CryptoLib4Pascal', 'CryptoLib/src'),
-                                 ('HashLib4Pascal', 'HashLib/src'),
-                                 ('SimpleBaseLib4Pascal', 'SimpleBaseLib/src')):
-            dep_root = ROOT / 'third_party' / dependency / base
-            if dep_root.exists():
-                search.extend(relative(path) for path in sorted({item.parent for item in dep_root.rglob('*.pas')}))
+        for dependency, base in DEPENDENCY_LAYOUT.items():
+            search.extend(relative(path) for path in dependency_directories(dependency, base, '.pas'))
         # Package manifests are source-only metadata. tools/build.py supplies
         # the exact dependency paths for command-line builds.
     value(paths, 'OtherUnitFiles', ';'.join(search))
