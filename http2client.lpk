@@ -22,7 +22,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="19">
+    <Files Count="26">
       <Item1>
         <Filename Value="src/Http2.Client.ClientCert.pas" />
         <UnitName Value="Http2.Client.ClientCert" />
@@ -60,45 +60,73 @@
         <UnitName Value="Http2.Client.Observer" />
       </Item9>
       <Item10>
-        <Filename Value="src/Http2.Client.Proxy.pas" />
-        <UnitName Value="Http2.Client.Proxy" />
+        <Filename Value="src/Http2.Client.Proxy.Environment.pas" />
+        <UnitName Value="Http2.Client.Proxy.Environment" />
       </Item10>
       <Item11>
-        <Filename Value="src/Http2.Client.RequestObserver.pas" />
-        <UnitName Value="Http2.Client.RequestObserver" />
+        <Filename Value="src/Http2.Client.Proxy.Match.pas" />
+        <UnitName Value="Http2.Client.Proxy.Match" />
       </Item11>
       <Item12>
-        <Filename Value="src/Http2.Client.SigPipe.pas" />
-        <UnitName Value="Http2.Client.SigPipe" />
+        <Filename Value="src/Http2.Client.Proxy.Types.pas" />
+        <UnitName Value="Http2.Client.Proxy.Types" />
       </Item12>
       <Item13>
-        <Filename Value="src/Http2.Client.Socks.pas" />
-        <UnitName Value="Http2.Client.Socks" />
+        <Filename Value="src/Http2.Client.Proxy.pas" />
+        <UnitName Value="Http2.Client.Proxy" />
       </Item13>
       <Item14>
-        <Filename Value="src/Http2.Client.Sse.pas" />
-        <UnitName Value="Http2.Client.Sse" />
+        <Filename Value="src/Http2.Client.RequestObserver.pas" />
+        <UnitName Value="Http2.Client.RequestObserver" />
       </Item14>
       <Item15>
-        <Filename Value="src/Http2.Client.Stream.pas" />
-        <UnitName Value="Http2.Client.Stream" />
+        <Filename Value="src/Http2.Client.SigPipe.pas" />
+        <UnitName Value="Http2.Client.SigPipe" />
       </Item15>
       <Item16>
-        <Filename Value="src/Http2.Client.Tls.pas" />
-        <UnitName Value="Http2.Client.Tls" />
+        <Filename Value="src/Http2.Client.Socks.pas" />
+        <UnitName Value="Http2.Client.Socks" />
       </Item16>
       <Item17>
-        <Filename Value="src/Http2.Client.WebSocket.Connection.pas" />
-        <UnitName Value="Http2.Client.WebSocket.Connection" />
+        <Filename Value="src/Http2.Client.Sse.pas" />
+        <UnitName Value="Http2.Client.Sse" />
       </Item17>
       <Item18>
-        <Filename Value="src/Http2.Client.WebSocket.pas" />
-        <UnitName Value="Http2.Client.WebSocket" />
+        <Filename Value="src/Http2.Client.Stream.pas" />
+        <UnitName Value="Http2.Client.Stream" />
       </Item18>
       <Item19>
+        <Filename Value="src/Http2.Client.Tls.Plain.pas" />
+        <UnitName Value="Http2.Client.Tls.Plain" />
+      </Item19>
+      <Item20>
+        <Filename Value="src/Http2.Client.Tls.Socket.pas" />
+        <UnitName Value="Http2.Client.Tls.Socket" />
+      </Item20>
+      <Item21>
+        <Filename Value="src/Http2.Client.Tls.Tunnel.pas" />
+        <UnitName Value="Http2.Client.Tls.Tunnel" />
+      </Item21>
+      <Item22>
+        <Filename Value="src/Http2.Client.Tls.Types.pas" />
+        <UnitName Value="Http2.Client.Tls.Types" />
+      </Item22>
+      <Item23>
+        <Filename Value="src/Http2.Client.Tls.pas" />
+        <UnitName Value="Http2.Client.Tls" />
+      </Item23>
+      <Item24>
+        <Filename Value="src/Http2.Client.WebSocket.Connection.pas" />
+        <UnitName Value="Http2.Client.WebSocket.Connection" />
+      </Item24>
+      <Item25>
+        <Filename Value="src/Http2.Client.WebSocket.pas" />
+        <UnitName Value="Http2.Client.WebSocket" />
+      </Item25>
+      <Item26>
         <Filename Value="src/Http2.Client.pas" />
         <UnitName Value="Http2.Client" />
-      </Item19>
+      </Item26>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
