@@ -21,7 +21,7 @@ uses
   SysUtils, Classes, SyncObjs, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls, Http2.Client.Observer, Http2.Common.FlowControl,
   Http2.Client.Clock, Http2.Common.Hpack, Http2.Client.Connection.Observer,
-  Http2.Client.Connection.Queue;
+  Http2.Client.Connection.Queue, Http2.Client.Connection.SendCredit;
 
 const
   /// connection-level receive window we advertise (RFC 7540 section 6.9.2)
@@ -141,8 +141,7 @@ type
     FFlowControl: TFlowControl;
     FPendingStreamCredit: TDictionary<LongWord, LongWord>;
     FPendingConnCredit: LongWord;
-    FSendCreditEvent: PRTLEvent;
-    FSendCreditWaiters: Integer;
+    FSendCreditWaiters: ISendCreditWaiterRegistry;
     function GetState: TConnectionState;
     function GetPeerSettings: TConnectionSettings;
     function GetObserver: IHttp2Observer;
@@ -160,7 +159,7 @@ type
     procedure SetState(const AValue: TConnectionState);
     procedure TrackReceivedData(const AStreamId, ALength: LongWord);
     procedure ApplyWindowUpdate(const AStreamId, AIncrement: LongWord);
-    /// release every sender parked on FSendCreditEvent; each re-checks its own
+    /// release every sender parked on its per-sender event; each re-checks its own
     /// window and its AAbort flag, so a wake that is not for it is harmless
     procedure WakeSendCredit;
     constructor Create(const ASocket: IHttp2Socket); overload;
@@ -231,6 +230,8 @@ type
     procedure UnregisterStream(const AStreamId: LongWord);
     /// number of in-flight stream leases (test seam)
     function StreamCount: Integer;
+    /// number of senders parked for flow-control credit (test seam)
+    function SendCreditWaiterCount: Integer;
     /// hand a stream-scoped frame to its lease; False when nobody owns it
     /// (the frame is then left on the shared inbound queue)
     function DispatchStreamFrame(const AFrame: TFrame): Boolean;
@@ -336,8 +337,7 @@ begin
   inherited Create;
   FLock := TCriticalSection.Create;
   FStateEvent := RTLEventCreate;
-  FSendCreditEvent := RTLEventCreate;
-  FSendCreditWaiters := 0;
+  FSendCreditWaiters := NewSendCreditWaiterRegistry;
   FSocket := ASocket;
   FOutbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
   FInbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
@@ -372,7 +372,7 @@ begin
   FreeAndNil(FNotifications);
   FreeAndNil(FStreams);
   RTLEventDestroy(FStateEvent);
-  RTLEventDestroy(FSendCreditEvent);
+  FSendCreditWaiters := nil;
   FLock.Free;
   inherited Destroy;
 end;
@@ -698,6 +698,11 @@ begin
   end;
 end;
 
+function TConnection.SendCreditWaiterCount: Integer;
+begin
+  Result := FSendCreditWaiters.Count;
+end;
+
 function TConnection.DispatchStreamFrame(const AFrame: TFrame): Boolean;
 var
   S: IConnectionStream;
@@ -899,25 +904,10 @@ begin
 end;
 
 procedure TConnection.WakeSendCredit;
-var
-  Waiters: Integer;
 begin
-  // RTLEventSetEvent releases EXACTLY ONE waiter and then auto-resets (it is
-  // not a sticky flag), so signal once per parked sender. Reading the count
-  // under FLock is what makes this lossless: a sender registers itself while
-  // still holding FLock, so a wake that runs after the count is read either
-  // sees the new waiter or the waiter sees the credit it was woken for.
-  FLock.Acquire;
-  try
-    Waiters := FSendCreditWaiters;
-  finally
-    FLock.Release;
-  end;
-  while Waiters > 0 do
-  begin
-    RTLEventSetEvent(FSendCreditEvent);
-    Dec(Waiters);
-  end;
+  // Each parked sender owns an event, so a rapid broadcast cannot collapse
+  // several pending signals into one.
+  FSendCreditWaiters.WakeAll;
 end;
 
 function TConnection.AcquireSendCredit(const AStreamId: LongWord;
@@ -928,60 +918,58 @@ var
   Remaining: Integer;
   Granted: LongWord;
   Win: TWindow;
+  Waiter: ISendCreditWaiter;
 begin
-  Deadline := GetTickCount64 + QWord(ATimeoutMs);
-  while True do
-  begin
-    FLock.Acquire;
-    try
-      if FClosed or (FState = csClosed) then
-        if FError <> '' then
-          raise FailureError(FError, FErrorCode)
-        else
-          raise EHttpConnectionClosed.Create(
-            'connection closed while waiting for send credit');
-      // Reserve min(connection window, stream window, room left in this
-      // frame). TryConsume is the atomic check-and-decrement across BOTH
-      // windows (it leaves them untouched when either lacks credit), so a
-      // stream starved on its own window never eats the connection window.
-      Granted := 0;
-      // RFC 9113 section 6.5.3: do not emit DATA before the peer's SETTINGS
-      // has set INITIAL_WINDOW_SIZE, or a lowered window would be overrun
-      // (FLOW_CONTROL_ERROR). Treat that as "no credit yet": the sender parks
-      // and ApplyPeerSettingsValue wakes it once the settings are applied.
-      if FPeerSettingsReceived and FFlowControl.TryGetStream(AStreamId, Win) then
-      begin
-        Granted := AMax;
-        if LongWord(FFlowControl.Connection.Size) < Granted then
-          Granted := LongWord(FFlowControl.Connection.Size);
-        if LongWord(Win.Size) < Granted then
-          Granted := LongWord(Win.Size);
-        if (Granted > 0) and FFlowControl.TryConsume(AStreamId, Granted) then
-          Exit(Granted);
-      end;
-      // credit that is there is still used; only a wait for more is cut short
-      if (AAbort <> nil) and (InterlockedExchangeAdd(AAbort^, 0) <> 0) then
-        Exit(0);
-      // No credit. Register as a waiter BEFORE releasing FLock: a
-      // WINDOW_UPDATE that lands from here on will count us and signal, so no
-      // wakeup can be lost between this check and the wait below
-      Inc(FSendCreditWaiters);
-    finally
-      FLock.Release;
-    end;
-    try
-      if GetTickCount64 >= Deadline then
-        Exit(0);
-      Remaining := Integer(Deadline - GetTickCount64);
-      RTLEventWaitFor(FSendCreditEvent, Remaining);
-    finally
+  Waiter := nil;
+  try
+    Deadline := GetTickCount64 + QWord(ATimeoutMs);
+    while True do
+    begin
       FLock.Acquire;
       try
-        Dec(FSendCreditWaiters);
+        if FClosed or (FState = csClosed) then
+          if FError <> '' then
+            raise FailureError(FError, FErrorCode)
+          else
+            raise EHttpConnectionClosed.Create(
+              'connection closed while waiting for send credit');
+        // Reserve min(connection window, stream window, room left in this
+        // frame). TryConsume is the atomic check-and-decrement across BOTH
+        // windows (it leaves them untouched when either lacks credit), so a
+        // stream starved on its own window never eats the connection window.
+        Granted := 0;
+        // RFC 9113 section 6.5.3: do not emit DATA before the peer's SETTINGS
+        // has set INITIAL_WINDOW_SIZE, or a lowered window would be overrun
+        // (FLOW_CONTROL_ERROR). Treat that as "no credit yet": the sender parks
+        // and ApplyPeerSettingsValue wakes it once the settings are applied.
+        if FPeerSettingsReceived and FFlowControl.TryGetStream(AStreamId, Win) then
+        begin
+          Granted := AMax;
+          if LongWord(FFlowControl.Connection.Size) < Granted then
+            Granted := LongWord(FFlowControl.Connection.Size);
+          if LongWord(Win.Size) < Granted then
+            Granted := LongWord(Win.Size);
+          if (Granted > 0) and FFlowControl.TryConsume(AStreamId, Granted) then
+            Exit(Granted);
+        end;
+        // credit that is there is still used; only a wait for more is cut short
+        if (AAbort <> nil) and (InterlockedExchangeAdd(AAbort^, 0) <> 0) then
+          Exit(0);
+        // Register before releasing FLock, so a settings or window update
+        // cannot land between the credit check and the park.
+        if Waiter = nil then
+          Waiter := FSendCreditWaiters.NewWaiter;
+        Waiter.Register;
       finally
         FLock.Release;
       end;
+      if GetTickCount64 >= Deadline then
+        Exit(0);
+      Remaining := Integer(Deadline - GetTickCount64);
+      Waiter.Wait(Remaining);
     end;
+  finally
+    Waiter := nil;
   end;
 end;
 
