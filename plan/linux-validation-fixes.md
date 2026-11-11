@@ -113,3 +113,11 @@ return success. The server owner makes missing h2spec, nghttp, curl, h2load,
 and required Python protocol packages fail the requested full gate. Existing
 fixed protocol expectations stay unchanged. Exact missing tools remain in
 logs. The client owner applies the same rule to required Docker peer cases.
+
+### LV-02 Docker path finding, 2026-11-11 18:00 UTC
+
+`mtls-real.sh` creates bind-mounted peer configuration below container-local
+`/tmp`. The remote Docker daemon cannot see that path. The client owner moves
+this scratch directory below the run output in the shared source mount and
+keeps cleanup restricted to its own generated directory. The main test
+container and host use the same absolute source path.
