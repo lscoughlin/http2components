@@ -37,9 +37,13 @@ class Checks:
 
 def source_dirs() -> list[Path]:
     result = []
-    for role in ("common", "client", "server"):
+    for role, details in COMPONENTS.items():
         path = ROOT / COMPONENTS[role]["source"]
         if not path.is_dir():
+            if role in ("openssl", "tlslib"):
+                package_dir = ROOT / details["package_dir"]
+                if not any(package_dir.glob("*.lpk")):
+                    continue
             raise SystemExit(f"Required component source directory is missing: {path.relative_to(ROOT)}")
         result.append(path)
     return result
@@ -47,7 +51,7 @@ def source_dirs() -> list[Path]:
 
 def package_files() -> list[Path]:
     return sorted(path for role in ("common", "client", "server", "openssl", "tlslib")
-                  for path in (ROOT / role).glob("*.lpk"))
+                  for path in (ROOT / COMPONENTS[role]["package_dir"]).glob("*.lpk"))
 
 
 def pascal_files() -> list[Path]:
@@ -64,8 +68,8 @@ def pascal_files() -> list[Path]:
 def header_pascal_files() -> list[Path]:
     result = pascal_files()
     result.extend(p for p in ROOT.glob("*.pas") if p.is_file())
-    result.extend(p for role in ("common", "client", "server", "openssl", "tlslib")
-                  for p in (ROOT / role).glob("*.pas") if p.is_file())
+    result.extend(p for role in COMPONENTS
+                  for p in (ROOT / COMPONENTS[role]["package_dir"]).glob("*.pas") if p.is_file())
     probes = ROOT / "doc/verification/client-probes"
     if probes.exists():
         result.extend(p for p in probes.glob("*.pas") if p.is_file())
@@ -238,10 +242,10 @@ def source_check(c: Checks) -> None:
             continue
         kind, declared = kind_match.group(1).lower(), kind_match.group(2)
         if Path(rel).parts[0] in ("common", "client", "server", "tls"):
-            role = next((r for r in ("common", "client", "server")
+            role = next((r for r in COMPONENTS
                          if declared.casefold() == "http2." + r or
                          declared.casefold().startswith("http2." + r + ".")), None)
-            expected_parent = Path(role) / "src" if role else None
+            expected_parent = Path(COMPONENTS[role]["source"]) if role else None
             if role is None or Path(rel).parent != expected_parent:
                 c.fail(f"{rel} must be directly under {expected_parent or '<component>/src'}")
         if kind == "unit" and Path(rel).stem.casefold() != declared.casefold():
@@ -433,12 +437,15 @@ def packages_check(c: Checks) -> None:
                 listed.setdefault(source_path.relative_to(ROOT).as_posix(), []).append(package.name)
             deps = {node.get("Value", "").casefold()
                     for node in tree.findall(".//RequiredPkgs/*/PackageName")}
-            role_deps = deps & {"http2common", "http2client", "http2server", "http2clientreaders"}
+            role_deps = deps & {"http2common", "http2client", "http2server", "http2clientreaders",
+                                "http2openssl", "http2tlslib"}
             expected_deps = {
                 "http2common.lpk": set(),
                 "http2client.lpk": {"http2common"},
                 "http2server.lpk": {"http2common"},
                 "http2clientreaders.lpk": {"http2common", "http2client"},
+                "http2openssl.lpk": {"http2common"},
+                "http2tlslib.lpk": {"http2common"},
             }.get(package.name.casefold())
             if expected_deps is None or role_deps != expected_deps:
                 c.fail(f"{package.name} has invalid component dependencies: {sorted(role_deps)}")
@@ -485,6 +492,10 @@ def packages_check(c: Checks) -> None:
                 expected = "http2client.lpk"
             elif stem.startswith("http2.server"):
                 expected = "http2server.lpk"
+            elif stem.startswith("http2.openssl"):
+                expected = "http2openssl.lpk"
+            elif stem.startswith("http2.tlslib"):
+                expected = "http2tlslib.lpk"
             else:
                 expected = None
             if expected and owners[0].casefold() != expected:
@@ -503,7 +514,8 @@ def component_check(c: Checks, component: str) -> None:
     sources = sorted(source_dir.rglob("*.pas"))
     if not sources:
         c.fail(f"component {component} has no Pascal source units")
-    packages = [ROOT / component / (name + ".lpk")
+    package_dir = ROOT / COMPONENTS[component]["package_dir"]
+    packages = [package_dir / (name + ".lpk")
                 for name in COMPONENTS[component]["packages"]]
     listed: dict[Path, int] = {}
     for package in packages:

@@ -46,7 +46,8 @@ docs.each do |path|
   bad += check_yaml(path.delete_prefix(root + '/'), match[1], license, copyright)
 end
 
-pascal_roots = %w[src test examples tools].map { |d| File.join(root, d) }
+component_roots = %w[common client server tls/openssl tls/tlslib]
+pascal_roots = (%w[test examples tools] + component_roots).map { |d| File.join(root, d) }
 pascal_files = pascal_roots.flat_map { |dir| Dir[File.join(dir, '**/*.pas')] }.sort
 pascal_files.concat(Dir[File.join(root, '*.pas')])
 pascal_files.concat(Dir[File.join(root, 'doc/verification/client-probes/*.pas')])
