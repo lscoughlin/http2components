@@ -1,0 +1,49 @@
+path	kind	owner	status
+Makefile	build	TLS-01/TLS-04/TLS-10	root dispatch and build command map
+Taskfile.yaml	build	TLS-01	aliases to root driver
+tools/build.py	build and validation	TLS-01/TLS-04/TLS-10	current source roots, package builds, test suites and validation gates
+tools/packages.py	package generation	TLS-01/TLS-10	four package groups and namespace mapping
+tools/check/repository.py	source/package checks	TLS-01/TLS-10	three source roots and package expectations
+tools/check/test_accounting.py	test accounting	TLS-10	check test declarations and ledger
+tools/check/local_process.py	integration validation	TLS-10	local child-process check
+tools/client/validate/interop.sh	client external TLS validation	TLS-10/TLS-13	interop gate; external peer
+tools/client/validate/h2probe-sanity.sh	client external TLS validation	TLS-10/TLS-13	external h2probe gate
+tools/client/validate/mtls-live.sh	client TLS/mTLS validation	TLS-10	live local Python peer; MTLS_BASE, OPENSSL_LIBPATH
+tools/client/validate/mtls-real.sh	client TLS/mTLS validation	TLS-13	Docker or remote host; MTLS_REAL_HOST, MTLS_REAL_LOCAL, MTLS_REAL_NATIVE, MTLS_REAL_BASE, MTLS_REPEAT, MTLS_POST_BYTES, HTTP2_IMAGE, NGINX_IMAGE, HTTPD_IMAGE, CADDY_IMAGE
+tools/client/validate/make-mtls-certs.sh	client test PKI	TLS-10	creates/replaces test fixture material when invoked; not run
+tools/client/validate/proxy-live.sh	client proxy validation	TLS-10/TLS-13	live proxy gate
+tools/client/validate/proxy-real.sh	client proxy validation	TLS-13	external/real proxy gate
+tools/client/validate/websocket-live.sh	client WebSocket validation	TLS-10/TLS-13	live and Autobahn modes
+tools/client/validate/sse-live.sh	client TLS/SSE validation	TLS-10/TLS-13	live peer gate
+tools/client/validate/cleartext-live.sh	client transport validation	TLS-10	cleartext behavior only; OPENSSL_LIBPATH optional
+tools/client/validate/harness.sh	client conformance validation	TLS-13	external harness and network validation
+tools/client/validate/mtls_server.py	client TLS/mTLS peer	TLS-10	local Python TLS peer
+tools/client/validate/ws_servers.py	client WebSocket peer	TLS-10	local Python TLS peer
+tools/server/validate/run.sh	server validation	TLS-10/TLS-13	server bounded/live/conformance modes; no execution in TLS-00
+tools/server/certs/make_mtls_pki.sh	server test PKI	TLS-10	creates temporary PKI under caller path
+tools/server/container/Dockerfile	container validation	TLS-13	deferred
+tools/client/container/Dockerfile	container validation	TLS-13	deferred
+doc/design/common/architecture.md	design docs	TLS-11	package/source namespace update
+doc/design/client/architecture.md	design docs	TLS-11	client package/source layout update
+doc/design/client/client-api.md	client API docs	TLS-11	context selection and migration
+doc/design/client/errors-redirects.md	client behavior docs	TLS-11	TLS error mapping if changed
+doc/design/client/fallback.md	client TLS/ALPN docs	TLS-11	existing strict and fallback behavior
+doc/design/client/mtls.md	client identity docs	TLS-11	provider-neutral identities and context migration
+doc/design/client/open-questions.md	client design	TLS-11	review TLS open questions
+doc/design/client/proxy.md	client proxy docs	TLS-11	separate proxy context/trust route
+doc/design/client/transport.md	client transport docs	TLS-11	provider-neutral session transport
+doc/design/client/websocket.md	client WebSocket docs	TLS-11	wss context and identity selection
+doc/design/server/architecture.md	design docs	TLS-11	package/source namespace update
+doc/design/server/configuration.md	server API docs	TLS-11	WithTlsContext and migration
+doc/design/server/http1.md	server behavior docs	TLS-11	TLS fallback where needed
+doc/design/server/mtls.md	server identity docs	TLS-11	provider-neutral peer metadata and trust
+doc/design/server/public-api.md	server API docs	TLS-11	WithTlsContext and API break
+doc/design/server/seam.md	server adapter docs	TLS-02/TLS-11	adapter decision evidence and API boundaries
+doc/design/server/tls.md	server TLS docs	TLS-02/TLS-11	new async adapter route and negotiated ALPN
+doc/design/server/websocket.md	server behavior docs	TLS-11	mTLS identity propagation where needed
+doc/verification/current-status.md	verification docs	TLS-12	update only with accepted results
+doc/references/README.md	reference ledger	TLS-02/TLS-11	new RFC copies only if required references are absent
+examples/server/tls_server.pas	example	TLS-11	request API-test changes through coordinator if required; migrate old WithTls options
+examples/server/mtls_server.pas	example	TLS-11	request API-test changes through coordinator if required; migrate old WithTls and mTLS settings
+examples/server/interop_server.pas	example	TLS-11	request API-test changes through coordinator if required; migrate old WithTls options
+examples/client/mtls_get.pas	example	TLS-11	request API-test changes through coordinator if required; migrate identity loading and client TLS context
