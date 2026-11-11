@@ -487,3 +487,23 @@ a server defect receives a narrow production repair with a regression check.
 The original seven passes, failed peer output, and server log remain retained.
 The complete eight-case HTTP/2 and WebSocket abuse gate runs again. Process
 cleanup must continue to create no new live or defunct child processes.
+
+## LV-30: Full server regression after forced socket closure repair
+
+Candidate 610a86b passes the original HTTP/1 slow-reader case in 1.114
+seconds. The complete server run reports failures in
+TWsHttp1Test.TestStopSendsGoingAway and
+TWriteTimeoutTest.TestSlowSteadyReaderIsNotClosed. The first failure occurs
+in shutdown; the second case runs for approximately 30 seconds. The exact
+assertions and complete run summary remain required evidence.
+
+The server owner traces both paths against the forced-close change. A
+normal WebSocket shutdown must deliver close code 1001 before the transport
+ends. A reader that makes progress must not be closed as a stalled reader.
+The owner distinguishes a production regression from a fixture defect with
+retained old/new evidence. The repair keeps the original stalled-reader
+HTTP 200 requirement and explicit abort with write timeout disabled. The
+owner does not weaken expected close codes or remove slow-reader progress
+checks. Root reviews the repair and runs all affected tests followed by the
+complete server suite. Performance stays blocked until the required server
+checks pass. Remote diagnostic runs wait for the current batch to finish.
