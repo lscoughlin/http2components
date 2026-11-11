@@ -35,7 +35,7 @@ uses
   Http2.Server.Errors, Http2.Common.Frames, Http2.Common.Hpack,
   Http2.Common.Headers, Http2.Server.Config, Http2.Server.Connection,
   Http2.Server.Seam, Http2.Server.Stream, Http2.Server.Tls.Binding,
-  Http2.Server.Async;
+  Http2.Server.Async, Http2.Server.Test.Socket;
 
 type
   /// the pure decisions of the TLS plug-in
@@ -392,17 +392,14 @@ function TAsyncServerTest.PeerClosed(const AClient: TCrtSocket;
   const ATimeoutMs: Integer): Boolean;
 var
   Deadline: QWord;
-  Pending: TCrtSocketPending;
 begin
   result := False;
   Deadline := GetTickCount64 + QWord(ATimeoutMs);
   while GetTickCount64 < Deadline do
   begin
-    Pending := AClient.SockReceivePending(100);
-    if Pending in [cspSocketError, cspSocketClosed,
-       cspDataAvailableOnClosedSocket] then
+    if TestSocketClosed(AClient) then
       Exit(True);
-    Sleep(50);
+    Sleep(100);
   end;
 end;
 

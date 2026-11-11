@@ -34,6 +34,7 @@ uses
   Http2.Server.Async, Http2.Server.Async.Options,
   Http2.Server.Observer, Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Environment, Http2.Server.Http1.RawClient,
+  Http2.Server.Test.Socket,
   Http2.Server.Async.Test,
   Http2.Server.WebSocket.TestKit, Http2.Server.WebSocket.Http1.Test;
 
@@ -514,12 +515,8 @@ begin
 end;
 
 function TAgeH2Client.IsClosed: Boolean;
-var
-  Pending: TCrtSocketPending;
 begin
-  Pending := FSock.SockReceivePending(100);
-  Result := Pending in [cspSocketError, cspSocketClosed,
-    cspDataAvailableOnClosedSocket];
+  Result := TestSocketClosed(FSock);
 end;
 
 function TAgeH2Client.WaitClosed(const ATimeoutMs: Integer): Boolean;
