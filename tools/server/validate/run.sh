@@ -38,28 +38,41 @@ if [ -z "${OPENSSL_LIBPATH:-}" ] && [ -d /opt/homebrew/opt/openssl@3/lib ]; then
 fi
 
 report_skip() {
+  skip_count=$((skip_count + 1))
   echo "SKIP  $1: $2"
 }
 
 report_pass() {
+  pass_count=$((pass_count + 1))
   echo "PASS  $1"
 }
 
 report_fail() {
+  fail_count=$((fail_count + 1))
   echo "FAIL  $1"
   exit_code=1
 }
 
 exit_code=0
+pass_count=0
+fail_count=0
+skip_count=0
 package="${1:-http2}"
 gate="$package"
 work="$(mktemp -d "${TMPDIR:-/tmp}/http2-server-validate.XXXXXX")"
+run_started=$(date +%s)
 cleanup() {
+  status=$?
+  trap - EXIT
   stop_example_server
   stop_interop_server
   rm -rf "$work"
+  elapsed=$(( $(date +%s) - run_started ))
+  echo "SUMMARY gate=$gate pass=$pass_count fail=$fail_count skip=$skip_count runtime=${elapsed}s exit=$status"
 }
-trap cleanup EXIT INT TERM
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 case "$gate" in
   fast)
@@ -83,10 +96,10 @@ case "$gate" in
   websocket)
     if ! start_example_server "$SERVER_BIN/ws_echo" 127.0.0.1 0; then
       report_fail "WebSocket example server did not become ready"
-    elif python3 "$here/../abuse/ws_abuse.py" 127.0.0.1 "$EXAMPLE_PORT"; then
-      report_pass "HTTP/1.1 WebSocket abuse checks"
+    elif python3 "$here/ws_h1_client.py" 127.0.0.1 "$EXAMPLE_PORT"; then
+      report_pass "HTTP/1.1 WebSocket echo (5 checks)"
     else
-      report_fail "HTTP/1.1 WebSocket abuse checks"
+      report_fail "HTTP/1.1 WebSocket echo"
     fi
     exit "$exit_code"
     ;;
@@ -221,7 +234,7 @@ if command -v h2spec >/dev/null 2>&1; then
     fi
   fi
 else
-  report_skip h2spec "the tool is not installed"
+  report_fail "h2spec is required for server conformance"
 fi
 
 # --- nghttp ---
@@ -232,7 +245,7 @@ if command -v nghttp >/dev/null 2>&1; then
     report_fail "nghttp GET /"
   fi
 else
-  report_skip nghttp "the tool is not installed"
+  report_fail "nghttp is required for server conformance"
 fi
 
 # --- curl ---
@@ -253,7 +266,7 @@ if command -v curl >/dev/null 2>&1; then
     report_fail "curl 8 MiB response ($size bytes)"
   fi
 else
-  report_skip curl "the tool is not installed"
+  report_fail "curl is required for server conformance"
 fi
 
 # --- h2load ---
@@ -269,7 +282,7 @@ if command -v h2load >/dev/null 2>&1; then
     report_fail "h2load 200 requests, 10 connections, 6 streams each (60 in flight)"
   fi
 else
-  report_skip h2load "the tool is not installed"
+  report_fail "h2load is required for server conformance"
 fi
 
 # the checks above used the clear-text server; the TLS check starts its own
@@ -292,6 +305,8 @@ if command -v curl >/dev/null 2>&1; then
   else
     report_fail "the fallback server did not report a port"
   fi
+else
+  report_fail "curl is required for the HTTP/1.1 fallback parity check"
 fi
 
 # --- TLS and ALPN ---
@@ -344,10 +359,10 @@ if command -v openssl >/dev/null 2>&1; then
       report_fail "the TLS server did not report a port"
     fi
   else
-    report_skip openssl "the certificate could not be created"
+    report_fail "the TLS certificate could not be created"
   fi
 else
-  report_skip openssl "the tool is not installed"
+  report_fail "openssl is required for server TLS conformance"
 fi
 
 # --- WebSocket over HTTP/2 (RFC 8441) with h2 and wsproto ---
@@ -370,7 +385,23 @@ if [ -x "$SERVER_BIN/ws_echo" ] && "$ws_python" -c 'import h2, wsproto' >/dev/nu
   fi
   stop_example_server
 else
-  report_skip "WebSocket over HTTP/2" "ws_echo or the Python packages h2 and wsproto are absent"
+  report_fail "WebSocket over HTTP/2 requires ws_echo and Python packages h2 and wsproto"
+fi
+
+# --- WebSocket over HTTP/1.1 ---
+if [ -x "$SERVER_BIN/ws_echo" ]; then
+  if start_example_server "$SERVER_BIN/ws_echo" 127.0.0.1 0; then
+    if python3 "$here/ws_h1_client.py" 127.0.0.1 "$EXAMPLE_PORT"; then
+      report_pass "WebSocket echo over HTTP/1.1 (5 checks)"
+    else
+      report_fail "WebSocket echo over HTTP/1.1"
+    fi
+  else
+    report_fail "WebSocket HTTP/1.1 server did not become ready"
+  fi
+  stop_example_server
+else
+  report_fail "WebSocket over HTTP/1.1 requires ws_echo"
 fi
 
 # --- Server-sent events on both protocols ---
@@ -384,7 +415,7 @@ if [ -x "$SERVER_BIN/sse_replay" ] && command -v curl >/dev/null 2>&1; then
   fi
   stop_example_server
 else
-  report_skip "SSE" "sse_replay or curl is absent"
+  report_fail "SSE conformance requires sse_replay and curl"
 fi
 
 exit "$exit_code"
