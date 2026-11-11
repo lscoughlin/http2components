@@ -34,6 +34,15 @@ const
 type
   TWebSocketConnection = class;
 
+  TWsReaderThread = class(TThread)
+  private
+    FConn: TWebSocketConnection;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AConn: TWebSocketConnection);
+  end;
+
   TWsSessionEnd = Http2.Client.WebSocket.Connection.Types.TWsSessionEnd;
   IWebSocketAttempt = Http2.Client.WebSocket.Connection.Types.IWebSocketAttempt;
 
@@ -66,7 +75,7 @@ type
     FLastRx: QWord;
     FLastPing: QWord;
     FSelfRef: IWebSocket;
-    FThread: TThread;
+    FThread: TWsReaderThread;
     FAttempt: IWebSocketAttempt;
     FProgress: IAttemptProgress;
     FEnded: LongInt;            // the end latch
@@ -131,7 +140,6 @@ type
     function GetSubprotocol: string;
     function GetUrl: string;
   end;
-
 function OpenWebSocket(const AFactory: IHttp1SocketFactory;
   const ARequest: IWebSocketRequest; const AProxy: IProxy;
   const ADefaultConnectTimeoutMs: Integer;
@@ -141,12 +149,29 @@ function OpenWebSocket(const AFactory: IHttp1SocketFactory;
 implementation
 
 uses Http2.Client.WebSocket.Connection.Open,
-  Http2.Client.WebSocket.Connection.Observer,
-  Http2.Client.WebSocket.Connection.ReaderThread;
+  Http2.Client.WebSocket.Connection.Observer;
 
 function NowMs: QWord;
 begin
   Result := GetTickCount64;
+end;
+constructor TWsReaderThread.Create(const AConn: TWebSocketConnection);
+begin
+  FConn := AConn;
+  FreeOnTerminate := True;
+  inherited Create(False);
+end;
+procedure TWsReaderThread.Execute;
+var
+  Conn: TWebSocketConnection;
+begin
+  Conn := FConn;
+  FConn := nil;
+  try
+    Conn.ReaderMain;
+  finally
+    Conn.ReleaseSelf;
+  end;
 end;
 
 
@@ -184,7 +209,6 @@ begin
   FLastRx := NowMs;
   FLastPing := FLastRx;
 end;
-
 destructor TWebSocketConnection.Destroy;
 begin
   EndSession(ciNone, 0, '', nil, True);
@@ -203,13 +227,11 @@ begin
   FIo.Free;
   inherited Destroy;
 end;
-
 procedure TWebSocketConnection.Start;
 begin
   FSelfRef := Self;
   FThread := TWsReaderThread.Create(Self);
 end;
-
 procedure TWebSocketConnection.ReleaseSelf;
 begin
   FSelfRef := nil;
@@ -224,19 +246,16 @@ begin
     AError, AAbandoned, InterlockedExchangeAdd64(FBytesIn, 0),
     InterlockedExchangeAdd64(FBytesOut, 0));
 end;
-
 procedure TWebSocketConnection.ReportIn(const AKind: TMessageKind;
   const ASize: Integer);
 begin
   FProgress.ReportMessage(AKind, mdIn, FStampUs, ASize, nil);
 end;
-
 procedure TWebSocketConnection.ReportOut(const AKind: TMessageKind;
   const AStampUs: Int64; const ASize: Integer);
 begin
   FProgress.ReportMessage(AKind, mdOut, AStampUs, ASize, nil);
 end;
-
 procedure TWebSocketConnection.MarkAborted;
 begin
   FStateLock.Enter;
@@ -291,7 +310,6 @@ begin
     end;
   end;
 end;
-
 procedure TWebSocketConnection.SendData(const AKind: Integer;
   const APayload: TBytes; const ALast: Boolean);
 var
@@ -335,7 +353,6 @@ begin
     else
       ReportOut(mkWsBinary, Stamp, Integer(Total));
 end;
-
 procedure TWebSocketConnection.SendText(const AText: string;
   const ALast: Boolean);
 var
@@ -351,13 +368,11 @@ begin
   end;
   SendData(1, B, ALast);
 end;
-
 procedure TWebSocketConnection.SendBinary(const AData: TBytes;
   const ALast: Boolean);
 begin
   SendData(2, AData, ALast);
 end;
-
 procedure TWebSocketConnection.SendPing(const AData: TBytes);
 var
   Stamp: Int64;
@@ -375,7 +390,6 @@ begin
   end;
   ReportOut(mkWsPing, Stamp, Length(AData));
 end;
-
 procedure TWebSocketConnection.SendPong(const AData: TBytes);
 var
   Stamp: Int64;
@@ -393,7 +407,6 @@ begin
   end;
   ReportOut(mkWsPong, Stamp, Length(AData));
 end;
-
 procedure TWebSocketConnection.Close(const AStatusCode: Integer;
   const AReason: string);
 var
@@ -428,20 +441,17 @@ begin
   if Sent then
     ReportOut(mkWsClose, Stamp, 2 + Length(AReason));
 end;
-
 procedure TWebSocketConnection.Abort;
 begin
   MarkAborted;
   EndSession(ciAbort, cWsCloseAbnormal, '', nil, False);
 end;
-
 procedure TWebSocketConnection.Request(const AN: Integer);
 begin
   if AN <= 0 then
     raise EHttpWebSocketError.Create('Request needs a positive count');
   AddDemand(AN);
 end;
-
 procedure TWebSocketConnection.AddDemand(const AN: Int64);
 begin
   FStateLock.Enter;
@@ -453,7 +463,6 @@ begin
   end;
   FDemandEvent.SetEvent;
 end;
-
 function TWebSocketConnection.GetInputClosed: Boolean;
 begin
   FStateLock.Enter;
@@ -463,7 +472,6 @@ begin
     FStateLock.Leave;
   end;
 end;
-
 function TWebSocketConnection.GetOutputClosed: Boolean;
 begin
   FStateLock.Enter;
@@ -473,12 +481,10 @@ begin
     FStateLock.Leave;
   end;
 end;
-
 function TWebSocketConnection.GetSubprotocol: string;
 begin
   Result := FSubprotocol;
 end;
-
 function TWebSocketConnection.GetUrl: string;
 begin
   Result := FUrl;
@@ -507,7 +513,6 @@ begin
       Result := -1;
   end;
 end;
-
 function TWebSocketConnection.WaitDemand: Boolean;
 begin
   while True do
@@ -527,7 +532,6 @@ begin
     FDemandEvent.WaitFor(100);
   end;
 end;
-
 procedure TWebSocketConnection.Terminal(const AError: Exception;
   const AOwned: Boolean);
 begin
