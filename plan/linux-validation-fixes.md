@@ -276,3 +276,15 @@ proxy probe fails compilation because its mORMot source search path is absent.
 The owner repairs build paths and checks the real mTLS probe for the same
 problem. Acceptance includes all affected complete gates with retained peer
 logs and counts; failures must not become skips.
+
+### LV-14 evidence, 2026-11-11 18:31 UTC
+
+The real mTLS run completes but its final table fails to print because the
+container has no column utility. Cleanup then removes the detailed rows. The
+client owner makes table formatting portable and preserves the result rows
+and peer logs under the validation output before removing private fixtures.
+The earlier live row sample confirms TLS 1.3 alert propagation failures for
+Apache and Caddy, including large POST cases; they remain required failures.
+The real proxy compiler has a separate mount issue: the candidate dependency
+symlink resolves outside the nested compiler container mount. The owner maps
+the resolved mORMot root, including static objects, into that container.
