@@ -2,8 +2,8 @@
 """Measure TLS handshake timeout and admission under incomplete peer load.
 
 Use PROVIDER_LIVE_BINARY to select an existing ProviderLive executable.
-The target is configured with a 1000 ms handshake timeout and a 65 connection
-limit. The async listener admits 65 connections. It stores the configured
+The target is configured with a 1000 ms handshake timeout and a 64 connection
+limit. The async listener admits 64 connections. It stores the configured
 limit minus one, then checks whether the current reader count is strictly
 greater before adding the next connection.
 """
@@ -28,7 +28,7 @@ from ws_sse_load import cpu_seconds
 
 
 HANDSHAKE_TIMEOUT_MS = 1000
-MAX_CONNECTIONS = 65
+MAX_CONNECTIONS = 64
 EFFECTIVE_CONNECTION_LIMIT = MAX_CONNECTIONS
 SILENT_PEERS = 64
 PARTIAL_PEERS = 64
