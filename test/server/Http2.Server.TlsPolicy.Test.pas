@@ -25,7 +25,7 @@ type
       const AResponse: IServerResponse);
   end;
 
-  TTlsPolicyTest = class(TTestCase)
+  TTlsProtocolMappingTest = class(TTestCase)
   published
     procedure TestFactoryMapsProtocolRange;
   end;
@@ -37,7 +37,7 @@ procedure TNullTlsHandler.Handle(const ARequest: IServerRequest;
 begin
 end;
 
-procedure TTlsPolicyTest.TestFactoryMapsProtocolRange;
+procedure TTlsProtocolMappingTest.TestFactoryMapsProtocolRange;
 var
   Factory: THttp2ServerFactory;
   Policy: TTlsPolicy;
@@ -66,5 +66,5 @@ begin
 end;
 
 initialization
-  RegisterTest(TTlsPolicyTest);
+  RegisterTest(TTlsProtocolMappingTest);
 end.

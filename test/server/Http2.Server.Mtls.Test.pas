@@ -83,7 +83,7 @@ var
   GPkiDir: string = '';
   GPkiTried: Boolean = False;
 
-/// the test PKI, made once by the script tools/certs/make_mtls_pki.sh
+/// the test PKI, made once by the script tools/server/certs/make_mtls_pki.sh
 // - answers an empty text when the script cannot run (no openssl command)
 function PkiDir: string;
 begin
@@ -92,7 +92,7 @@ begin
     GPkiTried := True;
     GPkiDir := IncludeTrailingPathDelimiter(GetTempDir) + 'http2server-mtls-test-' +
       IntToStr(GetProcessID);
-    if ExecuteProcess('/bin/sh', ['tools/certs/make_mtls_pki.sh', GPkiDir]) <> 0 then
+    if ExecuteProcess('/bin/sh', ['tools/server/certs/make_mtls_pki.sh', GPkiDir]) <> 0 then
       GPkiDir := '';
   end;
   Result := GPkiDir;
