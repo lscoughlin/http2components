@@ -101,6 +101,7 @@ python3 -c "import runpy; from pathlib import Path; m=runpy.run_path('tools/buil
 ```
 
 Coordinator run 03 passed 50 cases. Run 07 passed 82 cases. Run 08 passed 84
-cases. Post-split run 09 passed 84 cases and recorded the resource baseline
-above. Those logs are kept in the coordinator verification directory. A
-rerun remains required after the pending-write capacity correction.
+cases. Post-split run 09 passed 84 cases. Run 10 passed 84 cases after the
+pending-write capacity correction and returned X509, SSL, and SSL_CTX counts
+to the warmed baseline. The run logs are kept in the coordinator verification
+directory. The test suite does not force a native `SSL_write` WANT condition.
