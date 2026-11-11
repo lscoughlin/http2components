@@ -41,11 +41,14 @@ cases, five listener cases, and eight concurrent request cases. Each pair is
 tested at TLS 1.2 and TLS 1.3. It records negotiated version, ALPN, cipher,
 verified client and server peer identities, distinct client and server
 identity summaries, copied metadata after session teardown, HTTP status, and
-response content. Same-provider cases pass one context reference to both role
-factories. Concurrent request cases use two clients and one listener, all
-using that context. A handler barrier checks that both concurrent requests
-are active at the same time. Server handlers require an HTTP/2 stream and a
-client certificate principal. Server ALPN fallback is off. Listener requests
+response content. Negotiated version, ALPN, cipher and peer-summary checks use
+direct provider sessions. They do not inspect metadata from the separate HTTP
+transport sessions. The HTTP exchanges constrain the same contexts to the
+same TLS version, require strict `h2`, and require a verified client
+certificate principal in the request handler. Same-provider cases pass one
+context reference to both role factories. Concurrent request cases use two
+clients and one listener, all using that context. A handler barrier checks
+that both concurrent requests are active at the same time. Listener requests
 use new clients so each request creates a new connection. The listener cases
 use OpenSSL and TlsLib in one process, interleave requests, stop one listener,
 and verify fresh connections to the other. The expected count is 29 cases.
