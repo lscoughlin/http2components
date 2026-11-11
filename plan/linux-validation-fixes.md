@@ -224,3 +224,14 @@ certificate dates with the compatible CA signing command and verifies expiry.
 The first real proxy and mTLS command invocations attempted a nested SSH hop.
 The root coordinator uses their documented local/native mode environment in
 this already-remote Docker container; the failed invocations remain recorded.
+
+## LV-11: General integration TLS migration
+
+The Linux `test:integration` compile on candidate e41fb5e fails in
+Http2.Integration.Http.Test.pas line 73 on removed WithTls and
+TTlsServerOptions symbols. The server owner migrates general integration
+server and client setup to explicit contexts, preserving its nine cases and
+separate-process checks. Scope extends to test/integration/Http2.Integration.*
+and a needed server-side probe setup. Build-driver changes are coordinated
+with the runner owner. This gate remains separate from the 29/200-case TLS
+integration runners that already passed.
