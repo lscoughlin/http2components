@@ -79,8 +79,41 @@ uncaught expected verification error. The second run stopped after seven O/O
 TLS 1.2 assertions because the server-preference ALPN case expected `h2`
 while the configured server preference was `http/1.1`. The runner now checks
 the configured server preference, while the trusted case checks `h2` when
-the server lists it first. A new coordinator run is required. The current
-worker has not executed any TLS binary and reports no runtime pass count.
+the server lists it first. The coordinator's third run passed all 200 named
+assertions in 1.073 seconds. It completed 152 handshake scenarios: 19 per
+provider pair and TLS version combination. The executable exited 0 under the
+30-second limit. There was no timeout. The coordinator log is
+`bin/tls-coordinator/tls09-security-03.log`. Earlier failed logs remain
+`bin/tls-coordinator/tls09-security-01.log` and
+`bin/tls-coordinator/tls09-security-02.log`.
+
+The fixture tool was `/opt/homebrew/bin/openssl`, version
+`OpenSSL 4.1.0 23 Oct 2026`. The command arguments were:
+
+```text
+/opt/homebrew/bin/openssl req -new -key test/tls/tlslib/fixtures/server-intermediate.key -subj '/O=http2components test/CN=localhost' -out <temporary>/expired.csr
+/opt/homebrew/bin/openssl ca -batch -config <temporary>/ca.cnf -startdate 20150101000000Z -enddate 20160101000000Z -in <temporary>/expired.csr -out test/fixtures/tls-integration-security/expired-server.crt
+```
+
+The temporary CA configuration used the existing
+`test/fixtures/client/certs/mtls/intermediate.crt` and `intermediate.key`.
+It set a critical `CA:false` constraint, digital-signature and key-encipherment
+usage, server-auth EKU, and `DNS:localhost` plus `IP:127.0.0.1` SANs. The
+certificate and key are synthetic integration-test material. The chain file
+is the expired leaf followed by the existing intermediate certificate. The
+same chain and key load through both provider identity loaders.
+
+Fixture path checks used these commands with the same CLI:
+
+```text
+/opt/homebrew/bin/openssl verify -CAfile test/fixtures/client/certs/mtls/ca.crt -untrusted test/fixtures/client/certs/mtls/intermediate.crt test/fixtures/tls-integration-security/expired-server.crt
+/opt/homebrew/bin/openssl verify -CAfile test/fixtures/client/certs/mtls/ca.crt -untrusted test/fixtures/client/certs/mtls/intermediate.crt test/tls/tlslib/fixtures/server-intermediate-chain.crt
+```
+
+The expired leaf failed with `error 10 at 0 depth lookup: certificate has
+expired`. The valid control returned `OK`. The CLI was used only for local
+fixture generation and path checks. Runtime TLS used the installed OpenSSL
+3.5.9 library at `/opt/homebrew/opt/openssl@3/lib`.
 
 ## Limits
 
