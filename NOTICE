@@ -1,0 +1,17 @@
+http2components source provenance
+Copyright 2026 Liam Seamus Coughlin
+
+This source tree contains work from two projects with different license terms.
+The client source declares the Apache License, Version 2.0. The server source
+declares the GNU Lesser General Public License, version 2.1, with the Free
+Pascal linking exception. The full source license texts are in LICENSES/.
+
+The client and server NOTICE files are preserved as
+LICENSES/NOTICE-http2client.txt and LICENSES/NOTICE-http2server.txt. Their
+attribution and third-party statements apply to the source project named in
+each file. File-level provenance is recorded in
+plan/merge-0.30.0-inventory.tsv.
+
+The combined distribution license and the legal effect of combining source
+under these terms have not been resolved. This notice does not grant new
+rights or state that either license covers all files in this repository.
