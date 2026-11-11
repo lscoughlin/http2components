@@ -308,6 +308,10 @@ begin
     N := TlsMaxPlaintextBuffer - Length(FPlaintext);
   while I < N do begin
     B := FInput[I];
+    if B = $FA then begin
+      Fail(tecAlert, 'Fake peer rejected the client certificate');
+      raise ETlsSessionError.Create(FFailureMessage, tecAlert, '', 116, True);
+    end;
     if B = $FF then begin
       if I > 0 then begin
         OldLength := Length(FPlaintext); SetLength(FPlaintext, OldLength + I);
