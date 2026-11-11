@@ -15,7 +15,7 @@ Direct FPC 3.2.4 macOS arm64 compile and bounded common suite:
 - Command: `fpc -Fu./src -Fu./test/common -Fu/usr/local/lib/fpc/3.2.4/units/aarch64-darwin/fcl-fpcunit -FU./bin/common/units -FE./bin/common test/common/Http2.Common.RunTests.pas`
 - Run: `bin/common/Http2.Common.RunTests --all --format=plain`
 - Result: 229 tests, 0 errors, 0 failures, 0 ignored.
-- The test run completed in 0.060 seconds.
+- The test run completed in 0.055 seconds.
 - No mORMot, network tests, resource-intensive tests, or Linux tests were used.
 
 Raw compiler and test output is available under `bin/common` and is ignored by Git.
