@@ -56,6 +56,9 @@ Output case IDs use A03 for the 16 TLS metadata and HTTP/2 pairs, A04 for the
 five listener requests, and A02 for the eight concurrent requests. API probes
 check exact common facade and declaration assignments, client/server factory
 acceptance, and OpenSSL/TlsLib identity, context, and factory aliases.
+Fixture paths resolve by walking upward from the executable to the repository
+root, so the integration target can run from its isolated `bin/.../programs`
+directory. Body reads use the configured idle timeout.
 The run limit is 30 seconds. The worker compiled this program at base `f52bdf7`
 with the pinned providers; it did not execute the program. Runtime results
 remain pending the coordinator's bounded run.

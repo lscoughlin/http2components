@@ -17,11 +17,6 @@ uses
   Http2.OpenSSL, Http2.TlsLib;
 
 const
-  cCert = 'test/fixtures/client/certs/localhost.crt';
-  cKey = 'test/fixtures/client/certs/localhost.key';
-  cClientCert = 'test/fixtures/client/certs/mtls/client-chain.pem';
-  cClientKey = 'test/fixtures/client/certs/mtls/client.key';
-  cClientCa = 'test/fixtures/client/certs/mtls/ca.crt';
   cBody = 'tls integration response';
   cTimeoutMs = 5000;
 
@@ -51,8 +46,34 @@ var
   GConcurrentGate: TEvent;
   GConcurrentActive: LongInt;
   GConcurrentObserved: Boolean;
+  cCert, cKey, cClientCert, cClientKey, cClientCa: string;
 
 procedure Check(const AValue: Boolean; const AMessage: string); forward;
+
+function FindRepositoryRoot: string;
+var Candidate, Parent: string;
+begin
+  Candidate := ExtractFileDir(ExpandFileName(ParamStr(0)));
+  repeat
+    if FileExists(Candidate + '/test/fixtures/client/certs/localhost.crt') then
+      Exit(Candidate);
+    Parent := ExtractFileDir(Candidate);
+    if Parent = Candidate then Break;
+    Candidate := Parent;
+  until False;
+  raise Exception.Create('the integration fixtures are not above the executable');
+end;
+
+procedure ResolveFixtures;
+var Root: string;
+begin
+  Root := FindRepositoryRoot;
+  cCert := Root + '/test/fixtures/client/certs/localhost.crt';
+  cKey := Root + '/test/fixtures/client/certs/localhost.key';
+  cClientCert := Root + '/test/fixtures/client/certs/mtls/client-chain.pem';
+  cClientKey := Root + '/test/fixtures/client/certs/mtls/client.key';
+  cClientCa := Root + '/test/fixtures/client/certs/mtls/ca.crt';
+end;
 
 constructor TRequestThread.Create(const AClient: IHttpClient; const APort: Integer;
   const ACaseId: string);
@@ -532,6 +553,7 @@ end;
 
 begin
   try
+    ResolveFixtures;
     RunMatrix;
     RunInterleavedListeners;
     for V := Low(TTlsVersion) to High(TTlsVersion) do
