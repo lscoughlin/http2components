@@ -25,7 +25,7 @@ program Http2.Server.MtlsLive;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs,
-  Http2.Server,
+  Http2.Server, Http2.Common, Http2.OpenSSL,
   Http2.Client.Errors, Http2.Client.ClientCert, Http2.Client.Stream,
   Http2.Client.Messages, Http2.Client, Http2.Client.WebSocket,
   Http2.Server.Mtls.Live.Server, Http2.Server.Mtls.Live.Raw,
@@ -52,6 +52,7 @@ var
   HandlerRef: IHttp2Handler;
   WsHandler: TMtlsWsHandler;
   WsRef: IWsHandler;
+  ClientTlsContext: ITLSContext;
 
 constructor TSendOnOpen.Create;
 begin
@@ -107,7 +108,7 @@ end;
 
 function Identity(const AName: string): IClientIdentity;
 begin
-  Result := TClientIdentity.FromPemFiles(Pki + '/' + AName + '.crt',
+  Result := TOpenSSLIdentity.FromPemFiles(Pki + '/' + AName + '.crt',
     Pki + '/' + AName + '.key');
 end;
 
@@ -123,11 +124,10 @@ begin
   Result := '';
   try
     Factory := THttpClientFactory.Create
-      .WithInsecureTls
+      .WithTlsContext(ClientTlsContext)
       .WithMaxConnectionsPerHost(1);
     if AName <> '' then
-      Factory := Factory.WithClientCertificateFiles(Pki + '/' + AName + '.crt',
-        Pki + '/' + AName + '.key');
+      Factory := Factory.WithClientIdentity(Identity(AName));
     Client := Factory.Build;
     try
       for i := 1 to ARequests do
@@ -178,10 +178,9 @@ var
 begin
   Result := False;
   try
-    Factory := THttpClientFactory.Create.WithInsecureTls;
+    Factory := THttpClientFactory.Create.WithTlsContext(ClientTlsContext);
     if AName <> '' then
-      Factory := Factory.WithClientCertificateFiles(Pki + '/' + AName + '.crt',
-        Pki + '/' + AName + '.key');
+      Factory := Factory.WithClientIdentity(Identity(AName));
     Client := Factory.Build;
     try
       Listener := TSendOnOpen.Create;
@@ -212,7 +211,7 @@ begin
   WriteLn('-- mode none');
   Obs := TMtlsObserver.Create;
   ObsRef := Obs;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmNone, '', False, ccpNone);
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthNone, '', False, ccpNone);
   try
     Body := ClientGet(Server.Port, '');
     Check('none: a client without a certificate is served', Body = 'none;principal=', Body);
@@ -245,7 +244,7 @@ begin
   WriteLn('-- mode optional, principal = common name');
   Obs := TMtlsObserver.Create;
   ObsRef := Obs;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmOptional, 'ca.crt', False,
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthRequest, 'ca.crt', False,
     ccpCommonName);
   try
     Body := ClientGet(Server.Port, '');
@@ -299,7 +298,7 @@ begin
   WriteLn('-- mode required, principal = subject DN');
   Obs := TMtlsObserver.Create;
   ObsRef := Obs;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmRequired, 'ca.crt', False,
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthRequire, 'ca.crt', False,
     ccpSubjectDn);
   try
     CallsBefore := Handler.Calls;
@@ -439,7 +438,7 @@ begin
   ObsRef := Obs;
   // the first server never asks for a certificate, so the reader does not run.
   // Its growth is what the client library and the rest of the process keep
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmNone, '', False, ccpNone);
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthNone, '', False, ccpNone);
   try
     NoneGrowth := Growth(Server.Port);
     WriteLn('  growth over 5 handshakes of a client without a certificate: ',
@@ -447,7 +446,7 @@ begin
   finally
     Server.Stop;
   end;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmRequired, 'ca.crt', False,
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthRequire, 'ca.crt', False,
     ccpSubjectDn);
   try
     RequiredGrowth := Growth(Server.Port);
@@ -472,7 +471,7 @@ begin
   WriteLn('-- required, trust file holds the root and a self-signed client');
   Obs := TMtlsObserver.Create;
   ObsRef := Obs;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmRequired,
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthRequire,
     'trust-selfie.pem', False, ccpNone);
   try
     Body := ClientGet(Server.Port, 'selfie');
@@ -498,7 +497,7 @@ begin
   WriteLn('-- required, operating system store only');
   Obs := TMtlsObserver.Create;
   ObsRef := Obs;
-  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, ccmRequired, '', True, ccpNone);
+  Server := BuildMtlsServer(Pki, HandlerRef, ObsRef, tlsAuthRequire, '', True, ccpNone);
   try
     // the test root is not in the system store of the host, and the live check
     // never changes that store. The client of the test root is refused, which
@@ -518,6 +517,11 @@ begin
     WriteLn(StdErr, 'usage: Http2.Server.MtlsLive <pki-directory>');
     Halt(2);
   end;
+  ClientTlsContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault
+      .WithTrustAnchors([Pki + '/ca.crt']))
+    .Build;
+  SetRawTlsContext(ClientTlsContext);
   WsHandler := TMtlsWsHandler.Create;
   WsRef := WsHandler;
   Handler := TMtlsHandler.Create(WsRef);

@@ -494,8 +494,10 @@ def run_api_tests() -> None:
 
 
 def run_integration_tests() -> None:
+    build("openssl")
     binary = compile_file(ROOT / "test/integration/Http2.Integration.RunTests.pas",
-                          "integration-test", tests=True)
+                          "integration-test", tests=True,
+                          extra_flags=example_provider_flags(("openssl",)))
     generated = ROOT / "bin" / target_name() / profile() / "integration-test"
     with tempfile.TemporaryDirectory(prefix="pki-", dir=generated) as directory:
         env = open_ssl_env()
@@ -519,7 +521,7 @@ def run_server_live(kind: str) -> None:
     build("common")
     build("client")
     build("server")
-    binary = compile_file(sources[kind], "integration-test", tests=True)
+    binary = compile_server_program(sources[kind])
     generated = binary.parent / f"{kind}-pki"
     generated.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="pki-", dir=generated) as directory:

@@ -24,7 +24,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs,
   mormot.core.base, mormot.core.os,
-  Http2.Server;
+  Http2.Server, Http2.Common, Http2.OpenSSL;
 
 type
   /// the observer that counts failed handshakes
@@ -73,7 +73,7 @@ function Describe(const ACert: IClientCertificate;
 
 /// a TLS server on a free loopback port with the given mode and trust
 function BuildMtlsServer(const APki: string; const AHandler: IHttp2Handler;
-  const AObserver: IHttp2ServerObserver; const AMode: TClientCertMode;
+  const AObserver: IHttp2ServerObserver; const AMode: TTlsClientAuthMode;
   const ACaFile: string; const ASystemStore: Boolean;
   const APrincipal: TClientCertPrincipal): IHttp2Server;
 
@@ -229,25 +229,28 @@ begin
 end;
 
 function BuildMtlsServer(const APki: string; const AHandler: IHttp2Handler;
-  const AObserver: IHttp2ServerObserver; const AMode: TClientCertMode;
+  const AObserver: IHttp2ServerObserver; const AMode: TTlsClientAuthMode;
   const ACaFile: string; const ASystemStore: Boolean;
   const APrincipal: TClientCertPrincipal): IHttp2Server;
 var
-  Tls: TTlsServerOptions;
+  Tls: TTlsServerPolicy;
+  Identity: ITLSIdentity;
+  Context: ITLSContext;
 begin
-  Tls := TTlsServerOptions.Create
-    .WithCertificateFile(APki + '/server.crt')
-    .WithKeyFile(APki + '/server.key')
-    .WithClientCertMode(AMode)
-    .WithClientTrustSystemStore(ASystemStore)
-    .WithClientCertPrincipal(APrincipal);
+  Identity := TOpenSSLIdentity.FromPemFiles(APki + '/server.crt', APki + '/server.key');
+  Tls := TTlsServerPolicy.SecureDefault
+    .WithServerIdentity(Identity)
+    .WithClientAuth(AMode)
+    .WithSystemTrust(ASystemStore);
   if ACaFile <> '' then
-    Tls := Tls.WithClientCaFile(APki + '/' + ACaFile);
+    Tls := Tls.WithTrustAnchors([APki + '/' + ACaFile]);
+  Context := TOpenSSLTlsContextFactory.Create.WithServerPolicy(Tls).Build;
   Result := THttp2ServerFactory.Create
     .WithHost('127.0.0.1')
     .WithPort(0)
     .WithClearTextAllowed(False)
-    .WithTls(Tls)
+    .WithTlsContext(Context)
+    .WithClientCertPrincipal(APrincipal)
     .WithHandler(AHandler)
     .WithHandlerThreads(2)
     .WithIOThreads(2)

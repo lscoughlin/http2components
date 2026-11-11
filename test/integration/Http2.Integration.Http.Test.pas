@@ -11,7 +11,7 @@ unit Http2.Integration.Http.Test;
 interface
 uses
   SysUtils, Classes, fpcunit, testregistry,
-  Http2.Common, Http2.Client, Http2.Server,
+  Http2.Common, Http2.Client, Http2.Server, Http2.OpenSSL,
   Http2.Client.Messages, Http2.Client.Stream, Http2.Client.Tls;
 type
   TCombinedHttpTest = class(TTestCase)
@@ -61,6 +61,8 @@ function NewServer(const ATls: Boolean): IHttp2Server;
 var
   Factory: THttp2ServerFactory;
   Pki: string;
+  Identity: ITLSIdentity;
+  Policy: TTlsServerPolicy;
 begin
   Factory := THttp2ServerFactory.Create.WithHost('127.0.0.1').WithPort(0)
     .WithHandler(TEchoHandler.Create).WithHandlerThreads(2).WithIOThreads(1)
@@ -70,8 +72,10 @@ begin
     Pki := GetEnvironmentVariable('HTTP2_TEST_PKI');
     if not FileExists(Pki + '/server.crt') then
       raise Exception.Create('HTTP2_TEST_PKI does not contain server.crt');
-    Factory := Factory.WithTls(TTlsServerOptions.Create
-      .WithCertificateFile(Pki + '/server.crt').WithKeyFile(Pki + '/server.key'));
+    Identity := TOpenSSLIdentity.FromPemFiles(Pki + '/server.crt', Pki + '/server.key');
+    Policy := TTlsServerPolicy.SecureDefault.WithServerIdentity(Identity);
+    Factory := Factory.WithTlsContext(TOpenSSLTlsContextFactory.Create
+      .WithServerPolicy(Policy).Build);
   end;
   Result := Factory.Build;
   Result.Start;
@@ -80,11 +84,18 @@ end;
 function NewClient(const APolicy: TClearTextPolicy; const ATls: Boolean): IHttpClient;
 var
   Factory: THttpClientFactory;
+  TlsContext: ITLSContext;
 begin
   Factory := THttpClientFactory.Create.WithClearText(APolicy)
     .WithConnectTimeout(2000).WithHeaderTimeout(3000).WithMaxConnectionsPerHost(1);
   if ATls then
-    Factory := Factory.WithCACertFile(GetEnvironmentVariable('HTTP2_TEST_PKI') + '/ca.crt');
+  begin
+    TlsContext := TOpenSSLTlsContextFactory.Create
+      .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithTrustAnchors([
+        GetEnvironmentVariable('HTTP2_TEST_PKI') + '/ca.crt']))
+      .Build;
+    Factory := Factory.WithTlsContext(TlsContext);
+  end;
   Result := Factory.Build;
 end;
 
