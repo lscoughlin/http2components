@@ -2,20 +2,20 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: mtls, client certificate, live, validation, http2client, websocket
+keywords: mtls, client certificate, live, validation, http2components, websocket
 notes:
   - This program starts the server with TLS on loopback and drives it with the
-    sibling client at ../http2client. It checks the three client certificate
+    merged client facade. It checks the three client certificate
     modes, the identity that a handler reads, the refusal of a bad client, the
     HTTP/1.1 path and the WebSocket handshake over HTTP/1.1 and HTTP/2.
   - The client does not speak WebSocket over HTTP/2, so a small raw HTTP/2 client
     in Http2.Server.Mtls.Live.Raw opens the extended CONNECT stream.
   - The program is a validation run and puts no load on the server.
   - The first argument is the directory of the test PKI, made by
-    tools/certs/make_mtls_pki.sh. The exit code is 0 when every check passed.
+    tools/server/certs/make_mtls_pki.sh. The exit code is 0 when every check passed.
 ---
 }
-/// Live validation of mutual TLS against the sibling client
+/// Live validation of mutual TLS with the merged client facade
 program Http2.Server.MtlsLive;
 
 {$mode delphi}{$H+}
@@ -32,7 +32,7 @@ uses
   Http2.Server.Mtls.Live.Leak;
 
 type
-  /// the listener of the sibling client: it sends one text message when open
+  /// the WebSocket listener: it sends one text message when open
   TSendOnOpen = class(TWebSocketListener)
   public
     Opened, Done: TEvent;
@@ -111,7 +111,7 @@ begin
     Pki + '/' + AName + '.key');
 end;
 
-/// one HTTP/2 GET with the sibling client; a failure answers 'refused:<class>'
+/// one HTTP/2 GET with the merged client facade; a failure answers 'refused:<class>'
 function ClientGet(const APort: Integer; const AName: string;
   const ARequests: Integer = 1): string;
 var
@@ -167,7 +167,7 @@ begin
   Result := Copy(AText, 1, 8) = 'refused:';
 end;
 
-/// a WebSocket over HTTP/1.1 with the sibling client
+/// a WebSocket over HTTP/1.1 with the merged client facade
 function ClientWsHttp1(const APort: Integer; const AName: string): Boolean;
 var
   Factory: THttpClientFactory;
@@ -394,7 +394,7 @@ begin
     end;
     Check('required: that refusal reached no handler', Handler.Calls = CallsBefore);
 
-    // WebSocket over HTTP/1.1 with the sibling client
+    // WebSocket over HTTP/1.1 with the merged client facade
     WsHandler.Reset;
     Check('required: WebSocket over HTTP/1.1 delivers a message', ClientWsHttp1(Server.Port, 'alice'));
     Check('required: the HTTP/1.1 session sees the identity',

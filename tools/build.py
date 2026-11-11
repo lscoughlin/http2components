@@ -97,7 +97,8 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
         flags.append(f"-Fu{Path(unit_root) / 'fcl-fpcunit'}")
         flags.extend(("-Fu./test", "-Fu./test/common", "-Fu./test/client",
                       "-Fu./test/server", "-Fu./test/api", "-Fu./test/integration", "-Fu./examples", "-Fu./examples/client",
-                      "-Fu./examples/server"))
+                      "-Fu./examples/server", "-Fu./test/integration/server/tls",
+                      "-Fu./test/integration/server/mtls"))
     flags.extend(shlex.split(os.environ.get("FPCFLAGS", "")))
     return flags
 
@@ -209,9 +210,35 @@ def run_server_live(kind: str) -> None:
     generated.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix="pki-", dir=generated) as directory:
         env = open_ssl_env()
+        if platform.system() == "Darwin":
+            openssl_bin = Path(env.get("OPENSSL_LIBPATH", "")).parent / "bin"
+            if (openssl_bin / "openssl").exists():
+                env["PATH"] = str(openssl_bin) + os.pathsep + env.get("PATH", "")
         run(["sh", "tools/server/certs/make_mtls_pki.sh", directory],
             env=env, timeout=30)
         run([str(binary), directory], env=env, timeout=180)
+
+
+def compile_client_test_runner() -> Path:
+    build("common")
+    build("client")
+    return compile_file(ROOT / "test/client/Http2.Client.RunTests.pas",
+                        "client-test", tests=True)
+
+
+def compile_server_examples() -> None:
+    sources: list[Path] = []
+    for source in sorted((ROOT / "examples/server").rglob("*.pas")):
+        declaration = re.search(r"(?i)\bprogram\s+([A-Za-z_][A-Za-z0-9_.]*)",
+                                strip_pascal(source.read_text(errors="replace")))
+        if declaration:
+            sources.append(source)
+    if not sources:
+        raise SystemExit("No server example programs are present")
+    build("common")
+    build("server")
+    for source in sources:
+        compile_file(source, "examples-server")
 
 
 def validate_fast() -> None:
@@ -267,11 +294,14 @@ def run_validation_gate(role: str, gate: str) -> None:
         script = ROOT / entry[0]
         required(script, f"{role} validation script")
         if role == "server":
+            compile_server_examples()
             env = dict(os.environ)
             env["SERVER_BIN"] = str(ROOT / "bin" / target_name() / profile()
                                     / "examples-server" / "programs")
             run(["sh", str(script), *entry[1:]], env=env)
         else:
+            if gate in ("sse", "proxy", "websocket"):
+                compile_client_test_runner()
             run(["bash", str(script), *entry[1:]])
 
 

@@ -5,10 +5,10 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: mtls, live, raw client, http2, http1, extended connect, tls socket
 notes:
   - This unit holds two small raw clients for the live mutual TLS validation.
-    They use the TLS socket of the sibling client at ../http2client, which can
+    They use the TLS socket from the merged client facade, which can
     offer an ALPN list and present a client certificate.
   - The HTTP/2 client opens the extended CONNECT stream of RFC 8441, because the
-    sibling client speaks WebSocket over HTTP/1.1 only. It builds frames with the
+    merged client facade speaks WebSocket over HTTP/1.1 only. This unit builds frames with the
     codec of this library.
   - A refusal shows as a failed dial, a failed read or a closed socket before
     the response headers. TLS 1.3 reports a rejected client certificate on the
@@ -188,7 +188,7 @@ var
   P: PByte;
   Done, N: Integer;
 begin
-  // the TLS socket of the sibling client reads up to the count it is given and
+  // the TLS socket reads up to the count it is given and
   // waits for the rest, so a frame is read as its header, then its payload
   Result := False;
   P := @ABuffer;
