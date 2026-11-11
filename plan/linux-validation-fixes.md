@@ -133,3 +133,13 @@ Files: affected test TLS fixture helpers and provider runners. No production
 TLS behavior changes are implied. Acceptance: the OpenSSL provider suite and
 all integration suites using these fixtures run on OpenSSL 3.0 and the
 existing fixture format remains valid. The original failure log is retained.
+
+## LV-05: Linux native static library search path
+
+The native library component build passed, but the executable link for TLS
+integration failed at 18:01:19 UTC: `ld: cannot find libdeflatepas.a`.
+The checksum-verified archive is present in the pinned mORMot static directory.
+The setup owner reviews generated compiler/linker arguments and adds the
+appropriate target-specific static library search path without a macOS path
+or reliance on the caller's working directory. Acceptance is executable links
+for role, provider, integration, examples and Lazarus package consumers.
