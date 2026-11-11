@@ -302,3 +302,19 @@ saved session attempt cannot bypass a fresh identity/trust check. The tests
 record whether a ticket/session was issued; missing output or a failed first
 handshake is a failure, not evidence that resumption is disabled. The result
 record names this requirement change and keeps the initial failures.
+
+## LV-16: Connection load evidence checks
+
+Review of the preserved connection load tool finds two weak result paths.
+The idle mode returns success when a requested process CPU sample is absent,
+and it counts connections opened without checking that they stay open for
+the requested window. The active mode counts DATA END_STREAM without checking
+the expected response body or rejecting protocol error frames.
+
+The runner owner repairs tools/server/seam/seam.py in its own worktree. An
+explicit process ID requires usable CPU samples. Idle sockets remain open
+through the measured window. Active and delayed results require the expected
+response bytes and reject unexpected resets or GOAWAY errors. Existing load
+parameters, the half-core idle bound, and delayed-response bounds stay fixed.
+The tool reports complete counts and closes its own sockets after every path.
+Acceptance includes valid peer behavior and controlled closed/error responses.
