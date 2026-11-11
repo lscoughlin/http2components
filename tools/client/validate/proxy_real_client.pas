@@ -173,9 +173,11 @@ begin
   if V <> '' then
     Factory := Factory.WithNoProxy(V);
   CaFile := Opt('ca', '');
-  TlsPolicy := TTlsClientPolicy.SecureDefault.WithSystemTrust(True);
-  if CaFile <> '' then
-    TlsPolicy := TlsPolicy.WithTrustAnchors([CaFile]);
+  if CaFile = '' then
+    TlsPolicy := TTlsClientPolicy.SecureDefault.WithSystemTrust(True)
+  else
+    TlsPolicy := TTlsClientPolicy.SecureDefault.WithSystemTrust(False)
+      .WithTrustAnchors([CaFile]);
   TlsContext := TOpenSSLTlsContextFactory.Create
     .WithClientPolicy(TlsPolicy).Build;
   ProxyTlsContext := TOpenSSLTlsContextFactory.Create

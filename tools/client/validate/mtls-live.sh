@@ -50,7 +50,7 @@ bash "$HERE/make-mtls-certs.sh" "$CERTS" >"$WORK/certs.log" 2>&1 \
   || { cat "$WORK/certs.log" >&2; echo "mtls-live: could not generate its test PKI" >&2; exit 2; }
 
 M="${MORMOT:-$ROOT/third_party/mORMot2/src}"
-fpc -O2 -vw -Mdelphi -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$ROOT/tls/openssl/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
+fpc -O2 -vw -Mdelphi -dUSE_OPENSSL -Fu"$ROOT/common/src" -Fu"$ROOT/client/src" -Fu"$ROOT/server/src" -Fu"$ROOT/tls/openssl/src" -Fu"$M/core" -Fu"$M/lib" -Fu"$M/net" -Fu"$M/crypt" \
   -FE"$WORK" -FU"$WORK" "$ROOT/examples/client/mtls_get.pas" >"$WORK/fpc.log" 2>&1 \
   || { cat "$WORK/fpc.log"; echo "mtls-live: could not build examples/client/mtls_get.pas" >&2; exit 2; }
 GET="$WORK/mtls_get"

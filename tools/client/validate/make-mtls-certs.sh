@@ -34,7 +34,11 @@ PASS="mtls-test-pass"
 DAYS=9125
 
 if [ -z "${OPENSSL:-}" ]; then
-  OPENSSL=openssl
+  if [ "$(uname -s)" = Darwin ] && [ -x /opt/homebrew/opt/openssl@3/bin/openssl ]; then
+    OPENSSL=/opt/homebrew/opt/openssl@3/bin/openssl
+  else
+    OPENSSL=openssl
+  fi
 fi
 
 WORK="$(mktemp -d)"

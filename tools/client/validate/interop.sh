@@ -65,7 +65,7 @@ record() { # id case expected actual status
 compile_probe() {
   rm -rf "$BUILD"
   mkdir -p "$BUILD"
-  if ! "$FPC" -O2 -Mdelphi -Fu./common/src -Fu./client/src -Fu./server/src -Fu./test/client -Fu./tls/openssl/src -Fu"$BUILD" \
+  if ! "$FPC" -O2 -Mdelphi -dUSE_OPENSSL -Fu./common/src -Fu./client/src -Fu./server/src -Fu./test/client -Fu./tls/openssl/src -Fu"$BUILD" \
       -Fu"$MORMOT/core" -Fu"$MORMOT/lib" -Fu"$MORMOT/net" -Fu"$MORMOT/crypt" \
       -FU"$BUILD" -FE"$BUILD" tools/client/h2probe.pas >"$BUILD/build.log" 2>&1; then
     echo "ERROR: h2probe failed to compile; see $BUILD/build.log" >&2
