@@ -20,10 +20,13 @@
 
 ## Scope
 
-The user deferred resource-intensive tests and all Linux validation on
-2026-11-11. This plan records that separate work. Rows V00 through V14 remain
-deferred until a separate validation run records their results. This plan
-does not start containers, remote jobs, or load generators.
+The user first deferred resource-intensive tests and Linux validation on
+2026-11-11, then authorized this separate phase on liam-rzbox.local. The run
+started at 17:55:40 UTC. It uses native Linux amd64 Docker containers. The
+user assigned the host to this work and authorized repair plans implemented
+by GPT-6-Luna agents in separate worktrees. Root reviews and merges repairs
+and removes completed worktrees and branches. Brief reports are due every
+15 minutes and detailed reports every 20 minutes.
 
 The first version is 0.30.0. Release publication follows the final review;
 a prepared source tree is not evidence that the deferred checks passed.
@@ -141,3 +144,24 @@ The earlier timeout is not a pass and does not by itself prove a deadlock.
 The stale factory source paths found during that run are corrected; its
 27 focused tests pass. The original baseline cancellation failures remain
 part of the comparison record and require classification if they recur.
+
+
+## Execution status at 2026-11-11 19:30 UTC
+
+| IDs | Status |
+| --- | --- |
+| V00 | Each candidate has an immutable Git archive and command/result records. |
+| V01 | The complete 146-case harness is running alone on candidate 500eeaf. |
+| V02, V12 | Short server checks passed; full server conformance remains pending. |
+| V03 | Client Autobahn and independent server HTTP/2 WebSocket checks passed; final server gates remain pending. |
+| V04, V13 | Real mTLS passed 54 rows; real proxy passed 65 rows with three existing Squid build limitations. |
+| V05, V07, V11 | Performance and long-lived connection runs remain pending. |
+| V06 | All five builds, six packages, 25 examples, and complete client suite passed; the final complete server rerun remains pending. |
+| V09, V10 | Bounded provider/security matrices and independent client checks passed; independent server identity and performance probes are ready. |
+| V14 | The 13-case TLS adapter and 12-case listener suites passed; later server repairs require the final rerun. |
+| V08 | Release review remains incomplete. No release is published. |
+
+The evidence record is `doc/verification/linux-tls-2026-11-11.md`. The
+initial failures remain in the run artifacts. Local focused passes do not
+replace the final Linux server run. The original TLS replacement planning
+input remains unchanged and outside the tested source archives.
