@@ -35,3 +35,11 @@ WebSocket constants now refer to the protocol constants instead of repeating
 the values. The retained thread constructor/free probe has the required
 header and runs with the API probes. Six probes and all 16 API cases pass
 in bin/review-c02-c03-api.log.
+
+The final C03 review retained TWsReaderThread in its original public unit.
+The HTTP/1.1 opening handshake, session contracts, and notification helper
+are separate units. The temporary ReaderThread helper was removed. All
+owned production files are below 1000 lines. The source agent reported
+build and constructor/free checks through tool output; it created no durable
+raw log files. Parent API logs provide retained probe evidence. The source
+worktree was clean at acb98cc and was removed after review and merge.

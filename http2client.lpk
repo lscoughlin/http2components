@@ -22,7 +22,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="52">
+    <Files Count="55">
       <Item1>
         <Filename Value="src/client/Http2.Client.Api.pas" />
         <UnitName Value="Http2.Client.Api" />
@@ -216,21 +216,33 @@
         <UnitName Value="Http2.Client.Url" />
       </Item48>
       <Item49>
-        <Filename Value="src/client/Http2.Client.WebSocket.Connection.pas" />
-        <UnitName Value="Http2.Client.WebSocket.Connection" />
+        <Filename Value="src/client/Http2.Client.WebSocket.Connection.Observer.pas" />
+        <UnitName Value="Http2.Client.WebSocket.Connection.Observer" />
       </Item49>
       <Item50>
-        <Filename Value="src/client/Http2.Client.WebSocket.Protocol.pas" />
-        <UnitName Value="Http2.Client.WebSocket.Protocol" />
+        <Filename Value="src/client/Http2.Client.WebSocket.Connection.Open.pas" />
+        <UnitName Value="Http2.Client.WebSocket.Connection.Open" />
       </Item50>
       <Item51>
-        <Filename Value="src/client/Http2.Client.WebSocket.pas" />
-        <UnitName Value="Http2.Client.WebSocket" />
+        <Filename Value="src/client/Http2.Client.WebSocket.Connection.Types.pas" />
+        <UnitName Value="Http2.Client.WebSocket.Connection.Types" />
       </Item51>
       <Item52>
+        <Filename Value="src/client/Http2.Client.WebSocket.Connection.pas" />
+        <UnitName Value="Http2.Client.WebSocket.Connection" />
+      </Item52>
+      <Item53>
+        <Filename Value="src/client/Http2.Client.WebSocket.Protocol.pas" />
+        <UnitName Value="Http2.Client.WebSocket.Protocol" />
+      </Item53>
+      <Item54>
+        <Filename Value="src/client/Http2.Client.WebSocket.pas" />
+        <UnitName Value="Http2.Client.WebSocket" />
+      </Item54>
+      <Item55>
         <Filename Value="src/client/Http2.Client.pas" />
         <UnitName Value="Http2.Client" />
-      </Item52>
+      </Item55>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
