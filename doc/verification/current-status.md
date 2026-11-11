@@ -18,7 +18,9 @@ complete server suite: 721 tests, zero errors, and zero failures. Server TLS,
 independent identities, conformance, abuse, and repeated shutdown checks also
 passed. The remaining client peer checks passed. The first performance stage found
 an incomplete-handshake admission failure at the configured connection
-limit; repair and the remaining performance stages are in progress.
+limit. The admission repair passes all four focused cases. Its final
+acceptance candidate `9f0f8de` passes all 724 server tests and all affected
+TLS, identity, conformance, abuse, and shutdown checks. Performance has resumed.
 There is no release approval.
 
 The earlier bounded implementation candidate was `15feb54`, checked on
@@ -63,8 +65,8 @@ independent server peers, conformance, and abuse have passing results. The
 real proxy matrix passed 65 cases with three documented Squid limitations.
 The client mTLS upload matrix passed all 54 rows, and client interoperation
 passed all 13 required cases with its existing peer limitation. Performance
-started, but the incomplete-handshake admission check failed. Its repair and
-the remaining resource checks are pending. The Linux
+found and corrected an incomplete-handshake admission defect. Complete
+affected acceptance passes after the repair; the resource checks continue. The Linux
 record distinguishes strict passes from explicit peer limitations and
 classified harness rows.
 
