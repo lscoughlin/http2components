@@ -215,6 +215,12 @@ def source_check(c: Checks) -> None:
             c.fail(f"{rel} has no unit or program declaration")
             continue
         kind, declared = kind_match.group(1).lower(), kind_match.group(2)
+        if Path(rel).parts[0] == "src":
+            role = next((r for r in ("common", "client", "server")
+                         if declared.casefold() == "http2." + r or
+                         declared.casefold().startswith("http2." + r + ".")), None)
+            if role is None or Path(rel).parent != Path("src") / role:
+                c.fail(f"{rel} must be directly under src/{role or '<role>'}")
         if kind == "unit" and Path(rel).stem.casefold() != declared.casefold():
             c.fail(f"{rel} declares {kind} {declared}; file name does not match")
         key = declared.casefold() if kind == "unit" else f"program:{rel.casefold()}"
@@ -360,7 +366,7 @@ def packages_check(c: Checks) -> None:
     expected = {"http2common.lpk", "http2client.lpk", "http2server.lpk"}
     for missing in sorted(expected - packages):
         c.fail(f"required package {missing} is missing")
-    sources = sorted((ROOT / "src").glob("*.pas")) if (ROOT / "src").exists() else []
+    sources = sorted((ROOT / "src").rglob("*.pas")) if (ROOT / "src").exists() else []
     if not sources:
         c.fail("src/ has no production units; package inventory cannot pass")
     else:
@@ -382,6 +388,24 @@ def packages_check(c: Checks) -> None:
                 elif not source_path.exists():
                     c.fail(f"{package.name} names missing source {name}")
                 listed.setdefault(Path(name).as_posix(), []).append(package.name)
+            deps = {node.get("Value", "").casefold()
+                    for node in tree.findall(".//RequiredPkgs/*/PackageName")}
+            role_deps = deps & {"http2common", "http2client", "http2server", "http2clientreaders"}
+            expected_deps = {
+                "http2common.lpk": set(),
+                "http2client.lpk": {"http2common"},
+                "http2server.lpk": {"http2common"},
+                "http2clientreaders.lpk": {"http2common", "http2client"},
+            }.get(package.name.casefold())
+            if expected_deps is None or role_deps != expected_deps:
+                c.fail(f"{package.name} has invalid component dependencies: {sorted(role_deps)}")
+            license_node = tree.find(".//Package/License")
+            if license_node is None or license_node.get("Value") != "Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)":
+                c.fail(f"{package.name} does not declare the approved dual license")
+            if package.name.casefold() == "http2common.lpk":
+                search_node = tree.find(".//OtherUnitFiles")
+                if search_node is not None and "mormot" in search_node.get("Value", "").casefold():
+                    c.fail("http2common.lpk must not depend on mORMot2")
             unit_out = tree.find(".//UnitOutputDirectory")
             unit_out_value = unit_out.get("Value", "") if unit_out is not None else ""
             out_parts = Path(unit_out_value).parts

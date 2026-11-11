@@ -1,109 +1,102 @@
 # Implementation state
 
-Updated at the 30-minute report on 2026-11-11.
+Updated at 07:40 UTC on 2026-11-11. Work started at 06:38 UTC.
+The one-hour detailed report is complete. The next detailed report is due
+at 07:53 UTC. Brief reports occur every five minutes.
 
-## User instructions
+## Persistent instructions
 
-- GPT-6-Luna agents work in separate worktrees of http2components.
-- The parent reviews and merges their work, then removes finished worktrees
-  and branches.
-- Brief reports are due every five minutes; detailed reports every 15.
-  Work started at 06:38 UTC; the 30-minute report is complete.
-- No resource-intensive tests or Linux validation run during implementation.
-  The separate final validation plan records them.
-- All new work belongs to http2components. Existing http2client and
-  http2server repositories are read-only inputs.
-- The user owns the project copyrights and authorized dual licensing:
-  Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception).
-- Current AGENTS instructions require CodeGraph before code searches in an
-  indexed repository. Target worktrees have no index; the original server
-  repository has one. Indexing is not part of this work.
+All work is in http2components and its worktrees. The original client and
+server repositories are read-only. Agents use GPT-6-Luna in separate
+worktrees. Reviewed changes are merged; finished worktrees and branches
+are removed. No resource-intensive tests, containers, external conformance,
+or Linux validation run now. The separate final validation plan covers
+these checks. The owner authorized the dual license:
+Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception).
 
-## Worktrees and agents
-
-The worktree base is
-`/Users/liamcoughlin/Source/lscoughlin/.http2components-worktrees/`.
-
-| Worktree | Branch | Agent | Active work |
-| --- | --- | --- | --- |
-| integration | merge/integration | parent | Reviewed merges and focused verification |
-| build | merge/build | baseline_client | M01 build/check infrastructure; final commit pending |
-| common | merge/common | baseline_server | M02–M05; M04 next |
-| docs | merge/docs | inventory | M12 preparation; review corrections pending |
-
-The agent names reflect their first assignment. All child agents use
-GPT-6-Luna. Each tool command has an explicit workdir and `login:false`.
-The login shell produced blank command output early in this session.
+CodeGraph is used first for code questions in the indexed original server
+repository. Target worktrees have no index. All shell tool calls use
+login:false and an explicit working directory.
 
 ## Accepted work
 
-M00 inventory records 440 source entries with independently verified hashes.
-There are 196 client entries and 244 server entries; the server has one
-tracked symlink. License texts and historical notices are preserved.
-The current root LICENSE and NOTICE state the approved dual-license choice.
-RFC 1928 and RFC 1929 copies and retrieval records are present.
+M00: inventory has 440 source entries with independently checked hashes.
+License texts, notices, and RFC reference copies are retained. The original
+client baseline passes 913 tests with OpenSSL 3.5.9. The server baseline has
+867 tests; its combined run stopped after 753 cases with two cancellation
+failures. Those two cases pass alone. This combined-run issue remains open.
 
-The client baseline passes 913 tests on OpenSSL 3.5.9; focused mTLS passes
-78 tests. OpenSSL 4.1.0 failures did not recur with OpenSSL 3. The server
-builds. Its combined suite was stopped after 753 of 867 cases, with two
-cancellation failures. Both failures pass alone. That combined-run issue
-remains recorded, not resolved. Raw baseline files are in
-`integration/bin/baseline-evidence/`.
+M01: Make and Task share tools/build.py. Output is isolated under bin by
+platform, profile, component and purpose. Source, version, documentation,
+package and test-run checks are real checks. Tests have bounded deadlines.
 
-M02 commit a5903d6 is merged. Independent parent runs passed 38 common
-and 16 API tests. Cross-role error tests are under test/api. The common
-suite is pure. The shared header interface never had an explicit GUID;
-the merge retains one type identity without inventing a GUID.
+M02–M05: common primitives, facade, and role error aliases are merged.
+The parent passed 229 common tests, 16 API tests, and the common facade
+probe. Shared headers have one type identity and no invented GUID.
 
-M03 commit 3bccbb7 is merged. The parent verified the HPACK executable code
-against the pinned server implementation after namespace normalization.
-The common suite passes 113 tests. Direct parent output is under
-`integration/bin/review-m02/` and `integration/bin/review-m03/`.
+M12 preparation: 53 Markdown documents and 12 compiler probe sources are
+merged. Documentation and header checks passed before role imports.
+Final API, architecture, commands and migration review remains.
 
-Completed baseline-client, baseline-server, and inventory worktrees and
-branches have been removed after merging. Their agent sessions remain for
-new assignments. The current docs worktree is the inventory agent's next
-assignment.
+M07 import 3b8da78 is merged. All 72 imported production units are
+executable-identical after namespace mapping. Parent build:server and
+TFactoryTest (27 cases) pass. Server test accounting and selected tests
+remain with the server agent. Live client-dependent integration inputs
+have .pas.pending suffixes until the client is ready.
 
-## Pending review
+M06 import ddc43a3 and lock fix 198600e are merged. Parent review found
+and corrected lock creation order and exception-path lock release in peer
+settings handling. Parent build:client passes. Real source divisions and
+regression tests remain. Existing client public API must be preserved.
 
-M01 has received detailed review feedback. It uses one Python build driver
-for Make and Task. It must correctly check real Pascal dependencies,
-facade direction, root/package/probe headers, source sizes, XML package
-versions, docs, empty suites, and bounded timeouts. Common agent owns
-`test/api/Http2.Api.RunTests.pas`; test:api compiles that runner directly,
-without requiring absent future client/server facades. The build agent
-reports fixture tests and checks against an exported M02/M03 tree pass.
+M09 import preparation dff8e071 is merged. Role tools and example programs
+are present, with namespace and basic path changes. The preparation note
+lists the required script, output, readiness, and cleanup work.
 
-Docs preparation commit ff3f79b is not merged. It contains source docs,
-reference copies, historical evidence, migration table, and root docs.
-Corrections requested: probe Pascal headers, remove Story column from
-migration docs, remove remaining imperative prose, full license names in
-README, correct no-GUID claim, and obsolete client unit count/umbrella text.
-Final API/architecture and real build-command review remains after imports.
-Reference whitespace is verbatim and is exempt from diff whitespace cleanup.
+M10 preparation is in progress in the integration worktree. Four generated
+packages compile with Lazarus on macOS. The generator, final inventory,
+header restoration after Lazarus regeneration, and API probes need review.
 
-## Next work
+## Current team
 
-After M01 review, merge it into integration and the common worktree, then
-run its real checks. After M05, import client and server in parallel.
-Suggested roles: build agent moves to client M06/C01–C04; docs agent moves
-to server M07. Common agent can then prepare M08 test division/accounting
-in a separate worktree while the client source divisions proceed, with
-explicit test-file ownership to avoid overlapping edits.
+Worktree base: /Users/liamcoughlin/Source/lscoughlin/.http2components-worktrees
 
-M09–M15 still remain, subject to the user's deferred validation scope.
-`plan/validation-after-merge-0.30.0.md` contains the deferred matrix.
+| Agent | Worktree / branch | Task |
+| --- | --- | --- |
+| parent | integration / merge/integration | Review, merges, packages and API probes |
+| baseline_server | client / merge/client | C01–C04 client production division |
+| baseline_client | tests / merge/tests | M08 client tests, support, fixtures, accounting |
+| inventory | server / merge/server | M07 server test accounting and focused checks |
 
-The main user worktree remains on main with its original staged .gitignore.
-It has not been included in any agent commit. The accepted code is on
-merge/integration. Final integration into main must preserve that staged
-change. Ignored plan inputs were copied into each worktree; owned evidence
-is explicitly added with git add -f. Ignored logs needed after cleanup must
-be copied to the final target bin directory before worktree removal.
+Client test import 4efe6b5 is committed but not accepted. Review found wrong
+Http2.Client.Client imports and a trivial sentinel test. The agent fixed
+these and reports 801 imported tests pass against ddc43a3. There are 111
+source registrations mapped to common/API and one removed source sentinel.
+File divisions and accounting verification are still required.
 
-The integration worktree has its own independent pinned mORMot2 clone in
-third_party/mORMot2. It was cloned from the original dependency as a read
-operation with --no-hardlinks. All compiler output stays in target bin.
-Source repositories and original dependency checkout are clean. No recent
-compiler output was found in their source directories.
+The server agent next takes M09 tools/examples in a new worktree after
+M07 review. Parent already copied tools/server/certs/make_mtls_pki.sh;
+server test references must use that path, not a duplicate tools/certs path.
+
+Six finished worktrees/branches were removed after review: baseline-client,
+baseline-server, inventory, build, common, docs. Evidence logs were copied
+into integration/bin/baseline-evidence and integration/bin/agent-evidence.
+
+## Repository and remaining work
+
+Main is clean at e6cc749 and contains accepted foundation through M05 and
+documentation preparation. User commit 263036d retained .gitignore.
+Integration is ahead with role imports. Active agent worktrees have an
+untracked copy of the same .gitignore; it must be removed only after byte
+comparison if a merge would overwrite it.
+
+Pinned mORMot2 is a target-owned independent clone in
+integration/third_party/mORMot2. Agents use it read-only through MORMOT.
+Compiler output stays in target bin. OpenSSL 3 is selected explicitly or
+through the driver default; OpenSSL 4 produced baseline mTLS errors.
+
+The original plan inputs are ignored. Evidence notes are added with git
+add -f. Raw logs are ignored and must be retained before worktree cleanup.
+M09 completion, M10 final probes, M11 bounded local integration, M12 final
+docs, M14 review, and M15 archive verification remain. M13 and heavy/Linux
+checks are deferred by explicit user instruction. No release tag is made.

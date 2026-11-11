@@ -12,6 +12,12 @@ This table maps all 102 production units in the client and server source
 projects. A target with two unit paths is a planned split. The table records
 the target map; it does not state that every target has passed compilation.
 
+The library source directories are `src/common`, `src/client`, and
+`src/server`. Each directory contains the units with its matching namespace.
+No library unit is directly under `src/`. A client build uses the common
+and client search paths; a server build uses the common and server search
+paths. A combined build uses all three directories.
+
 ## Unit names
 
 | Source project | Source unit | Target unit path(s) | Change |
