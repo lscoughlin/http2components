@@ -331,8 +331,10 @@ end;
 
 procedure TTlsSocket.ReadPeerAlertAfterWriteFailure;
 var
-  PreviousTimeout: Integer;
+  PreviousTimeout, N: Integer;
+  Data: TBytes;
   Deadline, NowMs: QWord;
+  Used: SizeInt;
 begin
   // Some TLS 1.3 servers reject a client certificate only after they receive
   // application data.  With HTTP/2, the connection preface is the first data;
@@ -355,8 +357,40 @@ begin
             Break;
           FTransport.ReadTimeoutMs := Integer(Deadline - NowMs);
           try
-            if not ReadEncrypted then
+            if Length(FEncryptedPending) = 0 then
+            begin
+              SetLength(Data, TlsMaxEncryptedInput);
+              N := FReader.ReadSome(Data[0], Length(Data));
+              if N <= 0 then
+              begin
+                FTransportEof := True;
+                NotifyTransportEof;
+                Break;
+              end;
+              if N > Length(Data) then
+                Break;
+              SetLength(Data, N);
+              FEncryptedPending := Data;
+              FEncryptedOffset := 0;
+            end;
+            try
+              Used := FSession.FeedEncrypted(FEncryptedPending,
+                FEncryptedOffset, Length(FEncryptedPending) - FEncryptedOffset);
+            except
+              on E: ETlsSessionError do
+                MapSessionError(E);
+            end;
+            if (Used <= 0) or
+               (Used > Length(FEncryptedPending) - FEncryptedOffset) then
               Break;
+            Inc(FEncryptedOffset, Used);
+            if FEncryptedOffset >= Length(FEncryptedPending) then
+            begin
+              FEncryptedPending := nil;
+              FEncryptedOffset := 0;
+            end;
+            InterlockedIncrement(FInputGeneration);
+            RTLEventSetEvent(FInputProgress);
             AdvanceSession;
           except
             on E: EHttpTlsClientAuthError do

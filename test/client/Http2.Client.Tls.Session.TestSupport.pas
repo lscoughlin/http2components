@@ -92,6 +92,7 @@ type
     FBlockRead, FReadHasStarted: Boolean;
     FBlockWrite, FWriteHasStarted: Boolean;
     FFailNextWrite: Boolean;
+    FFailAllWrites: Boolean;
   public
     constructor Create(const AMaxWrite: Integer = 3);
     destructor Destroy; override;
@@ -101,6 +102,7 @@ type
     function WaitForReadStart(const ATimeoutMs: Integer): Boolean;
     procedure EnableWriteBlocking;
     procedure FailNextWrite;
+    procedure FailAllWrites;
     function WaitForWriteStart(const ATimeoutMs: Integer): Boolean;
     procedure ReleaseBlockedWrite;
     procedure Push(const ABytes: TBytes);
@@ -156,6 +158,7 @@ begin
   FBlockWrite := False;
   FWriteHasStarted := False;
   FFailNextWrite := False;
+  FFailAllWrites := False;
   FTrickleDelayMs := 0;
 end;
 
@@ -197,6 +200,10 @@ end;
 procedure TPartialStream.FailNextWrite;
 begin
   FFailNextWrite := True;
+end;
+procedure TPartialStream.FailAllWrites;
+begin
+  FFailAllWrites := True;
 end;
 
 function TPartialStream.WaitForWriteStart(const ATimeoutMs: Integer): Boolean;
@@ -325,7 +332,7 @@ var OldLength: Integer;
 begin
   Inc(FWrites);
   if not FOpen then Exit(0);
-  if FFailNextWrite then
+  if FFailAllWrites or FFailNextWrite then
   begin
     FFailNextWrite := False;
     raise EHttpConnectionClosed.Create('scripted socket write failed');

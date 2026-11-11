@@ -731,6 +731,46 @@ begin
   end;
 end;
 
+procedure TestWriteFailureZeroFeedDoesNotRetryOutput;
+var
+  Raw: TPartialStream;
+  RawSocket, Socket: IHttp2Socket;
+  Context: ITLSContext;
+  Payload, Input: TBytes;
+  BeforeWrites: Integer;
+  Started, Elapsed: QWord;
+  Preserved: Boolean;
+begin
+  Raw := TPartialStream.Create;
+  RawSocket := Raw;
+  Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 0);
+  Socket := TTlsSocket.Create(RawSocket, 'example.test', Context, nil,
+    ['h2'], 1000);
+  BeforeWrites := Raw.WriteCount;
+  Raw.FailAllWrites;
+  SetLength(Input, 1);
+  Input[0] := $FB; // the fake TLS session leaves this input unconsumed
+  Raw.Push(Input);
+  Payload := Bytes('preface');
+  Started := mormot.core.os.GetTickCount64;
+  Preserved := False;
+  try
+    Socket.Write(Payload[0], Length(Payload));
+  except
+    on E: EHttpConnectionClosed do
+      Preserved := E.Message = 'scripted socket write failed';
+  end;
+  Elapsed := mormot.core.os.GetTickCount64 - Started;
+  Check(Preserved, 'zero-feed recovery changed the original write failure');
+  Check(Raw.WriteCount = BeforeWrites + 1,
+    'zero-feed recovery retried encrypted output');
+  Check(Elapsed < 500, 'zero-feed recovery did not remain bounded');
+  Socket.Close;
+  Socket := nil;
+  RawSocket := nil;
+  Context := nil;
+end;
+
 var
   Cases: Integer;
 begin
@@ -775,5 +815,7 @@ begin
   TestWriteFailureWithoutAlertKeepsOriginalError; Inc(Cases);
   WriteLn('RUN write-failure-busy-reader'); Flush(Output);
   TestWriteFailureDoesNotDeadlockWithBusyReader; Inc(Cases);
+  WriteLn('RUN write-failure-zero-feed'); Flush(Output);
+  TestWriteFailureZeroFeedDoesNotRetryOutput; Inc(Cases);
   WriteLn('PASS ', Cases, ' cases');
 end.
