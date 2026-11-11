@@ -68,6 +68,9 @@ const
   ctPriorKnowledge = Http2.Client.Tls.ctPriorKnowledge;
   ctUpgrade = Http2.Client.Tls.ctUpgrade;
   ctHttp1 = Http2.Client.Tls.ctHttp1;
+  pkHttp = Http2.Client.Proxy.pkHttp;
+  pkHttps = Http2.Client.Proxy.pkHttps;
+  pkSocks5 = Http2.Client.Proxy.pkSocks5;
   cDefaultMaxConnectionsPerHost = Http2.Client.Defaults.cDefaultMaxConnectionsPerHost;
   cDefaultMaxTotalConnections = Http2.Client.Defaults.cDefaultMaxTotalConnections;
   cDefaultMaxStreamsPerConnection = Http2.Client.Defaults.cDefaultMaxStreamsPerConnection;
@@ -86,9 +89,7 @@ const
 type
   // TClearTextPolicy and TNegotiatedProtocol come from Http2.Client.Messages.pas
 
-  // the proxy types live in Http2.Client.Proxy; re-exported so a caller that only
-  // uses Http2.Client can name them (the TProxyKind VALUES need Http2.Client.Proxy in
-  // the uses clause, as with TClearTextPolicy)
+  // Proxy types and kind values are also available through this facade.
   IProxy = Http2.Client.Proxy.IProxy;
   IProxySelector = Http2.Client.Proxy.IProxySelector;
   TProxy = Http2.Client.Proxy.TProxy;
