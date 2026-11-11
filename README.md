@@ -43,6 +43,8 @@ records for the client 0.23.0 and server 0.29.0 source snapshots.
 ## License
 
 Project-owned code and documentation use the license choice in
-[LICENSE](LICENSE): `Apache-2.0 OR (LGPL-2.1-only WITH
+[LICENSE](LICENSE): the Apache License, Version 2.0, or the GNU Lesser
+General Public License, version 2.1, with the Free Pascal Independent Modules
+exception. Its SPDX expression is `Apache-2.0 OR (LGPL-2.1-only WITH
 Independent-modules-exception)`. Third-party works and specification text
 keep their own terms.

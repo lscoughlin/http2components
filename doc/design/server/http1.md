@@ -295,7 +295,7 @@ connection alone.
 ## Known limits
 
 - The request body is bounded by `MaxBodySize` and is not streamed past it. HTTP/2
-  applies flow control to the unread body; HTTP/1.1 does not (see the section on
+  applies flow control to the unread body; HTTP/1.1 does not (as described in the section on
   memory).
 - A client that stops reading a response loses its connection after the write
   timeout without progress, so its handler thread is not held for ever. The same

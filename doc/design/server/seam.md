@@ -137,7 +137,7 @@ open and moves bytes in both directions without a thread for the stream.
 
 A handler that never calls `Detach` keeps the synchronous contract, with one change
 that comes from the loss of the socket. When the socket closes, the connection
-core cancels every open stream (see "Connection loss" below), so a handler that
+core cancels every open stream (as described in "Connection loss" below), so a handler that
 waits on a stream wakes with `EStreamCancelled` at once and not at its next
 timeout. This is the cancellation on connection loss that the design always
 described. The response object belongs to the handler call and is gone when

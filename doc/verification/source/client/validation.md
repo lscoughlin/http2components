@@ -52,8 +52,8 @@ The default suite reported 910 tests, zero errors, and zero failures.
 Optional external-service gates were not enabled. No Linux check was run.
 
 The 29 `TClientTest` tests include three new cases on one HTTP/2 connection:
-an idle first body does not block a second response; pending first headers
-do not block a second response; cancellation during the first header wait
+an idle first body does not block a second response; pending first headers do not block a second response; cancellation during the
+first header wait
 leaves the connection usable. Custom response headers exercise the shared
 HPACK dynamic table. Waits have deadlines, and test cleanup releases the
 held response before it joins workers.
@@ -152,7 +152,7 @@ A.1–A.7 and A.9–A.13 PASS; **A.8 is SKIP**. A.3 runs through the
 `--body-writer` mode of `test/h2probe.pas` (`TChunkWriter`, 7-byte chunks) and
 a matching `run_probe ... --body-writer=...` case in `interop.sh`. A.7
 covers flow control: the connection layer returns window credit through
-`TFlowControl` (see the A.7 note below). A.8 has no nghttpd trigger to force a
+`TFlowControl` (as described in the A.7 note below). A.8 has no nghttpd trigger to force a
 mid-flight GOAWAY; the same semantics are covered by unit tests
 (`TStreamLease.OnConnectionGoAway` sets
 `FRetryable := FStreamId > ALastStreamId`; `TestGoAwayNotifiesEveryStream`
@@ -294,8 +294,8 @@ echoed `1001`, `1007` for invalid UTF-8) and the subprotocol list were as
 sent, `wss` negotiated `http/1.1` alone and a server without ALPN was accepted, and the proxy logs show the name sent unresolved over SOCKS5 and TLS
 inside TLS for `wss` behind an `https://` proxy. The Autobahn|Testsuite client
 run (`make validate-websocket-autobahn`) needs Docker; when the daemon is not
-running the script prints a SKIP. Run against the `crossbario/autobahn-testsuite`
-fuzzing server (cases 12 and 13, which cover `permessage-deflate`, excluded),
+running the script prints a SKIP. The run against the `crossbario/autobahn-testsuite`
+fuzzing server excludes cases 12 and 13, which cover `permessage-deflate`;
 it covers 301 cases: 296 OK, 2 NON-STRICT (6.4.3 and 6.4.4, invalid UTF-8
 split across fragments, which the client rejects with the next fragment) and
 3 INFORMATIONAL (7.1.6, 7.13.1, 7.13.2), with no FAILED and no UNIMPLEMENTED.
@@ -425,7 +425,7 @@ resolve the case).
 section 5.1 to explicit levels, so where our client is the stricter
 (connection) level we keep it: a stricter level never lets a broken stream
 corrupt connection state. **Exactly which ids fall in this bucket is not fixed
-across revisions or even across runs** (see the method note): the count observed is 13, but membership moves within the families below, so the rows are
+across revisions or even across runs** (as described in the method note): the count observed is 13, but membership moves within the families below, so the rows are
 grouped by *family* with the reasoning, not pinned to a run.
 
 | id | declaration | ours | justification |
@@ -441,7 +441,7 @@ grouped by *family* with the reasoning, not pinned to a run.
 | `8.1.2.1/3` | stream-error | conn-error (`PROTOCOL_ERROR`) | A pseudo-header field in trailers. We reject while decoding; the harness declares stream scope. RFC 9113 permits either level here; we keep connection scope because the forbidden field corrupts the header block. |
 | `8.1.2.2/1` | stream-error | conn-error (`PROTOCOL_ERROR`) | A connection-specific header field (`connection`) in a response. Same reasoning as `8.1.2.1/3`. |
 | `6.4/2` | stream-error | conn-error (`PROTOCOL_ERROR`) | END_STREAM on a stream the harness never opened. Section 5.1 makes a frame on an idle stream a connection error; the case declares stream scope. We are stricter, per the RFC. |
-| `6.9/2` | stream-error | conn-error (`INTERNAL_ERROR`) | The harness cannot emit its zero-increment WINDOW_UPDATE (Go rejects it), so it sends HEADERS(200) and drops the connection; we report the dead connection. See the dead-connection note above. |
+| `6.9/2` | stream-error | conn-error (`INTERNAL_ERROR`) | The harness cannot emit its zero-increment WINDOW_UPDATE (Go rejects it), so it sends HEADERS(200) and drops the connection; we report the dead connection. The dead-connection note above describes this case. |
 
 Every CLASS-DIFF is therefore one of: (a) our client is *stricter* and acting
 per the explicit RFC section (4.2/2, 5.1/5, 6.3/2, 6.1/2, 6.4/2, 8.1.2.6/1,
@@ -484,26 +484,26 @@ server that never binds is reported as an **infrastructure** failure and
 counted apart from a probe failure, because an unready server says nothing
 about the client.
 
-Check 2 deliberately does **not** use the h2-test-harness case `5.1/2`. That
+Case 2 deliberately does **not** use the h2-test-harness case `5.1/2`. That
 case sends RST_STREAM on a stream the *server* still considers idle (it never
 reads our HEADERS) and then closes the socket at once, so the reset races the
 EOF: our probe can legitimately report either a stream error (exit 3) or a
 connection error (exit 2), and the harness's own reference verifier expects the
 connection error (`verifier/cases/http2/5_1_stream_states.go`). It is an
-accepted divergence (see the `5.1/2` row above), not a deterministic
+accepted divergence (as described in the `5.1/2` row above), not a deterministic
 stream-error oracle, and using it would make the check flaky (roughly 1 run in
 3). The fabricated peer instead sends a valid 200 response HEADERS *then*
-RST_STREAM and holds the socket open, so exit 3 is unambiguous. Non-vacuity
-against that peer is verified by mutation: remove the RST_STREAM write and the
-check fails (`exit=2`, header timeout) as it must.
+RST_STREAM and holds the socket open, so exit 3 is unambiguous. Mutation
+confirms non-vacuity: the check fails with exit 2 and a header timeout when the
+RST_STREAM write is absent.
 
 Readiness for a **single-accept** server (the h2-test-harness, the fabricated
 peer, `openssl s_server`) is gated on a **log line**, never on a TCP
 connect. These servers call `Accept()` exactly once and exit; a connect-based
 probe (`nc -z`, `wait_port`, `port_open`) *is* a connection and would consume
 that accept, so the following real run fails with a spurious `connect ...
-failed` or TLS-handshake error. A `wait_port`
-check in `wait_harness_ready` would turn nearly the whole harness sweep from
+failed` or TLS-handshake error. The `wait_port` check in
+`wait_harness_ready` would turn nearly the whole harness sweep from
 `ours=stream-error` into a false `ours=conn-error`. The residual host-forwarder
 race (the container logs `listening on` a moment before the ssh-forwarded host
 port exists, ~1 run in 20) is handled by retrying a bounded number of times on

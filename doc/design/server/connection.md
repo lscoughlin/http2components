@@ -113,9 +113,8 @@ moves the state and the accessor `State` reads the flags.
   length. A `DATA` frame that ends with `END_STREAM` marks the remote end.
   A response that ends marks the local end. The state follows those marks.
 - `CloseStream` (`:709`) removes the stream from `FById` and from `FStreams`
-  and drops the reference of the core. A queue entry and a running handler
-  hold their own references, so the stream lives until the last holder
-  releases it.
+  and drops the reference of the core. The queue entry and running handler each hold a reference. The stream lives
+  until its last reference is released.
 
 `TServerStream` keeps its own reference count. `AddRef` and `ReleaseRef`
 (`src/Http2.Server.Stream.pas`) guard the object. Three holders exist: the
@@ -311,8 +310,7 @@ transition from "no output" to "output" (`:563`). The document
 
 The factory setting `ServerLimits.WriteTimeoutMs` bounds the time that the
 output of one connection makes no progress (see
-[configuration](configuration.md)). It defaults to 60000, and 0 turns the
-check off.
+[configuration](configuration.md)). It defaults to 60000. A value of 0 disables the check.
 
 The check differs from the stream write timeout. The stream write timeout
 bounds one blocked write call of one handler (`TServerStream.Write` in

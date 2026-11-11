@@ -55,11 +55,11 @@ core that prove the seam is enough: tracing, metrics and logging
 
 - Arbitrary headers (`traceparent`, `tracestate`,
   `baggage`, correlation ids) with a fresh value per attempt.
-- Report the start, the response headers and the end of every attempt, with
+- Every attempt has a start, response headers, and an end, with
   status, error, byte counts and timings.
 - Cover plain requests, Server-Sent Events streams and WebSockets with one
   vocabulary.
-- Give enough per-message timing to measure time to first token, inter-event
+- Per-message timing measures time to first token, inter-event
   latency and throughput of a streaming endpoint, measured at the wire and
   not at the consumer.
 - Cost nothing for a client with no observer installed, and little for one
@@ -268,8 +268,8 @@ implementation that ignores every call. `ReportMessage` takes the arrival stamp
 the reader read from the wire; the attempt keeps the count, the first and last
 stamp and the gaps, and builds the `TMessageInfo` only for a kind the observers
 asked for. When a reader reported any inbound data message, those aggregates
-replace the per-frame ones the codec gathers, because a message is an event
-there and not a DATA frame.
+These message-level callbacks take the place of per-frame callbacks because
+a message is an event, not a DATA frame.
 
 The codec ends the exchange inside the `Read` that returns the last bytes of
 the body. A reader therefore brackets each read with `ReadBegin` and `ReadEnd`:
@@ -286,8 +286,8 @@ THttpClientFactory.WithRequestObserver(const AObserver: IHttpClientObserver): TH
 TCompositeObserver = class(TInterfacedObject, IHttpClientObserver, IHttpMessageObserver)
 ```
 
-`WithRequestObserver` accumulates: each call adds an observer. Start callbacks
-run in registration order and end callbacks in reverse, so the observer
+`WithRequestObserver` accumulates observers. Start callbacks run in
+registration order and end callbacks in reverse. The observer
 registered first wraps the rest: its start runs first and its end last. A
 tracing observer registered first therefore sees the headers the later ones
 inject from `OnResponseHeaders` onward, not inside its own `OnAttemptStart`,
@@ -664,7 +664,7 @@ requested.
 ## Threading and failure
 
 - Observer callbacks must be fast and must not block.
-- Start, headers, redirect, retry and end for a plain request run on the
+- Events for a plain request (start, headers, redirect, retry, and end) run on the
   caller's thread, except `OnAttemptEnd`, which runs on whichever thread
   completes the body (usually the reader's own) or releases the response.
 - Every call is guarded: an observer that raises is swallowed and reported to

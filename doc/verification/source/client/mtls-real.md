@@ -36,9 +36,8 @@ with `tools/container/remote-run.sh`, compiles the example in the dev image,
 and starts the servers as sibling containers from their stock images with
 `--network host` on ports from `MTLS_REAL_BASE` (default 9440). The client runs
 in a container on the same network. With `MTLS_REAL_NATIVE=1` the client is
-built with the host's own Free Pascal and runs on the host, and only the servers
-run in Docker (Rancher Desktop forwards their ports to loopback). Every client
-run is under a 20 second timeout.
+built with the host's own Free Pascal and runs on the host. Docker hosts only the servers (Rancher Desktop forwards their ports to
+loopback). Each client process has a 20 second timeout.
 
 | Server | Configuration |
 |---|---|

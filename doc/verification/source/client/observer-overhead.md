@@ -47,7 +47,9 @@ Three configurations:
 |---|---|
 | no observer | none: `WithRequestObserver` is not called |
 | tracing + metrics + logging | `TTracingObserver`, `TMetricsObserver` (per-event gate off) and `TLoggingObserver`, in that order. The tracer and the metric registry are the in-memory stand-ins of the examples; the logger counts lines and keeps none |
-| all three, per-event gate on | the same, with `TMetricsObserver.PerEvent` on, so every SSE event reaches `OnMessage` and feeds the inter-event histogram. Run for the SSE workload only, because a plain response has no per-message callbacks |
+| all three, per-event gate on | the same, with `TMetricsObserver.PerEvent` on, so every SSE event reaches `OnMessage` and feeds the inter-event histogram.
+This configuration applies to the SSE workload only; a plain response has no
+per-message callbacks |
 
 Each configuration gets a fresh client, a warm-up of 200 requests that is
 dropped, then the timed requests. The configurations run in turn inside a
@@ -59,8 +61,7 @@ observer" in microseconds and in percent.
 
 The measurement is wall time on a loopback socket and includes the server's
 thread and the kernel, so the absolute figures belong to the machine they were
-taken on; what carries over is the difference between configurations. Run it on
-an otherwise idle machine.
+taken on; what carries over is the difference between configurations. An otherwise idle machine gives more stable results.
 
 ## Command
 
@@ -96,8 +97,8 @@ Machine, FPC version and date of the run:
 
 ## Bound
 
-The bound on what an observer may cost per request is **not yet stated**. It is
-set when the table above is filled in, and then recorded here and in
+The bound on observer cost per request is **not yet stated**. The bound will
+be determined when the table above is filled in, and recorded here and in
 [open-questions](../../../design/client/open-questions.md).
 
 | Statement | Value |

@@ -154,8 +154,8 @@ flowchart TB
 
 ## Connection lifecycle
 
-1. **Create.** Dial TCP, then TLS negotiating ALPN `h2`. On negotiated `h2`,
-   write the connection preface: the client magic
+1. **Create.** TCP opens, then TLS negotiates ALPN `h2`. When ALPN selects `h2`,
+   the client writes the connection preface: the client magic
    `PRI * HTTP/2.0` + CRLF + CRLF + `SM` + CRLF + CRLF, then a `SETTINGS`
    frame. The connection can open streams as soon as the preface is written:
    a request may send `HEADERS` immediately, since HEADERS is not
@@ -164,16 +164,16 @@ flowchart TB
    `SETTINGS_INITIAL_WINDOW_SIZE` known — the default is 65535, but a peer
    may lower it, and emitting DATA first would overrun its window
    (RFC 9113 section 6.5.3: `FLOW_CONTROL_ERROR`).
-2. **Steady state.** Serve streams; maintain HPACK tables, settings, and
+2. **Steady state.** The connection serves streams and maintains HPACK tables, settings, and
    windows.
 3. **Keep-alive.** Idle connections may be probed with `PING` and closed
    after `FIdleTimeoutMs`, provided no active streams.
-4. **`GOAWAY`.** Mark draining; stop creating new streams. Streams with ids
+4. **`GOAWAY`.** The connection enters a draining state and stops creating new streams. Streams with ids
    at or below the last-stream-id may complete; **higher streams may be
    safely retried on a fresh connection (the peer guarantees it did not
-   process them).** Never retry a stream that may have been processed unless
-   the request is known to be safe. Remove an unusable connection from the
-   pool and open a replacement.
+   process them).** A stream that may have been processed is retried only when
+   the request is known to be safe. An unusable connection leaves the pool,
+   and the client opens a replacement.
 5. **Errors.** A transport/protocol error fails all leases on that
    connection; `ftRstStream` fails only the affected lease.
 6. **Shutdown.** `IHttpClient.Close` stops accepting leases, drains or

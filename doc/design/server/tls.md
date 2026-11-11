@@ -209,21 +209,18 @@ is on, and the connection is refused when the fallback is off
 
 ## Open verification
 
-The pure select rule and the symbol resolution are verified by the unit tests
+The unit tests cover the pure select rule and symbol resolution
 of `test/Http2.Server.Alpn.Test.pas`, which run in the normal test suite. The
 pure TLS decisions and the h2c loopback are verified by
 `test/Http2.Server.Async.Test.pas`.
 
-**Live handshake coverage.** The fpcunit suite holds no live TLS handshake
-loopback, because the mORMot2 client socket offers no ALPN list. The TLS socket of
-the sibling HTTP/2 client at `../http2client` offers any list, so three runs
-outside the suite drive real OpenSSL handshakes. `make tls-live` runs two servers
+**Live handshake coverage.** The fpcunit suite has no live TLS handshake loopback because the mORMot2
+client socket offers no ALPN list. The source client TLS socket offers any
+list, so three separate runs drive OpenSSL handshakes. `make tls-live` runs two servers
 in one process, with and without the HTTP/1.1 fallback, and checks each ALPN offer
-([validation](../../verification/source/server/validation.md)). The `h2spec` runs of
-`tools/validate/run.sh` use TLS and negotiate `h2`, and `make mtls-live` checks
-the client certificate paths. The ALPN select rule, the negotiated-name
-check and the handshake deadline carry unit tests, and the h2c loopback proves the
-IO pool end to end. The platform run on Linux amd64 is open, because this host is
+([validation](../../verification/source/server/validation.md)). The h2spec validation uses TLS and negotiates h2. The mutual-TLS validation
+checks the client certificate paths. Unit tests cover the ALPN selection rule, selected protocol name, and handshake
+deadline. The h2c loopback demonstrates the IO pool end to end. The platform run on Linux amd64 is open, because this host is
 macOS aarch64.
 
 ## Sources

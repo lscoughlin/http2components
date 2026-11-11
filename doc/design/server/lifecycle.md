@@ -19,9 +19,9 @@ related_docs:
   - doc/design/server/configuration.md
   - doc/design/server/websocket.md
 invariants:
-  - Start binds the port and returns; it never blocks for a request.
-  - Stop is idempotent. A second call does nothing.
-  - Stop sends GOAWAY on every open connection before it waits.
+  - The Start method binds the port and returns; it does not block for a request.
+  - The Stop method is idempotent. A second call has no effect.
+  - The Stop method sends GOAWAY on every open connection before the wait.
   - The graceful wait is bounded by the graceful stop timeout.
   - A server that stopped is built again, not started again.
   - The handler pool stops before the IO pools, so no handler touches a connection that the IO side already released.
@@ -79,8 +79,8 @@ applies both rules and asks the IO side to remove the connection.
 A third timeout, the connection write timeout
 (`ServerLimits.WriteTimeoutMs`, as described in [configuration](configuration.md)),
 reaches the connection through the once-per-second sweep instead of the idle
-event. The idle event never sees a busy connection, so the sweep judges the
-write progress itself (as described in [io-pool](io-pool.md)).
+event. The idle event never sees a busy connection, so the sweep checks the
+connection write progress (as described in [io-pool](io-pool.md)).
 
 ## The connection lifetime limits
 

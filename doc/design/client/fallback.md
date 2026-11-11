@@ -42,11 +42,11 @@ each origin.
 | HTTP/1.1, no probe | `http` | TCP, cleartext | The caller sets the policy |
 
 The default stays strict. The client uses `h2` over TLS only. Cleartext and
-HTTP/1.1 fallback are off until the caller enables them. See "Factory
-surface".
+HTTP/1.1 fallback are off until the caller enables them. The [client API](client-api.md)
+document defines these settings.
 
-All five modes are covered by tests and interop cases A.10–A.13; see
-"Implementation status".
+The source tests and interop cases A.10–A.13 cover all five modes. The source
+validation record describes their results.
 
 WebSocket connections ([websocket](websocket.md)) sit outside these modes. They always
 speak HTTP/1.1 for the opening handshake and take no part in the fallback and
@@ -76,32 +76,32 @@ result for the origin. Details are in [client-api](client-api.md) for lease acqu
 
 ### `https` origins
 
-1. Dial TCP. Start TLS.
-2. Offer the ALPN list. Use `h2` and `http/1.1` when fallback is on. Use
-   `h2` alone when fallback is off.
-3. Read the ALPN result.
-4. If ALPN is `h2`, use HTTP/2. Write the connection preface. Continue with
-   [transport](transport.md).
-5. If ALPN is `http/1.1` and fallback is on, use the HTTP/1.1 codec.
-6. If ALPN is empty and fallback is on, use HTTP/1.1. RFC 7301 says that an
+1. The client opens TCP and starts TLS.
+2. The ALPN offer includes `h2` and `http/1.1` when fallback is on. It includes
+   only `h2` when fallback is off.
+3. The client reads the ALPN result.
+4. If ALPN is `h2`, the client uses HTTP/2 and writes the connection preface.
+   The [transport](transport.md) document describes the next steps.
+5. If ALPN is `http/1.1` and fallback is on, the client uses the HTTP/1.1 codec.
+6. If ALPN is empty and fallback is on, the client uses HTTP/1.1. RFC 7301 says that an
    empty ALPN result means HTTP/1.1.
-7. If ALPN is `http/1.1` or empty and fallback is off, raise
+7. If ALPN is `http/1.1` or empty and fallback is off, the client raises
    `EHttpProtocolError`. The message names the selected protocol. This
    matches test A.9.
-8. If ALPN names an unknown protocol, raise `EHttpProtocolError`.
+8. If ALPN names an unknown protocol, the client raises `EHttpProtocolError`.
 
 ### `http` origins
 
-1. Dial TCP. Do not start TLS.
-2. Read the cleartext policy.
-3. If the policy is **reject**, raise `EHttpProtocolError`. The default
+1. The client opens TCP without TLS.
+2. The client reads the cleartext policy.
+3. If the policy is **reject**, the client raises `EHttpProtocolError`. The default
    policy is reject.
-4. If the policy is **prior knowledge**, write the HTTP/2 connection
-   preface. Use HTTP/2. Send no `Upgrade` header.
-5. If the policy is **upgrade**, send the h2c upgrade procedure. See the
-   next section.
-6. If the policy is **HTTP/1.1**, use the HTTP/1.1 codec on the connection.
-   Send no `Upgrade` header.
+4. If the policy is **prior knowledge**, the client writes the HTTP/2 connection
+   preface and uses HTTP/2. It sends no `Upgrade` header.
+5. If the policy is **upgrade**, the client follows the h2c upgrade procedure
+   in the next section.
+6. If the policy is **HTTP/1.1**, the client uses the HTTP/1.1 codec on the
+   connection. It sends no `Upgrade` header.
 
 ```mermaid
 flowchart TB
@@ -125,18 +125,18 @@ flowchart TB
 
 ## h2c upgrade procedure
 
-The client does these steps one time for each connection:
+Each connection follows these steps:
 
-1. Build the request as an HTTP/1.1 request.
-2. Add the header `Upgrade: h2c`.
-3. Add the header `HTTP2-Settings: <value>`. The value is the base64url
+1. The client builds an HTTP/1.1 request.
+2. The request contains the header `Upgrade: h2c`.
+3. The request contains the header `HTTP2-Settings: <value>`. The value is the base64url
    encoding of the SETTINGS payload, with no padding. Details are in [protocol](protocol.md).
-4. Add the header `Connection: Upgrade, HTTP2-Settings`.
-5. Send the request. Wait for the response.
-6. If the response code is `101`, switch to HTTP/2. Write the connection
-   preface. The `101` response is the response to the request.
-7. If the upgrade fails, keep the HTTP/1.1 connection. Use the received
-   response as the response to the request. The HTTP/1.1 codec then handles
+4. The request contains the header `Connection: Upgrade, HTTP2-Settings`.
+5. The client sends the request and waits for the response.
+6. If the response code is `101`, the client switches to HTTP/2 and writes the
+   connection preface. The `101` response is the response to the request.
+7. If the upgrade fails, the client keeps the HTTP/1.1 connection and uses the
+   received response for the request. The HTTP/1.1 codec then handles
    all later requests on that connection.
 
 The upgrade adds one round trip. Prior knowledge does not. The client uses
@@ -150,11 +150,10 @@ method, target, headers, and three extra headers: `Upgrade`, `Connection`, and
 request and answers it. That answer is the response to the caller's request.
 The client reads it from the same socket and does not send the request again.
 
-The rule exists because sending a request twice repeats its effects. A bodyless
-`POST`, `PUT`, or `DELETE` can change state on the server, and a retry would
-change it twice. The same rule explains why a request with a body does not use
-the upgrade at all: the client would have to send the body in the probe and
-again over HTTP/2. A request with a body goes over plain HTTP/1.1.
+The rule exists because sending a request twice repeats its effects. A bodyless `POST`, `PUT`, or `DELETE` can change server state. A retry can
+repeat that state change. The same rule explains why a request with a body does not use
+the upgrade at all: the client would send the body in the probe and again over
+HTTP/2. A request with a body uses plain HTTP/1.1.
 
 The connection that carried a declined upgrade stays in the pool. It serves
 later requests to the same origin as an ordinary HTTP/1.1 connection, until
@@ -281,7 +280,7 @@ Rules:
    consent. A silent fallback can hide a downgrade attack.
 
 The observer has no cleartext-warning event, so a cleartext request produces
-no warning; see "Known gaps".
+no warning; as described in "Known gaps".
 
 `ctHttp1` is a cleartext policy like the other two. It gives no
 confidentiality and no integrity, and the caller opts in to it on purpose.

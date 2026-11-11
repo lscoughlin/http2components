@@ -146,8 +146,8 @@ undecided mode, as for a new connection, and the next first read chooses the pro
 ## The socket options
 
 mORMot2 leaves an accepted async socket at the operating system defaults. The
-`TCP_NODELAY` comment (`mormot.net.sock.pas`) and the `SetupConnection`
-call that turns Nagle off and keep-alive on
+`TCP_NODELAY` comment (`mormot.net.sock.pas`) and the Nagle and keep-alive
+setup in `SetupConnection`
 (`mormot.net.sock.pas`) belong to the `NewSocket` path, which
 builds listener and client sockets. The async accept path
 (`TNetSocketWrap.Accept` at `mormot.net.sock.pas`) calls neither, so an

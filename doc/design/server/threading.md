@@ -71,8 +71,8 @@ admission queue and runs `IHttp2Handler.Handle` to completion. The handler is
 synchronous, so one handler thread serves one request at a time. A handler that
 must wait for another request is out of scope for this library.
 
-A handler call blocks in three places: a read with no buffered body bytes, a
-write with a full outbound buffer, and a read or write whose window is closed.
+A handler call blocks during a read with no buffered body bytes, a write with
+a full outbound buffer, or a read or write whose window is closed.
 Each of those blocks parks on the stream waiter, which releases every lock
 first. The handler thread therefore holds no lock while it sleeps.
 
@@ -168,10 +168,9 @@ never holds it across a call into the channel or the handler.
 ## Wake-up safety
 
 The wake-up follows the mORMot2 pattern. The IO thread sets a pending flag
-under the connection lock and then signals the waiter. The waiter checks the
-flag under its own lock before it parks, so a signal that arrives between the
-check and the park is never lost.
+under the connection lock and then signals the waiter. The waiter checks the flag under its own lock before it parks. A pending flag
+preserves a signal that arrives just before the waiter parks.
 
-A waiter that answers `wrTimeout` re-checks the cancel flag and the pending
-flag before it returns, so a signal or a cancellation that races with the
-deadline still wins.
+After a `wrTimeout` answer, the waiter checks the cancel and pending flags
+before it returns. This preserves a signal or cancellation that arrives
+before the deadline check.

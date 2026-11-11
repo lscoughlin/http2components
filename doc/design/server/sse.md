@@ -101,8 +101,7 @@ drop the event, try later, or close the stream. The channel calls the drain
 notification when the queue falls to `ChannelLowWater`, and the stream then
 clears the stall mark.
 
-A stream that stays full for `SseStallTimeoutMs` is closed with an abort. The
-check runs on the timer, so the close happens within one timer period after the
+A stream that stays full for `SseStallTimeoutMs` is closed with an abort. The timer runs this check, so the close happens within one timer period after the
 limit. The value 0 turns the check off. The default is 30000. A send that the
 channel queues also clears the stall mark, so a stream that makes progress is not
 closed for an old refusal.

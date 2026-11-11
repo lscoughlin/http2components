@@ -61,7 +61,7 @@ and `ICleartextSocketFactory` as aliases of the types declared in
 `Http2.Client.Tls` (they cannot live here, or `Http2.Client.Tls` would need this unit
 while this unit needs `Http2.Client.Tls` for `IHttp2Socket`).
 
-The generic read helper (see the syntax note below) maps a response body to
+The generic read helper (as described in the syntax note below) maps a response body to
 a `T`:
 
 ```pascal
@@ -184,7 +184,7 @@ type
 - `FHeaders` is an interface, so copying a `THttpRequest` shares the header
   map. That is deliberate, but it makes `WithHeader` on a copy mutate the
   original as well — so any code that adds a header to a request it did not
-  build itself must call `Clone` first. `Clone` copies the record and deep
+  The build process calls `Clone` first. `Clone` copies the record and deep
   copies the header map (every repeated value preserved). `TSseReconnectLoop`
   clones its request before echoing `last-event-id`, so the caller's request
   is never modified ([server-sent-events](server-sent-events.md)).
@@ -299,7 +299,7 @@ flowchart TB
 
 `src/Http2.Client.Encoding.pas` holds the content codings the client understands:
 gzip (RFC 1952) and deflate (RFC 1950, or a bare deflate stream). The codecs
-use the zlib bindings that Free Pascal ships with the compiler
+rely on the zlib bindings that Free Pascal ships with the compiler
 (`paszlib`/`zstream`), so the unit adds no dependency.
 
 The client offers no coding by default. A caller opts in with
@@ -346,7 +346,7 @@ hand-rolled loop.
 - `ReadText(AResponse): string` drains the response body to EOF and copies
   the bytes **verbatim** — no charset sniffing, no transcoding. It is the
   string counterpart of reading the raw `TBytes`.
-- `TResponseReader<T>` (see above) keeps its raw-passthrough semantics: a
+- `TResponseReader<T>` (as described in above) keeps its raw-passthrough semantics: a
   `tkAString` type (which includes `UTF8String` on FPC 3.2.4) is decoded as
   an `AnsiString` without conversion, a `tkDynArray` is read as `TBytes`, and
   anything else is `memcpy`'d as `SizeOf(T)`. A reader that wants

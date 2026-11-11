@@ -27,7 +27,7 @@ notes:
 # Open Questions
 
 Single source of truth for **unresolved** decisions. A settled decision lives
-in the note that owns the area (see "Settled decisions" for where each one
+in the note that owns the area (as described in "Settled decisions" for where each one
 is recorded) and is not restated here.
 
 ## Open

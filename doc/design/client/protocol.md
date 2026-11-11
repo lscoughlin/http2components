@@ -218,7 +218,7 @@ type
 ```
 
 `TConnection` drives `TFlowControl` (`TrackReceivedData`, `SendWindowUpdate`,
-`ApplyPeerSettingsValue`); see the implementation note below.
+`ApplyPeerSettingsValue`); as described in the implementation note below.
 
 Two nested windows, both counting **only** DATA bytes:
 

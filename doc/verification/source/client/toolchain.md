@@ -45,8 +45,8 @@ reproduce commands.
 | FPC 3.2.4 bundled `openssl` / `opensslsockets` | **No ALPN symbols** (grep of `opensslsockets.ppu` empty) → cannot negotiate `h2`. |
 | mormot2 `src/lib/mormot.lib.openssl11.pas` | **Exports ALPN**: `SSL_CTX_set_alpn_protos` (line 2164), `SSL_get0_alpn_selected` (line 2192); dynamically loads OpenSSL 1.1/3.x. |
 | mormot checkout | `third_party/mORMot2` @ `b2b195da1e0580058672a88620ef71bb47283eb1` (2026-10-08, "core: Locked*() are now full memory barriers on FPC non-Intel CPUs"), the revision `../http2server` pins. Unit dirs: `core`, `lib`, `net`, `crypt`. |
-| mormot2 WebSocket references | read as design references, not linked: `src/net/mormot.net.ws.core.pas` (`TWebSocketFrameOpCode`, `FRAME_LEN_MASK`, `ProcessMask`, `ComputeChallenge`, `FrameSendEncode` and its use of `NetRandom32`), `src/net/mormot.net.ws.client.pas` (`THttpClientWebSockets` and its handshake). The linked pieces are unchanged: `Http2.Client.WebSocket.Connection` takes its random masking key from `RAND_bytes` in `mormot.lib.openssl11`. See `doc/design/websocket.md`. |
-| mormot2 proxy-routing references | read as design references, not linked: `src/net/mormot.net.sock.pas` (`TUri`, `TIp4SubNet`, `NetIsIP4`, `NetIsIP6`, `TCrtSocket.DoOpenTunnel`), `src/core/mormot.core.os.pas` (`IsLocalHost`, `GetSystemEnv`). Linked by `Http2.Client.Tls`: `src/lib/mormot.lib.openssl11.pas` (`BIO_s_mem`, `BIO_read`, `BIO_write`, `BIO_ctrl`, `SSL_set_bio`). Absent from the OpenSSL binding: `BIO_meth_new`, `BIO_set_data`, `BIO_set_retry_*`, `BIO_new_bio_pair`. No SOCKS client exists in the checkout. See `doc/design/proxy.md`. |
+| mormot2 WebSocket references | read as design references, not linked: `src/net/mormot.net.ws.core.pas` (`TWebSocketFrameOpCode`, `FRAME_LEN_MASK`, `ProcessMask`, `ComputeChallenge`, `FrameSendEncode` and its use of `NetRandom32`), `src/net/mormot.net.ws.client.pas` (`THttpClientWebSockets` and its handshake). The linked pieces are unchanged: `Http2.Client.WebSocket.Connection` takes its random masking key from `RAND_bytes` in `mormot.lib.openssl11`. The WebSocket design is in `doc/design/websocket.md`. |
+| mormot2 proxy-routing references | read as design references, not linked: `src/net/mormot.net.sock.pas` (`TUri`, `TIp4SubNet`, `NetIsIP4`, `NetIsIP6`, `TCrtSocket.DoOpenTunnel`), `src/core/mormot.core.os.pas` (`IsLocalHost`, `GetSystemEnv`). Linked by `Http2.Client.Tls`: `src/lib/mormot.lib.openssl11.pas` (`BIO_s_mem`, `BIO_read`, `BIO_write`, `BIO_ctrl`, `SSL_set_bio`). Absent from the OpenSSL binding: `BIO_meth_new`, `BIO_set_data`, `BIO_set_retry_*`, `BIO_new_bio_pair`. No SOCKS client exists in the checkout. The proxy design is in `doc/design/proxy.md`. |
 | `OPENSSL_LIBPATH` | **Required on this machine.** Without it `OpenSslIsAvailable=FALSE` and `OpenSslVersionText=''`. With `OPENSSL_LIBPATH=/opt/homebrew/opt/openssl@3/lib`: `OpenSslIsAvailable=TRUE`, `OpenSslVersionText='OpenSSL 3.6.5 29 Sep 2026'`. Probed from `/tmp/mormotprobe/probe_tls.pas`. |
 | Backend library | OpenSSL `3.6.5` — `/opt/homebrew/opt/openssl@3` (kegs 3.4/3.5/3.6 also present). |
 | LibreSSL | API-compatible (`libssl` OpenSSL-1.1 symbol surface). **No separate backend**; document only. |
@@ -116,12 +116,12 @@ IDE as a design-time package.
 | Units | all 22 in `src/`, `Http2.Client.pas` (umbrella) first; `Http2.Client.Readers.pas` is the optional JSON/XML unit, and `Http2.Client.Encoding.pas` holds the content codings, `Http2.Client.Sse.pas` the Server-Sent Events reader, `Http2.Client.Proxy.pas` and `Http2.Client.Socks.pas` proxy routing, `Http2.Client.WebSocket.pas` and `Http2.Client.WebSocket.Connection.pas` the WebSocket client, `Http2.Client.Clock.pas` and `Http2.Client.RequestObserver.pas` the request observer |
 | Test suite | 792 tests, 0 errors, 0 failures (registration list: `test/Http2.Client.TestRunner.pas`); as described in [testing-observability](../../../design/client/testing-observability.md) |
 | `OtherUnitFiles` | `src` + the four vendored mormot dirs (`core`, `lib`, `net`, `crypt`) |
-| `RequiredPkgs` | `FCL` **only** — deliberately **not** the IDE `mormot2` package (see below) |
+| `RequiredPkgs` | `FCL` **only** — deliberately **not** the IDE `mormot2` package (as described in below) |
 | Unit output | `lib/$(TargetCPU)-$(TargetOS)` (gitignored) |
 | Syntax mode | Delphi (`{$mode delphi}` is set per-unit anyway) |
 | Generated file | `http2client.pas` (auto-created registration unit) — **derived from the `.lpk`, gitignored** |
 
-Build:
+Recorded package build command:
 
 ```sh
 lazbuild http2client.lpk
@@ -170,7 +170,7 @@ Last counted: `make test` reports **648 tests, 0 errors, 0 failures** and
 
 `examples/` holds eight programs (`basic_get`, `post_text`, `json_request`,
 `xml_request`, `threaded_get`, `sse_stream`, `websocket_echo`, `proxy_env`) — see `examples/README.md`.
-Build and run:
+Recorded example build and run commands:
 
 ```sh
 make examples          # or: task examples  ->  bin/<source-stem>
@@ -226,8 +226,8 @@ Linux differences the code handles: `clock_gettime` is declared in
 `Http2.Client.Clock`; SIGPIPE is never ignored or handled, because the library does
 not change a signal disposition: there is no `SO_NOSIGPIPE`, so plain sends use
 `send` with `MSG_NOSIGNAL` (`cMsgNoSignal` in `Http2.Client.SigPipe`), and each OpenSSL
-call that can write (`SSL_connect`, `SSL_read`, `SSL_write`, `SSL_shutdown`)
-runs inside a shield that blocks SIGPIPE in the calling thread only, consumes
+Each OpenSSL function that can write (`SSL_connect`, `SSL_read`, `SSL_write`,
+`SSL_shutdown`) runs inside a shield that blocks SIGPIPE in the calling thread only, consumes
 any SIGPIPE the call raised with a zero-timeout `sigtimedwait`, and restores
 the thread's mask (a TLS layer over another transport writes through that
 transport, which is covered the same way); an expired socket deadline is recognised from OpenSSL's

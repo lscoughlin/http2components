@@ -134,9 +134,8 @@ session; the session releases it at the end.
 upgrade code checks the syntax, the version and the origin, detaches the stream at
 once and returns; the handler of the route returns. No response has gone out. `Init`
 is the first task of the session, so it runs on a pool thread, never on an IO thread
-and never in the handler of the route. It sees the whole request, including `Cookie`
-and `Authorization`, through a read-only copy that the session keeps, and it may
-call a database.
+and never in the route handler. The handler receives a read-only copy of the
+whole request, including `Cookie` and `Authorization`, and may access a database.
 
 - **Accept.** The result names a subprotocol, which must be one of those the client
   offered or empty, and may add header fields. The server sends the handshake
@@ -390,7 +389,7 @@ defaults live in `Create`.
 | `InitTimeoutMs` | 10000 | the wait for `Init` |
 | `ControlBucket` | 100 tokens, 10 a second | Ping and Pong frames that arrive |
 | `MessageBucket` | 10000 tokens, 10000 a second | data messages that arrive |
-| `OriginPolicy` | `opSameOrAbsent` | see above |
+| `OriginPolicy` | `opSameOrAbsent` | as described in above |
 | `AllowedOrigins` | none | the allow-list, each entry `scheme://host[:port]` |
 | `Subprotocols` | none | the subprotocols the server picks from, in order of preference |
 

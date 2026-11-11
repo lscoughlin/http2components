@@ -186,5 +186,5 @@ thread needs the head swap.
 
 The library uses the blocking waiter. The seam, the interface
 `IStreamWaiter` and the single place where a stream sleeps are the parts that
-keep a coroutine option open. A replacement of `TBlockingWaiter` changes no
+A coroutine option remains possible. A replacement of `TBlockingWaiter` changes no
 other unit.

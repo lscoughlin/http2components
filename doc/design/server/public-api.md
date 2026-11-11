@@ -24,7 +24,7 @@ related_docs:
 invariants:
   - A caller reaches the library through the unit Http2.Server alone.
   - The factory is a value. Every WithX method answers a new record, and a stored factory never changes.
-  - Build validates the settings and answers a server that is not yet started.
+  - The Build method validates the settings and answers a server that is not yet started.
   - The handler contract is synchronous and holds no coroutine.
   - The observer runs on the thread that raised the event.
   - Every counter of TServerStats comes from a live counter of the server, and no number is guessed.
@@ -143,9 +143,8 @@ both. The document [http1](http1.md) lists what a handler can see.
 cap, the two stream timeouts, the connection write timeout, the two outbound
 frame caps and the outbound DATA frame bound. `WithSocketOptions` sets the
 socket options of each accepted connection: no-delay, the keep-alive timers,
-the buffer sizes and the reuse-port flag. `WithMinTlsVersion` and
-`WithMaxTlsVersion` set the accepted TLS range on the TLS options record, 1.2
-to 1.3 by default. The document [configuration](configuration.md) holds every
+the buffer sizes and the reuse-port flag. The TLS options record holds the accepted TLS range. The default range is
+TLS 1.2 to TLS 1.3. The document [configuration](configuration.md) holds every
 setting.
 
 ## The facade
@@ -225,8 +224,7 @@ totals for the HTTP/2 core. It also holds the WebSocket counters `WsSessions`
 `WsProtocolErrors` and `WsPingTimeouts` (totals).
 
 The gauges count what the server holds now: `BusyHandlers`, `QueueLength`,
-`OpenConnections`, `OpenStreams` and `DetachedStreams`. The totals count every event since the
-build and never decrease: `RefusedTotal`, `TimedOutTotal`, `ResetTotal` and
+`OpenConnections`, `OpenStreams` and `DetachedStreams`. The totals count every event since server startup and are never decremented: `RefusedTotal`, `TimedOutTotal`, `ResetTotal` and
 `TrippedTotal`.
 
 `THttp2Server.Stats` (`src/Http2.Server.Runtime.pas`) reads the handler-pool

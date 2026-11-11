@@ -102,9 +102,8 @@ answers. `rmRefuseStream` resets the stream with `REFUSED_STREAM`.
 refusal and the timed-out refusal.
 
 The handler side never encodes a header block. The HPACK encoder is connection
-state and runs on an IO thread only, so a 503 refusal becomes a
-`QueueResponseHeaders` call on the stream and the IO side encodes the block
-later. This rule follows the seam note in
+state and runs on an IO thread only, so a 503 refusal becomes a stream response-header operation. The IO side
+encodes the block later. This rule follows the seam note in
 [seam](seam.md).
 
 ## Reset before dispatch

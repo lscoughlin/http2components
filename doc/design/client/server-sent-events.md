@@ -53,7 +53,7 @@ SSE is a **reader layer**, not a transport mode:
 | Connection + thread | `Http2.Client.Connection` | unchanged; supplies DATA frames and keeps the receive window open |
 | Stream lease / body | `Http2.Client.Stream` | body-read inactivity timeout + cancellation polling |
 | Response | `Http2.Client.Messages` (`IHttpResponse`, `IHttpBodyStream`) | the seam SSE reads from |
-| Codec | `Http2.Client` (HTTP/2), `Http2.Client.Http1` (fallback) | HTTP/2 fully supported; HTTP/1.1 best-effort (see below) |
+| Codec | `Http2.Client` (HTTP/2), `Http2.Client.Http1` (fallback) | HTTP/2 fully supported; HTTP/1.1 best-effort (as described in below) |
 | **SSE** | `Http2.Client.Sse` | parser, source, reconnect loop |
 
 SSE is codec-agnostic on purpose: it consumes `IHttpResponse.Body` and
@@ -92,8 +92,8 @@ An SSE request is `GET` with:
 | --- | --- | --- |
 | `accept` | `text/event-stream` | yes |
 | `cache-control` | `no-store` | recommended; stops an intermediary caching the stream |
-| `last-event-id` | the last observed id | only on resume (see "Reconnection") |
-| `accept-encoding` | `identity` | **yes — see "Content coding"** |
+| `last-event-id` | the last observed id | only on resume (as described in "Reconnection") |
+| `accept-encoding` | `identity` | **yes — as described in "Content coding"** |
 
 `Http2.Common.Headers` carries `HeaderAccept`, `HeaderCacheControl`,
 `HeaderAcceptEncoding` and `HeaderLastEventId = 'last-event-id'`.
@@ -121,7 +121,7 @@ The format is the WHATWG event-stream grammar (HTML Living Standard,
 "Interpreting an event stream"). The parser is a **pure, incremental,
 byte-in/event-out class** — `TSseEventParser` — with no socket or lease
 dependency, so it can be tested by slicing an input at every byte boundary
-(see "Testing"). It is the SSE analogue of `THpackCodec` in
+(as described in "Testing"). It is the SSE analogue of `THpackCodec` in
 [protocol](protocol.md): a pure layer the rest of the stack composes.
 
 Grammar, exactly:
@@ -186,8 +186,7 @@ multi-byte sequence split across two `Feed` calls is held until complete.
 
 ## Timeouts and liveness
 
-**This is the reason SSE needs a transport-level body deadline.** A body
-read blocks on the lease's inbound frame queue with a deadline.
+**This is the reason SSE needs a transport-level body deadline.** A body read blocks on the lease's inbound frame queue with a deadline.
 `TStreamLease.FTimeoutMs` is set from the **header** timeout in
 `THttpConnection.AcquireCancellable` (`Lease.TimeoutMs := ATimeoutMs`) and
 defaults to `30000`. For a normal request that is correct — the whole body is
@@ -285,7 +284,7 @@ deadlocks.
   and gracefully closes connections (GOAWAY); the SSE read then fails with
   `EHttpConnectionClosed`. The source surfaces that as a terminal error
   (or, when the reconnect loop is enabled and the failure is transient, as a
-  reconnect trigger — see "Reconnection and resume").
+  reconnect trigger — as described in "Reconnection and resume").
 
 ## Content coding
 
@@ -404,7 +403,7 @@ Two consumption styles, matching the two the library already has:
   caller's thread loops. This is the primitive.
 - **Push** — not provided. "Push" means a caller-owned thread that wraps
   `ReadEvent` (for a UI or a queue). An observer that wants every event as it
-  is parsed uses `IHttpMessageObserver` (see "Observability").
+  is parsed uses `IHttpMessageObserver` (as described in "Observability").
 
 `TSseSource` reads `IHttpResponse.Body` in chunks, feeds
 `TSseEventParser`, and buffers completed events in a bounded queue so a
@@ -461,13 +460,13 @@ SSE-specific type for the retry bound:
 | `src/Http2.Client.Stream.pas` | body read timeout + read-side cancellation |
 | `src/Http2.Client.pas` | `WithSseReadTimeout` request setter; threads the token and the body deadline to the lease's body read |
 | `src/Http2.Common.Headers.pas` | `HeaderLastEventId` constant |
-| `src/Http2.Client.pas` | re-exports `Http2.Client.Sse` |
+| `src/Http2.Client.pas` | public client facade; any SSE aliases await final API review |
 | `test/Http2.Client.Sse.Test.pas` | parser, validation, source, reconnect |
 | `examples/sse_stream.pas` | runnable demo against the test server |
-| `tools/validate/sse_server.py` | a minimal live SSE server for interop (see "Testing") |
+| `tools/validate/sse_server.py` | a minimal live SSE server for interop (as described in "Testing") |
 
-`Http2.Client.Sse` joins the umbrella because, unlike `Http2.Client.Readers`, it needs no
-`fcl-json`/`fcl-xml` dependency.
+`Http2.Client.Sse` is a client feature unit. It has no `fcl-json` or
+`fcl-xml` dependency. Its import and facade alias details await final API review.
 
 ## Testing
 

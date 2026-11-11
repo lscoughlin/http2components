@@ -86,53 +86,27 @@ Layering, top down:
    stream-id counter). Details are in [transport](transport.md).
 5. **`TStreamLease` / stream state** — one request/response exchange.
 
-## Unit layout and naming
+## Entry units and feature imports
 
-Twenty units in `src/`, listed roughly in dependency order (`Http2.Client`
-depends on the units after it that it re-exports, such as `Http2.Client.Proxy` and
-`Http2.Client.WebSocket`):
+The combined library has three public entry units: `Http2.Common`,
+`Http2.Client`, and `Http2.Server`. The client entry provides the factory,
+request, response, and client API. The server entry provides the server
+factory, handler, request, and response API. Shared protocol types live in
+`Http2.Common`.
 
-```pascal
-unit Http2.Common.Errors;      // EHttpError hierarchy, THttp2ErrorCode
-unit Http2.Common.Frames;      // TFrameType, TFrame, TFrameHeader, TConnectionSettings
-unit Http2.Common.Headers;     // IHttpHeaders, THttpHeaders, header-name constants
-unit Http2.Common.Hpack;       // THpackCodec (static + dynamic tables)
-unit Http2.Common.FlowControl; // TWindow, connection/stream window accounting
-unit Http2.Client.Tls;         // IHttp2Socket, ALPN, TLS context, cert validation,
-                        // TClearTextPolicy, TNegotiatedProtocol
-unit Http2.Client.Messages;    // IHttpResponse, IResponseReader<T> (re-exports TLS enums)
-unit Http2.Client.Http1;       // THttp1Connection, HTTP/1.1 codec + h2c upgrade
-unit Http2.Client.Connection;  // TConnection, TConnectionThread, IConnectionStream,
-                        // IBlockingQueue<T>, TBlockingQueue<T>
-unit Http2.Client.Stream;      // TStreamLease, THttpMethod, THttpBody, IBodyWriter,
-                        // IHttpBodyStream, TStreamIdAllocator
-unit Http2.Client.Observer;    // IHttp2Observer
-unit Http2.Client;      // THttpClientFactory, IHttpClient, THttpRequest,
-                        // TConnectionPool, IPooledConnection,
-                        // THttpConnection, THttp1PooledConnection,
-                        // IHttp2SocketFactory, TResponseReader<T>,
-                        // WithTextBody / ReadText
-unit Http2.Client.Readers;     // optional: JSON/XML readers + send helpers (fcl-json/fcl-xml)
-unit Http2.Client.Sse;         // TSseEventParser, TSseSource, TSseReconnectLoop, SseRequest
-unit Http2.Client.Encoding;    // content codings (gzip, deflate)
-unit Http2.Client.Proxy;       // IProxy, IProxySelector, proxy URLs, no-proxy list,
-                        // environment snapshot (RTL + Http2.Common.Errors only)
-unit Http2.Client.Socks;       // SOCKS5 client messages and tunnel (RFC 1928, 1929)
-unit Http2.Client.WebSocket;   // frame codec, message assembly, handshake rules,
-                        // IWebSocket / IWebSocketListener / IWebSocketRequest
-                        // (RTL + Http2.Common.Errors only)
-unit Http2.Client.WebSocket.Connection; // TWebSocketConnection, OpenWebSocket
-unit Http2.Client;             // umbrella: re-exports every unit above EXCEPT Http2.Client.Readers
-```
+Client features use explicit `Http2.Client.*` units. A client that needs a
+proxy, SOCKS, HTTP/1.1, SSE, or WebSocket feature names the feature unit in its
+`uses` clause. The client facade does not promise to re-export every feature.
+The `Http2` source umbrella is removed. `Http2.Client` is the public client
+entry unit. It does not replace the feature imports of every former unit.
 
-`Http2.Client.Readers` is deliberately **outside** the umbrella and the core: it is the only unit that depends on `fcl-json`/`fcl-xml`, so a caller
-links it only by naming it in their own `uses` clause. Details are in [messages](messages.md).
+`Http2.Client.Readers` is optional. It holds JSON and XML helpers and depends
+on the related FCL reader units. The core client package does not require it.
+The final split-unit list and facade aliases remain under source review.
 
-**Dependency direction.** `Http2.Client` and `Http2.Client.Connection` are the
-concurrency owners; the layers below them are pure and independently
-testable. `Http2.Client.Messages` re-exports `TClearTextPolicy` and
-`TNegotiatedProtocol` from `Http2.Client.Tls`, so a caller that only needs the
-public message types does not pull in the socket layer's details.
+Client units depend on common units. Common units have no client or server
+dependencies. Client units have no server dependencies. This keeps both roles
+usable in one process without an interface cycle.
 
 Conventions:
 

@@ -125,8 +125,8 @@ with `WithMaxTotalConnections(128)`.
 
 `WithMaxConnections(max)` is a shorthand: it sets **both** caps to `max`,
 which suits a single-authority pool. `WithMaxConnectionsPerHost` and
-`WithMaxTotalConnections` set each cap separately; a high-concurrency client
-uses them to bound each host tightly while still allowing many hosts.
+`WithMaxTotalConnections` configures each cap separately. A high-concurrency
+client uses the caps to bound each host tightly while allowing many hosts.
 
 `WithProxy(host, port)` routes every dial that the no-proxy list does not
 exempt through an HTTP `CONNECT` tunnel to `host:port`; the tunnel is
@@ -227,7 +227,7 @@ type
 ```
 
 `Send` **blocks until response status and headers are available**, then
-returns an `IHttpResponse` whose body can be streamed or drained (see
+returns an `IHttpResponse` whose body can be streamed or drained (as described in
 [messages](messages.md)). It does not block until the body is complete. `Send` is
 thread-safe and may be called concurrently from many threads; each call
 acquires its own stream lease.
@@ -310,9 +310,8 @@ flowchart TB
 ```
 
 The connection thread is the **sole writer** to the socket: callers never
-touch the socket directly, they only enqueue frames. This keeps
-HPACK encoder state and flow-control accounting single-threaded on the
-write side. The [transport](transport.md) document describes the queue design. The [protocol](protocol.md) document describes
+touch the socket directly, they only enqueue frames. This keeps the HPACK encoder state and flow-control accounting single-threaded
+at the socket writer. The [transport](transport.md) document describes the queue design. The [protocol](protocol.md) document describes
 flow control.
 
 ## RFC references

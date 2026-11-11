@@ -60,8 +60,8 @@ stream identifier reads the `StreamId` property of the base class
 `Http2.Common.Frames` freezes the wire format. A frame is a nine-octet header,
 `TFrameHeader`, and a payload, `TFrame`, as RFC 9113 section 4.1 defines.
 
-The unit carries the payload builders, the payload parsers and the stream
-read and write routines. `ReadFrame` enforces the received-frame limit
+The unit carries payload builders, payload parsers, and stream operations.
+The `ReadFrame` operation enforces the received-frame limit
 (`src/Http2.Common.Frames.pas`): a frame header that states a length above
 the limit raises `EHttpProtocolError` with `ecFrameSizeError` before the
 server reads the payload. This check is what stops a peer from asking the
@@ -143,8 +143,8 @@ connection window and one window per open stream.
 
 A window never exceeds 2^31-1 octets. The constant `MaxWindowSize` holds that
 value (`src/Http2.Common.FlowControl.pas`), and both `ApplyUpdate` and
-`ApplyInitialWindowDelta` check the new size against it and raise a flow
-control error above it.
+`ApplyInitialWindowDelta` checks the new size against this limit and reports
+a flow-control error when the size is too large.
 
 ## RFC references
 

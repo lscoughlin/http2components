@@ -43,9 +43,9 @@ without one the client answers none.
   bundle, with an optional passphrase.
 - A consumer that needs a different identity per origin, or that rotates the
   certificate while the process runs, supplies a selector that is asked at
-  each dial (see "Selector and proxy identity").
+  each dial (as described in "Selector and proxy identity").
 - A caller that knows which service needs which certificate attaches the
-  identity to the request itself (see "Per-request identity").
+  identity to the request itself (as described in "Per-request identity").
 - An `https://` proxy can require its own client identity, kept apart from the
   origin identity: the two identities are separate and each goes to exactly one
   kind of peer.
@@ -155,10 +155,10 @@ TLS-free base interface of `IClientIdentity` in `Http2.Client.IdentityHandle`, s
 WebSocket unit stays free of OpenSSL types; a caller passes an
 `IClientIdentity` unchanged.
 
-`WithClientIdentity`, `WithClientCertificateFiles` and
-`WithClientIdentitySelector` replace one another: the last one called wins.
+Identity settings follow a precedence order. The last configured identity
+takes precedence.
 `WithProxyClientIdentity` is independent of them, and a request identity wins
-over all three (see "Per-request identity").
+over all three (as described in "Per-request identity").
 
 A client with neither configured behaves as before. `Build` raises
 `EHttpTlsConfigError` for a fixed or proxy identity whose leaf has expired, and for files
@@ -396,9 +396,9 @@ Consequences:
 - It is not a redirect trigger and never falls back to HTTP/1.1.
 - A request observer sees it as the attempt's `Error`; no new outcome field is
   added in this version.
-- A connection that reads some bytes before the alert (an alert after real
-  application data) is not classified this way; only an alert on the first
-  read is.
+- A connection that receives application data before the alert is not
+  classified this way. This classification applies only when the alert arrives
+  before any application data.
 
 ## Logging and secrets
 
@@ -421,18 +421,18 @@ Consequences:
   SSE and `wss`, and through a CONNECT, a SOCKS5 and an `https` proxy. A
   source scan checks that every `TTlsSocket` for an origin is built with the
   identity. The selector cases count its calls (once per dial, not per
-  request, never for cleartext), check the thread and that another thread can
-  take the pool lock meanwhile, choose a different identity per origin, answer
-  `nil`, throw, rotate between two dials (the old connection still delivers
-  its response and the pool holds two keys), refuse an expired answer before
-  dialling (HTTP/2 and `wss`), ask once for two concurrent cold requests and
+  request, never for cleartext). The cases cover concurrent access to the pool
+  lock, per-origin identity selection, `nil` and exception results, identity
+  rotation between two dials (the old connection still delivers its response
+  and the pool holds two keys), expired answers before dialling (HTTP/2 and
+  `wss`), and one selector call for two concurrent cold requests. They also
   cover `wss`. The cap cases check that rotation at `MaxConnectionsPerHost` and
   at `MaxTotalConnections` evicts the idle connection of the old identity, that
   a busy one is never evicted, and that two identities share the host cap. An
   injected factory without `IIdentitySocketFactory` is refused at `Build` for a
   fixed identity, a proxy identity and a selector, and at `Send` for a request
-  identity (`https` and `wss`). The proxy cases
-  use a loopback `https` proxy that requires a client certificate: through
+  identity (`https` and `wss`). The proxy cases use a loopback `https` proxy
+  that requires a client certificate. Through
   CONNECT, SOCKS5 and the `https` proxy (TLS 1.2 and 1.3) the origin sees the
   origin identity, the `https` proxy sees only the proxy identity, the origin
   never sees the proxy identity, the proxy identity alone is refused by an

@@ -90,8 +90,7 @@ the capacity (`src/Http2.Server.Limits.pas`).
 
 The trip state is sticky. The first empty-bucket answer sets `Tripped`, and
 every later `TryTake` returns `False` without a refill
-(`src/Http2.Server.Limits.pas`). The connection is closing, so no later
-take can succeed.
+(`src/Http2.Server.Limits.pas`). The connection is closing, so a later token request cannot succeed.
 
 `TTokenBucket` has no lock. The caller holds the connection lock. Every call
 of one bucket runs on one thread at a time.

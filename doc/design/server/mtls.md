@@ -181,7 +181,7 @@ store off and uses `ClientCaFile`.
 
 HTTP/2 over TLS 1.2 must disable renegotiation, and a server must not send a
 post-handshake CertificateRequest on TLS 1.3 (RFC 9113 sections 9.2.1 and 9.2.3,
-read from `doc/references/rfc9113.txt`). The server meets both rules:
+as stated in the local copy of RFC 9113). The server meets both rules:
 
 - The client certificate is requested in the first handshake only. The server
   never calls `SSL_verify_client_post_handshake`.
@@ -356,7 +356,7 @@ Open gaps:
   mORMot2 gives no way to redirect the system store and the run never changes
   the store of the host.
 - The sibling client keeps one `X509` object alive for each client that it
-  builds with an identity. This is outside the server; see the leak check above.
+  builds with an identity. This is outside the server; as described in the leak check above.
 - The run is on macOS aarch64 only. The Linux amd64 run is open, as for the rest
   of the library.
 - No load or stress run is part of this feature.

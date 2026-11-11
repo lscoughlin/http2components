@@ -1,3 +1,13 @@
+{**
+---
+license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+copyright: Copyright 2026 Liam Seamus Coughlin
+keywords: compiler_probe
+notes:
+  - Historical compiler probe source.
+  - Not a merged library unit.
+---
+}
 {$mode delphi}{$H+}
 program probe12;
 uses {$IFDEF UNIX}cthreads,{$ENDIF} SysUtils, Classes, SyncObjs, Generics.Collections;

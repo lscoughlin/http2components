@@ -83,8 +83,8 @@ is `test/Http2.Client.RunTests.pas`. One test unit per source area:
 | `Http2.Client.ClearText.Test` / `Http2.Client.Http1.Test` | h2c and HTTP/1.1 fallback; a declined upgrade and `ctHttp1` send each request once (the scripted peer counts the copies it received) |
 
 Property-style checks (HPACK `Decode(Encode(H)) = H`, window arithmetic,
-frame serialization) run alongside the example-based cases. Run with
-`make test` or `task test`; the runner exits non-zero on any failure.
+and frame serialization) run alongside example-based cases. The source test
+runner uses `make test` or `task test` and exits non-zero on a failure.
 
 ## Observability hooks
 

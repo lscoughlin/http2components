@@ -60,8 +60,8 @@ pattern again.
 | Large response | `curl --http2-prior-knowledge 'http://127.0.0.1:PORT/large?bytes=8388608'` | 8388608 bytes in 0.0086 s |
 | Load | `h2load -n 200 -c 10 -m 6 http://127.0.0.1:PORT/` | 200 requests, 0 failed |
 
-The unit suite adds 867 tests with 0 errors and 0 failures, as of the
-`make test` run of 2026-11-06. The suite holds the local rules; the tools
+The unit suite had 867 tests, 0 errors, and 0 failures in its
+2026-11-06 test run. The suite holds the local rules; the tools
 above hold the external rules.
 
 ### External validation of the new settings
@@ -82,8 +82,8 @@ example server runs with default settings.
 
 The abuse result matches the run on main `2bf7004` without these changes
 (7 of 8, the same check fails), so this run introduces no drop. The 8 of 8
-record in the release run below dates from version 0.24.0 and predates the
-change in the empty-DATA answer. The example server has no profile for a
+record in the release run below dates from version 0.24.0. It records the
+previous empty-DATA answer. The example server has no profile for a
 small outbound DATA frame size, so that case is covered by the `OutputCaps`
 unit tests and not by a manual run.
 
@@ -208,10 +208,11 @@ the pending-octet term in the backlog: with the term removed, a handler that wri
 (`THttp1DetachTest`, 11 tests) cover the chunked channel and the event stream on
 HTTP/1.1.
 
-`task validate` runs the HTTP/2 conformance with a server whose fallback is off,
+The `task validate` command runs HTTP/2 conformance with the server fallback off,
 because case 3.5.2 of `h2spec` sends `INVALID CONNECTION PREFACE`, which a server
-with the fallback on reads as an HTTP/1.1 request line and answers with 400. The
-run passes the whole `http2` package. The script then starts a server with the
+with the fallback on interprets this as an HTTP/1.1 request line and answers
+with 400. The whole `http2` package passes. The script then starts a server
+with the
 fallback on and checks that `curl --http1.1` and `curl --http2` give the same body
 over clear text and over TLS. A server with the fallback off and a certificate
 refuses `curl --http1.1` and serves `curl --http2`.
@@ -265,7 +266,7 @@ default windows, the detach limit).
 The client in `tools/validate/ws_h2_client.py` uses the Python packages `h2` 4.4.1 and
 `wsproto` 1.3.2. It reads the setting, opens the extended CONNECT stream, sends 50 text
 messages, checks 50 matching echoes, closes with 1000 and reads the clean close. The
-check ran against `examples/ws_echo` on 2026-10-22 and passed. `tools/validate/run.sh`
+validation ran against `examples/ws_echo` on 2026-10-22 and passed. `tools/validate/run.sh`
 runs it when the packages are present.
 
 ### The release run
@@ -363,7 +364,7 @@ type is `text/event-stream`, and one `tick` event arrives each second.
 
 Gaps of this record: the run with 5000 open streams and one ordinary request is
 not made, and a browser `EventSource` is not checked. The event stream runs on
-HTTP/1.1 too (see the section on the HTTP/1.1 fallback).
+HTTP/1.1 too (as described in the section on the HTTP/1.1 fallback).
 
 ### The connection seam
 
@@ -447,8 +448,8 @@ The unit test `TConnectionCoreTest.TestClosedStreamsAreFreed` holds the same
 rule without a socket: it opens and resets 2000 streams and fails when the
 heap grows by one stream for each cycle.
 
-The measurement that fixed the `WINDOW_UPDATE` bucket came from the interop
-run of commit `9eda1e0`: a body of 100 MB drew 6102 `WINDOW_UPDATE` frames at
+The measurement that fixed the `WINDOW_UPDATE` bucket came from commit
+`9eda1e0`. During interop, a body of 100 MB drew 6102 `WINDOW_UPDATE` frames at
 a steady rate of 2450 frames a second on a healthy connection. The unit test
 `TFactoryTest.TestDefaultBuckets` holds the default capacity of 10000 and the
 refill of 4000 a second, and `TAbuseLimitTest.TestWindowUpdateFloodGoAway`

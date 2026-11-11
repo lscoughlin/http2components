@@ -59,7 +59,7 @@ begin
 - The units are `Http2.Client.WebSocket` (frame codec, message assembly, handshake
   rules and the public interfaces; it uses only FPC standard units, including
   `sha1` and `base64`, and `Http2.Common.Errors`) and `Http2.Client.WebSocket.Connection` (the
-  connection and the opening handshake). Both are re-exported by `Http2.Client`, and
+  connection and the opening handshake). Both are exported by `Http2.Client`, and
   `Http2.Client` declares aliases for `IWebSocket`, `IWebSocketListener`,
   `IWebSocketRequest`, `TWebSocketListener` and `TWebSocketRequest`, so a
   program that names only `Http2.Client` can use the API.
@@ -326,9 +326,8 @@ All derive from `EHttpError`.
 Behaviour of the reference code that shapes the design:
 
 - mORMot2 layers its own sub-protocols on top of RFC 6455 (for example
-  `synopsejson`) and binds the connection to its server framework, so it is
-  read for its frame handling and handshake, while the client API above
-  follows the JDK.
+  `synopsejson`) and binds the connection to its server framework. Its frame
+  handling and handshake are a reference; the client API follows the JDK.
 - The reference draws the masking key of each outgoing frame from
   `NetRandom32`, so a key per frame is the model here as well; the key comes
   from OpenSSL's generator and a failing generator raises.

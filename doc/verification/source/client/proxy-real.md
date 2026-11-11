@@ -104,7 +104,7 @@ documented limit that `http://` origins are tunnelled with `CONNECT`.
 ## Not covered
 
 - The client's proxy identity reaching Squid cannot be shown in Squid's log
-  (see the table). Squid's behaviour with a required client certificate would
+  (as described in the table). Squid's behaviour with a required client certificate would
   need an OpenSSL build of Squid.
 - Absolute-URI forwarding is not exercised: the client does not use it.
 - The mTLS h2 origin (nghttpd `--verify-client`) does not verify the

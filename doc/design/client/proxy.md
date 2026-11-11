@@ -57,8 +57,8 @@ the route.
 ## Types
 
 The proxy types live in a unit that depends on the RTL and `Http2.Common.Errors`
-only, `Http2.Client.Proxy`, re-exported by
-`Http2.Client` and the `Http2.Client` umbrella unit.
+only. `Http2.Client.Proxy` is an explicit feature unit. Consumers name it in
+their `uses` clause. The client facade does not promise to re-export every feature.
 
 ```pascal
 type
@@ -88,9 +88,8 @@ type
   end;
 ```
 
-`TProxy.Create(host, port)` and `TProxy.Create(host, port, user, password)`
-build an `http` proxy; the overloads taking a leading `TProxyKind` build the
-other kinds. A `nil` result from `SelectProxy` means "connect directly".
+The `TProxy.Create(host, port)` overloads create an `http` proxy. Overloads
+with a leading `TProxyKind` create the other proxy kinds. A `nil` result from `SelectProxy` means "connect directly".
 `AUri` is the absolute URL of the request about to be sent, in the same string
 form `THttpRequest.Url` uses.
 
@@ -147,8 +146,8 @@ list: a host that matches either goes direct whether the proxy came from `WithPr
 environment.
 
 With nothing configured the route is direct for every request, which is the
-behaviour of a client that never mentions a proxy. The environment is never
-read unless `WithProxyEnvironmentVars` is on.
+behaviour of a client that never mentions a proxy. Environment proxy variables affect routing only when
+`WithProxyEnvironmentVars` is on.
 
 ### `WithNoProxy`
 
@@ -416,7 +415,7 @@ Behaviour of the reference code that shapes the design:
   directly.
 - `GetProxyForUri` in `mormot.net.client` reads `HTTP_PROXY` and `HTTPS_PROXY`
   in uppercase only. This client reads the lowercase names first and ignores
-  uppercase `HTTP_PROXY` (see "Environment variables").
+  uppercase `HTTP_PROXY` (as described in "Environment variables").
 - `TIp4SubNet` covers IPv4 only. IPv6 CIDR ranges are matched here.
 - `TCrtSocket.DoOpenTunnel` accepts an `https://` proxy only when the
   destination itself is not TLS; it raises `unsupported dual TLS layers`
@@ -435,7 +434,7 @@ Behaviour of the reference code that shapes the design:
   falls back to a direct connection.
 - SOCKS4, SOCKS4a, GSSAPI authentication and the `BIND` / `UDP ASSOCIATE`
   commands are not implemented.
-- Forwarding mode is not provided; see above.
+- Forwarding mode is not provided; as described in above.
 - Proxy auto-config (PAC) is not implemented.
 
 ## Errors

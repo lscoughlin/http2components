@@ -93,6 +93,21 @@ are grouped by role:
 - [Client source records](verification/source/client/)
 - [Server source records](verification/source/server/)
 
+The source-record files are listed below for direct access.
+
+- `verification/client-probes/source-notes.md`
+- `verification/source/client/README.md`
+- `verification/source/client/toolchain.md`
+- `verification/source/client/validation.md`
+- `verification/source/client/proxy-real.md`
+- `verification/source/client/mtls-real.md`
+- `verification/source/client/observer-overhead.md`
+- `verification/source/client/harness-run-full.log`
+- `verification/source/client/harness-expectations.tsv`
+- `verification/source/server/README.md`
+- `verification/source/server/toolchain.md`
+- `verification/source/server/validation.md`
+
 These records do not validate the combined tree. Merged API review, root
 command review, and final validation remain separate work.
 
