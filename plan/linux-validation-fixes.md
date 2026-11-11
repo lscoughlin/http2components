@@ -474,3 +474,16 @@ checks verify that no live or defunct descendants remain. Startup failures
 must preserve logs and release children too. Existing defunct processes in
 the old container remain part of the evidence; container removal at completion
 removes them. This repair does not change protocol expectations.
+
+## LV-29: Empty-DATA abuse case fails before its expected rate-limit result
+
+The corrected Linux abuse gate reaches all eight HTTP/2 cases. Seven pass;
+the empty-DATA flood receives GOAWAY PROTOCOL_ERROR instead of the expected
+ENHANCE_YOUR_CALM result. The runner owner checks the peer's stream setup and
+frame sequence against the strict server policy. The trace must establish
+whether the flood reaches a valid open stream. An invalid fixture is repaired
+without weakening the expected rate-limit result. A valid fixture that exposes
+a server defect receives a narrow production repair with a regression check.
+The original seven passes, failed peer output, and server log remain retained.
+The complete eight-case HTTP/2 and WebSocket abuse gate runs again. Process
+cleanup must continue to create no new live or defunct child processes.
