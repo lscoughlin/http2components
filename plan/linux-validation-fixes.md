@@ -440,3 +440,14 @@ do not satisfy this requirement. A focused native Linux check precedes another
 complete server run; the full run remains required to detect shared-state
 failures. Affected general integration and server peer checks run again after
 a production repair. Performance waits for this failure to be resolved.
+
+## LV-26: Live mTLS cleanup exception after successful raw request
+
+The final live mTLS run on 609ab70 exited 217 after its first three successful
+mode-none checks. The exception was ETlsSessionError with the message
+transport ended without TLS close_notify. The earlier 40-case run passed, so
+this result needs a repeated, isolated check and a traced cleanup path. The
+client owner reviews the raw peer and server shutdown order. A test-peer
+cleanup error is handled at that boundary only; a genuine truncated response
+must still fail. A production defect receives a separate narrow repair.
+All 40 live mTLS cases must pass again, and initial failed logs remain.
