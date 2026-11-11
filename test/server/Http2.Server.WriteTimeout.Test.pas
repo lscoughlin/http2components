@@ -745,6 +745,7 @@ var
   HandlerRef: IHttp2Handler;
   Client: TStallClient;
   Ping: TBytes;
+  SawClosedSocket: Boolean;
   Start, Deadline: QWord;
 begin
   // the PING frames mark the connection active, so the idle callback
@@ -760,6 +761,7 @@ begin
     Client.SendGet(1, '/burst');
     SetLength(Ping, 8);
     FillChar(Ping[0], Length(Ping), 7);
+    SawClosedSocket := False;
     Deadline := GetTickCount64 + QWord(CloseTimeoutMs);
     while GetTickCount64 < Deadline do
     begin
@@ -767,16 +769,31 @@ begin
         Client.SendPing(Ping);
       except
         on ENetSock do
-          Break; // the server closed the socket: the wait is over
+        begin
+          SawClosedSocket := True;
+          Break; // a failed write proves the peer socket is no longer usable
+        end;
       end;
       // no drain here: the peer never reads, so a send error or a reset
       // is the close signal
       if Client.IsClosed then
+      begin
+        SawClosedSocket := True;
         Break;
+      end;
       Sleep(200);
     end;
     AssertTrue('the pinging peer that never reads stayed open',
-      Client.IsClosed);
+      SawClosedSocket);
+    Deadline := GetTickCount64 + QWord(CloseTimeoutMs);
+    while not ServerSideGone and (GetTickCount64 < Deadline) do
+      Sleep(20);
+    AssertTrue('the server kept the pinging connection after the peer write failed',
+      ServerSideGone);
+    // The unread response body can precede the FIN. Drain only after the
+    // no-read stall interval and server-side close have both been observed.
+    AssertTrue('the pinging peer did not receive EOF after draining the body',
+      Client.DrainAndWaitClosed(CloseTimeoutMs));
     AssertTrue('the close came before the timeout passed',
       GetTickCount64 - Start > CloseFloorMs);
     AssertTrue('the close took longer than about 3 s after the timeout',
