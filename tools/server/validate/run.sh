@@ -60,6 +60,11 @@ skip_count=0
 package="${1:-http2}"
 gate="$package"
 work="$(mktemp -d "${TMPDIR:-/tmp}/http2-server-validate.XXXXXX")"
+log_dir="${VALIDATION_LOG_DIR:-$root/bin/validation/logs}"
+mkdir -p "$log_dir"
+run_id="$(date +%Y%m%dT%H%M%S)-$$"
+safe_gate=$(echo "$gate" | tr '/:' '--')
+safe_package=$(echo "$package" | tr '/:' '--')
 run_started=$(date +%s)
 cleanup() {
   status=$?
@@ -69,6 +74,7 @@ cleanup() {
   rm -rf "$work"
   elapsed=$(( $(date +%s) - run_started ))
   echo "SUMMARY gate=$gate pass=$pass_count fail=$fail_count skip=$skip_count runtime=${elapsed}s exit=$status"
+  echo "VALIDATION_LOG_DIR=$log_dir run=$run_id"
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -82,10 +88,11 @@ case "$gate" in
     fi
     if command -v h2spec >/dev/null 2>&1; then
       for pkg in http2/4.2 http2/6.5; do
-        if h2spec -h 127.0.0.1 -p "$INTEROP_PORT" "$pkg" >/dev/null 2>&1 </dev/null; then
+        pkg_log=$(echo "$pkg" | tr '/:' '--')
+        if h2spec -h 127.0.0.1 -p "$INTEROP_PORT" "$pkg" </dev/null >"$log_dir/h2spec-$safe_gate-$run_id-$pkg_log.log" 2>&1; then
           report_pass "h2spec $pkg"
         else
-          report_fail "h2spec $pkg"
+          report_fail "h2spec $pkg (see $log_dir/h2spec-$safe_gate-$run_id-$pkg_log.log)"
         fi
       done
     else
@@ -227,21 +234,36 @@ echo "the example server listens on port $INTEROP_PORT"
 if command -v h2spec >/dev/null 2>&1; then
   if [ "$package" = "fast" ]; then
     for pkg in http2/4.2 http2/6.5; do
-      if h2spec -h 127.0.0.1 -p "$INTEROP_PORT" "$pkg" >/dev/null 2>&1 </dev/null; then
+      pkg_log=$(echo "$pkg" | tr '/:' '--')
+      if h2spec -h 127.0.0.1 -p "$INTEROP_PORT" "$pkg" </dev/null >"$log_dir/h2spec-$safe_gate-$run_id-$pkg_log.log" 2>&1; then
         report_pass "h2spec $pkg"
       else
-        report_fail "h2spec $pkg"
+        report_fail "h2spec $pkg (see $log_dir/h2spec-$safe_gate-$run_id-$pkg_log.log)"
       fi
     done
-  else
-    if h2spec -h 127.0.0.1 -p "$INTEROP_PORT" "$package" >/dev/null 2>&1 </dev/null; then
+  elif [ "$gate" != conformance ]; then
+    if h2spec -h 127.0.0.1 -p "$INTEROP_PORT" "$package" </dev/null >"$log_dir/h2spec-$safe_gate-$run_id-$safe_package.log" 2>&1; then
       report_pass "h2spec $package"
     else
-      report_fail "h2spec $package"
+      report_fail "h2spec $package (see $log_dir/h2spec-$safe_gate-$run_id-$safe_package.log)"
     fi
   fi
 else
   report_fail "h2spec is required for server conformance"
+fi
+
+# A complete conformance run includes the HTTP/2 and HPACK packages.
+if [ "$gate" = conformance ]; then
+  if command -v h2spec >/dev/null 2>&1; then
+    for pkg in http2 hpack; do
+      h2spec_log="$log_dir/h2spec-$safe_gate-$run_id-$pkg.log"
+      if h2spec -h 127.0.0.1 -p "$INTEROP_PORT" "$pkg" </dev/null >"$h2spec_log" 2>&1; then
+        report_pass "h2spec $pkg"
+      else
+        report_fail "h2spec $pkg (see $h2spec_log)"
+      fi
+    done
+  fi
 fi
 
 # --- nghttp ---
@@ -283,10 +305,19 @@ fi
 # REFUSED_STREAM, which RFC 9113 section 8.7 permits.  This run stays inside
 # the bound, so a refusal is a defect here.
 if command -v h2load >/dev/null 2>&1; then
-  if h2load -n 200 -c 10 -m 6 "http://127.0.0.1:$INTEROP_PORT/" >/dev/null 2>&1 </dev/null; then
-    report_pass "h2load 200 requests, 10 connections, 6 streams each (60 in flight)"
+  h2load_log="$log_dir/h2load-$safe_gate-$run_id.log"
+  h2load_requests="$log_dir/h2load-$safe_gate-$run_id-requests.tsv"
+  if h2load -n 200 -c 10 -m 6 --log-file="$h2load_requests" \
+     "http://127.0.0.1:$INTEROP_PORT/" </dev/null >"$h2load_log" 2>&1; then
+    request_counts=$(awk -F '\t' 'NF >= 2 { total++; if ($2 == 200) ok++ } END { printf "%d %d", total, ok }' "$h2load_requests")
+    if grep -Eq 'requests: 200 total, 200 started, 200 done, 200 succeeded, 0 failed, 0 errored' "$h2load_log" &&
+       [ "$request_counts" = "200 200" ]; then
+      report_pass "h2load 200 requests, 10 connections, 6 streams each (60 in flight)"
+    else
+      report_fail "h2load request results (expected 200 HTTP 200 responses; got $request_counts; see $h2load_log and $h2load_requests)"
+    fi
   else
-    report_fail "h2load 200 requests, 10 connections, 6 streams each (60 in flight)"
+    report_fail "h2load 200 requests, 10 connections, 6 streams each (60 in flight; see $h2load_log)"
   fi
 else
   report_fail "h2load is required for server conformance"
