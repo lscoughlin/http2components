@@ -179,3 +179,17 @@ transport close and deadline paths. Production server transport and the
 listener test helper are in scope if the failure requires them. No assertion
 is weakened to hide a live connection. Acceptance is the complete listener
 suite with actual closure/deadline behavior and unaffected adapter checks.
+
+## LV-09: Timed suite limits and per-case evidence
+
+The full server suite exceeds ten minutes while the generic runner default
+is 180 seconds. The Docker build currently does not supply a longer limit.
+The validation runner also buffers all output until exit, so a timeout lacks
+the last active case required by the evidence contract. The runner owner
+adds an explicit configurable full-suite Docker timeout (initially 1200
+seconds), leaves named bounded TLS limits at 30 seconds, and supplies an
+optional server test listener that records each case start/end with a flush.
+The trace does not change assertions, case registration or execution order.
+The build driver streams and retains child output while preserving timeout
+process-group cleanup and nonzero/empty-suite failure checks. Acceptance is
+exact case progress and complete output on pass, failure and timeout.
