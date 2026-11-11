@@ -393,3 +393,18 @@ on failure. Each compile has a retained log, initial samples follow a settle
 period, and generated private keys are removed. Process socket file-descriptor
 counts are named as such; they are not reported as accepted-connection totals.
 The requests use the unchanged count of one million and one concurrent stream.
+
+## LV-23: New client harness error-scope differences
+
+The native Linux sweep has three CLASS-DIFF rows not fully explained by the
+historical result record: 5.1.2/1, 5.3.1/2, and 8.1.2.3/7. The observed client
+errors include a socket write failure or closed TLS transport instead of a
+specific protocol error. The client owner reads the pinned case and verifier
+source and preserves the initial reference, client, and container logs.
+After the full isolated sweep, a separate trace run repeats these cases with
+the same TLS URL, timeout, and keep-open period. Its frame trace establishes
+whether the invalid frame reached the client and which side closed first.
+A demonstrated client defect receives a narrow fix and regression check in
+the owner's worktree, followed by affected independent cases. An oracle or
+peer-lifetime limit has explicit evidence and remains a classified limit;
+it does not become a strict protocol pass. No expected outcome is changed.
