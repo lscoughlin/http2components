@@ -23,14 +23,18 @@ KEY = "dGhlIHNhbXBsZSBub25jZQ=="
 
 def cpu_seconds(value: str) -> float:
     """Parse ps TIME on Linux (HH:MM:SS) and BSD/macOS (MM:SS.hh)."""
-    match = re.fullmatch(r"(?:(\d+)-(\d{1,2}):)?(\d{1,2}):(\d{1,2})(?:\.(\d+))?", value)
+    match = re.fullmatch(r"(?:(\d+)-(\d{1,2}):(\d{2}):(\d{2})|(\d{1,2}):(\d{2}):(\d{2})|(\d+):(\d{2})\.(\d+))", value)
     if not match:
         raise ValueError(f"unsupported ps CPU time: {value!r}")
-    day_hours, minutes, seconds, fraction = match.groups()[1:]
-    days = int(match.group(1) or 0)
-    hours = int(day_hours or 0)
-    fractional_seconds = float("0." + fraction) if fraction else 0.0
-    return days * 86400 + hours * 3600 + int(minutes) * 60 + int(seconds) + fractional_seconds
+    if match.group(1) is not None:
+        days, hours, minutes, seconds = map(int, match.groups()[:4])
+        return days * 86400 + hours * 3600 + minutes * 60 + seconds
+    if match.group(5) is not None:
+        hours, minutes, seconds = map(int, match.groups()[4:7])
+        return hours * 3600 + minutes * 60 + seconds
+    minutes, seconds = map(int, match.groups()[7:9])
+    fraction = float("0." + match.group(10))
+    return minutes * 60 + seconds + fraction
 
 
 def ps(pid: int):
@@ -90,15 +94,34 @@ async def requests(host, port, window, rate, lat):
 
     async def one():
         t0 = time.monotonic()
+        w = None
         try:
             r, w = await asyncio.wait_for(asyncio.open_connection(host, port), 5)
             w.write(f"GET /events HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n"
                     f"Last-Event-ID: 999\r\n\r\n".encode())
-            await asyncio.wait_for(r.read(-1), 10)
-            w.close()
+            response = await asyncio.wait_for(r.read(-1), 10)
+            head, separator, body = response.partition(b"\r\n\r\n")
+            headers = {}
+            if separator:
+                for line in head.split(b"\r\n")[1:]:
+                    name, split, value = line.partition(b":")
+                    if split:
+                        headers[name.strip().lower()] = value.strip().lower()
+            if (not separator or not head.startswith(b"HTTP/1.1 200 ") or
+                    not headers.get(b"content-type", b"").startswith(b"text/event-stream")):
+                raise RuntimeError("event request did not return HTTP 200 text/event-stream")
+            if b"data:" not in body or b"\n\n" not in body:
+                raise RuntimeError("event request returned no complete SSE event")
             lat.append((time.monotonic() - t0) * 1000.0)
         except Exception:
             lat.append(float("inf"))
+        finally:
+            if w is not None:
+                w.close()
+                try:
+                    await asyncio.wait_for(w.wait_closed(), 2)
+                except (asyncio.TimeoutError, OSError):
+                    pass
 
     while time.monotonic() < end:
         tasks.append(asyncio.create_task(one()))

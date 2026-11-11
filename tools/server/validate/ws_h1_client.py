@@ -20,8 +20,12 @@ def record(name, ok, detail=""):
     print(("PASS " if ok else "FAIL ") + name + (f" ({detail})" if detail else ""))
 
 
-def read_exact(sock, count):
+def read_exact(sock, count, pending=None):
     data = bytearray()
+    if pending:
+        take = min(count, len(pending))
+        data.extend(pending[:take])
+        del pending[:take]
     while len(data) < count:
         chunk = sock.recv(count - len(data))
         if not chunk:
@@ -30,14 +34,14 @@ def read_exact(sock, count):
     return bytes(data)
 
 
-def read_frame(sock):
-    first, second = read_exact(sock, 2)
+def read_frame(sock, pending):
+    first, second = read_exact(sock, 2, pending)
     length = second & 0x7f
     if length == 126:
         length = struct.unpack(">H", read_exact(sock, 2))[0]
     elif length == 127:
         length = struct.unpack(">Q", read_exact(sock, 8))[0]
-    return first & 0x0f, read_exact(sock, length)
+    return first & 0x0f, read_exact(sock, length, pending)
 
 
 def send_frame(sock, opcode, payload):
@@ -66,23 +70,35 @@ def main():
         sock.sendall(request.encode())
         response = bytearray()
         while b"\r\n\r\n" not in response:
-            response.extend(sock.recv(4096))
-        headers = bytes(response).split(b"\r\n\r\n", 1)[0].decode("latin1").lower()
-        expected = base64.b64encode(hashlib.sha1((KEY + GUID).encode()).digest()).decode().lower()
-        record("HTTP/1.1 WebSocket upgrade", headers.startswith("http/1.1 101 ") and
-               f"sec-websocket-accept: {expected}" in headers and
-               "sec-websocket-protocol: echo" in headers)
+            if len(response) > 65536:
+                raise RuntimeError("WebSocket response headers exceed 64 KiB")
+            chunk = sock.recv(4096)
+            if not chunk:
+                raise ConnectionError("peer closed before completing WebSocket response headers")
+            response.extend(chunk)
+        header_bytes, _, remainder = bytes(response).partition(b"\r\n\r\n")
+        headers = header_bytes.decode("latin1").split("\r\n")
+        fields = {}
+        for line in headers[1:]:
+            name, separator, value = line.partition(":")
+            if separator:
+                fields[name.strip().lower()] = value.strip()
+        expected = base64.b64encode(hashlib.sha1((KEY + GUID).encode()).digest()).decode()
+        record("HTTP/1.1 WebSocket upgrade", headers[0].startswith("HTTP/1.1 101 ") and
+               fields.get("sec-websocket-accept") == expected and
+               fields.get("sec-websocket-protocol", "").lower() == "echo")
+        pending = bytearray(remainder)
         send_frame(sock, 1, b"hello over http/1.1")
-        opcode, payload = read_frame(sock)
+        opcode, payload = read_frame(sock, pending)
         record("text echo", opcode == 1 and payload == b"hello over http/1.1")
         send_frame(sock, 2, b"\x00\x01\xff")
-        opcode, payload = read_frame(sock)
+        opcode, payload = read_frame(sock, pending)
         record("binary echo", opcode == 2 and payload == b"\x00\x01\xff")
         send_frame(sock, 9, b"ping")
-        opcode, payload = read_frame(sock)
+        opcode, payload = read_frame(sock, pending)
         record("ping and pong", opcode == 10 and payload == b"ping")
         send_frame(sock, 8, struct.pack(">H", 1000))
-        opcode, payload = read_frame(sock)
+        opcode, payload = read_frame(sock, pending)
         record("close handshake", opcode == 8 and payload[:2] == struct.pack(">H", 1000))
     except Exception as exc:
         record("HTTP/1.1 WebSocket checks", False, str(exc))
