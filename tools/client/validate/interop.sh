@@ -171,6 +171,7 @@ if [ -n "$DOCKER" ] && "$DOCKER" info >/dev/null 2>&1; then
   DOCKER_OK=yes
 fi
 # seed a document root (must exist before start_apache copies it in)
+chmod 755 "$HTDOCS"
 printf 'hello-http2\n' > "$HTDOCS/index.html"
 printf '0123456789'     > "$HTDOCS/small.txt"
 head -c 30000 /dev/urandom > "$HTDOCS/m30.bin"
