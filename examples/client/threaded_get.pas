@@ -21,7 +21,8 @@ program example_threaded;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs,
-  Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Stream, Http2.Client.Messages, Http2.Client;
+  Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Stream,
+  Http2.Client.Messages, Http2.Client, Http2.Common, Http2.OpenSSL;
 
 type
   /// one worker issues ACount GETs and records the outcome under a shared lock
@@ -99,6 +100,7 @@ end;
 
 var
   Client: IHttpClient;
+  TlsContext: ITLSContext;
   Url: string;
   ThreadCount, PerThread: Integer;
   Workers: array of TGetWorker;
@@ -122,7 +124,11 @@ begin
 
   // One client, shared by every thread. A high-concurrency recipe bounds each
   // host tightly and multiplexes widely rather than opening many connections.
+  TlsContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+    .Build;
   Client := THttpClientFactory.Create
+    .WithTlsContext(TlsContext)
     .WithMaxConnectionsPerHost(2)
     .WithMaxTotalConnections(128)
     .WithMaxStreamsPerConnection(30)

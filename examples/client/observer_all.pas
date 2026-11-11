@@ -27,7 +27,8 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, Http2.Client.Errors, Http2.Client.Stream, Http2.Client.Messages,
   Http2.Client, Http2.Client.Tls, Http2.Client.Sse, Http2.Client.WebSocket, Http2.Client.RequestObserver,
-  observer_tracing, observer_metrics, observer_logging;
+  observer_tracing, observer_metrics, observer_logging,
+  Http2.Common, Http2.OpenSSL;
 
 type
   /// closes when the echo arrives, and signals the end
@@ -158,6 +159,7 @@ var
   Metrics: IHttpClientObserver;
   Factory: THttpClientFactory;
   Client: IHttpClient;
+  OriginTls, ProxyTls: ITLSContext;
   Root: ISpan;
   R: IHttpResponse;
   Loop: TSseReconnectLoop;
@@ -190,6 +192,18 @@ begin
       .WithRequestObserver(Metrics)
       .WithRequestObserver(TLoggingObserver.Create(LoggerRef))
       .WithClearText(ctUpgrade).WithHttp1Fallback(True);
+    if (Pos('https://', LowerCase(Base)) = 1) or
+       (Pos('wss://', LowerCase(WsUrl)) = 1) then
+    begin
+      OriginTls := TOpenSSLTlsContextFactory.Create
+        .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+        .Build;
+      ProxyTls := TOpenSSLTlsContextFactory.Create
+        .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+        .Build;
+      Factory := Factory.WithTlsContext(OriginTls)
+        .WithProxyTlsContext(ProxyTls);
+    end;
     Client := Factory.Build;
     Registry.AddCollector(TPoolStatsCollector.Create(Client));
 

@@ -16,10 +16,11 @@ program example_basic_get;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Stream, Http2.Client.Messages,
-  Http2.Client;
+  Http2.Client, Http2.Common, Http2.OpenSSL;
 
 var
   Client: IHttpClient;
+  TlsContext: ITLSContext;
   Url: string;
   Response: IHttpResponse;
 begin
@@ -30,7 +31,11 @@ begin
   end;
   Url := ParamStr(1);
 
+  TlsContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+    .Build;
   Client := THttpClientFactory.Create
+    .WithTlsContext(TlsContext)
     // one connection per host is the most RFC 9113 section 9.1 conformant
     // choice; the pool still multiplexes many streams over it
     .WithMaxConnectionsPerHost(1)

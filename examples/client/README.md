@@ -11,11 +11,13 @@ make examples      # or: task examples
 
 The binaries land in `bin/<target>/<profile>/examples-client/programs/` (gitignored).
 
-## Run
+## TLS provider selection
 
-Every example needs the OpenSSL library path at runtime. Without it the first
-request fails with
-`EHttpConnectionError: OpenSSL is not available: set OPENSSL_LIBPATH ...`.
+Programs that send HTTPS or WSS requests select the OpenSSL provider and
+configure peer and host-name verification. They do not use an implicit TLS
+provider. Programs that only send HTTP requests do not load a TLS provider.
+OpenSSL must be available at runtime for an HTTPS or WSS request. Set
+`OPENSSL_LIBPATH` when the library is outside the system search path.
 
 ```sh
 export OPENSSL_LIBPATH=/opt/homebrew/opt/openssl@3/lib   # macOS / Homebrew
@@ -52,8 +54,8 @@ make measure-observer
 | `observer_all.pas` | `WithRequestObserver` with the tracing, metrics and logging adapters together: a plain request, an SSE stream with a reconnect and a WebSocket session against the `tools/client/validate` servers; prints one trace, the derived metrics and the log lines. |
 | `observer_overhead.pas` | The cost of the observers on a loopback request (no observer, the three adapters, the per-event gate on); starts its own server. Run with `make measure-observer`. |
 | `observer_tracing.pas`, `observer_metrics.pas`, `observer_logging.pas` | Adapter units, not programs: a tracer, a metrics registry and a structured logger over `IHttpClientObserver`, with in-memory stand-ins for the tracer and the registry. The tests compile against them. |
-| `mtls_get.pas` | `WithClientCertificateFiles`: a GET or a `wss` session with a client certificate, a bad identity failing at `Build`, and `EHttpTlsClientAuthError` on a rejection. |
-| `proxy_env.pas` | `WithProxyEnvironmentVars` + `WithNoProxy`: route a GET by `http_proxy` / `https_proxy` / `all_proxy` / `no_proxy`. |
+| `mtls_get.pas` | Explicit OpenSSL identity loading and selection for a GET or `wss` session, plus `EHttpTlsClientAuthError` when the server rejects the identity. |
+| `proxy_env.pas` | `WithProxyEnvironmentVars` + `WithNoProxy`: route a GET by `http_proxy` / `https_proxy` / `all_proxy` / `no_proxy`, with separate explicit OpenSSL contexts for the origin and HTTPS proxy. |
 
 ## Notes
 
@@ -65,3 +67,7 @@ make measure-observer
   examples do so in a `finally`.
 - The endpoints above are public services used for illustration. Point the
   programs at your own server for anything real.
+- HTTPS and WSS examples use OpenSSL with system trust. `mtls_get` also adds
+  its optional CA file to the origin and HTTPS proxy trust policy. The TLS
+  integration examples show explicit OpenSSL and TlsLib selection, one context
+  shared by a client and server, and a separate HTTPS proxy context.

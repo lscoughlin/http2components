@@ -20,12 +20,13 @@ program example_proxy_env;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Http2.Client.Errors, Http2.Client.Stream, Http2.Client.Messages, Http2.Client.Proxy,
-  Http2.Client;
+  Http2.Client, Http2.Common, Http2.OpenSSL;
 
 var
   Client: IHttpClient;
   Response: IHttpResponse;
   F: THttpClientFactory;
+  OriginTls, ProxyTls: ITLSContext;
 begin
   if ParamCount < 1 then
   begin
@@ -38,6 +39,13 @@ begin
     // the protocol-level fallbacks keep the example working against proxies
     // and origins that do not speak HTTP/2
     .WithHttp1Fallback(True);
+  OriginTls := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+    .Build;
+  ProxyTls := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+    .Build;
+  F := F.WithTlsContext(OriginTls).WithProxyTlsContext(ProxyTls);
   if ParamCount >= 2 then
     F := F.WithNoProxy(ParamStr(2));
 

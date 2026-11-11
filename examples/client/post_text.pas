@@ -17,10 +17,11 @@ program example_post_text;
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Stream, Http2.Client.Messages,
-  Http2.Client;
+  Http2.Client, Http2.Common, Http2.OpenSSL;
 
 var
   Client: IHttpClient;
+  TlsContext: ITLSContext;
   Url: string;
   Response: IHttpResponse;
 begin
@@ -31,7 +32,11 @@ begin
   end;
   Url := ParamStr(1);
 
-  Client := THttpClientFactory.Create.WithMaxConnectionsPerHost(1).Build;
+  TlsContext := TOpenSSLTlsContextFactory.Create
+    .WithClientPolicy(TTlsClientPolicy.SecureDefault.WithSystemTrust(True))
+    .Build;
+  Client := THttpClientFactory.Create.WithTlsContext(TlsContext)
+    .WithMaxConnectionsPerHost(1).Build;
   try
     Response := Client.Send(
       WithTextBody(

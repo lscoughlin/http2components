@@ -26,7 +26,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils,
   mormot.core.base,
-  Http2.Server;
+  Http2.Server, Http2.Common, Http2.OpenSSL;
 
 type
   /// the handler of the example
@@ -56,6 +56,9 @@ end;
 
 var
   Server: IHttp2Server;
+  TlsContext: ITLSContext;
+  ServerIdentity: ITLSIdentity;
+  ServerPolicy: TTlsServerPolicy;
   Line: string;
 begin
   if ParamCount < 2 then
@@ -63,12 +66,17 @@ begin
     Writeln(StdErr, 'usage: tls_server <server.crt> <server.key>');
     Halt(2);
   end;
+  ServerIdentity := TOpenSSLIdentity.FromPemFiles(ParamStr(1), ParamStr(2));
+  ServerPolicy := TTlsServerPolicy.SecureDefault
+    .WithServerIdentity(ServerIdentity);
+  TlsContext := TOpenSSLTlsContextFactory.Create
+    .WithServerPolicy(ServerPolicy)
+    .Build;
   Server := THttp2ServerFactory.Create
     .WithHost('127.0.0.1')
     .WithPort(8443)
-    .WithTls(TTlsServerOptions.Create
-      .WithCertificateFile(ParamStr(1))
-      .WithKeyFile(ParamStr(2)))
+    .WithClearTextAllowed(False)
+    .WithTlsContext(TlsContext)
     .WithHandler(TTlsHelloHandler.Create)
     .Build;
   Server.Start;

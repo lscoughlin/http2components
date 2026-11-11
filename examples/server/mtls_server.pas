@@ -14,8 +14,8 @@ notes:
 ---
 }
 /// A mutual TLS server
-// - the program builds a factory with the client certificate mode set to
-//   required, and a handler that reads the verified identity from the request
+// - the program builds an explicit OpenSSL server policy with required client
+//   authentication and a handler that reads the verified identity from the request
 program mtls_server;
 
 {$mode delphi}{$H+}
@@ -26,7 +26,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils,
   mormot.core.base,
-  Http2.Server;
+  Http2.Server, Http2.Common, Http2.OpenSSL;
 
 type
   /// the handler of the example
@@ -63,6 +63,9 @@ end;
 
 var
   Server: IHttp2Server;
+  TlsContext: ITLSContext;
+  ServerIdentity: ITLSIdentity;
+  ServerPolicy: TTlsServerPolicy;
   Line: string;
 begin
   if ParamCount < 3 then
@@ -70,18 +73,21 @@ begin
     Writeln(StdErr, 'usage: mtls_server <server.crt> <server.key> <client-trust.pem>');
     Halt(2);
   end;
+  ServerIdentity := TOpenSSLIdentity.FromPemFiles(ParamStr(1), ParamStr(2));
+  ServerPolicy := TTlsServerPolicy.SecureDefault
+    .WithServerIdentity(ServerIdentity)
+    .WithClientAuth(tlsAuthRequire)
+    .WithTrustAnchors([ParamStr(3)]);
+  TlsContext := TOpenSSLTlsContextFactory.Create
+    .WithServerPolicy(ServerPolicy)
+    .Build;
   Server := THttp2ServerFactory.Create
     .WithHost('127.0.0.1')
     .WithPort(8443)
-    .WithTls(TTlsServerOptions.Create
-      .WithCertificateFile(ParamStr(1))
-      .WithKeyFile(ParamStr(2))
-      // ccmRequired refuses a client without a certificate in the handshake.
-      // ccmOptional serves it, and the handler sees a nil identity
-      .WithClientCertMode(ccmRequired)
-      .WithClientCaFile(ParamStr(3))
-      // the principal is empty unless the caller asks for the subject
-      .WithClientCertPrincipal(ccpSubjectDn))
+    // the provider checks client certificates against the explicit trust file
+    .WithClearTextAllowed(False)
+    .WithTlsContext(TlsContext)
+    .WithClientCertPrincipal(ccpSubjectDn)
     .WithHandler(TWhoAmIHandler.Create)
     .Build;
   Server.Start;
