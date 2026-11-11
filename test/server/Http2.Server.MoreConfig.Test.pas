@@ -27,7 +27,9 @@ uses
   Http2.Server.Config,
   Http2.Server.Config.Limits,
   Http2.Server.Config.Socket,
-  Http2.Server.Config.Tls;
+  Http2.Common.Tls.Types,
+  Http2.Common.Tls.Context,
+  Http2.Test.Tls.Fake;
 
 type
   /// a handler that does nothing, only to satisfy the factory wiring
@@ -37,7 +39,7 @@ type
       const AResponse: IServerResponse);
   end;
 
-  /// tests of TServerLimits, TSocketOptions and the TLS version range
+  /// tests of TServerLimits, TSocketOptions and common TLS context policy
   TMoreConfigTest = class(TTestCase)
   private
     FHandler: IHttp2Handler;
@@ -50,16 +52,13 @@ type
   published
     procedure TestDefaultServerLimits;
     procedure TestDefaultSocketOptions;
-    procedure TestDefaultTlsVersions;
     procedure TestFactoryCarriesNewRecords;
     procedure TestServerLimitsImmutability;
     procedure TestSocketOptionsImmutability;
-    procedure TestTlsVersionImmutability;
     procedure TestFactoryWithNewRecords;
     procedure TestValidateServerLimits;
     procedure TestValidateDataFrameSize;
     procedure TestValidateSocketOptions;
-    procedure TestValidateTlsVersionOrder;
     procedure TestValidateSeveralProblemsInOneCall;
   end;
 
@@ -145,17 +144,6 @@ begin
   AssertFalse('reuse-port is off by default', O.ReusePort);
 end;
 
-procedure TMoreConfigTest.TestDefaultTlsVersions;
-var
-  T: TTlsServerOptions;
-begin
-  T := TTlsServerOptions.Create;
-  AssertTrue('the default minimum TLS version is 1.2',
-    T.MinTlsVersion = tvTls12);
-  AssertTrue('the default maximum TLS version is 1.3',
-    T.MaxTlsVersion = tvTls13);
-end;
-
 procedure TMoreConfigTest.TestFactoryCarriesNewRecords;
 var
   F: THttp2ServerFactory;
@@ -184,10 +172,6 @@ begin
   AssertEquals('the factory send buffer size', 0, F.Socket.SendBufferBytes);
   AssertEquals('the factory receive buffer size', 0, F.Socket.RecvBufferBytes);
   AssertFalse('the factory reuse-port', F.Socket.ReusePort);
-  AssertTrue('the factory minimum TLS version is 1.2',
-    F.Tls.MinTlsVersion = tvTls12);
-  AssertTrue('the factory maximum TLS version is 1.3',
-    F.Tls.MaxTlsVersion = tvTls13);
 end;
 
 procedure TMoreConfigTest.TestServerLimitsImmutability;
@@ -263,24 +247,6 @@ begin
   AssertEquals('the forked send buffer size', 65536, Forked.SendBufferBytes);
   AssertEquals('the forked receive buffer size', 32768, Forked.RecvBufferBytes);
   AssertTrue('the forked reuse-port', Forked.ReusePort);
-end;
-
-procedure TMoreConfigTest.TestTlsVersionImmutability;
-var
-  Base, Forked: TTlsServerOptions;
-begin
-  Base := TTlsServerOptions.Create;
-  Forked := Base.WithMinTlsVersion(tvTls13).WithMaxTlsVersion(tvTls13);
-  AssertTrue('the original minimum version is unchanged',
-    Base.MinTlsVersion = tvTls12);
-  AssertTrue('the original maximum version is unchanged',
-    Base.MaxTlsVersion = tvTls13);
-  AssertTrue('the forked minimum version',
-    Forked.MinTlsVersion = tvTls13);
-  AssertTrue('the forked maximum version',
-    Forked.MaxTlsVersion = tvTls13);
-  AssertEquals('the handshake timeout survives the fork', 10000,
-    Forked.HandshakeTimeoutMs);
 end;
 
 procedure TMoreConfigTest.TestFactoryWithNewRecords;
@@ -484,41 +450,13 @@ begin
     HasProblem(Problems, 'the socket buffer size is below 0'));
 end;
 
-procedure TMoreConfigTest.TestValidateTlsVersionOrder;
-var
-  Problems: TArray<string>;
-  Base: THttp2ServerFactory;
-begin
-  Base := BaseFactory;
-  AssertTrue('the defaults are valid: ' + ProblemText(Problems),
-    Base.Validate(Problems));
-
-  Base.WithTls(TTlsServerOptions.Create
-    .WithMinTlsVersion(tvTls13)
-    .WithMaxTlsVersion(tvTls12)).Validate(Problems);
-  AssertTrue('an inverted version range is reported: ' +
-    ProblemText(Problems),
-    HasProblem(Problems,
-      'the minimum TLS version is above the maximum'));
-
-  Problems := nil;
-  AssertTrue('a range of 1.2 alone is allowed: ' + ProblemText(Problems),
-    Base.WithTls(TTlsServerOptions.Create
-      .WithMinTlsVersion(tvTls12)
-      .WithMaxTlsVersion(tvTls12)).Validate(Problems));
-  Problems := nil;
-  AssertTrue('a range of 1.3 alone is allowed: ' + ProblemText(Problems),
-    Base.WithTls(TTlsServerOptions.Create
-      .WithMinTlsVersion(tvTls13)
-      .WithMaxTlsVersion(tvTls13)).Validate(Problems));
-end;
-
 procedure TMoreConfigTest.TestValidateSeveralProblemsInOneCall;
 var
   F: THttp2ServerFactory;
   Problems: TArray<string>;
+  Context: ITLSContext;
 begin
-  // one call with bad limits, bad socket values and an inverted TLS range
+  // one call with bad limits and bad socket values
   F := BaseFactory
     .WithServerLimits(TServerLimits.Create
       .WithMaxConnections(-1)
@@ -526,14 +464,13 @@ begin
       .WithStreamWriteTimeoutMs(0))
     .WithSocketOptions(TSocketOptions.Create
       .WithKeepAliveIdleSec(60)
-      .WithSendBufferBytes(-1))
-    .WithTls(TTlsServerOptions.Create
-      .WithMinTlsVersion(tvTls13)
-      .WithMaxTlsVersion(tvTls12));
+      .WithSendBufferBytes(-1));
+  Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 2500);
+  F := F.WithTlsContext(Context);
   Problems := nil;
   AssertFalse('the broken factory fails validation', F.Validate(Problems));
   AssertTrue('several problems arrive at once: ' + ProblemText(Problems),
-    Length(Problems) >= 6);
+    Length(Problems) >= 5);
   AssertTrue('the connection count problem is in the list: ' +
     ProblemText(Problems),
     HasProblem(Problems, 'the maximum connection count is below 0'));
@@ -548,9 +485,9 @@ begin
     HasProblem(Problems, 'the keep-alive values are not valid'));
   AssertTrue('the buffer problem is in the list: ' + ProblemText(Problems),
     HasProblem(Problems, 'the socket buffer size is below 0'));
-  AssertTrue('the TLS version problem is in the list: ' +
+  AssertTrue('the missing server role is in the list: ' +
     ProblemText(Problems),
-    HasProblem(Problems, 'the minimum TLS version is above the maximum'));
+    HasProblem(Problems, 'no server role'));
 end;
 
 initialization

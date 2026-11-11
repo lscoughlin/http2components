@@ -7,8 +7,7 @@ notes:
   - This unit holds the identity of a verified client certificate. The record
     is immutable once built, so one reference is shared by every stream of a
     connection and by a WebSocket session without a lock.
-  - The reader takes the certificate from the SSL object of one connection and
-    never from the shared TNetTlsContext record.
+  - Peer data comes from verified, provider-neutral TLS session metadata.
 ---
 }
 /// The identity of a verified TLS client certificate
@@ -22,7 +21,7 @@ interface
 
 uses
   SysUtils,
-  mormot.core.base, mormot.net.sock, mormot.lib.openssl11,
+  Http2.Common.Tls.Identity,
   Http2.Server.Mtls.Types;
 
 type
@@ -85,14 +84,8 @@ type
 function NewClientCertificate(
   const AData: TClientCertificateData): IClientCertificate;
 
-/// the identity of a loaded X509 certificate; the caller keeps its reference
-function ClientCertificateFromX509(const AX509: PX509;
-  const APrincipal: TClientCertPrincipal): IClientCertificate;
-
-/// the identity of the peer of one finished TLS handshake
-// - answers nil when there is no TLS instance, no peer certificate, or when
-//   the chain did not verify (SSL_get_verify_result is not X509_V_OK)
-function ReadClientCertificate(const ATls: INetTls;
+/// the identity of a verified peer certificate summary
+function ClientCertificateFromPeer(const APeer: ITLSPeerCertificate;
   const APrincipal: TClientCertPrincipal): IClientCertificate;
 
 implementation
@@ -189,87 +182,29 @@ begin
   Result := TClientCertificateImpl.Create(AData);
 end;
 
-/// split the general names of a SAN list by their type prefix
-procedure SplitSan(const ANames: TRawUtf8DynArray;
-  out ADns, AUri, AEmail: TArray<string>);
-var
-  i: Integer;
-  Name: string;
-
-  procedure Add(var AList: TArray<string>; const AValue: string);
-  begin
-    SetLength(AList, Length(AList) + 1);
-    AList[High(AList)] := AValue;
-  end;
-
-begin
-  ADns := nil;
-  AUri := nil;
-  AEmail := nil;
-  for i := 0 to High(ANames) do
-  begin
-    Name := string(ANames[i]);
-    if Copy(Name, 1, 4) = 'DNS:' then
-      Add(ADns, Copy(Name, 5, MaxInt))
-    else if Copy(Name, 1, 4) = 'URI:' then
-      Add(AUri, Copy(Name, 5, MaxInt))
-    else if Copy(Name, 1, 6) = 'email:' then
-      Add(AEmail, Copy(Name, 7, MaxInt));
-    // any other entry is dropped: mORMot2 splits the text of an address name
-    // (IP Address:...) at the blank, and the record keeps no address field
-  end;
-end;
-
-function ClientCertificateFromX509(const AX509: PX509;
+function ClientCertificateFromPeer(const APeer: ITLSPeerCertificate;
   const APrincipal: TClientCertPrincipal): IClientCertificate;
 var
   D: TClientCertificateData;
-  One: PX509DynArray;
+  Leaf: TTlsCertificateSummary;
 begin
   Result := nil;
-  if AX509 = nil then
+  if (APeer = nil) or not APeer.Verified then
     Exit;
-  D.SubjectDn := string(AX509^.SubjectName);
-  D.IssuerDn := string(AX509^.IssuerName);
-  D.CommonName := string(AX509^.GetSubject('CN'));
-  D.SerialHex := UpperCase(StringReplace(string(AX509^.SerialNumber), ':', '',
-    [rfReplaceAll]));
-  D.Sha256 := LowerCase(string(AX509^.FingerPrint(EVP_sha256)));
-  SplitSan(AX509^.SubjectAlternativeNames(False), D.SanDns, D.SanUri,
-    D.SanEmail);
-  D.NotBefore := AX509^.NotBefore;
-  D.NotAfter := AX509^.NotAfter;
-  SetLength(One, 1);
-  One[0] := AX509;
-  D.Pem := string(PX509DynArrayToPem(One));
+  Leaf := APeer.Leaf;
+  D.SubjectDn := Leaf.Subject;
+  D.IssuerDn := Leaf.Issuer;
+  D.CommonName := Leaf.CommonName;
+  D.SerialHex := Leaf.Serial;
+  D.Sha256 := Leaf.FingerprintSha256;
+  D.Pem := Leaf.Pem;
+  D.NotBefore := Leaf.NotBeforeUtc;
+  D.NotAfter := Leaf.NotAfterUtc;
+  D.SanDns := APeer.DnsNames;
+  D.SanUri := APeer.UriNames;
+  D.SanEmail := APeer.EmailAddresses;
   D.PrincipalText := PrincipalTextFor(APrincipal, D.SubjectDn, D.CommonName);
   Result := NewClientCertificate(D);
-end;
-
-function ReadClientCertificate(const ATls: INetTls;
-  const APrincipal: TClientCertPrincipal): IClientCertificate;
-var
-  Ssl: PSSL;
-  Peer: PX509;
-begin
-  Result := nil;
-  if ATls = nil then
-    Exit;
-  Ssl := PSSL(ATls.GetRawTls);
-  if Ssl = nil then
-    Exit;
-  Peer := Ssl^.PeerCertificate;     // takes a reference; Free releases it
-  if Peer = nil then
-    Exit;
-  try
-    // OpenSSL ends a handshake whose chain failed, so a connection that got
-    // here verified. The check is one call and keeps the rule explicit
-    if SSL_get_verify_result(Ssl) <> 0 then
-      Exit;
-    Result := ClientCertificateFromX509(Peer, APrincipal);
-  finally
-    Peer^.Free;
-  end;
 end;
 
 end.

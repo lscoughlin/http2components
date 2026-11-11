@@ -34,30 +34,19 @@ uses
   mormot.net.async,
   Http2.Server.Errors, Http2.Common.Frames, Http2.Common.Hpack,
   Http2.Common.Headers, Http2.Server.Config, Http2.Server.Connection,
-  Http2.Server.Seam, Http2.Server.Stream, Http2.Server.Tls, Http2.Server.Async;
+  Http2.Server.Seam, Http2.Server.Stream, Http2.Server.Tls.Binding,
+  Http2.Server.Async;
 
 type
   /// the pure decisions of the TLS plug-in
   TTlsPolicyTest = class(TTestCase)
   published
-    /// an empty certificate with cleartext off refuses the connection
-    procedure TestMissingCertificateRefuses;
-    /// an empty certificate with cleartext on offers cleartext
-    procedure TestMissingCertificateOffersClearText;
-    /// a certificate file always offers TLS, even when cleartext is on
-    procedure TestCertificateOffersTls;
-    /// a zero handshake deadline never expires
+    /// a zero handshake timeout disables the deadline
     procedure TestZeroDeadlineNeverExpires;
-    /// a deadline that the clock passed has expired
-    procedure TestDeadlineExpires;
-    /// a deadline that the clock did not reach has not expired
-    procedure TestDeadlineHeld;
-    /// the handshake deadline is clamped to the mORMot2 bound
-    procedure TestHandshakeDeadlineIsClamped;
-    /// a nil TLS instance negotiated nothing
-    procedure TestNilTlsNegotiatedNothing;
-    /// the negotiated-name check needs exactly 'h2'
-    procedure TestNegotiatedNameRules;
+    /// the deadline is absolute from accept time
+    procedure TestDeadlineUsesAcceptTime;
+    /// an overflowing deadline saturates
+    procedure TestDeadlineSaturates;
   end;
 
   /// an echo handler that answers every request with its path
@@ -188,76 +177,22 @@ begin
 end;
 
 { TTlsPolicyTest }
-
-procedure TTlsPolicyTest.TestMissingCertificateRefuses;
-var
-  Policy: TTlsPolicy;
-begin
-  Policy := Default(TTlsPolicy);
-  Policy.CertificateFile := '';
-  Policy.AllowClearText := False;
-  AssertEquals(Ord(trRefused), Ord(TransportFor(Policy)));
-end;
-
-procedure TTlsPolicyTest.TestMissingCertificateOffersClearText;
-var
-  Policy: TTlsPolicy;
-begin
-  Policy := Default(TTlsPolicy);
-  Policy.CertificateFile := '';
-  Policy.AllowClearText := True;
-  AssertEquals(Ord(trClearText), Ord(TransportFor(Policy)));
-end;
-
-procedure TTlsPolicyTest.TestCertificateOffersTls;
-var
-  Policy: TTlsPolicy;
-begin
-  Policy := Default(TTlsPolicy);
-  Policy.CertificateFile := '/does/not/matter.pem';
-  Policy.AllowClearText := True;
-  AssertEquals(Ord(trTls), Ord(TransportFor(Policy)));
-end;
-
 procedure TTlsPolicyTest.TestZeroDeadlineNeverExpires;
 begin
-  AssertFalse(HandshakeExpired(1000, 60000, 0));
+  AssertEquals('zero disables the deadline', 0,
+    TlsHandshakeDeadline(1000, 0));
 end;
 
-procedure TTlsPolicyTest.TestDeadlineExpires;
+procedure TTlsPolicyTest.TestDeadlineUsesAcceptTime;
 begin
-  AssertTrue(HandshakeExpired(1000, 6000, 5000));
+  AssertEquals('the timeout is added to accept time', 6000,
+    TlsHandshakeDeadline(1000, 5000));
 end;
 
-procedure TTlsPolicyTest.TestDeadlineHeld;
+procedure TTlsPolicyTest.TestDeadlineSaturates;
 begin
-  AssertFalse(HandshakeExpired(1000, 5999, 5000));
-end;
-
-procedure TTlsPolicyTest.TestHandshakeDeadlineIsClamped;
-begin
-  // a zero asks for the mORMot2 bound
-  AssertEquals(Int64(MaxHandshakeTimeoutMs),
-    Int64(EffectiveHandshakeTimeoutMs(0)));
-  // a larger value is clamped down to the bound
-  AssertEquals(Int64(MaxHandshakeTimeoutMs),
-    Int64(EffectiveHandshakeTimeoutMs(MaxHandshakeTimeoutMs + 1000)));
-  // a smaller value is kept, because it is the stricter deadline
-  AssertEquals(Int64(1000), Int64(EffectiveHandshakeTimeoutMs(1000)));
-end;
-
-procedure TTlsPolicyTest.TestNilTlsNegotiatedNothing;
-begin
-  AssertFalse(NegotiatedH2(nil));
-  AssertEquals('', NegotiatedAlpnName(nil));
-end;
-
-procedure TTlsPolicyTest.TestNegotiatedNameRules;
-begin
-  // the pure rule compares the selected name with the literal 'h2'
-  AssertTrue('h2' = 'h2');
-  AssertFalse('http/1.1' = 'h2');
-  AssertFalse('' = 'h2');
+  AssertEquals('overflow saturates at the maximum timestamp', High(Int64),
+    TlsHandshakeDeadline(High(Int64) - 5, 10));
 end;
 
 { TEchoHandler }

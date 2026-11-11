@@ -90,6 +90,7 @@ begin
         AMaxAgeMs, AGraceMs);
       THttp2AsyncConnection(Instances[I]).CheckWriteStall(NowMs,
         AWriteTimeoutMs);
+      THttp2AsyncConnection(Instances[I]).CheckHandshakeDeadline(NowMs);
     end;
 end;
 

@@ -23,10 +23,8 @@ interface
 
 uses
   SysUtils,
-  mormot.core.base, mormot.net.sock, mormot.net.async,
-  mormot.lib.openssl11,
-  Http2.Server.Config, Http2.Server.Config.Tls, Http2.Server.Connection,
-  Http2.Server.Tls,
+  mormot.core.base, mormot.net.async,
+  Http2.Server.Config, Http2.Server.Connection,
   Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Observer,
   Http2.Server.Async.Counters,
   Http2.Server.Http1.Core, Http2.Server.Http1.Driver;
@@ -40,9 +38,6 @@ function BindAddressText(const AHost: string; const APort: Integer): RawUtf8;
 //   earlier of the two. A sub-second timeout rounds up to one second, because
 //   the base class compares in 32-bit seconds. 0 means no check
 function IdleCheckSeconds(const AIdleMs, AHeaderMs: Integer): Cardinal;
-
-/// the TLS policy of the listener, with the client certificate settings
-function BuildTlsPolicy(const AFactory: THttp2ServerFactory): TTlsPolicy;
 
 /// the options that every connection core of the server uses
 function BuildConnectionCoreOptions(
@@ -142,13 +137,6 @@ procedure ReportTlsFailed(const ACounters: TServerCounters;
 function LeastControlBucket(
   const AFactory: THttp2ServerFactory): TTokenBucketOptions;
 
-/// set the socket deadlines of the handshake, after the mORMot2 bound
-// - a deadline is a convenience: Darwin answers EINVAL for SO_RCVTIMEO on a
-//   socket whose peer already sent RST, so a failure here forbids no valid
-//   connection and never raises
-procedure SetHandshakeDeadline(const ASocket: TNetSocket;
-  const ARequestedMs: LongWord);
-
 /// the second by which the first header block must have ended
 // - zero marks a met deadline. A sub-second timeout rounds up to one second,
 //   and a zero timeout leaves the accept second itself as the deadline
@@ -183,26 +171,6 @@ begin
     Host := '0.0.0.0';
   // mORMot2 splits the text at the last colon, so an IPv6 host needs no bracket
   result := RawUtf8(Host + ':' + IntToStr(APort));
-end;
-
-function BuildTlsPolicy(const AFactory: THttp2ServerFactory): TTlsPolicy;
-begin
-  result.CertificateFile := AFactory.Tls.CertificateFile;
-  result.KeyFile := AFactory.Tls.KeyFile;
-  result.KeyPassword := AFactory.Tls.KeyPassword;
-  result.HandshakeTimeoutMs := LongWord(AFactory.Tls.HandshakeTimeoutMs);
-  result.AllowClearText := AFactory.ClearTextAllowed;
-  result.AllowHttp11 := AFactory.Http11Fallback;
-  result.IgnoreCertificateErrors := True;
-  result.ClientTrust := AFactory.Tls.ClientTrust;
-  case AFactory.Tls.MinTlsVersion of
-    tvTls12: result.MinProtocol := TLS1_2_VERSION;
-    tvTls13: result.MinProtocol := TLS1_3_VERSION;
-  end;
-  case AFactory.Tls.MaxTlsVersion of
-    tvTls12: result.MaxProtocol := TLS1_2_VERSION;
-    tvTls13: result.MaxProtocol := TLS1_3_VERSION;
-  end;
 end;
 
 function BuildConnectionCoreOptions(
@@ -441,23 +409,6 @@ begin
   if AHeaderTimeoutMs > 0 then
     Result := Result + TAsyncConnectionSec(
       cardinal((AHeaderTimeoutMs + 999) div 1000));
-end;
-
-procedure SetHandshakeDeadline(const ASocket: TNetSocket;
-  const ARequestedMs: LongWord);
-var
-  Ms: LongWord;
-begin
-  Ms := EffectiveHandshakeTimeoutMs(ARequestedMs);
-  if Ms = 0 then
-    exit;
-  try
-    ASocket.SetReceiveTimeout(Integer(Ms));
-    ASocket.SetSendTimeout(Integer(Ms));
-  except
-    on ENetSock do
-      ;   // no deadline is set; the connection still proceeds
-  end;
 end;
 
 end.

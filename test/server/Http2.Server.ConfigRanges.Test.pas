@@ -42,7 +42,6 @@ type
     procedure TestZeroWindowsAreRejected;
     procedure TestZeroStreamLimitIsRejected;
     procedure TestHeaderTableAbove2To31IsRejected;
-    procedure TestKeyFileMayBeEmptyWhenTheCertificateHoldsIt;
     procedure TestQueueDepthZeroStaysValid;
     procedure TestAllProblemsComeInOneMessage;
     procedure TestBindAddressTextUsesTheHost;
@@ -148,19 +147,6 @@ begin
     'header table'));
   AssertFalse(Rejects(Base.WithHeaderTableSize(LongWord(2147483647)),
     'header table'));
-end;
-
-procedure TConfigRangesTest.TestKeyFileMayBeEmptyWhenTheCertificateHoldsIt;
-var
-  Problems: TArray<string>;
-  F: THttp2ServerFactory;
-begin
-  // ApplyTls takes an empty key file, because a PEM file can hold both
-  F := THttp2ServerFactory.Create
-    .WithHandler(FHandler)
-    .WithTls(TTlsServerOptions.Create.WithCertificateFile('a.pem'));
-  AssertTrue('SRV-12: Validate and ApplyTls agree: ' +
-    ' no problem about the key', F.Validate(Problems));
 end;
 
 procedure TConfigRangesTest.TestQueueDepthZeroStaysValid;

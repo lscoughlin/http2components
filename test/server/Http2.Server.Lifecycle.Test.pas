@@ -23,7 +23,8 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, fpcunit, testregistry,
   Http2.Server, Http2.Server.Errors, Http2.Server.Http1.RawClient,
-  Http2.Server.WsHardening.Test;
+  Http2.Server.WsHardening.Test, Http2.Common.Tls.Context,
+  Http2.Common.Tls.Types, Http2.Test.Tls.Fake;
 
 type
   /// an observer that raises on every event
@@ -48,7 +49,7 @@ type
     procedure TestNewConnectionIsRefusedWhileStopping;
     procedure TestStopCancelsPastTheGracefulTimeout;
     procedure TestObserverThatRaisesDoesNotShrinkThePool;
-    procedure TestFailedStartLeavesNothingBound;
+    procedure TestClientOnlyContextIsRejected;
   end;
 
 implementation
@@ -231,32 +232,20 @@ begin
   end;
 end;
 
-procedure TLifecycleTest.TestFailedStartLeavesNothingBound;
+procedure TLifecycleTest.TestClientOnlyContextIsRejected;
 var
-  Tls: TTlsServerOptions;
-  Failed: Boolean;
-  Server: IHttp2Server;
+  Context: ITLSContext;
+  Problems: TArray<string>;
+  I: Integer;
+  Found: Boolean;
 begin
-  Tls := TTlsServerOptions.Create
-    .WithCertificateFile('/nonexistent/cert.pem')
-    .WithKeyFile('/nonexistent/key.pem');
-  Server := LiveFactory(FHandlerRef).WithTls(Tls).Build;
-  Failed := False;
-  try
-    Server.Start;
-  except
-    Failed := True;
-  end;
-  AssertTrue('Start raises', Failed);
-  AssertFalse('SRV-6: the server is not running', Server.IsRunning);
-  Failed := False;
-  try
-    Server.Start;
-  except
-    Failed := True;
-  end;
-  AssertTrue('a second Start raises again', Failed);
-  Server.Stop;
+  Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 2500);
+  AssertFalse('a client-only context cannot bind to a server',
+    LiveFactory(FHandlerRef).WithTlsContext(Context).Validate(Problems));
+  Found := False;
+  for I := 0 to High(Problems) do
+    if Pos('no server role', Problems[I]) > 0 then Found := True;
+  AssertTrue('the server-role problem is reported', Found);
 end;
 
 initialization
