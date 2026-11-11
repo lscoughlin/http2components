@@ -1,0 +1,1812 @@
+{**
+---
+license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+copyright: Copyright 2026 Liam Seamus Coughlin
+keywords: client_test
+notes:
+  - this preserves a client test from the source project
+---
+}
+/// Public-API client tests (plan story S09: factory, pool, Send, Close,
+/// response types, generic reader).
+// - the pool tests use an injected IHttp2SocketFactory that returns an
+//   in-memory scripted server socket, so NO real sockets are opened.
+// - non-vacuous by construction: the cap test asserts the observed dial count
+//   and connection count equal MaxConnections (mutating the pool to ignore the
+//   cap fails it); pseudo-header/port-omission is asserted from the DECODED
+//   wire block in Http2.Client.Request.Test.pas.
+unit Http2.Client.Test;
+
+{$mode delphi}{$H+}
+{$modeswitch advancedrecords}
+{$modeswitch typehelpers}
+{$interfaces com}
+
+interface
+
+uses
+  SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
+  Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack,
+  Http2.Client.Tls, Http2.Client.Connection, Http2.Client.Stream, Http2.Client.Messages, Http2.Client.Client,
+  Http2.Client.Observer, Http2.Client.Encoding;
+
+type
+  TFakeResponseGate = (frgNone, frgFirstHeaders, frgFirstBody);
+
+  /// a scripted in-memory HTTP/2 server: parses every frame the client writes
+  /// and answers each request HEADERS with a configured response.
+  TFakeServerSocket = class(TInterfacedObject, IHttp2Socket)
+  private
+    FLock: TCriticalSection;
+    FAcc: TBytes;                 // all bytes the client has written
+    FParsePos: Integer;
+    FPrefaceDone: Boolean;
+    FIn: TBytes;                  // bytes the client may read
+    FReadPos: Integer;
+    FStatus: string;
+    FBody: TBytes;
+    FEndStream: Boolean;
+    FRespHeaders: THeaderBlock;
+    FCodec: THpackCodec;
+    FGate: TFakeResponseGate;
+    FRequestCount: Integer;
+    FHeldStreamId: LongWord;
+    FRequestEvent: TEvent;
+    FConnected: Boolean;
+    FConnectTimeoutMs, FReadTimeoutMs, FWriteTimeoutMs: Integer;
+    procedure AppendWritten(const ABuffer; const ACount: Integer);
+    procedure ParseAvailable;
+    procedure EmitResponse(const AStreamId: LongWord);
+    function FrameBytes(const AF: TFrame): TBytes;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    procedure SetResponse(const AStatus: string; const ABody: TBytes;
+      const AEndStream: Boolean);
+    /// add a response header field to every response this socket answers
+    procedure AddResponseHeader(const AName, AValue: string);
+    procedure SetGate(const AGate: TFakeResponseGate);
+    function WaitForRequests(const ACount, ATimeoutMs: Integer): Boolean;
+    procedure ReleaseGate;
+    function Read(var ABuffer; ACount: Integer): Integer;
+    function Write(const ABuffer; ACount: Integer): Integer;
+    procedure Close;
+    function GetConnected: Boolean;
+    function GetConnectTimeoutMs: Integer;
+    procedure SetConnectTimeoutMs(const AValue: Integer);
+    function GetReadTimeoutMs: Integer;
+    procedure SetReadTimeoutMs(const AValue: Integer);
+    function GetWriteTimeoutMs: Integer;
+    procedure SetWriteTimeoutMs(const AValue: Integer);
+  end;
+
+  /// counts dials and hands out fresh fake server sockets. ResponseEndStream=
+  /// False makes the fake answer with HEADERS only (no END_STREAM, no DATA),
+  /// so a lease stays registered and the pool cap binds.
+  TFakeSocketFactory = class(TInterfacedObject, IHttp2SocketFactory)
+  private
+    FLock: TCriticalSection;
+    FDials: Integer;
+    FResponseBody: TBytes;
+    FResponseEndStream: Boolean;
+    FResponseStatus: string;
+    FResponseHeaders: THeaderBlock;
+    FResponseGate: TFakeResponseGate;
+    FLastSocket: TFakeServerSocket;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    function Dial(const AHost: string; const APort: Word;
+      const ATimeoutMs: Integer): IHttp2Socket;
+    function Dials: Integer;
+    procedure SetResponse(const AStatus: string; const ABody: TBytes;
+      const AEndStream: Boolean);
+    /// add a response header field that every dialled socket will answer
+    procedure AddResponseHeader(const AName, AValue: string);
+    procedure SetResponseGate(const AGate: TFakeResponseGate);
+    function WaitForRequests(const ACount, ATimeoutMs: Integer): Boolean;
+    procedure ReleaseGate;
+  end;
+
+  /// a fake IConnectionStream used only to raise a connection's stream count
+  TFakeConnStream = class(TInterfacedObject, IConnectionStream)
+  public
+    procedure OnConnectionFailed(const AMessage: string;
+      const ACode: THttp2ErrorCode);
+    procedure OnConnectionGoAway(const ALastStreamId: LongWord);
+    procedure OnStreamFrame(const AFrame: TFrame);
+  end;
+
+  /// a fake pooled connection for least-loaded pool tests (no sockets)
+  TFakePooledConnection = class(TInterfacedObject, IPooledConnection)
+  private
+    FLoad: Integer;
+    FEligible: Boolean;
+    FOrigin: string;
+    FConn: TConnection;
+    FLock: TCriticalSection;
+  public
+    constructor Create(const AOrigin: string; const ALoad: Integer;
+      const AEligible: Boolean);
+    destructor Destroy; override;
+    function ActiveStreams: Integer;
+    function Eligible: Boolean;
+    function Acquire(const ARequest: TStreamRequest; const ATimeoutMs: Integer;
+      out AAcquired: Boolean): IHttpResponse;
+    function AcquireUpgraded(const ARequest: TStreamRequest;
+      const ATimeoutMs: Integer): IHttpResponse;
+    function Closed: Boolean;
+    procedure Drain;
+    procedure ReleaseIfIdle;
+    function GetConn: TConnection;
+    function GetOrigin: string;
+    function GetLock: TCriticalSection;
+    function GetKey: Pointer;
+  end;
+
+  /// a fake response + body stream for TResponseReader<T> tests
+  TFakeBody = class(TInterfacedObject, IHttpBodyStream)
+  private
+    FData: TBytes;
+    FPos: Integer;
+  public
+    constructor Create(const AData: TBytes);
+    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Eof: Boolean;
+  end;
+
+  TFakeResponse = class(TInterfacedObject, IHttpResponse)
+  private
+    FStatus: LongInt;
+    FHeaders: IHttpHeaders;
+    FBody: IHttpBodyStream;
+  public
+    constructor Create(const AStatus: LongInt; const ABody: IHttpBodyStream);
+    function GetStatusCode: LongInt;
+    function GetHeaders: IHttpHeaders;
+    function GetBody: IHttpBodyStream;
+  end;
+
+  /// one thread performing a single Send against a shared client
+  TSendWorker = class(TThread)
+  private
+    FClient: IHttpClient;
+    FUrl: string;
+    FDone: PRTLEvent;
+    FDoneFlag: Boolean;
+    FStatus: LongInt;
+    FError: string;
+    FRaised: Boolean;
+    FResponse: IHttpResponse;   // retained so the stream stays registered
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AClient: IHttpClient; const AUrl: string);
+    destructor Destroy; override;
+    function WaitDone(const ATimeoutMs: Integer): Boolean;
+    property Status: LongInt read FStatus;
+    property Raised: Boolean read FRaised;
+    property Error: string read FError;
+    property Response: IHttpResponse read FResponse;
+  end;
+
+  TBodyReadWorker = class(TThread)
+  private
+    FResponse: IHttpResponse;
+    FDone: PRTLEvent;
+    FStarted: PRTLEvent;
+    FError: string;
+    FByteCount: Integer;
+    FStartedFlag: Boolean;
+    FDoneFlag: Boolean;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AResponse: IHttpResponse);
+    destructor Destroy; override;
+    function WaitStarted(const ATimeoutMs: Integer): Boolean;
+    function WaitDone(const ATimeoutMs: Integer): Boolean;
+    property Error: string read FError;
+    property ByteCount: Integer read FByteCount;
+  end;
+
+  TCancellableSendWorker = class(TThread)
+  private
+    FClient: IHttpClient;
+    FToken: ICancellationToken;
+    FDone: PRTLEvent;
+    FRaised: Boolean;
+    FDoneFlag: Boolean;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AClient: IHttpClient;
+      const AToken: ICancellationToken);
+    destructor Destroy; override;
+    function WaitDone(const ATimeoutMs: Integer): Boolean;
+    property Raised: Boolean read FRaised;
+  end;
+
+  TClientTest = class(TTestCase)
+  published
+    // 09.1
+    procedure TestFactoryDefaults;
+    procedure TestFactoryIsImmutable;
+    procedure TestDocumentedFluentChainBuilds;
+    // 09.2
+    procedure TestSendReturnsStatusHeadersAndBody;
+    procedure TestSendDecodesAGzipBody;
+    procedure TestSendLeavesAnUncodedBodyAlone;
+    procedure TestSendKeepsAnUnknownCodingRaw;
+    // 09.3
+    procedure TestResponseReaderDecodesBytes;
+    procedure TestResponseReaderDecodesString;
+    procedure TestResponseReaderDecodesUTF8String;
+    procedure TestResponseReaderDecodesRecord;
+    // base-library text helpers
+    procedure TestWithTextBodySetsBodyAndContentType;
+    procedure TestWithTextBodyKeepsExplicitContentType;
+    procedure TestReadTextReturnsBody;
+    // 09.5
+    procedure TestPoolNeverExceedsMaxConnections;
+    procedure TestMaxConnectionsPerHostAndTotalAreIndependent;
+    procedure TestPoolNeverExceedsMaxConnectionsPerHost;
+    procedure TestPoolNeverExceedsMaxTotalConnections;
+    procedure TestConcurrentSendAcrossOneConnection;
+    procedure TestIdleBodyReadDoesNotBlockSecondStream;
+    procedure TestWaitingHeadersDoNotBlockSecondStream;
+    procedure TestCancelledHeaderWaitLeavesConnectionUsable;
+    // 09.6
+    procedure TestLeastLoadedSelection;
+    procedure TestPerConnectionStreamCap;
+    // 09.8
+    procedure TestCloseRejectsNewSends;
+    procedure TestCloseKeepsOutstandingBodyReadable;
+    // 09.10 / integration (opt-in: set HTTP2_LIVE_ITEST=1 and run nghttpd)
+    procedure TestLiveGetAgainstNghttpd;
+    procedure TestLivePostEchoAgainstNghttpd;
+    // S11 wiring: the factory-level observer reaches real connections
+    procedure TestFactoryObserverReceivesConnectionAndFrameEvents;
+  end;
+
+implementation
+
+{ TFakeServerSocket }
+
+constructor TFakeServerSocket.Create;
+var
+  F: TFrame;
+begin
+  inherited Create;
+  FLock := TCriticalSection.Create;
+  FCodec := THpackCodec.Create;
+  FStatus := '200';
+  FBody := nil;
+  FEndStream := True;
+  FRespHeaders := nil;
+  FGate := frgNone;
+  FRequestCount := 0;
+  FHeldStreamId := 0;
+  FRequestEvent := TEvent.Create(nil, True, False, '');
+  FConnected := True;
+  FConnectTimeoutMs := 1000;
+  FReadTimeoutMs := 1000;
+  FWriteTimeoutMs := 1000;
+  // a real server sends its own SETTINGS as its first frame; the client must
+  // apply it before it may send DATA, so seed it for the very first read
+  F := BuildSettingsFrame(TConnectionSettings.Defaults);
+  FIn := FrameBytes(F);
+end;
+
+destructor TFakeServerSocket.Destroy;
+begin
+  FCodec.Free;
+  FRequestEvent.Free;
+  FLock.Free;
+  inherited Destroy;
+end;
+
+procedure TFakeServerSocket.SetResponse(const AStatus: string;
+  const ABody: TBytes; const AEndStream: Boolean);
+begin
+  FLock.Acquire;
+  try
+    FStatus := AStatus;
+    FBody := ABody;
+    FEndStream := AEndStream;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TFakeServerSocket.AddResponseHeader(const AName, AValue: string);
+var
+  N: Integer;
+  FirstBodyCount: Integer;
+begin
+  FLock.Acquire;
+  try
+    N := Length(FRespHeaders);
+    SetLength(FRespHeaders, N + 1);
+    FRespHeaders[N].Name := AName;
+    FRespHeaders[N].Value := AValue;
+    FRespHeaders[N].Sensitive := False;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TFakeServerSocket.SetGate(const AGate: TFakeResponseGate);
+begin
+  FLock.Acquire;
+  try
+    FGate := AGate;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TFakeServerSocket.WaitForRequests(const ACount,
+  ATimeoutMs: Integer): Boolean;
+var
+  Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  repeat
+    FLock.Acquire;
+    try
+      if FRequestCount >= ACount then
+        Exit(True);
+    finally
+      FLock.Release;
+    end;
+    if GetTickCount64 >= Deadline then
+      Exit(False);
+    Sleep(1);
+  until False;
+end;
+
+procedure TFakeServerSocket.ReleaseGate;
+var
+  F: TFrame;
+begin
+  FLock.Acquire;
+  try
+    if FHeldStreamId = 0 then
+      Exit;
+    if FGate = frgFirstBody then
+    begin
+      F := BuildDataFrame(FHeldStreamId, FBody, True);
+      FIn := FIn + FrameBytes(F);
+    end
+    else
+      EmitResponse(FHeldStreamId);
+    FHeldStreamId := 0;
+    FGate := frgNone;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TFakeServerSocket.FrameBytes(const AF: TFrame): TBytes;
+var
+  MS: TMemoryStream;
+begin
+  Result := nil;
+  MS := TMemoryStream.Create;
+  try
+    WriteFrame(MS, AF);
+    SetLength(Result, MS.Size);
+    if MS.Size > 0 then
+      Move(MS.Memory^, Result[0], MS.Size);
+  finally
+    MS.Free;
+  end;
+end;
+
+procedure TFakeServerSocket.EmitResponse(const AStreamId: LongWord);
+var
+  Block: THeaderBlock;
+  Enc: TBytes;
+  F: TFrame;
+  I, N: Integer;
+begin
+  // ':status' is first, then every header this socket was told to add
+  N := Length(FRespHeaders);
+  SetLength(Block, N + 1);
+  Block[0].Name := ':status';
+  Block[0].Value := FStatus;
+  Block[0].Sensitive := False;
+  for I := 0 to N - 1 do
+    Block[I + 1] := FRespHeaders[I];
+  Enc := FCodec.Encode(Block);
+  if Length(FBody) = 0 then
+  begin
+    F := BuildHeadersFrame(AStreamId, Enc, True, FEndStream);
+    FIn := FIn + FrameBytes(F);
+  end
+  else
+  begin
+    F := BuildHeadersFrame(AStreamId, Enc, True, False);
+    FIn := FIn + FrameBytes(F);
+    F := BuildDataFrame(AStreamId, FBody, FEndStream);
+    FIn := FIn + FrameBytes(F);
+  end;
+end;
+
+procedure TFakeServerSocket.AppendWritten(const ABuffer;
+  const ACount: Integer);
+var
+  P: PByte;
+  N: Integer;
+begin
+  if ACount <= 0 then
+    Exit;
+  P := @ABuffer;
+  N := Length(FAcc);
+  SetLength(FAcc, N + ACount);
+  Move(P^, FAcc[N], ACount);
+end;
+
+procedure TFakeServerSocket.ParseAvailable;
+var
+  Len, Typ: Integer;
+  StreamId: LongWord;
+  Total: Integer;
+  Block: THeaderBlock;
+  Enc: TBytes;
+  F: TFrame;
+  I: Integer;
+begin
+  if not FPrefaceDone then
+  begin
+    if Length(FAcc) < 24 then
+      Exit;
+    FParsePos := 24;
+    FPrefaceDone := True;
+  end;
+  while Length(FAcc) - FParsePos >= FrameHeaderSize do
+  begin
+    Len := (FAcc[FParsePos] shl 16) or (FAcc[FParsePos + 1] shl 8) or
+      FAcc[FParsePos + 2];
+    Typ := FAcc[FParsePos + 3];
+    StreamId := (LongWord(FAcc[FParsePos + 5]) shl 24) or
+      (LongWord(FAcc[FParsePos + 6]) shl 16) or
+      (LongWord(FAcc[FParsePos + 7]) shl 8) or LongWord(FAcc[FParsePos + 8]);
+    if Length(FAcc) - FParsePos < FrameHeaderSize + Len then
+      Exit;
+    Total := FrameHeaderSize + Len;
+    Inc(FParsePos, Total);
+    if (Typ = Ord(ftHeaders)) and (StreamId <> 0) then
+    begin
+      Inc(FRequestCount);
+      FRequestEvent.SetEvent;
+      if (FRequestCount = 1) and (FGate = frgFirstHeaders) then
+        FHeldStreamId := StreamId
+      else if (FRequestCount = 1) and (FGate = frgFirstBody) then
+      begin
+        FHeldStreamId := StreamId;
+        SetLength(Block, Length(FRespHeaders) + 1);
+        Block[0].Name := ':status';
+        Block[0].Value := FStatus;
+        Block[0].Sensitive := False;
+        for I := 0 to High(FRespHeaders) do
+          Block[I + 1] := FRespHeaders[I];
+        Enc := FCodec.Encode(Block);
+        F := BuildHeadersFrame(StreamId, Enc, True, False);
+        FIn := FIn + FrameBytes(F);
+      end
+      else
+        EmitResponse(StreamId);
+    end;
+  end;
+end;
+
+function TFakeServerSocket.Write(const ABuffer; ACount: Integer): Integer;
+begin
+  FLock.Acquire;
+  try
+    if not FConnected then
+      raise EHttpConnectionClosed.Create('fake socket closed');
+    AppendWritten(ABuffer, ACount);
+    ParseAvailable;
+  finally
+    FLock.Release;
+  end;
+  Result := ACount;
+end;
+
+function TFakeServerSocket.Read(var ABuffer; ACount: Integer): Integer;
+var
+  Avail, N: Integer;
+  P: PByte;
+begin
+  FLock.Acquire;
+  try
+    if not FConnected then
+      Exit(0);
+    Avail := Length(FIn) - FReadPos;
+    if Avail <= 0 then
+      raise EHttpTimeout.Create('fake read idle');
+    N := ACount;
+    if N > Avail then
+      N := Avail;
+    P := @ABuffer;
+    Move(FIn[FReadPos], P^, N);
+    Inc(FReadPos, N);
+    Result := N;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TFakeServerSocket.Close;
+begin
+  FConnected := False;
+end;
+
+function TFakeServerSocket.GetConnected: Boolean;
+begin
+  Result := FConnected;
+end;
+
+function TFakeServerSocket.GetConnectTimeoutMs: Integer;
+begin
+  Result := FConnectTimeoutMs;
+end;
+
+procedure TFakeServerSocket.SetConnectTimeoutMs(const AValue: Integer);
+begin
+  FConnectTimeoutMs := AValue;
+end;
+
+function TFakeServerSocket.GetReadTimeoutMs: Integer;
+begin
+  Result := FReadTimeoutMs;
+end;
+
+procedure TFakeServerSocket.SetReadTimeoutMs(const AValue: Integer);
+begin
+  FReadTimeoutMs := AValue;
+end;
+
+function TFakeServerSocket.GetWriteTimeoutMs: Integer;
+begin
+  Result := FWriteTimeoutMs;
+end;
+
+procedure TFakeServerSocket.SetWriteTimeoutMs(const AValue: Integer);
+begin
+  FWriteTimeoutMs := AValue;
+end;
+
+{ TFakeSocketFactory }
+
+constructor TFakeSocketFactory.Create;
+begin
+  inherited Create;
+  FLock := TCriticalSection.Create;
+  FResponseStatus := '200';
+  FResponseBody := nil;
+  FResponseEndStream := True;
+  FResponseHeaders := nil;
+  FResponseGate := frgNone;
+  FLastSocket := nil;
+end;
+
+destructor TFakeSocketFactory.Destroy;
+begin
+  FLock.Free;
+  inherited Destroy;
+end;
+
+procedure TFakeSocketFactory.SetResponse(const AStatus: string;
+  const ABody: TBytes; const AEndStream: Boolean);
+begin
+  FLock.Acquire;
+  try
+    FResponseStatus := AStatus;
+    FResponseBody := ABody;
+    FResponseEndStream := AEndStream;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TFakeSocketFactory.Dial(const AHost: string; const APort: Word;
+  const ATimeoutMs: Integer): IHttp2Socket;
+var
+  S: TFakeServerSocket;
+  I: Integer;
+begin
+  S := TFakeServerSocket.Create;
+  FLock.Acquire;
+  try
+    Inc(FDials);
+    FLastSocket := S;
+    S.SetResponse(FResponseStatus, FResponseBody, FResponseEndStream);
+    S.SetGate(FResponseGate);
+    for I := 0 to High(FResponseHeaders) do
+      S.AddResponseHeader(FResponseHeaders[I].Name,
+        FResponseHeaders[I].Value);
+  finally
+    FLock.Release;
+  end;
+  Result := S;
+end;
+
+procedure TFakeSocketFactory.SetResponseGate(const AGate: TFakeResponseGate);
+begin
+  FLock.Acquire;
+  try
+    FResponseGate := AGate;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TFakeSocketFactory.WaitForRequests(const ACount,
+  ATimeoutMs: Integer): Boolean;
+var
+  S: TFakeServerSocket;
+  Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  repeat
+    FLock.Acquire;
+    try
+      S := FLastSocket;
+    finally
+      FLock.Release;
+    end;
+    if S <> nil then
+      Exit(S.WaitForRequests(ACount,
+        Integer(Deadline - GetTickCount64)));
+    if GetTickCount64 >= Deadline then
+      Exit(False);
+    Sleep(1);
+  until False;
+end;
+
+procedure TFakeSocketFactory.ReleaseGate;
+var
+  S: TFakeServerSocket;
+begin
+  FLock.Acquire;
+  try
+    S := FLastSocket;
+  finally
+    FLock.Release;
+  end;
+  if S <> nil then
+    S.ReleaseGate;
+end;
+
+procedure TFakeSocketFactory.AddResponseHeader(const AName, AValue: string);
+var
+  N: Integer;
+begin
+  FLock.Acquire;
+  try
+    N := Length(FResponseHeaders);
+    SetLength(FResponseHeaders, N + 1);
+    FResponseHeaders[N].Name := AName;
+    FResponseHeaders[N].Value := AValue;
+    FResponseHeaders[N].Sensitive := False;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TFakeSocketFactory.Dials: Integer;
+begin
+  FLock.Acquire;
+  try
+    Result := FDials;
+  finally
+    FLock.Release;
+  end;
+end;
+
+{ TFakeConnStream }
+
+procedure TFakeConnStream.OnConnectionFailed(const AMessage: string;
+  const ACode: THttp2ErrorCode);
+begin
+end;
+
+procedure TFakeConnStream.OnConnectionGoAway(const ALastStreamId: LongWord);
+begin
+end;
+
+procedure TFakeConnStream.OnStreamFrame(const AFrame: TFrame);
+begin
+end;
+
+{ TFakePooledConnection }
+
+constructor TFakePooledConnection.Create(const AOrigin: string;
+  const ALoad: Integer; const AEligible: Boolean);
+begin
+  inherited Create;
+  FOrigin := AOrigin;
+  FLoad := ALoad;
+  FEligible := AEligible;
+  FLock := TCriticalSection.Create;
+  FConn := TConnection.Create(TFakeServerSocket.Create);
+end;
+
+destructor TFakePooledConnection.Destroy;
+begin
+  FConn.Free;
+  FLock.Free;
+  inherited Destroy;
+end;
+
+function TFakePooledConnection.ActiveStreams: Integer;
+begin
+  Result := FLoad;
+end;
+
+function TFakePooledConnection.Eligible: Boolean;
+begin
+  Result := FEligible;
+end;
+
+function TFakePooledConnection.AcquireUpgraded(
+  const ARequest: TStreamRequest;
+  const ATimeoutMs: Integer): IHttpResponse;
+begin
+  raise EHttpProtocolError.Create('fake pooled connection: no h2c upgrade',
+    ecInternalError);
+end;
+
+function TFakePooledConnection.Closed: Boolean;
+begin
+  Result := FConn.State = csClosed;
+end;
+
+function TFakePooledConnection.GetKey: Pointer;
+begin
+  Result := Pointer(FConn);
+end;
+
+function TFakePooledConnection.Acquire(const ARequest: TStreamRequest;
+  const ATimeoutMs: Integer; out AAcquired: Boolean): IHttpResponse;
+begin
+  AAcquired := False;
+  Result := nil;
+end;
+
+procedure TFakePooledConnection.Drain;
+begin
+  FEligible := False;
+end;
+
+procedure TFakePooledConnection.ReleaseIfIdle;
+begin
+end;
+
+function TFakePooledConnection.GetConn: TConnection;
+begin
+  Result := FConn;
+end;
+
+function TFakePooledConnection.GetOrigin: string;
+begin
+  Result := FOrigin;
+end;
+
+function TFakePooledConnection.GetLock: TCriticalSection;
+begin
+  Result := FLock;
+end;
+
+{ TFakeBody }
+
+constructor TFakeBody.Create(const AData: TBytes);
+begin
+  inherited Create;
+  FData := AData;
+  FPos := 0;
+end;
+
+function TFakeBody.Read(var ABuffer; const ACount: LongInt): LongInt;
+var
+  Avail, N: Integer;
+  P: PByte;
+begin
+  Avail := Length(FData) - FPos;
+  if Avail <= 0 then
+    Exit(0);
+  N := ACount;
+  if N > Avail then
+    N := Avail;
+  P := @ABuffer;
+  Move(FData[FPos], P^, N);
+  Inc(FPos, N);
+  Result := N;
+end;
+
+function TFakeBody.Eof: Boolean;
+begin
+  Result := FPos >= Length(FData);
+end;
+
+{ TFakeResponse }
+
+constructor TFakeResponse.Create(const AStatus: LongInt;
+  const ABody: IHttpBodyStream);
+begin
+  inherited Create;
+  FStatus := AStatus;
+  FBody := ABody;
+  FHeaders := NewHttpHeaders;
+end;
+
+function TFakeResponse.GetStatusCode: LongInt;
+begin
+  Result := FStatus;
+end;
+
+function TFakeResponse.GetHeaders: IHttpHeaders;
+begin
+  Result := FHeaders;
+end;
+
+function TFakeResponse.GetBody: IHttpBodyStream;
+begin
+  Result := FBody;
+end;
+
+{ TSendWorker }
+
+constructor TSendWorker.Create(const AClient: IHttpClient; const AUrl: string);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FClient := AClient;
+  FUrl := AUrl;
+  FDone := RTLEventCreate;
+end;
+
+destructor TSendWorker.Destroy;
+begin
+  RTLEventDestroy(FDone);
+  inherited Destroy;
+end;
+
+procedure TSendWorker.Execute;
+var
+  R: IHttpResponse;
+begin
+  try
+    R := FClient.Send(THttpRequest.Create(hmGet, FUrl));
+    FResponse := R;
+    FStatus := R.StatusCode;
+  except
+    on E: Exception do
+    begin
+      FRaised := True;
+      FError := E.ClassName + ': ' + E.Message;
+      if E is EHttpError then
+        FStatus := -1;
+    end;
+  end;
+  FDoneFlag := True;
+  RTLEventSetEvent(FDone);
+end;
+
+function TSendWorker.WaitDone(const ATimeoutMs: Integer): Boolean;
+var
+  Deadline: QWord;
+  Remaining: Integer;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  while not FDoneFlag do
+  begin
+    if GetTickCount64 >= Deadline then
+      Exit(False);
+    Remaining := Integer(Deadline - GetTickCount64);
+    RTLEventWaitFor(FDone, Remaining);
+  end;
+  Result := True;
+end;
+
+constructor TBodyReadWorker.Create(const AResponse: IHttpResponse);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FResponse := AResponse;
+  FDone := RTLEventCreate;
+  FStarted := RTLEventCreate;
+end;
+
+destructor TBodyReadWorker.Destroy;
+begin
+  RTLEventDestroy(FStarted);
+  RTLEventDestroy(FDone);
+  inherited Destroy;
+end;
+
+procedure TBodyReadWorker.Execute;
+var
+  B: array[0..31] of Byte;
+begin
+  FStartedFlag := True;
+  RTLEventSetEvent(FStarted);
+  try
+    FByteCount := FResponse.Body.Read(B[0], SizeOf(B));
+  except
+    on E: Exception do FError := E.ClassName + ': ' + E.Message;
+  end;
+  FDoneFlag := True;
+  RTLEventSetEvent(FDone);
+end;
+
+function TBodyReadWorker.WaitStarted(const ATimeoutMs: Integer): Boolean;
+var Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  while not FStartedFlag and (GetTickCount64 < Deadline) do Sleep(1);
+  Result := FStartedFlag;
+end;
+
+function TBodyReadWorker.WaitDone(const ATimeoutMs: Integer): Boolean;
+var Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  while not FDoneFlag and (GetTickCount64 < Deadline) do Sleep(1);
+  Result := FDoneFlag;
+end;
+
+constructor TCancellableSendWorker.Create(const AClient: IHttpClient;
+  const AToken: ICancellationToken);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FClient := AClient;
+  FToken := AToken;
+  FDone := RTLEventCreate;
+end;
+
+destructor TCancellableSendWorker.Destroy;
+begin
+  RTLEventDestroy(FDone);
+  inherited Destroy;
+end;
+
+procedure TCancellableSendWorker.Execute;
+var
+  R: IHttpResponse;
+begin
+  try
+    R := FClient.Send(THttpRequest.Create(hmGet,
+      'https://api.example/first').WithCancelToken(FToken));
+  except
+    on E: Exception do FRaised := True;
+  end;
+  FDoneFlag := True;
+  RTLEventSetEvent(FDone);
+end;
+
+function TCancellableSendWorker.WaitDone(const ATimeoutMs: Integer): Boolean;
+var Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  while not FDoneFlag and (GetTickCount64 < Deadline) do Sleep(1);
+  Result := FDoneFlag;
+end;
+
+{ helpers }
+
+function BytesOf(const A: string): TBytes;
+var
+  I: Integer;
+begin
+  Result := nil;
+  SetLength(Result, Length(A));
+  for I := 1 to Length(A) do
+    Result[I - 1] := Ord(A[I]);
+end;
+
+function StrOf(const A: TBytes): string;
+var
+  I: Integer;
+begin
+  Result := '';
+  for I := 0 to High(A) do
+    Result := Result + Chr(A[I]);
+end;
+
+function ReadWholeBody(const ABody: IHttpBodyStream): string;
+var
+  Buf: array[0..255] of Byte;
+  N: LongInt;
+  B: TBytes;
+begin
+  Result := '';
+  while True do
+  begin
+    N := ABody.Read(Buf, SizeOf(Buf));
+    if N <= 0 then
+      Break;
+    SetLength(B, N);
+    Move(Buf[0], B[0], N);
+    Result := Result + StrOf(B);
+  end;
+end;
+
+{ TClientTest }
+
+procedure TClientTest.TestFactoryDefaults;
+var
+  F: THttpClientFactory;
+begin
+  F := THttpClientFactory.Create;
+  AssertEquals('MaxConnectionsPerHost default', 4, F.MaxConnectionsPerHost);
+  AssertEquals('MaxTotalConnections default', 32, F.MaxTotalConnections);
+  AssertEquals('MaxConnections alias', 4, F.MaxConnections);
+  AssertEquals('MaxStreamsPerConnection default', 100,
+    F.MaxStreamsPerConnection);
+  AssertTrue('FollowRedirects default', F.FollowRedirects);
+  AssertEquals('MaxRedirects default', 10, F.MaxRedirects);
+  AssertEquals('ConnectTimeoutMs default', 10000, F.ConnectTimeoutMs);
+  AssertEquals('HeaderTimeoutMs default', 30000, F.HeaderTimeoutMs);
+  AssertEquals('IdleTimeoutMs default', 60000, F.IdleTimeoutMs);
+  AssertEquals('ProxyHost default', '', F.ProxyHost);
+  AssertEquals('ProxyPort default', 0, Ord(F.ProxyPort));
+end;
+
+procedure TClientTest.TestFactoryIsImmutable;
+var
+  Base, Forked: THttpClientFactory;
+begin
+  Base := THttpClientFactory.Create;
+  Forked := Base.WithMaxConnections(8).WithFollowRedirects(False);
+  AssertEquals('fork changed MaxConnections', 8, Forked.MaxConnections);
+  AssertEquals('fork changed MaxConnectionsPerHost', 8,
+    Forked.MaxConnectionsPerHost);
+  AssertEquals('fork changed MaxTotalConnections', 8,
+    Forked.MaxTotalConnections);
+  AssertFalse('fork changed FollowRedirects', Forked.FollowRedirects);
+  // the original is untouched
+  AssertEquals('base MaxConnections unchanged', 4, Base.MaxConnections);
+  AssertEquals('base MaxTotalConnections unchanged', 32,
+    Base.MaxTotalConnections);
+  AssertTrue('base FollowRedirects unchanged', Base.FollowRedirects);
+  // chaining twice from one base yields independent records
+  AssertEquals('base MaxStreams unchanged', 100, Base.MaxStreamsPerConnection);
+  AssertEquals('fork MaxStreams unchanged', 100, Forked.MaxStreamsPerConnection);
+end;
+
+procedure TClientTest.TestDocumentedFluentChainBuilds;
+var
+  Client: IHttpClient;
+begin
+  Client := THttpClientFactory.Create
+    .WithMaxConnections(8)
+    .WithMaxStreamsPerConnection(50)
+    .WithFollowRedirects(False)
+    .Build;
+  AssertTrue('the documented chain builds a client', Client <> nil);
+  Client.Close;
+end;
+
+procedure TClientTest.TestSendReturnsStatusHeadersAndBody;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  R: IHttpResponse;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .Build;
+  R := Client.Send(THttpRequest.Create(hmGet, 'https://api.example/thing'));
+  AssertEquals('status decoded from the wire', 200, R.StatusCode);
+  AssertEquals('body streamed', '', ReadWholeBody(R.Body));
+  AssertEquals('exactly one connection dialled', 1, Factory.Dials);
+  Client.Close;
+end;
+
+procedure TClientTest.TestSendDecodesAGzipBody;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  R: IHttpResponse;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Factory.SetResponse('200', GzipCompress(BytesOf('a gzipped body')), True);
+  Factory.AddResponseHeader('content-encoding', 'gzip');
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .Build;
+  R := Client.Send(THttpRequest.Create(hmGet, 'https://api.example/thing')
+    .WithAcceptEncoding('gzip'));
+  AssertEquals('status decoded from the wire', 200, R.StatusCode);
+  // the decode happens below ReadText, so a plain read yields plain bytes
+  AssertEquals('the gzip body is decoded transparently', 'a gzipped body',
+    ReadText(R));
+  AssertEquals('the coding header is removed', '',
+    R.Headers.GetFirst('content-encoding'));
+  Client.Close;
+end;
+
+procedure TClientTest.TestSendLeavesAnUncodedBodyAlone;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  R: IHttpResponse;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Factory.SetResponse('200', BytesOf('plain text'), True);
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .Build;
+  R := Client.Send(THttpRequest.Create(hmGet, 'https://api.example/thing'));
+  AssertEquals('an uncoded body is returned as it arrived', 'plain text',
+    ReadText(R));
+  Client.Close;
+end;
+
+procedure TClientTest.TestSendKeepsAnUnknownCodingRaw;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  R: IHttpResponse;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Factory.SetResponse('200', BytesOf('brotli bytes'), True);
+  Factory.AddResponseHeader('content-encoding', 'br');
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .Build;
+  R := Client.Send(THttpRequest.Create(hmGet, 'https://api.example/thing'));
+  // an unsupported coding is not decoded, and the header still names it
+  AssertEquals('an unknown coding reaches the caller raw', 'brotli bytes',
+    ReadText(R));
+  AssertEquals('the unknown coding header is kept', 'br',
+    R.Headers.GetFirst('content-encoding'));
+  Client.Close;
+end;
+
+procedure TClientTest.TestResponseReaderDecodesBytes;
+var
+  Resp: IHttpResponse;
+  V: TBytes;
+begin
+  Resp := TFakeResponse.Create(200, TFakeBody.Create(BytesOf('abcd')));
+  TResponseReader<TBytes>.Read(Resp, V);
+  AssertEquals('byte count', 4, Length(V));
+  AssertEquals('byte content', 'abcd', StrOf(V));
+end;
+
+procedure TClientTest.TestResponseReaderDecodesString;
+var
+  Resp: IHttpResponse;
+  V: AnsiString;
+begin
+  Resp := TFakeResponse.Create(200, TFakeBody.Create(BytesOf('hello')));
+  TResponseReader<AnsiString>.Read(Resp, V);
+  AssertEquals('string content', 'hello', string(V));
+end;
+
+type
+  TSmallDto = record
+    A, B: LongWord;
+  end;
+
+procedure TClientTest.TestResponseReaderDecodesRecord;
+var
+  Resp: IHttpResponse;
+  V: TSmallDto;
+  Raw: TBytes;
+begin
+  SetLength(Raw, SizeOf(TSmallDto));
+  LongWord(Pointer(@Raw[0])^) := $11223344;
+  LongWord(Pointer(@Raw[4])^) := $55667788;
+  Resp := TFakeResponse.Create(200, TFakeBody.Create(Raw));
+  TResponseReader<TSmallDto>.Read(Resp, V);
+  AssertEquals('first field', LongWord($11223344), V.A);
+  AssertEquals('second field', LongWord($55667788), V.B);
+end;
+
+procedure TClientTest.TestResponseReaderDecodesUTF8String;
+var
+  Resp: IHttpResponse;
+  V: UTF8String;
+begin
+  // UTF8String is an AnsiString on FPC 3.2.4; the base reader copies the body
+  // bytes verbatim into it (no code-page conversion)
+  Resp := TFakeResponse.Create(200, TFakeBody.Create(BytesOf('h'#195#169'llo')));
+  TResponseReader<UTF8String>.Read(Resp, V);
+  AssertEquals('utf8 byte count', 6, Length(V));
+  AssertEquals('utf8 text', 'h'#195#169'llo', string(V));
+end;
+
+procedure TClientTest.TestWithTextBodySetsBodyAndContentType;
+var
+  Req: THttpRequest;
+begin
+  Req := WithTextBody(
+    THttpRequest.Create(hmPost, 'https://api.example/echo'), 'hello');
+  AssertTrue('body is set', Req.Body.IsSet);
+  AssertEquals('body bytes', 'hello', StrOf(Req.Body.Data));
+  AssertEquals('content-type defaulted', 'text/plain',
+    Req.Headers.GetFirst('content-type'));
+end;
+
+procedure TClientTest.TestWithTextBodyKeepsExplicitContentType;
+var
+  Req: THttpRequest;
+begin
+  Req := WithTextBody(
+    THttpRequest.Create(hmPost, 'https://api.example/echo')
+      .WithHeader('content-type', 'text/csv'), 'a,b');
+  AssertEquals('explicit content-type preserved', 'text/csv',
+    Req.Headers.GetFirst('content-type'));
+end;
+
+procedure TClientTest.TestReadTextReturnsBody;
+var
+  Resp: IHttpResponse;
+begin
+  Resp := TFakeResponse.Create(200, TFakeBody.Create(BytesOf('plain text')));
+  AssertEquals('body as text', 'plain text', ReadText(Resp));
+end;
+
+procedure TClientTest.TestPoolNeverExceedsMaxConnections;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  Pool: TConnectionPool;
+  Workers: array[0..5] of TSendWorker;
+  I, Succeeded, TimedOut, Timeouts: Integer;
+begin
+  Factory := TFakeSocketFactory.Create;
+  // answer with HEADERS only (no END_STREAM): each acquired lease keeps its
+  // slot, so the pool can never wave more than MaxConnections*cap through
+  Factory.SetResponse('200', nil, False);
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .WithMaxConnections(2)
+    .WithMaxStreamsPerConnection(1)
+    .WithHeaderTimeout(600)
+    .Build;
+  Pool := (Client as THttpClient).Pool;
+  for I := 0 to High(Workers) do
+  begin
+    Workers[I] := TSendWorker.Create(Client, 'https://api.example/x');
+    Workers[I].Start;
+  end;
+  Succeeded := 0;
+  TimedOut := 0;
+  Timeouts := 0;
+  // wait for every worker BEFORE releasing any response, so the two holders
+  // keep their slots occupied for the whole deadline and the rest time out
+  for I := 0 to High(Workers) do
+    AssertTrue('worker finished', Workers[I].WaitDone(5000));
+  for I := 0 to High(Workers) do
+  begin
+    if (not Workers[I].Raised) and (Workers[I].Status = 200) then
+      Inc(Succeeded)
+    else
+    begin
+      if Pos('timed out', Workers[I].Error) > 0 then
+        Inc(Timeouts);
+      Inc(TimedOut);
+    end;
+  end;
+  AssertEquals('exactly MaxConnections connections dialled', 2,
+    Factory.Dials);
+  AssertEquals('pool reports MaxConnections connections', 2,
+    Pool.ConnectionCount);
+  AssertEquals('two streams fit the two slots', 2, Succeeded);
+  AssertEquals('the rest wait and time out at the slot deadline', 4, TimedOut);
+  AssertEquals('the waits time out with EHttpTimeout', 4, Timeouts);
+  for I := 0 to High(Workers) do
+    Workers[I].Free;
+  Client.Close;
+end;
+
+procedure TClientTest.TestMaxConnectionsPerHostAndTotalAreIndependent;
+var
+  Base, PerHost, Total, Legacy: THttpClientFactory;
+begin
+  Base := THttpClientFactory.Create;
+  // the two caps are set independently, so a high-concurrency caller can keep
+  // a large total while tightly bounding each authority
+  PerHost := Base.WithMaxConnectionsPerHost(1)
+    .WithMaxTotalConnections(64)
+    .WithMaxStreamsPerConnection(20);
+  AssertEquals('per-host cap set', 1, PerHost.MaxConnectionsPerHost);
+  AssertEquals('total cap set', 64, PerHost.MaxTotalConnections);
+  AssertEquals('stream cap set', 20, PerHost.MaxStreamsPerConnection);
+  // MaxConnectionsPerHost leaves the total alone
+  AssertEquals('the base total is unchanged', 32, Base.MaxTotalConnections);
+
+  Total := Base.WithMaxTotalConnections(8);
+  AssertEquals('total cap set', 8, Total.MaxTotalConnections);
+  AssertEquals('per-host cap untouched', 4, Total.MaxConnectionsPerHost);
+
+  // the legacy single setter pins both, which is right for a single authority
+  Legacy := Base.WithMaxConnections(6);
+  AssertEquals('WithMaxConnections sets the per-host cap', 6,
+    Legacy.MaxConnectionsPerHost);
+  AssertEquals('WithMaxConnections also sets the total', 6,
+    Legacy.MaxTotalConnections);
+end;
+
+procedure TClientTest.TestPoolNeverExceedsMaxConnectionsPerHost;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  Pool: TConnectionPool;
+  Workers: array[0..3] of TSendWorker;
+  I, Succeeded, TimedOut, Timeouts: Integer;
+begin
+  Factory := TFakeSocketFactory.Create;
+  // hold every lease open (HEADERS only) so a slot occupied stays occupied
+  Factory.SetResponse('200', nil, False);
+  // one connection per host, but room for all four pool-wide: if the per-host
+  // cap were ignored, each host would open its second connection and the
+  // per-origin counts below would read 2
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .WithMaxConnectionsPerHost(1)
+    .WithMaxTotalConnections(4)
+    .WithMaxStreamsPerConnection(1)
+    .WithHeaderTimeout(600)
+    .Build;
+  Pool := (Client as THttpClient).Pool;
+  Workers[0] := TSendWorker.Create(Client, 'https://a.example/x');
+  Workers[1] := TSendWorker.Create(Client, 'https://a.example/x');
+  Workers[2] := TSendWorker.Create(Client, 'https://b.example/x');
+  Workers[3] := TSendWorker.Create(Client, 'https://b.example/x');
+  for I := 0 to High(Workers) do
+    Workers[I].Start;
+  Succeeded := 0;
+  TimedOut := 0;
+  Timeouts := 0;
+  for I := 0 to High(Workers) do
+    AssertTrue('worker finished', Workers[I].WaitDone(5000));
+  for I := 0 to High(Workers) do
+  begin
+    if (not Workers[I].Raised) and (Workers[I].Status = 200) then
+      Inc(Succeeded)
+    else
+    begin
+      if Pos('timed out', Workers[I].Error) > 0 then
+        Inc(Timeouts);
+      Inc(TimedOut);
+    end;
+  end;
+  // one connection per host (2 total), each capped at a single stream
+  AssertEquals('one connection dialled per host', 2, Factory.Dials);
+  AssertEquals('the pool holds per-host + total connections', 2,
+    Pool.ConnectionCount);
+  AssertEquals('a.example opened exactly one connection', 1,
+    Pool.ConnectionCountForOrigin('a.example'));
+  AssertEquals('b.example opened exactly one connection', 1,
+    Pool.ConnectionCountForOrigin('b.example'));
+  AssertEquals('one stream fits each host slot', 2, Succeeded);
+  AssertEquals('the extra request per host waits and times out', 2, TimedOut);
+  AssertEquals('the waits time out with EHttpTimeout', 2, Timeouts);
+  for I := 0 to High(Workers) do
+    Workers[I].Free;
+  Client.Close;
+end;
+
+procedure TClientTest.TestPoolNeverExceedsMaxTotalConnections;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  Pool: TConnectionPool;
+  Workers: array[0..1] of TSendWorker;
+  I, Succeeded, TimedOut: Integer;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Factory.SetResponse('200', nil, False);
+  // a generous per-host cap but a total of one: the global resource budget
+  // must bind below the per-host cap
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .WithMaxConnectionsPerHost(4)
+    .WithMaxTotalConnections(1)
+    .WithMaxStreamsPerConnection(1)
+    .WithHeaderTimeout(600)
+    .Build;
+  Pool := (Client as THttpClient).Pool;
+  Workers[0] := TSendWorker.Create(Client, 'https://a.example/x');
+  Workers[1] := TSendWorker.Create(Client, 'https://b.example/x');
+  for I := 0 to High(Workers) do
+    Workers[I].Start;
+  Succeeded := 0;
+  TimedOut := 0;
+  for I := 0 to High(Workers) do
+    AssertTrue('worker finished', Workers[I].WaitDone(5000));
+  for I := 0 to High(Workers) do
+    if (not Workers[I].Raised) and (Workers[I].Status = 200) then
+      Inc(Succeeded)
+    else
+      Inc(TimedOut);
+  AssertEquals('only one connection may exist pool-wide', 1, Factory.Dials);
+  AssertEquals('the pool reports its one connection', 1, Pool.ConnectionCount);
+  AssertEquals('one stream proceeds', 1, Succeeded);
+  AssertEquals('the second host waits and times out', 1, TimedOut);
+  for I := 0 to High(Workers) do
+    Workers[I].Free;
+  Client.Close;
+end;
+
+procedure TClientTest.TestConcurrentSendAcrossOneConnection;
+const
+  N = 8;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  Pool: TConnectionPool;
+  Workers: array[0..N - 1] of TSendWorker;
+  I, Ok: Integer;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Factory.AddResponseHeader('x-test-concurrent', 'dynamic-value');
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .WithMaxConnections(1)
+    .WithMaxStreamsPerConnection(100)
+    .Build;
+  Pool := (Client as THttpClient).Pool;
+  for I := 0 to N - 1 do
+  begin
+    Workers[I] := TSendWorker.Create(Client, 'https://api.example/x');
+    Workers[I].Start;
+  end;
+  Ok := 0;
+  for I := 0 to N - 1 do
+  begin
+    AssertTrue('worker finished', Workers[I].WaitDone(10000));
+    AssertFalse('no error under concurrency: ' + Workers[I].Error,
+      Workers[I].Raised);
+    AssertEquals('shared dynamic header is decoded', 'dynamic-value',
+      Workers[I].Response.Headers.GetFirst('x-test-concurrent'));
+    if Workers[I].Status = 200 then
+      Inc(Ok);
+    Workers[I].Free;
+  end;
+  AssertEquals('all concurrent sends succeed', N, Ok);
+  AssertEquals('all streams share one connection', 1, Factory.Dials);
+  AssertEquals('pool still reports one connection', 1, Pool.ConnectionCount);
+  Client.Close;
+end;
+
+procedure TClientTest.TestIdleBodyReadDoesNotBlockSecondStream;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  First, Second: TSendWorker;
+  Reader: TBodyReadWorker;
+  B: array[0..15] of Byte;
+  N: Integer;
+  FirstBodyCount: Integer;
+  SecondBody: string;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Factory.SetResponse('200', BytesOf('body'), True);
+  Factory.AddResponseHeader('x-test-hpack', 'shared-table-value');
+  Factory.SetResponseGate(frgFirstBody);
+  Client := THttpClientFactory.Create.WithSocketFactory(Factory)
+    .WithMaxConnections(1).WithMaxStreamsPerConnection(8)
+    .WithHeaderTimeout(5000).Build;
+  First := TSendWorker.Create(Client, 'https://api.example/first');
+  Second := nil;
+  Reader := nil;
+  SecondBody := '';
+  FirstBodyCount := 0;
+  try
+    First.Start;
+    AssertTrue('first response headers arrive', First.WaitDone(2000));
+    AssertFalse('first send succeeds', First.Raised);
+    Reader := TBodyReadWorker.Create(First.Response);
+    Reader.Start;
+    AssertTrue('first body reader starts', Reader.WaitStarted(1000));
+    Second := TSendWorker.Create(Client, 'https://api.example/second');
+    Second.Start;
+    AssertTrue('second response arrives while first body is idle',
+      Second.WaitDone(1500));
+    AssertFalse('second send succeeds', Second.Raised);
+    AssertEquals('dynamic HPACK response header decodes',
+      'shared-table-value',
+      Second.Response.Headers.GetFirst('x-test-hpack'));
+    N := Second.Response.Body.Read(B[0], SizeOf(B));
+    SetLength(SecondBody, N);
+    if N > 0 then Move(B[0], SecondBody[1], N);
+    Factory.ReleaseGate;
+    AssertTrue('first body read finishes after release', Reader.WaitDone(2000));
+    FirstBodyCount := Reader.ByteCount;
+  finally
+    Factory.ReleaseGate;
+    if Reader <> nil then Reader.WaitDone(2000);
+    if Second <> nil then Second.Free;
+    if Reader <> nil then Reader.Free;
+    First.Free;
+    Client.Close;
+  end;
+  AssertEquals('second stream body is readable', 'body', SecondBody);
+  AssertTrue('first stream body is readable', FirstBodyCount > 0);
+end;
+
+procedure TClientTest.TestWaitingHeadersDoNotBlockSecondStream;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  First, Second: TSendWorker;
+  SecondDone: Boolean;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Factory.SetResponse('200', BytesOf('body'), True);
+  Factory.AddResponseHeader('x-test-hpack', 'shared-table-value');
+  Factory.SetResponseGate(frgFirstHeaders);
+  Client := THttpClientFactory.Create.WithSocketFactory(Factory)
+    .WithMaxConnections(1).WithMaxStreamsPerConnection(8)
+    .WithHeaderTimeout(5000).Build;
+  First := TSendWorker.Create(Client, 'https://api.example/first');
+  Second := nil;
+  try
+    First.Start;
+    AssertTrue('first request reaches server; dials=' + IntToStr(Factory.Dials),
+      Factory.WaitForRequests(1, 2000));
+    Second := TSendWorker.Create(Client, 'https://api.example/second');
+    Second.Start;
+    SecondDone := Second.WaitDone(1500);
+    Factory.ReleaseGate;
+    AssertTrue('first response finishes during cleanup', First.WaitDone(2500));
+    AssertTrue('second stream finishes while first headers are pending', SecondDone);
+    AssertFalse('second stream succeeds', Second.Raised);
+    AssertEquals('dynamic HPACK response header decodes',
+      'shared-table-value',
+      Second.Response.Headers.GetFirst('x-test-hpack'));
+    AssertFalse('released first stream succeeds', First.Raised);
+  finally
+    Factory.ReleaseGate;
+    if Second <> nil then Second.Free;
+    First.Free;
+    Client.Close;
+  end;
+end;
+
+procedure TClientTest.TestCancelledHeaderWaitLeavesConnectionUsable;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  Token: ICancellationToken;
+  First: TCancellableSendWorker;
+  Second: TSendWorker;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Factory.SetResponse('200', BytesOf('body'), True);
+  Factory.AddResponseHeader('x-test-hpack', 'shared-table-value');
+  Factory.SetResponseGate(frgFirstHeaders);
+  Client := THttpClientFactory.Create.WithSocketFactory(Factory)
+    .WithMaxConnections(1).WithMaxStreamsPerConnection(8)
+    .WithHeaderTimeout(5000).Build;
+  Token := TCancellationToken.Create;
+  First := TCancellableSendWorker.Create(Client, Token);
+  Second := nil;
+  try
+    First.Start;
+    AssertTrue('first request reaches server; dials=' + IntToStr(Factory.Dials),
+      Factory.WaitForRequests(1, 2000));
+    (Token as TCancellationToken).Cancel;
+    AssertTrue('cancelled header wait ends', First.WaitDone(2000));
+    AssertTrue('first send observes cancellation', First.Raised);
+    Second := TSendWorker.Create(Client, 'https://api.example/second');
+    Second.Start;
+    AssertTrue('connection accepts a request after cancellation',
+      Second.WaitDone(2000));
+    AssertFalse('request after cancellation succeeds', Second.Raised);
+    AssertEquals('connection HPACK state remains valid after cancellation',
+      'shared-table-value',
+      Second.Response.Headers.GetFirst('x-test-hpack'));
+  finally
+    Factory.ReleaseGate;
+    if Second <> nil then Second.Free;
+    First.Free;
+    Client.Close;
+  end;
+end;
+
+procedure TClientTest.TestLeastLoadedSelection;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  Pool: TConnectionPool;
+  Origin: string;
+  Picked: IPooledConnection;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .Build;
+  Pool := (Client as THttpClient).Pool;
+  Origin := 'api.example';
+  Pool.AddForTest(Origin, TFakePooledConnection.Create(Origin, 3, True));
+  Pool.AddForTest(Origin, TFakePooledConnection.Create(Origin, 1, True));
+  Pool.AddForTest(Origin, TFakePooledConnection.Create(Origin, 0, False));
+  Picked := Pool.PickForTest(Origin);
+  AssertTrue('a connection was picked', Picked <> nil);
+  AssertEquals('least-loaded eligible connection chosen', 1,
+    Picked.ActiveStreams);
+  Client.Close;
+end;
+
+procedure TClientTest.TestPerConnectionStreamCap;
+var
+  Sock: IHttp2Socket;
+  Conn: TConnection;
+  Pooled: THttpConnection;
+  Settings: TConnectionSettings;
+begin
+  Sock := TFakeServerSocket.Create;
+  Conn := TConnection.Create(Sock);
+  Pooled := THttpConnection.Create(Conn, 'api.example', 1);
+  try
+    AssertTrue('idle connection is eligible', Pooled.Eligible);
+    Conn.RegisterStream(1, TFakeConnStream.Create);
+    AssertFalse('local cap reached -> ineligible', Pooled.Eligible);
+    Conn.UnregisterStream(1);
+    AssertTrue('slot freed -> eligible again', Pooled.Eligible);
+    // peer SETTINGS_MAX_CONCURRENT_STREAMS also caps eligibility
+    Settings := TConnectionSettings.Defaults;
+    Settings.MaxConcurrentStreams := 1;
+    Conn.ApplyPeerSettingsValue(Settings);
+    AssertTrue('peer cap 1, no streams -> eligible', Pooled.Eligible);
+    Conn.RegisterStream(3, TFakeConnStream.Create);
+    AssertFalse('peer cap 1 reached -> ineligible', Pooled.Eligible);
+    Conn.UnregisterStream(3);
+  finally
+    // Pooled owns the TConnection and frees it in its destructor
+    Pooled.Free;
+  end;
+end;
+
+procedure TClientTest.TestCloseRejectsNewSends;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  Raised: Boolean;
+begin
+  Factory := TFakeSocketFactory.Create;
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .Build;
+  Client.Close;
+  Raised := False;
+  try
+    Client.Send(THttpRequest.Create(hmGet, 'https://api.example/x'));
+  except
+    on E: EHttpConnectionClosed do Raised := True;
+  end;
+  AssertTrue('Send after Close raises EHttpConnectionClosed', Raised);
+end;
+
+procedure TClientTest.TestCloseKeepsOutstandingBodyReadable;
+var
+  Factory: TFakeSocketFactory;
+  Client: IHttpClient;
+  R: IHttpResponse;
+  First: array[0..0] of Byte;
+  Rest: array[0..15] of Byte;
+  N: LongInt;
+  Total: Integer;
+begin
+  Factory := TFakeSocketFactory.Create;
+  // answer with a body that does not end the stream, so the response body
+  // stays readable after Close
+  Factory.SetResponse('200', BytesOf('hello-world'), False);
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Factory)
+    .Build;
+  R := Client.Send(THttpRequest.Create(hmGet, 'https://api.example/x'));
+  AssertEquals('response headers', 200, R.StatusCode);
+
+  N := R.Body.Read(First[0], 1);
+  AssertEquals('one buffered byte before Close', 1, N);
+  Client.Close;
+  Total := N;
+  while Total < 11 do
+  begin
+    N := R.Body.Read(Rest[0], SizeOf(Rest));
+    AssertTrue('buffered body readable after Close', N > 0);
+    Inc(Total, N);
+  end;
+  AssertEquals('the whole buffered body stayed readable after Close', 11,
+    Total);
+end;
+
+procedure TClientTest.TestLiveGetAgainstNghttpd;
+var
+  Client: IHttpClient;
+  R: IHttpResponse;
+  Url: string;
+begin
+  // opt-in: requires nghttpd on 127.0.0.1:8080 and the matching TLS cert; the
+  // default suite stays hermetic with this test skipped
+  if GetEnvironmentVariable('HTTP2_LIVE_ITEST') <> '1' then
+    Exit;
+  Url := GetEnvironmentVariable('HTTP2_LIVE_ITEST_URL');
+  if Url = '' then
+    Url := 'https://127.0.0.1:8080/';
+  Client := THttpClientFactory.Create
+    .WithCACertFile(GetEnvironmentVariable('HTTP2_LIVE_ITEST_CA'))
+    .Build;
+  try
+    R := Client.Send(THttpRequest.Create(hmGet, Url));
+    AssertEquals('live GET returns 200', 200, R.StatusCode);
+  finally
+    Client.Close;
+  end;
+end;
+
+procedure TClientTest.TestLivePostEchoAgainstNghttpd;
+var
+  Client: IHttpClient;
+  R: IHttpResponse;
+  Url, Echoed, Sent: string;
+begin
+  // nghttpd must be started with --echo-upload so a POST is echoed back
+  if GetEnvironmentVariable('HTTP2_LIVE_ITEST') <> '1' then
+    Exit;
+  Url := GetEnvironmentVariable('HTTP2_LIVE_ITEST_URL');
+  if Url = '' then
+    Url := 'https://127.0.0.1:8080/';
+  Sent := 'http2client-echo-body';
+  Client := THttpClientFactory.Create
+    .WithCACertFile(GetEnvironmentVariable('HTTP2_LIVE_ITEST_CA'))
+    .Build;
+  try
+    R := Client.Send(THttpRequest.Create(hmPost, Url)
+      .WithHeader('content-type', 'text/plain')
+      .WithBody(THttpBody.FromString(Sent)));
+    AssertEquals('live POST returns 200', 200, R.StatusCode);
+    Echoed := string(AnsiString(PAnsiChar(ReadAllBodyBytes(R.Body))));
+    AssertEquals('nghttpd echoed the uploaded POST body', Sent, Echoed);
+  finally
+    Client.Close;
+  end;
+end;
+
+procedure TClientTest.TestFactoryObserverReceivesConnectionAndFrameEvents;
+var
+  Fact: TFakeSocketFactory;
+  Obs: TRecordingObserver;
+  Client: IHttpClient;
+  R: IHttpResponse;
+begin
+  Fact := TFakeSocketFactory.Create;
+  Obs := TRecordingObserver.Create;
+  Client := THttpClientFactory.Create
+    .WithSocketFactory(Fact)
+    .WithObserver(Obs)
+    .Build;
+  R := Client.Send(THttpRequest.Create(hmGet, 'https://api.example/thing'));
+  AssertEquals('status decoded', 200, R.StatusCode);
+  AssertTrue('connection open was observed',
+    Obs.WaitForCount(oekConnectionOpen, 1, 3000));
+  AssertTrue('the request HEADERS frame was observed outbound',
+    Obs.WaitForCount(oekFrameOut, 1, 3000));
+  AssertTrue('the server SETTINGS frame was observed inbound',
+    Obs.WaitForCount(oekFrameIn, 1, 3000));
+  AssertTrue('the stream lease was observed open',
+    Obs.WaitForCount(oekStreamOpen, 1, 3000));
+  // non-vacuous: a factory that dropped the observer would record nothing
+  AssertTrue('events were actually delivered', Obs.Count > 0);
+  Client.Close;
+  AssertTrue('connection close was observed',
+    Obs.WaitForCount(oekConnectionClose, 1, 3000));
+end;
+
+initialization
+  RegisterTest(TClientTest);
+end.
