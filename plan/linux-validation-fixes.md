@@ -193,3 +193,20 @@ The trace does not change assertions, case registration or execution order.
 The build driver streams and retains child output while preserving timeout
 process-group cleanup and nonzero/empty-suite failure checks. Acceptance is
 exact case progress and complete output on pass, failure and timeout.
+
+## LV-10: Client external gate failures
+
+On candidate d270c08, sanity passes five cases, cleartext passes, and SSE
+passes two cases. Interop reports A.11 h2c upgrade failure against Apache:
+connection closes while reading a frame header. A.8 remains an explicit
+historical exclusion because nghttpd has no trigger for mid-flight GOAWAY.
+The WebSocket live gate reports failures in its 18 registered cases.
+The client owner repairs stale explicit TLS policy calls in gated live tests
+and diagnoses A.11 against an independent client and retained peer logs.
+Production client changes require a demonstrated wire or state defect, not a
+weaker expectation. Existing fixed mandatory case IDs stay unchanged.
+
+LV-06 remains open: the complete client suite still exits SIGPIPE after the
+first fixture wrapper repair. A new stack identifies the remaining raw socket
+or SSL call; all fixture operations that can write are covered with scoped
+signal handling. The prior failed rerun is retained as evidence.
