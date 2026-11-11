@@ -18,6 +18,9 @@ HPACK, Frames, and FlowControl. Their intended layout is described in the
 [common architecture](doc/design/common/architecture.md) and
 [protocol design](doc/design/common/protocol.md).
 
+Library units are under `src/common`, `src/client`, and `src/server`.
+Their dotted unit names remain unchanged.
+
 JSON and XML helpers are optional. They belong to the client Readers package;
 the core client package does not require those helpers.
 

@@ -215,6 +215,12 @@ def source_check(c: Checks) -> None:
             c.fail(f"{rel} has no unit or program declaration")
             continue
         kind, declared = kind_match.group(1).lower(), kind_match.group(2)
+        if Path(rel).parts[0] == "src":
+            role = next((r for r in ("common", "client", "server")
+                         if declared.casefold() == "http2." + r or
+                         declared.casefold().startswith("http2." + r + ".")), None)
+            if role is None or Path(rel).parent != Path("src") / role:
+                c.fail(f"{rel} must be directly under src/{role or '<role>'}")
         if kind == "unit" and Path(rel).stem.casefold() != declared.casefold():
             c.fail(f"{rel} declares {kind} {declared}; file name does not match")
         key = declared.casefold() if kind == "unit" else f"program:{rel.casefold()}"
@@ -360,7 +366,7 @@ def packages_check(c: Checks) -> None:
     expected = {"http2common.lpk", "http2client.lpk", "http2server.lpk"}
     for missing in sorted(expected - packages):
         c.fail(f"required package {missing} is missing")
-    sources = sorted((ROOT / "src").glob("*.pas")) if (ROOT / "src").exists() else []
+    sources = sorted((ROOT / "src").rglob("*.pas")) if (ROOT / "src").exists() else []
     if not sources:
         c.fail("src/ has no production units; package inventory cannot pass")
     else:

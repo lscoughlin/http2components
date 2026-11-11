@@ -82,7 +82,7 @@ def base_flags(component: str, *, tests: bool = False) -> list[str]:
     role = component.removesuffix("-test")
     if role.startswith("examples-"):
         role = "examples"
-    flags = ["-O2", "-vw", "-Mdelphi", "-Fu./src"]
+    flags = ["-O2", "-vw", "-Mdelphi", "-Fu./src/common", "-Fu./src/client", "-Fu./src/server"]
     if role in ("client", "server", "readers", "examples", "api", "integration"):
         verify_mormot()
         mormot = Path(os.environ.get("MORMOT", "third_party/mORMot2/src"))
@@ -140,10 +140,10 @@ def open_ssl_env() -> dict[str, str]:
 
 def build(component: str) -> None:
     facade = {
-        "common": "src/Http2.Common.pas",
-        "client": "src/Http2.Client.pas",
-        "server": "src/Http2.Server.pas",
-        "readers": "src/Http2.Client.Readers.pas",
+        "common": "src/common/Http2.Common.pas",
+        "client": "src/client/Http2.Client.pas",
+        "server": "src/server/Http2.Server.pas",
+        "readers": "src/client/Http2.Client.Readers.pas",
     }[component]
     compile_file(ROOT / facade, component)
 
