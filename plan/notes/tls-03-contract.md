@@ -200,3 +200,9 @@ The server review found that an empty ciphertext queue alone cannot prove that a
 OpenSSL reports the sum of its queued and in-flight plaintext. TlsLib protects accepted plaintext synchronously in `TTlsEngine.Write`; its count is zero. The fake session also encodes synchronously and its default progress count is zero. The shared contract checks the count against accepted credit and requires zero after complete delivery. The OpenSSL test also fills the pending queue, observes a positive count after partial encryption, and checks that Abort clears it.
 
 Main bounded checks passed: OpenSSL 90 cases in 0.585 seconds (`bin/tls-coordinator/tls-progress-openssl-03.log`), TlsLib 84 cases in 1.011 seconds (`bin/tls-coordinator/tls-progress-tlslib.log`). The first new OpenSSL assertion failed because the test assumed a full write instead of the permitted 16 KiB prefix. The corrected test retains and submits the suffix. This is not a forced native WANT_READ/WANT_WRITE test.
+
+## Peer close review, 2026-11-11
+
+A one-sided close case now checks that the receiving session returns a close_notify response and preserves the final authenticated plaintext. The shared test uses one local shutdown call only. OpenSSL moves from a received close to closing, then completes SSL_shutdown; TlsLib queues its idempotent native SendClose response before closing. Closed sessions can retain drainable close output. The fake session follows the same response rule.
+
+Main bounded checks passed: OpenSSL 91 cases in 0.692 seconds (`bin/tls-coordinator/tls-close-openssl.log`), TlsLib 85 cases in 1.193 seconds (`bin/tls-coordinator/tls-close-tlslib.log`), and common 22 cases in 0.215 seconds (`bin/tls-coordinator/tls-close-common.log`). No load or Linux validation was run.

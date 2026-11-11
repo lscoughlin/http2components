@@ -163,6 +163,12 @@ begin
         Fail('TlsLib handshake failed', EngineFailureCategory(FEngine.LastError))
       else begin FState := tssOpen; RefreshInfo; end;
     end;
+  if FEngine.IsInboundClosed and not FEngine.IsTerminal then
+  begin
+    { The common session closes both directions. SendClose is idempotent. }
+    FEngine.SendClose;
+    FState := tssClosed;
+  end;
   while (Length(FCipher) < TlsMaxEncryptedOutput) and FEngine.WantsWrite do
   begin
     Cap := TlsMaxEncryptedOutput - Length(FCipher);

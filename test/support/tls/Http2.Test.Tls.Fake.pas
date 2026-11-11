@@ -62,7 +62,7 @@ type
     FId: Integer;
     FOwner: ITLSContext;
     FDeadlineMs: Int64;
-    FHoldHandshake, FShutdownPending, FIsServer: Boolean;
+    FHoldHandshake, FShutdownPending, FCloseSent, FIsServer: Boolean;
     FClientOptions: TTlsClientSessionOptions;
     FServerOptions: TTlsServerSessionOptions;
     FInput, FOutput, FPlaintext: TBytes;
@@ -331,11 +331,16 @@ begin
     SetLength(FPlaintext, OldLength + N);
     for I := 0 to N - 1 do FPlaintext[OldLength + I] := FInput[I];
   end;
-  if PeerClosed then begin Delete(FInput, 0, N + 1); FState := tssClosed; end
+  if PeerClosed then begin
+    Delete(FInput, 0, N + 1);
+    FState := tssClosed;
+    if not FCloseSent then FShutdownPending := True;
+  end
   else if N > 0 then Delete(FInput, 0, N);
   if FShutdownPending and (Length(FOutput) <= TlsMaxEncryptedOutput - 2) then begin
     FOutput := FOutput + [$15, $00];
     FShutdownPending := False;
+    FCloseSent := True;
     Result.MadeProgress := True;
   end;
   if (FState = tssClosing) and (Length(FOutput) = 0) and

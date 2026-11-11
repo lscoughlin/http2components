@@ -517,7 +517,9 @@ begin
       else
       begin
         E := SSL_get_error(FSsl, N);
-        if E = SSL_ERROR_ZERO_RETURN then FState := tssClosed
+        { A peer close still needs our close_notify. The next advance drains
+          accepted writes and completes SSL_shutdown before the terminal state. }
+        if E = SSL_ERROR_ZERO_RETURN then FState := tssClosing
         else if not (E in [SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE]) then
           Fail('OpenSSL record processing failed', tecAlert);
         Break;
