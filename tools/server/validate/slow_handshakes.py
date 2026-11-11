@@ -151,8 +151,12 @@ def make_peer(port: int, index: int, kind: str) -> Peer:
     started = time.monotonic()
     try:
         peer = socket.create_connection(("127.0.0.1", port), timeout=1.0)
-    except OSError as error:
+    except ConnectionRefusedError as error:
         return Peer(index, kind, None, started, admission="tcp_connection_refused",
+                    close_kind=f"connect_error:{type(error).__name__}",
+                    close_ms=round((time.monotonic() - started) * 1000))
+    except OSError as error:
+        return Peer(index, kind, None, started, admission="peer_connect_error",
                     close_kind=f"connect_error:{type(error).__name__}",
                     close_ms=round((time.monotonic() - started) * 1000))
     peer.setblocking(False)
@@ -363,7 +367,8 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
         f"scheduler_margin_ms={SCHEDULER_MARGIN_MS}\n"
         f"listener_max_connections={MAX_CONNECTIONS}\n"
         f"source_effective_admission_limit={EFFECTIVE_CONNECTION_LIMIT}\n"
-        "limit_source=server/src/Http2.Server.Async.pas:804 (MaxConnections = configured limit - 1)\n"
+        "limit_source=server/src/Http2.Server.Async.pas:THttp2AsyncServer.Create, "
+        "MaxConnections := AFactory.ServerLimits.MaxConnections - 1\n"
         f"silent_peers={SILENT_PEERS}\npartial_client_hello_peers={PARTIAL_PEERS}\n",
         encoding="utf-8",
     )
@@ -436,8 +441,10 @@ def one_case(binary: Path, provider: str, version: str, cert: str, key: str,
                 peer.admission_observed_ms = round(
                     (excess_snapshot - peer.started) * 1000
                 )
-                if not peer.tcp_connected:
+                if peer.admission == "tcp_connection_refused":
                     peer.admission = "tcp_connection_refused"
+                elif not peer.tcp_connected:
+                    peer.admission = "peer_error_before_capacity_observation"
                 elif peer.close_kind == "eof" or peer.close_kind.startswith("socket_error:"):
                     peer.admission = "server_closed_during_capacity_observation"
                 elif peer.sock is None:
