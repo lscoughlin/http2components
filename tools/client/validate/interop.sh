@@ -42,14 +42,24 @@ PASS=0; FAIL=0; SKIP=0
 rows=()
 
 cleanup() {
+  local exit_status=$?
   [ -n "${NGHTTPD_PID:-}" ] && kill "$NGHTTPD_PID" 2>/dev/null
   [ -n "${NGHTTPD_PLAIN_PID:-}" ] && kill "$NGHTTPD_PLAIN_PID" 2>/dev/null
   [ -n "${NGHTTPD_SMALLWIN_PID:-}" ] && kill "$NGHTTPD_SMALLWIN_PID" 2>/dev/null
   [ -n "${SSERVER_PID:-}" ] && kill "$SSERVER_PID" 2>/dev/null
   if [ -n "$DOCKER" ]; then
+    if [ "$exit_status" -ne 0 ] || [ "$FAIL" -gt 0 ]; then
+      "$DOCKER" logs "$CONTAINER_H2C" >"$BUILD/apache-h2c.log" 2>&1 || true
+      "$DOCKER" logs "$CONTAINER_H1" >"$BUILD/apache-h1.log" 2>&1 || true
+    fi
     "$DOCKER" rm -f "$CONTAINER_H2C" "$CONTAINER_H1" >/dev/null 2>&1
   fi
-  rm -rf "$BUILD" "$HTDOCS" 2>/dev/null
+  if [ "$exit_status" -ne 0 ] || [ "$FAIL" -gt 0 ]; then
+    echo "interop diagnostics retained at $BUILD" >&2
+  else
+    rm -rf "$BUILD" 2>/dev/null
+  fi
+  rm -rf "$HTDOCS" 2>/dev/null
 }
 trap cleanup EXIT
 

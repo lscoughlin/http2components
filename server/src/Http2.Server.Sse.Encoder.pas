@@ -108,9 +108,9 @@ var
 
   procedure AddFieldLength(const ANameLength, AValueLength: Integer);
   begin
-    Inc(OutputLength, ANameLength + 2);
+    Inc(OutputLength, Int64(ANameLength) + 2);
     if AValueLength > 0 then
-      Inc(OutputLength, AValueLength + 1);
+      Inc(OutputLength, Int64(AValueLength) + 1);
   end;
 
   procedure AddText(const AText: RawByteString);
