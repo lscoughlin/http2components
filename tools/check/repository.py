@@ -382,6 +382,24 @@ def packages_check(c: Checks) -> None:
                 elif not source_path.exists():
                     c.fail(f"{package.name} names missing source {name}")
                 listed.setdefault(Path(name).as_posix(), []).append(package.name)
+            deps = {node.get("Value", "").casefold()
+                    for node in tree.findall(".//RequiredPkgs/*/PackageName")}
+            role_deps = deps & {"http2common", "http2client", "http2server", "http2clientreaders"}
+            expected_deps = {
+                "http2common.lpk": set(),
+                "http2client.lpk": {"http2common"},
+                "http2server.lpk": {"http2common"},
+                "http2clientreaders.lpk": {"http2common", "http2client"},
+            }.get(package.name.casefold())
+            if expected_deps is None or role_deps != expected_deps:
+                c.fail(f"{package.name} has invalid component dependencies: {sorted(role_deps)}")
+            license_node = tree.find(".//Package/License")
+            if license_node is None or license_node.get("Value") != "Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)":
+                c.fail(f"{package.name} does not declare the approved dual license")
+            if package.name.casefold() == "http2common.lpk":
+                search_node = tree.find(".//OtherUnitFiles")
+                if search_node is not None and "mormot" in search_node.get("Value", "").casefold():
+                    c.fail("http2common.lpk must not depend on mORMot2")
             unit_out = tree.find(".//UnitOutputDirectory")
             unit_out_value = unit_out.get("Value", "") if unit_out is not None else ""
             out_parts = Path(unit_out_value).parts

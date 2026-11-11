@@ -17,3 +17,16 @@ The --check mode detects stale inventory or source contents before a build.
 
 Final API probes and the final source inventory remain open. No Linux or
 load validation was run.
+
+The API task now runs the common facade probe and four role probes in
+addition to the 16 error identity tests. The probes cover each role alone,
+both roles together, shared headers and exception bases, interface GUIDs,
+factory helpers, generic response readers, and optional JSON/XML readers.
+The client and server body writers remain explicitly qualified where both
+roles are used. The first server probe lacked a required handler; the
+probe fixture was corrected. The complete task now passes, with a 30-second
+deadline per probe. Final facade-only body-writer aliases will be checked
+after the client division.
+
+Package checks reject incorrect role dependencies and common mORMot2 paths.
+A temporary fixture with a client-to-server dependency was rejected.

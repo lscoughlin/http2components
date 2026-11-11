@@ -21,9 +21,13 @@ MORMOT_REV = "b2b195da1e0580058672a88620ef71bb47283eb1"
 HARNESS_REV = "0bc075cc21e5a247dfd222e005d1e7e5679d2bff"
 
 
-def run(args: list[str], *, env: dict[str, str] | None = None, cwd: Path = ROOT) -> None:
+def run(args: list[str], *, env: dict[str, str] | None = None, cwd: Path = ROOT,
+        timeout: int | None = None) -> None:
     print("+ " + shlex.join(args), flush=True)
-    result = subprocess.run(args, cwd=cwd, env=env)
+    try:
+        result = subprocess.run(args, cwd=cwd, env=env, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        raise SystemExit(f"Command exceeded its {timeout}s deadline: {shlex.join(args)}")
     if result.returncode:
         raise SystemExit(result.returncode)
 
@@ -165,7 +169,13 @@ def run_api_tests() -> None:
     binary = compile_file(runner, "api-test", tests=True)
     if not binary.exists():
         raise SystemExit(f"Test runner did not produce {binary}")
-    run_suite(binary)
+    run_suite(binary, True)
+    probes = [ROOT / "test/common/Http2.Common.ApiProbe.pas",
+              *sorted((ROOT / "test/api").glob("*.ApiProbe.pas"))]
+    for probe in probes:
+        component = "common-test" if probe.parent.name == "common" else "api-test"
+        program = compile_file(probe, component, tests=True)
+        run([str(program)], env=open_ssl_env(), timeout=30)
 
 
 def run_suite(binary: Path, needs_openssl: bool = False) -> None:
