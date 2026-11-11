@@ -64,7 +64,7 @@ def independent_handshake(port, version, ca_file):
     start = time.monotonic()
     result = run(["openssl", "s_client", "-connect", f"localhost:{port}",
                   flag, "-alpn", "h2", "-verify_return_error", "-verify_hostname",
-                  "localhost", "-CAfile", ca_file, "-brief"], input=b"", timeout=10)
+                  "localhost", "-CAfile", ca_file], input=b"", timeout=10)
     report = (result.stdout + result.stderr).decode(errors="replace")
     expected = "TLSv1.2" if version == "1.2" else "TLSv1.3"
     if expected not in report or "ALPN protocol: h2" not in report:
@@ -91,7 +91,7 @@ def churn(port, version, ca_file, count=50):
     for _ in range(count):
         run(["openssl", "s_client", "-connect", f"localhost:{port}",
              flag, "-alpn", "h2", "-verify_return_error", "-verify_hostname",
-             "localhost", "-CAfile", ca_file, "-brief"], input=b"", timeout=10)
+             "localhost", "-CAfile", ca_file], input=b"", timeout=10)
     return time.monotonic() - start
 
 
