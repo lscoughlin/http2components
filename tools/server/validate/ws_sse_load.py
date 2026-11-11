@@ -17,7 +17,6 @@ import base64
 import hashlib
 import os
 import re
-import struct
 import subprocess
 import sys
 import time
@@ -156,6 +155,14 @@ async def close_writer(writer):
         return True
     except (asyncio.TimeoutError, OSError):
         return False
+
+
+async def tracked_open(opener, host, port, sem, opened):
+    """Keep each successful connection reachable while other opens wait."""
+    pair = await opener(host, port, sem)
+    if pair is not None:
+        opened.append(pair)
+    return pair
 
 
 async def monitor_sse(reader, label):
@@ -337,11 +344,18 @@ async def requests(host, port, window, rate, lat):
                 except (asyncio.TimeoutError, OSError):
                     pass
 
-    while time.monotonic() < end:
-        tasks.append(asyncio.create_task(one()))
-        nxt += interval
-        await asyncio.sleep(max(0.0, nxt - time.monotonic()))
-    await asyncio.gather(*tasks)
+    try:
+        while time.monotonic() < end:
+            tasks.append(asyncio.create_task(one()))
+            nxt += interval
+            await asyncio.sleep(max(0.0, nxt - time.monotonic()))
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 async def main():
@@ -366,13 +380,13 @@ async def main():
     cleanup_failure = None
     try:
         ws_results = await asyncio.gather(
-            *[open_ws(host, wsport, sem) for _ in range(n)], return_exceptions=True)
+            *[tracked_open(open_ws, host, wsport, sem, ws) for _ in range(n)],
+            return_exceptions=True)
         sse_results = await asyncio.gather(
-            *[open_sse(host, sseport, sem) for _ in range(n)], return_exceptions=True)
-        ws = [result if isinstance(result, tuple) else None for result in ws_results]
-        sse = [result if isinstance(result, tuple) else None for result in sse_results]
-        ok_ws = sum(1 for pair in ws if pair)
-        ok_sse = sum(1 for pair in sse if pair)
+            *[tracked_open(open_sse, host, sseport, sem, sse) for _ in range(n)],
+            return_exceptions=True)
+        ok_ws = len(ws)
+        ok_sse = len(sse)
         print(f"opened {ok_ws}/{n} WebSocket sessions and {ok_sse}/{n} event streams "
               f"in {time.monotonic() - t0:.1f} s", flush=True)
         open_errors = [result for result in ws_results + sse_results
