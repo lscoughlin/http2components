@@ -28,11 +28,15 @@ uses
 // - an idle time of 0 leaves keep-alive off
 procedure ApplySocketOptions(const ASocket: TNetSocket;
   const AOptions: TSocketOptions);
+/// read bytes still queued in the kernel TCP send queue when supported
+// - the result is false on platforms without the Linux TIOCOUTQ query
+function TryGetSocketSendQueue(const ASocket: TNetSocket;
+  out ABytes: Int64): Boolean;
 
 implementation
 
 uses
-  {$IFDEF UNIX}Sockets,{$ENDIF}
+  {$IFDEF UNIX}Sockets, BaseUnix,{$ENDIF}
   SysUtils;
 
 {$IFDEF UNIX}
@@ -123,6 +127,26 @@ begin
     on ENetSock do
       ; // the receive buffer keeps its default, and the connection proceeds
   end;
+end;
+
+function TryGetSocketSendQueue(const ASocket: TNetSocket;
+  out ABytes: Int64): Boolean;
+{$IFDEF LINUX}
+var
+  QueueBytes: cint;
+{$ENDIF}
+begin
+  ABytes := 0;
+  Result := False;
+  {$IFDEF LINUX}
+  if ASocket = nil then
+    Exit;
+  QueueBytes := 0;
+  // Linux TIOCOUTQ returns bytes sent to the socket but not yet acknowledged.
+  Result := fpIOCtl(cint(ASocket.Socket), $5411, @QueueBytes) = 0;
+  if Result then
+    ABytes := QueueBytes;
+  {$ENDIF}
 end;
 
 end.

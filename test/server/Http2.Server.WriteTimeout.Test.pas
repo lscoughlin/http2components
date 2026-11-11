@@ -54,6 +54,14 @@ type
     procedure TestProgressAfterNowNeverStalls;
     /// a negative timeout never stalls
     procedure TestNegativeTimeoutNeverStalls;
+    /// a new output backlog starts the progress clock
+    procedure TestFirstOutputStartsProgressClock;
+    /// local socket acceptance counts as progress while the backlog refills
+    procedure TestLocalSocketWriteCountsAsProgress;
+    /// acknowledged kernel bytes count as progress while app backlog stays flat
+    procedure TestKernelSendQueueDrainCountsAsProgress;
+    /// a flat app and kernel queue with no local writes is not progress
+    procedure TestFlatQueuesDoNotCountAsProgress;
   end;
 
   /// the outcome of one burst handler run, shared with the test thread
@@ -251,6 +259,34 @@ procedure TWriteStalledTest.TestNegativeTimeoutNeverStalls;
 begin
   AssertFalse('a negative timeout stalls',
     WriteStalled(10000, 1000, -1, 1000));
+end;
+
+procedure TWriteStalledTest.TestFirstOutputStartsProgressClock;
+begin
+  AssertTrue('new output did not start its progress clock',
+    WriteProgressObserved(100, 0, 0, 0, 0, 0, False));
+end;
+
+procedure TWriteStalledTest.TestLocalSocketWriteCountsAsProgress;
+begin
+  AssertTrue('local socket progress was missed during queue refill',
+    WriteProgressObserved(200, 200, 1500, 1000, 700, 700, True));
+  AssertTrue('local socket progress was missed without a kernel sample',
+    WriteProgressObserved(200, 200, 1500, 1000, 0, 0, False));
+end;
+
+procedure TWriteStalledTest.TestKernelSendQueueDrainCountsAsProgress;
+begin
+  AssertTrue('kernel queue drain was missed while app backlog stayed flat',
+    WriteProgressObserved(200, 200, 1500, 1500, 500, 700, True));
+end;
+
+procedure TWriteStalledTest.TestFlatQueuesDoNotCountAsProgress;
+begin
+  AssertFalse('flat queues count as progress',
+    WriteProgressObserved(200, 200, 1500, 1500, 700, 700, True));
+  AssertFalse('an invalid kernel sample counts as progress',
+    WriteProgressObserved(200, 200, 1500, 1500, 100, 700, False));
 end;
 
 { TStallOutcome }
