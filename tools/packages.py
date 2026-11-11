@@ -74,6 +74,9 @@ def render(name: str, sources: list[Path]) -> dict[Path, str]:
     include_roles = ('common',) if component == 'common' else ('common', component)
     include_paths = [ROOT / COMPONENTS[role]['source'] for role in include_roles]
     if component == 'tlslib':
+        compat_root = (ROOT / 'bin' / '$(TargetCPU)-$(TargetOS)' / 'default' /
+                       'tlslib' / 'compat' / 'cryptolib' / 'CryptoLib' / 'src')
+        include_paths.append(compat_root / 'Include')
         for dependency, base in DEPENDENCY_LAYOUT.items():
             include_paths.extend(dependency_directories(dependency, base, '.inc'))
     value(paths, 'IncludeFiles', ';'.join(relative(path) for path in include_paths))
@@ -83,6 +86,9 @@ def render(name: str, sources: list[Path]) -> dict[Path, str]:
     if component == 'tlslib':
         search = [relative(ROOT / 'bin' / '$(TargetCPU)-$(TargetOS)' / 'default' /
                            'tlslib' / 'units' / 'bootstrap'),
+                  relative(ROOT / 'bin' / '$(TargetCPU)-$(TargetOS)' / 'default' /
+                           'tlslib' / 'compat' / 'cryptolib' / 'CryptoLib' / 'src' /
+                           'Rngs' / 'Providers'),
                   *search, relative(ROOT / COMPONENTS[component]['source'])]
     elif component in ('client', 'server', 'openssl'):
         search.append(relative(ROOT / COMPONENTS[component]['source']))
