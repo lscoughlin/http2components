@@ -119,9 +119,8 @@ procedure ReportEventKind(const AObserver: IHttp2ServerObserver;
   const AKind: TServerEventKind; const AStreamId: LongWord;
   const ALimit: TLimitKind; const ADetail: string);
 
-/// count one accepted connection and tell the observer
-procedure ReportOpened(const ACounters: TServerCounters;
-  const AObserver: IHttp2ServerObserver);
+/// tell the observer that the listener admitted one connection
+procedure ReportOpened(const AObserver: IHttp2ServerObserver);
 
 /// count one closed connection and tell the observer
 procedure ReportClosed(const ACounters: TServerCounters;
@@ -362,10 +361,8 @@ begin
   end;
 end;
 
-procedure ReportOpened(const ACounters: TServerCounters;
-  const AObserver: IHttp2ServerObserver);
+procedure ReportOpened(const AObserver: IHttp2ServerObserver);
 begin
-  ACounters.ConnectionOpened;
   ReportEventKind(AObserver, seConnectionAccepted, 0, lkReset,
     'the socket is accepted');
 end;

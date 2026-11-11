@@ -70,6 +70,8 @@ type
   THttp2AsyncConnection = class(TAsyncConnection)
   public
     FServer: THttp2AsyncServer;   // weak reference; the owner frees this
+    FAdmissionClaim: IConnectionAdmissionClaim;
+    FCountedOpen: Boolean;
     FCore: TServerConnectionCore;
     FEvents: IConnectionEvents;
     FWaker: IWriteWaker;
@@ -134,6 +136,7 @@ type
     procedure CloseAbortively;
     /// drop the state of the connection that ended: both cores, the waker and the lock
     procedure ReleaseState;
+    procedure ReleaseAdmission;
   protected
     procedure AfterCreate; override;
     procedure BeforeDestroy; override;
@@ -190,7 +193,12 @@ type
     FObserver: IHttp2ServerObserver;
     /// the connection, reset, trip and handshake counters
     FCounters: TServerCounters;
+    /// the bound on accepted connections, including those before first read
+    FAdmission: IConnectionAdmission;
   protected
+    function ConnectionNew(aSocket: TNetSocket;
+      aConnection: TAsyncConnection; aAddAndSubscribe: Boolean): Boolean;
+      override;
     /// the idle period before OnLastOperationIdle runs, in seconds
     // - the base class returns zero, which disables the event, so the server
     //   enables it with the factory idle timeout
@@ -296,7 +304,6 @@ begin
   FIdleSeconds := cardinal(FServer.Factory.IdleTimeoutMs div 1000);
   FSendLock := TCriticalSection.Create;
   FMode := cmUndecided;
-  FServer.ConnectionOpened;
 end;
 procedure THttp2AsyncConnection.StartHttp2;
 begin
@@ -340,8 +347,7 @@ begin
   if FH1 <> nil then
     FH1.Core.ReleaseHost;
   FreeAndNil(FTlsAdapter);
-  if FServer <> nil then
-    FServer.ConnectionClosed;
+  ReleaseAdmission;
   FreeAndNil(FSendLock);
   FreeAndNil(FCore);
   FreeAndNil(FH1);
@@ -694,20 +700,24 @@ end;
 
 procedure THttp2AsyncConnection.OnClose;
 begin
-  if (FTlsAdapter <> nil) and not FPeerTlsClosed and
-     not FLocalTlsShutdown then
-    try
-      FTlsAdapter.NotifyTransportEof;
-    except
-      on ETlsSessionError do ;
-    end;
-  // the socket is gone: cancel the streams, so that a waiting handler and the
-  // sink of a detached stream learn it now and not at their next timeout
-  if FCore <> nil then
-    FCore.ConnectionLost;
-  if FH1 <> nil then
-    FH1.Core.ConnectionLost;
-  inherited OnClose;
+  try
+    if (FTlsAdapter <> nil) and not FPeerTlsClosed and
+       not FLocalTlsShutdown then
+      try
+        FTlsAdapter.NotifyTransportEof;
+      except
+        on ETlsSessionError do ;
+      end;
+    // the socket is gone: cancel the streams, so that a waiting handler and
+    // the sink of a detached stream learn it before their next timeout
+    if FCore <> nil then
+      FCore.ConnectionLost;
+    if FH1 <> nil then
+      FH1.Core.ConnectionLost;
+    inherited OnClose;
+  finally
+    ReleaseAdmission;
+  end;
 end;
 
 function THttp2AsyncConnection.PullOutput(out AData: TBytes): Boolean;
@@ -814,18 +824,17 @@ begin
   FStreamPool := TStreamPool.Create(AFactory.StreamPoolSize);
   FChannelImpl.SourceProvider := FStreamPool.NewSource;
   FObserver := nil;
+  FAdmission := NewConnectionAdmission(AFactory.ServerLimits.MaxConnections);
   Options := ASYNC_OPTION_PROD;
   if AFactory.Socket.ReusePort then
     include(Options, acoReusePort);
   inherited Create(BindAddressText(AFactory.Host, AFactory.Port), nil, nil,
     THttp2AsyncConnection, 'http2', nil, Options, AFactory.IOThreads);
-  // mORMot2 tests the count before the new socket joins the set, and the
-  // test is strict, so a factory value of N maps to N minus one; 0 means
-  // no cap
-  if AFactory.ServerLimits.MaxConnections <= 0 then
-    MaxConnections := MaxInt
-  else
-    MaxConnections := AFactory.ServerLimits.MaxConnections - 1;
+  // ConnectionNew reserves the configured bound before AfterCreate and the
+  // first-read queue. Disable mORMot's separate limits, whose accept backoff
+  // can delay prompt refusals and whose counts do not include both states.
+  MaxConnections := MaxInt;
+  MaxPending := MaxInt;
 end;
 
 procedure THttp2AsyncServer.AfterConstruction;
@@ -876,15 +885,7 @@ begin
     FFactory.GracefulStopTimeoutMs, FFactory.ServerLimits.WriteTimeoutMs);
 end;
 
-procedure THttp2AsyncServer.ConnectionOpened;
-begin
-  ReportOpened(FCounters, FObserver);
-end;
-
-procedure THttp2AsyncServer.ConnectionClosed;
-begin
-  ReportClosed(FCounters, FObserver);
-end;
+{$I Http2.Server.Async.Admission.inc}
 
 procedure THttp2AsyncServer.Notify(const AEvent: TServerEvent);
 begin
