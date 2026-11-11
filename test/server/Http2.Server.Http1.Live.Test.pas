@@ -62,7 +62,7 @@ type
     procedure TestEarlyAnswerWithAnUnreadBodyKeepsTheConnection;
     procedure TestQueueFullAnswers503WithRetryAfter;
     procedure TestWriteTimeoutDoesNotCloseAnIdleKeepAlive;
-    procedure TestFirstWriteAfterIdleGetsAFullTimeout;
+    procedure TestRequestAfterIdleIsServed;
     procedure TestStopEndsAnOpenConnection;
     procedure TestFallbackOffClosesAnHttp1Request;
     procedure TestOneListenerServesBothProtocols;
@@ -609,7 +609,7 @@ begin
   end;
 end;
 
-procedure THttp1LiveTest.TestFirstWriteAfterIdleGetsAFullTimeout;
+procedure THttp1LiveTest.TestRequestAfterIdleIsServed;
 var
   C: TRawHttp;
   R: TRawResponse;
