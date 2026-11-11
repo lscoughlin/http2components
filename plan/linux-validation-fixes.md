@@ -95,3 +95,21 @@ The existing plaintext WS/SSE probe remains a separate baseline. Correctness
 requires all requested operations to complete without unexpected errors.
 Performance values are measurements; the run does not assert an invented
 cross-host regression threshold. Resource cleanup is checked after disconnect.
+
+### LV-02 findings, 2026-11-11 17:57 UTC
+
+`interop.sh` and `h2probe-sanity.sh` contain macOS OpenSSL/PATH settings;
+interop also sets a Darwin FPC unit directory. `proxy_real_client.pas` uses
+old trust and certificate factory methods. The client owner replaces these
+with platform-correct tool discovery and explicit provider contexts and
+identity loaders, including separate HTTPS proxy policy. The owner checks
+h2probe's insecure option against the new API. Docker-required cases A.11
+and A.12 cannot become successful SKIP results after Docker failure.
+
+### Required external tools, 2026-11-11 17:57 UTC
+
+The server conformance gate currently skips missing required tools and can
+return success. The server owner makes missing h2spec, nghttp, curl, h2load,
+and required Python protocol packages fail the requested full gate. Existing
+fixed protocol expectations stay unchanged. Exact missing tools remain in
+logs. The client owner applies the same rule to required Docker peer cases.
