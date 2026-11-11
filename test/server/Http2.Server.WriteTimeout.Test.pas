@@ -523,7 +523,7 @@ end;
 
 function TStallClient.IsClosed: Boolean;
 begin
-  Result := TestSocketClosed(FSock, True);
+  Result := TestSocketClosed(FSock);
 end;
 
 procedure TStallClient.Drain;

@@ -149,16 +149,46 @@ begin
   end;
 end;
 
-/// whether a saved TLS session resumes with a client certificate
-function ResumptionWorks(const APort: Integer; const AVersion: string): Boolean;
+/// check that saved session state cannot resume without fresh authentication
+function SessionTicketPolicy(const APort: Integer; const AVersion,
+  AProtocol: string): Boolean;
 var
-  Common, Cmd: string;
+  Common, NoCertificate, Cmd: string;
 begin
   Common := 'openssl s_client ' + AVersion + ' -connect 127.0.0.1:' + IntToStr(APort) +
-    ' -alpn h2 -cert alice.crt -key alice.key';
-  Cmd := 'cd ' + Pki + ' && rm -f resume.pem && (sleep 1; echo Q) | ' + Common +
-    ' -sess_out resume.pem >/dev/null 2>&1; (sleep 1; echo Q) | ' + Common +
-    ' -sess_in resume.pem 2>&1 | grep -q "^Reused"';
+    ' -alpn h2 -verify_return_error -verify_hostname localhost -CAfile ca.crt';
+  NoCertificate := Common + ' -sess_in ' + AProtocol + '.pem';
+  Common := Common + ' -cert alice.crt -key alice.key';
+  Cmd := 'cd ' + Pki + ' && rm -f ' + AProtocol + '.pem ' + AProtocol +
+    '-full.log ' + AProtocol + '-saved.log ' + AProtocol + '-no-cert.log && ' +
+    '(sleep 1; printf Q) | ' + Common + ' -sess_out ' + AProtocol +
+    '.pem >' + AProtocol + '-full.log 2>&1; ' +
+    'full_status=$?; ' +
+    'if [ "$full_status" -ne 0 ] || ' +
+    '(! grep -q "^New, ' + AProtocol + '" ' + AProtocol + '-full.log) || ' +
+    '(! grep -Eq "Verification: OK|Verify return code: 0 \\(ok\\)" ' +
+    AProtocol + '-full.log); then cat ' + AProtocol + '-full.log; exit 1; fi; ' +
+    'if [ ! -s ' + AProtocol + '.pem ]; then ' +
+    'echo "PASS ' + AProtocol + ' verified full handshake; no resumable session was issued"; ' +
+    'exit 0; fi; ' +
+    '(sleep 1; printf Q) | ' + Common + ' -sess_in ' + AProtocol +
+    '.pem >' + AProtocol + '-saved.log 2>&1; ' +
+    'saved_status=$?; ' +
+    'if [ "$saved_status" -ne 0 ] || ' +
+    '(! grep -q "^New, ' + AProtocol + '" ' + AProtocol + '-saved.log) || ' +
+    'grep -q "^Reused" ' + AProtocol + '-saved.log || ' +
+    '(! grep -Eq "Verification: OK|Verify return code: 0 \\(ok\\)" ' +
+    AProtocol + '-saved.log); then cat ' + AProtocol + '-saved.log; exit 1; fi; ' +
+    '(sleep 1; printf Q) | ' + NoCertificate + ' >' + AProtocol +
+    '-no-cert.log 2>&1; no_cert_status=$?; ' +
+    'if [ "$no_cert_status" -eq 0 ] || ' +
+    'grep -q "^New, ' + AProtocol + '" ' + AProtocol + '-no-cert.log || ' +
+    'grep -q "^Reused" ' + AProtocol + '-no-cert.log || ' +
+    '(! grep -Eiq "alert|handshake failure|certificate required" ' +
+    AProtocol + '-no-cert.log); then cat ' + AProtocol + '-no-cert.log; exit 1; fi; ' +
+    'echo "PASS ' + AProtocol + ' full handshake; saved attempt is full; no-cert attempt refused"; ' +
+    'rm -f ' + AProtocol + '.pem ' + AProtocol + '-full.log ' + AProtocol +
+    '-saved.log ' + AProtocol + '-no-cert.log';
   Result := ExecuteProcess('/bin/sh', ['-c', Cmd]) = 0;
 end;
 
@@ -348,10 +378,10 @@ begin
     Body := ClientGet(Server.Port, 'special');
     Check('required: a comma in a DN value is escaped as RFC 4514 says',
       Contains(Body, 'CN=Doe\, Jane') and Contains(Body, 'O=Acme\, Inc'), Body);
-    Check('required: a saved TLS 1.2 session resumes with the certificate',
-      ResumptionWorks(Server.Port, '-tls1_2'));
-    Check('required: a saved TLS 1.3 session resumes with the certificate',
-      ResumptionWorks(Server.Port, '-tls1_3'));
+    Check('required: TLS 1.2 uses fresh client authentication after a saved-session attempt',
+      SessionTicketPolicy(Server.Port, '-tls1_2', 'TLSv1.2'));
+    Check('required: TLS 1.3 uses fresh client authentication after a saved-session attempt',
+      SessionTicketPolicy(Server.Port, '-tls1_3', 'TLSv1.3'));
 
     // HTTP/1.1 over TLS on the same listener
     H1 := RawHttp1Get(Server.Port, Identity('alice'), '/id');
