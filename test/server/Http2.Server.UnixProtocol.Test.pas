@@ -2,10 +2,13 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: unix socket, test, http2, http1.1, tls, fpcunit
+keywords: unix socket, test, http2, http1.1, fpcunit
 notes:
   - This unit tests the protocols over a Unix socket: HTTP/2 with prior knowledge,
-    many HTTP/1.1 connections in sequence and in parallel, and TLS with ALPN.
+    and many HTTP/1.1 connections in sequence and in parallel.
+  - The TLS tests over a Unix socket, with ALPN, are in
+    test/integration/Http2.Integration.Unix.Test.pas. The server test build has
+    no TLS provider, so this unit has no TLS test.
   - The HTTP/2 test writes raw octets with the frame and HPACK units, because the
     in-memory peer of the connection core cannot write to a socket.
   - Each test uses a path under /tmp that TearDown removes.
