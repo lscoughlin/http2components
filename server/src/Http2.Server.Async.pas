@@ -825,9 +825,7 @@ begin
   FChannelImpl.SourceProvider := FStreamPool.NewSource;
   FObserver := nil;
   FAdmission := NewConnectionAdmission(AFactory.ServerLimits.MaxConnections);
-  Options := ASYNC_OPTION_PROD;
-  if AFactory.Socket.ReusePort then
-    include(Options, acoReusePort);
+  Options := BuildListenerOptions(AFactory);
   inherited Create(BindAddressText(AFactory.Host, AFactory.Port), nil, nil,
     THttp2AsyncConnection, 'http2', nil, Options, AFactory.IOThreads);
   // ConnectionNew reserves the configured bound before AfterCreate and the

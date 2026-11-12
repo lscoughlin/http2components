@@ -33,6 +33,10 @@ uses
 // - an empty host binds every IPv4 address
 function BindAddressText(const AHost: string; const APort: Integer): RawUtf8;
 
+/// the options of the listener of the async server, from the factory
+function BuildListenerOptions(
+  const AFactory: THttp2ServerFactory): TAsyncConnectionsOptions;
+
 /// the period of the idle callback, in whole seconds
 // - the callback is the one place that checks both timeouts, so it runs at the
 //   earlier of the two. A sub-second timeout rounds up to one second, because
@@ -170,6 +174,14 @@ begin
     Host := '0.0.0.0';
   // mORMot2 splits the text at the last colon, so an IPv6 host needs no bracket
   result := RawUtf8(Host + ':' + IntToStr(APort));
+end;
+
+function BuildListenerOptions(
+  const AFactory: THttp2ServerFactory): TAsyncConnectionsOptions;
+begin
+  result := ASYNC_OPTION_PROD;
+  if AFactory.Socket.ReusePort then
+    include(result, acoReusePort);
 end;
 
 function BuildConnectionCoreOptions(
