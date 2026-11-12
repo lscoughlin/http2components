@@ -540,17 +540,14 @@ rule is not changed: a consumer that wants wire-accurate timing uses
   proxy or TCP coalescing) share a stamp, and the later ones report
   `SinceLastUs = 0`. Counts, bytes, first, last and throughput stay correct;
   a per-event gap histogram is quantised to frames.
-- **A stalled consumer.** Connection window credit is returned to the peer
-  when DATA *arrives* (`TrackReceivedData`), so one idle stream never stops
-  the other streams. Stream window credit is returned when the lease consumes
-  the DATA frame (`TrackConsumedData`), so a stalled consumer limits the peer
-  to the stream receive window. A lease's inbound queue is unbounded, so
-  `Push` never blocks the connection's reader thread. A consumer that stops
-  reading does not delay arrival stamps for that stream or for any other
-  stream on the same connection. The reader keeps applying WINDOW_UPDATE
-  frames, which an upload needs when the client sends the whole request body
-  before it reads the response. The frames of a stalled consumer wait in
-  memory, up to the stream receive window.
+- **A stalled consumer.** Window credit is returned to the peer when DATA
+  *arrives* (`TrackReceivedData`), so flow control never throttles the peer on
+  the consumer's account. A lease's inbound queue is unbounded, so `Push`
+  never blocks the connection's reader thread. A consumer that stops reading
+  does not delay arrival stamps for that stream or for any other stream on the
+  same connection. The reader keeps applying WINDOW_UPDATE frames, which an
+  upload needs when the client sends the whole request body before it reads
+  the response. The frames of a stalled consumer wait in memory.
 - **Multiplexing.** Frames of several streams are read by one thread. A burst
   on one stream delays the stamps of the others by the time it takes to read
   it. This is microseconds for typical frames.

@@ -46,12 +46,10 @@ Free Pascal 3.2.4 primitives (all choices below are probe-verified; see
   unbounded, so `Push` on a lease queue never blocks the connection thread.
   The thread therefore keeps reading connection frames (WINDOW_UPDATE,
   SETTINGS, PING) while a consumer is idle, for example while the client
-  still sends a request body and has not yet read the response. Connection
-  window credit is returned on arrival (`TrackReceivedData`). Stream window
-  credit is returned when the lease consumes a DATA frame
-  (`TrackConsumedData`), so a stream queues at most its receive window of
-  DATA. The connection's inbound queue for unclaimed frames is also unbounded.
-  The outbound queue keeps the bound
+  still sends a request body and has not yet read the response. Window credit
+  is returned on arrival, so the peer decides how many frames wait in the
+  queue. The connection's inbound queue for unclaimed frames is also
+  unbounded. The outbound queue keeps the bound
   (`cDefaultQueueCapacity`, 128 frames). See
   [request-observability](request-observability.md), "Arrival stamping".
 - `TCriticalSection` (unit `SyncObjs`) — the pool guard, and per-connection
@@ -117,7 +115,8 @@ One thread per connection, responsible for *both* directions:
   `HEADERS`. The single writer guarantees this by construction.
 - **Backpressure:** `TBlockingQueue` has a bounded depth; a full outbound
   queue blocks (or returns a retryable error) instead of growing unbounded.
-  A full inbound queue applies flow-control pressure via window updates. On
+  Inbound queues are unbounded, because a full inbound queue would stop the
+  reader from applying WINDOW_UPDATE frames. On
   shutdown, `Shutdown` unblocks waiters and pending calls fail with
   `EHttpConnectionClosed` rather than hanging.
 - **Contention:** the HPACK encoder is stateful and shared across streams.

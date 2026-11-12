@@ -336,7 +336,8 @@ begin
   FAllocator := AAllocator;
   FRequest := ARequest;
   FOutbound := FConnection.Outbound;
-  FInbound := TBlockingQueue<TFrame>.Create(0); // unbounded
+  // unbounded: a full queue would stop the reader from applying WINDOW_UPDATE
+  FInbound := TBlockingQueue<TFrame>.Create(0);
   FOwnsEncoder := AEncoder = nil;
   FOwnsDecoder := ADecoder = nil;
   if AEncoder <> nil then FEncoder := AEncoder else FEncoder := THpackCodec.Create;
@@ -755,7 +756,6 @@ begin
   // after the reader thread saw the frame, so the clock is never read here
   FBodyArrivedUs := AFrame.ArrivedUs;
   Inc(FBodyReceived, Length(FBodyPending));
-  FConnection.TrackConsumedData(FStreamId, AFrame.DataLength);
   FResponseState := rsBodyOpen;
   if AFrame.IsEndStream then
   begin
