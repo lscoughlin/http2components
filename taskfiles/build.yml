@@ -1,17 +1,17 @@
 version: '3'
 
-# Contract of this file (PY-03). Other Taskfiles rely on these names.
+# Contract of this file. Other Taskfiles rely on these names.
 #
-# Public tasks (names of the old Taskfile are unchanged):
+# Public tasks:
 #   build, build:common, build:client, build:server, build:readers,
 #   build:openssl, build:tlslib, examples, clean
-# Public tasks that the old Makefiles reached through build.py:
+# Component tasks:
 #   component:build:common|client|server|readers|openssl|tlslib
 #                          One component, no dependency build.
 #   clean:component:common|client|server|readers|openssl|tlslib
 #                          Remove the output directories of one component.
 #   isolation:compile, isolation:tlslib:runtime
-#                          The isolation probes of build.py.
+#                          The isolation probes.
 #   compile:client-test-runner
 #                          Build common, client and openssl. Compile the
 #                          client test runner (client-test).
@@ -23,7 +23,7 @@ version: '3'
 #                          integration-test. The program is
 #                          bin/<target>/<profile>/integration-test/programs/<stem>.
 #                          The output is the "+ <command>" lines of the
-#                          build, as build.py prints them.
+#                          build.
 # Internal task (call with `task:` from another task):
 #   compile-file           vars COMPONENT, SOURCE (path relative to the
 #                          repository root); optional TESTS (true or false,
@@ -31,7 +31,7 @@ version: '3'
 #                          "openssl tlslib": the flags of example_provider_flags),
 #                          EXTRA (more flags, separated by blanks), VERIFIED
 #                          (true skips the pin check; the caller has done it).
-#                          Equal to compile_file of build.py. It checks the
+#                          It checks the
 #                          pins that the role needs, writes the response file
 #                          <OUT>/<COMPONENT>/cfg/flags-<stem>.cfg and runs fpc.
 #                          The program is <OUT>/<COMPONENT>/programs/<stem>.
@@ -41,7 +41,7 @@ version: '3'
 #                          build_tlslib, compose_flags, tlslib_closure,
 #                          fpc_run and the helpers of this file.
 #   {{.OPENSSL_ENV_SH}}    Defines open_ssl_env. It exports OPENSSL_LIBPATH
-#                          with the build.py default when the variable is
+#                          with its default when the variable is
 #                          unset. Call it in a subshell to scope the value.
 #
 # Flags: tools/fpc/*.cfg holds the static flags of each role, one flag for
@@ -55,8 +55,8 @@ version: '3'
 # (a measured fpc 3.2.4 behavior). The reverse order changes the TlsLib
 # bootstrap order and so the unit that fpc picks.
 # Environment: FPC, FPCFLAGS, FPC_UNITS, TARGET, PROFILE, DEBUG, the *_ROOT
-# overrides (PY-02 snippet) and OPENSSL_LIBPATH.
-# Changes from build.py: no 300 s limit on compiles; no lock file for the
+# overrides and OPENSSL_LIBPATH.
+# Notes: no 300 s limit on compiles; no lock file for the
 # common build; the Pascal parser is a grep (see example_programs);
 # FPCFLAGS is split at blanks, without shell quotes.
 
@@ -86,7 +86,7 @@ vars:
     TLSLIB_ORDER='{{.TLSLIB_COMPILE_ORDER}}'
     FPCDIR=$DEP_ROOT/tools/fpc
 
-    # Print "+ <command>" as build.py does, then run the command.
+    # Print "+ <command>", then run the command.
     fpc_run() {
       _line="$*"
       if [ "${#_line}" -gt 1200 ]; then
@@ -101,7 +101,7 @@ vars:
     # or starts with # is skipped), then -FU, -FE and the source. The
     # arguments after the fourth are put before the flags. The flags are not
     # given as an @file: fpc searches the -Fu directories of a response file
-    # in the reverse order, so the order of build.py would change.
+    # in the reverse order, so the unit order would change.
     # Arguments: flag file, unit directory, program directory, source, options.
     FPC_RUN=fpc_run
     quiet_run() { "$@"; }
@@ -193,7 +193,7 @@ vars:
       fi
     }
 
-    # base_flags of build.py as a response file on standard output.
+    # The base flags of a component as a response file on standard output.
     # Arguments: component, tests (true or false), user flags (1 or 0).
     compose_flags() {
       role_of "$1"
@@ -219,13 +219,13 @@ vars:
       if [ "$3" = 1 ]; then user_flags; fi
     }
 
-    # example_provider_flags of build.py for one provider.
+    # The flags that an example needs for one provider.
     provider_flags() {
       compose_flags "$1" false 0
       printf '%s\n' "-Fu$OUT/$1/units"
     }
 
-    # compile_file of build.py. Arguments: component, source, tests,
+    # Compile one source file. Arguments: component, source, tests,
     # providers, extra flags.
     compile_file() {
       _c=$1; _src=$2; _t=$3; _prov=$4; _extra=$5

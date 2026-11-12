@@ -8,7 +8,7 @@
 # private port, points SSE_TEST_URL at it, runs just the TSseLiveTest suite,
 # then always stops the server again.
 #
-#   bash tools/client/validate/sse-live.sh          # or: make validate-sse
+#   bash tools/client/validate/sse-live.sh          # or: task validate:client:sse
 #
 # Env overrides: SSE_PORT (default 8399), SSE_HOST (default 127.0.0.1),
 # BIN (default bin), and the usual FPC/OPENSSL_LIBPATH.
@@ -28,7 +28,7 @@ SSE_PORT="${SSE_PORT:-8399}"
 RUNNER="$BIN/Http2.Client.RunTests"
 
 if [ ! -x "$RUNNER" ]; then
-  echo "sse-live: $RUNNER is missing; run 'make test' first" >&2
+  echo "sse-live: $RUNNER is missing; run 'task test:client' first" >&2
   exit 2
 fi
 

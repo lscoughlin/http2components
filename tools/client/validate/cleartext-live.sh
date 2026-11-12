@@ -8,7 +8,7 @@
 #              request and the request is not written again
 #   ctHttp1    no Upgrade header at all
 #
-#   bash tools/client/validate/cleartext-live.sh     # or: make validate-cleartext
+#   bash tools/client/validate/cleartext-live.sh     # or: task validate:client:cleartext
 #
 # Env overrides: CT_PORT (default 8651), OPENSSL_LIBPATH.
 set -u

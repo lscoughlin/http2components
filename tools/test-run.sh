@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 # Copyright 2026 Liam Seamus Coughlin
 #
-# Run a test program with a time limit. The script replaces run, run_suite
-# and the PKI step of tools/build.py. It needs no timeout program and no
+# Run a test program with a time limit. The script runs a test suite and the
+# PKI step of a test run. It needs no timeout program and no
 # Python. It works with a POSIX sh on macOS and on Linux.
 #
 # Usage:
@@ -135,7 +135,7 @@ run_limited() {
   if [ -e "$tmp/timeout" ]; then timed_out=1; fi
 }
 
-# Print "+ <command>" as build.py does.
+# Print "+ <command>" as a shell trace does.
 echo_command() {
   printf '+ %s\n' "$*"
 }

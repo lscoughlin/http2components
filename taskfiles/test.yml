@@ -1,7 +1,6 @@
 version: '3'
 
-# Test tasks (PY-04). They replace run_tests, run_api_tests,
-# run_integration_tests and the test:tls targets of tools/build.py.
+# Test tasks. They cover the unit, API, integration and TLS test targets.
 #
 # Each task builds the components that the test needs, compiles the test
 # runner with compile-file (TESTS=true), and starts it with tools/test-run.sh.
@@ -12,8 +11,8 @@ version: '3'
 # TEST_TIMEOUT (seconds, default 180), OPENSSL_LIBPATH (default as in
 # taskfiles/build.yml), and the variables of taskfiles/build.yml.
 #
-# Change from build.py: the script ends the runner and its descendants. It
-# does not use a process group (see tools/test-run.sh).
+# The script ends the runner and its descendants. It does not use a process
+# group (see tools/test-run.sh).
 
 tasks:
   test:common:

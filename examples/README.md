@@ -11,7 +11,7 @@ name verification. They do not use an implicit provider or an insecure policy.
 | `tls_dual_role.pas` | One OpenSSL context for both client and server roles. The client trusts the supplied server identity, and the server uses a certificate with a `localhost` subject alternative name. |
 | `tls_https_proxy.pas` | Separate OpenSSL contexts for the origin and HTTPS proxy. The origin uses system trust; the proxy uses the supplied CA file. |
 
-Build all examples with `python3 tools/build.py examples`. The integration
+Build all examples with `task examples`. The integration
 programs are written to `bin/<target>/<profile>/examples-integration/programs/`.
 The build compiles the examples. It does not run them.
 

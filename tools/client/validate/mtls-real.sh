@@ -34,11 +34,11 @@
 # lscoughlin@liam-rzbox.local): the tree is copied there with
 # tools/client/container/remote-run.sh and this script runs on that host.
 # MTLS_REAL_HOST=local runs it on this machine.  MTLS_REAL_NATIVE=1 builds and
-# runs the client with the host's own Free Pascal (as `make test` does) and
+# runs the client with the host's own Free Pascal (as `task test:client` does) and
 # starts only the servers in Docker, whose published ports the host reaches on
 # loopback (Rancher Desktop does this for --network host containers).
 #
-#   bash tools/client/validate/mtls-real.sh          # or: make validate-mtls-real
+#   bash tools/client/validate/mtls-real.sh          # or: task validate:client:mtls-real
 #
 # Env: MTLS_REAL_BASE (default 9440; each server uses 10 ports from its slot),
 # MTLS_REPEAT, HTTP2_IMAGE (dev image), NGINX_IMAGE, HTTPD_IMAGE, CADDY_IMAGE.

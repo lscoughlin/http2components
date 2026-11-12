@@ -26,7 +26,7 @@
 # through the https proxy, where the origin sees that identity and the proxy
 # the proxy identity.
 #
-#   bash tools/client/validate/mtls-live.sh          # or: make validate-mtls
+#   bash tools/client/validate/mtls-live.sh          # or: task validate:client:mtls
 #
 # Fixtures come from tools/client/validate/make-mtls-certs.sh (test/fixtures/client/certs/mtls).
 # Env overrides: MTLS_BASE (default 8661), OPENSSL_LIBPATH.

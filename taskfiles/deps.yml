@@ -1,6 +1,6 @@
 version: '3'
 
-# Contract of this file (PY-02). Other Taskfiles rely on these names.
+# Contract of this file. Other Taskfiles rely on these names.
 #
 # Public tasks:
 #   setup:deps           Clone or update every pinned dependency under
@@ -10,7 +10,7 @@ version: '3'
 #                        DEPENDENCY_NAMES.
 # Internal tasks (call with `task:` from another task):
 #   verify-dependency    var NAME (for example mORMot2). Fails with the
-#                        messages of the old build.py verify_dependency when
+#                        messages when
 #                        the checkout is missing, has another HEAD or origin,
 #                        has local changes, or has no license notice.
 #   dependency-root      var NAME. Prints the resolved checkout directory on
@@ -30,8 +30,7 @@ version: '3'
 #   <UPPER NAME>_ORIGIN, <UPPER NAME>_REVISION, HARNESS_ORIGIN, HARNESS_REV.
 # Environment: TLS_DEPENDENCY_CACHE_ROOT (local clone source), <UPPER>_ROOT,
 #   MORMOT_ROOT, MORMOT.
-# Change from build.py: the hint in the "is missing" message is
-#   "run task setup:deps" (it was "run make setup-deps").
+# The hint in the "is missing" message is "run task setup:deps".
 
 vars:
   # POSIX shell functions. The text is put at the start of a command.
