@@ -65,9 +65,7 @@ selects the OpenSSL runtime library directory when it is outside the system
 loader path.
 
 The TlsLib package uses the pinned TlsLib, CryptoLib, HashLib, and
-SimpleBaseLib sources. On macOS with Free Pascal, a hash-checked CryptoLib
-random-provider overlay is generated under `bin/`; the dependency checkout is
-not modified. Its bootstrap unit order is retained. Lazarus package builds
+SimpleBaseLib sources. The bootstrap unit order is retained. Lazarus package builds
 use a private configuration and a scoped compiler wrapper. The wrapper
 removes only the forced `-B` argument from the TlsLib `lazbuild` invocation,
 after the fresh ordered bootstrap, so its PPUs remain available through the

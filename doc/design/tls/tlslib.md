@@ -36,9 +36,7 @@ alert remains available in session error metadata.
 TlsLib uses a sans-I/O engine. Sessions accept and return bounded byte
 buffers. Each transport serializes its own session calls, and every session
 retains its context. One context can be shared across client and server roles
-and threads. The package has no OpenSSL dependency. On macOS with Free Pascal,
-the build uses a hash-checked CryptoLib random-provider overlay in `bin/`;
-the pinned dependency checkout remains unchanged. Package builds use a
+and threads. The package has no OpenSSL dependency. Package builds use a
 private Lazarus configuration and preserve the ordered CryptoLib bootstrap.
 After that fresh bootstrap, a scoped wrapper removes only the forced `-B`
 argument from the TlsLib `lazbuild` invocation. This keeps the bootstrap PPUs

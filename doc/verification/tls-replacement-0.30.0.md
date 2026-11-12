@@ -33,9 +33,7 @@ OpenSSL 4.1.0, dated 2026-10-23. These are separate runtime and fixture tools.
 | SimpleBaseLib4Pascal | `9310af083d398ed62f01d8c82d39f85ad194dc93` |
 
 The origins and license notices are recorded in `tools/dependencies.json`.
-The dependency checkouts stayed clean. The macOS/FPC CryptoLib random-source
-patch is a versioned overlay under generated output. It does not modify the
-pinned checkout. Other platforms were not validated.
+The dependency checkouts stayed clean. Other platforms were not validated.
 
 ## Executed bounded checks
 
@@ -160,12 +158,9 @@ without `OPENSSL_LIBPATH`. It passed 87 cases in 0.854 seconds, exit 0.
 It loaded 82 images, with no `libssl` or `libcrypto` image. Its complete
 log is `bin/tls-coordinator/final/test-tls-tlslib.log`.
 
-The first image check failed despite 87 passing functional cases: macOS
-framework dependencies loaded LibreSSL 3.3.6 system libraries. A separate
-Security.framework probe showed the same issue. The reviewed random-source
-overlay reads `/dev/urandom` with interrupted-operation and short-read handling,
-rejects failed reads, and has no weak fallback. It removed that dependency.
-The small RNG probe passed three cases before the full exchange check.
+On macOS, the upstream CryptoLib random provider loads the LibreSSL system
+libraries through the macOS frameworks. The build does not patch this
+behavior. The image checks above predate this decision.
 
 Lazarus forces `-B` for an unbuilt package. The TlsLib-only build wrapper
 removes that exact argument after a fresh ordered dependency bootstrap, which

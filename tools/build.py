@@ -18,7 +18,6 @@ import time
 import fcntl
 import json
 import stat
-import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -175,37 +174,6 @@ def base_flags(component: str, *, tests: bool = False,
 
 def verify_mormot() -> None:
     verify_dependency("mORMot2")
-
-
-def prepare_macos_rng_overlay() -> tuple[Path | None, str]:
-    """Prepare the pinned CryptoLib RNG overlay for a Darwin FPC target."""
-    target_os = subprocess.check_output([compiler(), "-iTO"], text=True).strip().casefold()
-    if platform.system() != "Darwin" or target_os != "darwin":
-        return None, "none"
-    from tools.patches.cryptolib.overlay import (
-        PATCHED_UNIT_SHA256,
-        macos_rng_overlay_fingerprint,
-        prepare_macos_rng_overlay as prepare_overlay,
-    )
-
-    original = verify_dependency("CryptoLib4Pascal")
-    profile_root = ROOT / "bin" / target_name() / profile() / "tlslib"
-    compat_root = profile_root / "compat"
-    overlay_root = compat_root / "cryptolib"
-    provider_dir = overlay_root / "CryptoLib" / "src" / "Rngs" / "Providers"
-    marker = compat_root / "cryptolib-rng.fingerprint"
-    fingerprint = macos_rng_overlay_fingerprint()
-    patched_unit = provider_dir / "ClpMacOSRandomProvider.pas"
-    if (marker.is_file() and marker.read_text().strip() == fingerprint
-            and patched_unit.is_file()
-            and hashlib.sha256(patched_unit.read_bytes()).hexdigest() == PATCHED_UNIT_SHA256
-            and (overlay_root / "CryptoLib" / "src" / "Include").is_dir()):
-        return provider_dir, fingerprint
-
-    provider_dir = prepare_overlay(original, overlay_root)
-    marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(fingerprint + "\n")
-    return provider_dir, fingerprint
 
 
 def dependency_root(name: str) -> Path:
@@ -414,7 +382,6 @@ def build(component: str) -> None:
 
 
 def tlslib_flags() -> list[str]:
-    overlay_provider, _ = prepare_macos_rng_overlay()
     roots = [dependency_root("TlsLib4Pascal") / "TlsLib" / "src",
              dependency_root("CryptoLib4Pascal") / "CryptoLib" / "src",
              dependency_root("HashLib4Pascal") / "HashLib" / "src",
@@ -423,24 +390,14 @@ def tlslib_flags() -> list[str]:
     includes = {source.parent for base in roots for source in base.rglob("*.inc")}
     preferred = [roots[1] / "Math" / "EC" / "Multiplier", roots[1] / "Math" / "EC"]
     dirs = [path for path in preferred if path.exists()]
-    if overlay_provider is not None:
-        dirs.insert(0, overlay_provider)
     dirs.extend(sorted(directories - set(dirs)))
     includes.update(directories)
-    if overlay_provider is not None:
-        includes.add(overlay_provider.parents[1] / "Include")
     return [f"-Fu{path}" for path in dirs] + [f"-Fi{path}" for path in sorted(includes)]
 
 
 def compile_provider_tlslib(source: Path) -> Path:
     units, programs = output("tlslib")
     package_units = output("tlslib")[0] / "bootstrap"
-    _, overlay_fingerprint = prepare_macos_rng_overlay()
-    fingerprint_file = units.parent / "bootstrap-overlay.fingerprint"
-    if (not fingerprint_file.is_file()
-            or fingerprint_file.read_text().strip() != overlay_fingerprint):
-        shutil.rmtree(units, ignore_errors=True)
-        units.mkdir(parents=True, exist_ok=True)
     package_units.mkdir(parents=True, exist_ok=True)
     flags = ["-O2", "-vw", "-Mdelphi", *tlslib_flags(),
              *shlex.split(os.environ.get("FPCFLAGS", ""))]
@@ -458,7 +415,6 @@ def compile_provider_tlslib(source: Path) -> Path:
     run([compiler(), f"-Fu{package_units}", *flags,
          f"-Fu{COMPONENTS['common']['source']}", f"-Fu{COMPONENTS['tlslib']['source']}",
          f"-FU{units}", f"-FE{programs}", str(source.relative_to(ROOT))], timeout=300)
-    fingerprint_file.write_text(overlay_fingerprint + "\n")
     return programs / source.stem
 
 
