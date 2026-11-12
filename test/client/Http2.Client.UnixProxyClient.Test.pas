@@ -24,6 +24,8 @@ uses
   SysUtils, Classes, BaseUnix, Sockets, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Proxy.Types,
   Http2.Client.Messages, Http2.Client.Factory, Http2.Client,
+  mormot.lib.openssl11, Http2.Client.Tls.Support,
+  Http2.Client.Test.OpenSSL.SigPipe, Http2.Client.Test.TlsContext,
   Http2.Client.Unix.TestKit, Http2.Client.UnixClientWire.Test;
 
 type
@@ -61,6 +63,25 @@ type
     property Inner: RawByteString read FInner;
   end;
 
+  /// a proxy listener on a socket file. It answers CONNECT with 200, then
+  /// runs a TLS server handshake with the test certificate on the tunnel,
+  /// so the tunnel acts as the origin. It answers one request over TLS.
+  TConnectTlsProxyListener = class(TUnixListener)
+  private
+    FHead: RawByteString;
+    FRequest: RawByteString;
+    FHandshake: Integer;
+  public
+    /// reads the CONNECT head, then the TLS handshake and the request
+    procedure Serve(AFd: Integer); override;
+    /// the CONNECT head that the listener read
+    property Head: RawByteString read FHead;
+    /// the request head that arrived inside the TLS session
+    property Request: RawByteString read FRequest;
+    /// 1 when the server handshake on the tunnel succeeded
+    property HandshakeResult: Integer read FHandshake;
+  end;
+
   /// a selector that answers one fixed proxy for every URI
   TFixedProxySelector = class(TInterfacedObject, IProxySelector)
   private
@@ -87,6 +108,7 @@ type
     procedure TestNoProxyHostGoesDirectOverTcp;
     procedure TestRequestGoesThroughTheUnixProxy;
     procedure TestSocks5ThroughUnixProxyViaFactory;
+    procedure TestHttpsOriginThroughUnixProxyUsesTlsToTheOrigin;
   end;
 
 implementation
@@ -165,6 +187,32 @@ begin
   Result := '/' + StringOfChar('a', ALength - 1);
 end;
 
+/// reads over a TLS session until AMarker arrives, the peer closes or the
+/// timeout expires; the descriptor of the session is polled first
+function ReadTlsHeadUntil(ASsl: PSSL; AFd: Integer;
+  const AMarker: RawByteString; const ATimeoutMs: Integer): RawByteString;
+var
+  Pfd: pollfd;
+  Buf: array[0..511] of Byte;
+  N, Old: Integer;
+begin
+  Result := '';
+  while Pos(AMarker, Result) = 0 do
+  begin
+    Pfd.fd := AFd;
+    Pfd.events := POLLIN;
+    Pfd.revents := 0;
+    if fpPoll(@Pfd, 1, ATimeoutMs) <= 0 then
+      Break;
+    N := TestSslRead(ASsl, @Buf[0], SizeOf(Buf));
+    if N <= 0 then
+      Break;
+    Old := Length(Result);
+    SetLength(Result, Old + N);
+    Move(Buf[0], Result[Old + 1], N);
+  end;
+end;
+
 /// true when Build raises EHttpUnixSocketConfigError
 function BuildRaisesUnixConfigError(const AFactory: THttpClientFactory): Boolean;
 begin
@@ -212,6 +260,42 @@ begin
   WriteAll(AFd, Socks5ConnectSucceeded);
   FInner := ReadHeadUntil(AFd, HeadEndMark, 3000);
   WriteAll(AFd, OriginAnswer);
+end;
+
+{ TConnectTlsProxyListener }
+
+procedure TConnectTlsProxyListener.Serve(AFd: Integer);
+var
+  Ctx: PSSL_CTX;
+  Ssl: PSSL;
+  Answer: RawByteString;
+begin
+  Answer := OriginAnswer;
+  FHandshake := 0;
+  FHead := ReadHeadUntil(AFd, HeadEndMark, 3000);
+  WriteAll(AFd, ConnectAnswer);
+  Ctx := SSL_CTX_new(TLS_server_method());
+  try
+    SSL_CTX_use_certificate_file(Ctx,
+      PUtf8Char(UTF8String(TestCertPath('localhost.crt'))), SSL_FILETYPE_PEM);
+    SSL_CTX_use_PrivateKey_file(Ctx,
+      PUtf8Char(UTF8String(TestCertPath('localhost.key'))), SSL_FILETYPE_PEM);
+    Ssl := SSL_new(Ctx);
+    try
+      SSL_set_fd(Ssl, AFd);
+      FHandshake := TestSslAccept(Ssl);
+      if FHandshake = 1 then
+      begin
+        FRequest := ReadTlsHeadUntil(Ssl, AFd, HeadEndMark, 3000);
+        TestSslWrite(Ssl, Pointer(Answer), Length(Answer));
+      end;
+      TestSslShutdown(Ssl);
+    finally
+      SSL_free(Ssl);
+    end;
+  finally
+    SSL_CTX_free(Ctx);
+  end;
 end;
 
 { TFixedProxySelector }
@@ -384,6 +468,45 @@ begin
       string(Socks5ConnectExampleTest), string(L.Request));
     AssertTrue('origin request in the tunnel', Pos('GET /x HTTP/1.1', L.Inner) = 1);
     AssertTrue('Host header', Pos('Host: example.test', L.Inner) > 0);
+    Client.Close;
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TUnixProxyClientTest.TestHttpsOriginThroughUnixProxyUsesTlsToTheOrigin;
+var
+  L: TConnectTlsProxyListener;
+  Client: IHttpClient;
+  R: IHttpResponse;
+begin
+  // the fake origin is a TLS server, so the test needs the OpenSSL provider
+  // and the test certificate
+  if not OpenSslIsAvailable then
+  begin
+    AssertTrue('OpenSSL unavailable; skipped', True);
+    Exit;
+  end;
+  if (not FileExists(TestCertPath('localhost.crt'))) or
+     (not FileExists(TestCertPath('localhost.key'))) then
+  begin
+    AssertTrue('test certs unavailable; skipped', True);
+    Exit;
+  end;
+  L := TConnectTlsProxyListener.Create(FPath);
+  try
+    Client := THttpClientFactory.Create.WithUnixProxy(FPath)
+      .WithTlsContext(OpenSslClientTestContext('', True))
+      .WithHttp1Fallback.WithConnectTimeout(2000)
+      .WithHeaderTimeout(3000).Build;
+    R := Client.Send(THttpRequest.Create(hmGet, 'https://example.test/x'));
+    AssertEquals('status', 200, R.StatusCode);
+    AssertEquals('one connection on the file', 1, L.Accepted);
+    AssertTrue('CONNECT to the origin on port 443', Pos(
+      'CONNECT example.test:443 HTTP/1.1', L.Head) = 1);
+    AssertEquals('TLS handshake with the origin through the tunnel', 1,
+      L.HandshakeResult);
+    AssertTrue('origin request inside TLS', Pos('GET /x HTTP/1.1', L.Request) = 1);
     Client.Close;
   finally
     L.Free;
