@@ -89,7 +89,14 @@ uses
   Http2.Server.Facade.Test,
   Http2.Server.Http1.Hardening.Test,
   Http2.Server.Runtime.Test,
-  Http2.Server.TlsPolicy.Test;
+  Http2.Server.TlsPolicy.Test,
+  Http2.Server.ConfigUnix.Test,
+  Http2.Server.Unix.Path.Test,
+  Http2.Server.Unix.TestKit,
+  Http2.Server.UnixServer.Test,
+  Http2.Server.UnixOptions.Test,
+  Http2.Server.UnixFacade.Test,
+  Http2.Server.UnixProtocol.Test;
 
 const
   /// name of the top-level suite in the runner report

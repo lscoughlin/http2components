@@ -35,6 +35,10 @@ uses
   Http2.Client.Timeouts.Test, Http2.Client.Tls.Test,
   Http2.Client.WebSocket.Codec.Test, Http2.Client.WebSocket.Handshake.Test, Http2.Client.WebSocketClient.Test,
   Http2.Client.WebSocketLive.Test, Http2.Client.WebSocketObservability.Core.Test,
-  Http2.Client.WebSocketObservability.Lifecycle.Test;
+  Http2.Client.WebSocketObservability.Lifecycle.Test,
+  Http2.Client.Unix.TestKit, Http2.Client.UnixSocket.Test, Http2.Client.UnixDial.Test,
+  Http2.Client.UnixClient.Test, Http2.Client.UnixClientWire.Test,
+  Http2.Client.UnixClientProtocols.Test, Http2.Client.UnixProxyType.Test,
+  Http2.Client.UnixProxyDial.Test, Http2.Client.UnixProxyClient.Test;
 
 end.

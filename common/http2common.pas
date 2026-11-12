@@ -22,6 +22,7 @@ uses
   Http2.Common.Tls.Policy,
   Http2.Common.Tls.Session,
   Http2.Common.Tls.Types,
+  Http2.Common.UnixPath,
   Http2.Common;
 
 implementation
