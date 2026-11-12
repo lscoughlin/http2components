@@ -292,9 +292,15 @@ begin
     raise EHttpTlsConfigError.Create('an explicit HTTPS proxy TLS context is required');
   if AProxy.Kind = pkHttps then
     RequireClientTlsContext(AProxyContext, 'HTTPS proxy');
-  Who := Format('%s:%d', [AProxy.Host, AProxy.Port]);
+  if AProxy.UnixPath <> '' then
+    Who := 'unix:' + AProxy.UnixPath
+  else
+    Who := Format('%s:%d', [AProxy.Host, AProxy.Port]);
   // plain TCP to the proxy first: no tunnel is requested by the constructor
-  Plain := TPlainSocket.Create(AProxy.Host, AProxy.Port, AConnectTimeoutMs);
+  if AProxy.UnixPath <> '' then
+    Plain := TPlainSocket.CreateUnix(AProxy.UnixPath, AConnectTimeoutMs)
+  else
+    Plain := TPlainSocket.Create(AProxy.Host, AProxy.Port, AConnectTimeoutMs);
   Result := Plain;
   Plain.SetReadTimeoutMs(AConnectTimeoutMs);
   Plain.SetWriteTimeoutMs(AConnectTimeoutMs);
