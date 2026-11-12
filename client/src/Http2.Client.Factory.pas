@@ -59,6 +59,8 @@ type
     FProxyIdentity: IClientIdentity;
     FTlsContext: ITLSContext;
     FProxyTlsContext: ITLSContext;
+    FUnixPath: string;
+    FUnixPathError: string;
   public
     class function Create: THttpClientFactory; static;
     /// compatibility shim: sets BOTH the per-host and the total cap to AMax,
@@ -76,6 +78,11 @@ type
     /// the proxy for the request is chosen by ASelector (nil = direct); it
     /// overrides every other proxy setting (doc/design/proxy.md)
     function WithProxySelector(const ASelector: IProxySelector): THttpClientFactory;
+    /// every connection goes to this socket file; the URL host still names
+    /// the authority.  APath must be absolute, hold no NUL byte and be at most
+    /// 103 bytes long; Build raises EHttpUnixSocketConfigError otherwise.
+    /// '' clears the option.  A Unix socket cannot be used with a proxy.
+    function WithUnixSocket(const APath: string): THttpClientFactory;
     /// one proxy URL ('[scheme://][user[:password]@]host[:port]', schemes
     /// http, https, socks5, socks5h) for every scheme without a more specific
     /// proxy; the manual form of all_proxy.  '' clears it.
@@ -178,12 +185,15 @@ type
     property Logger: IHttpLogger read FLogger;
     property Http1Fallback: Boolean read FHttp1Fallback;
     property ClearTextPolicy: TClearTextPolicy read FClearTextPolicy;
+    /// the socket file that every connection uses, '' when none is set
+    property UnixPath: string read FUnixPath;
   end;
 
 implementation
 
 uses
-  Http2.Client.SocketFactory, Http2.Client.Core, Http2.Client.Identity;
+  Http2.Client.SocketFactory, Http2.Client.Core, Http2.Client.Identity,
+  Http2.Common.UnixPath;
 
 class function THttpClientFactory.Create: THttpClientFactory;
 begin
@@ -209,6 +219,8 @@ begin
   Result.FProxyIdentity := nil;
   Result.FTlsContext := nil;
   Result.FProxyTlsContext := nil;
+  Result.FUnixPath := '';
+  Result.FUnixPathError := '';
   Result.FObserver := nil;
   Result.FRequestObservers := nil;
   Result.FLogger := nil;
@@ -275,6 +287,17 @@ function THttpClientFactory.WithProxySelector(
 begin
   Result := Self;
   Result.FProxySelector := ASelector;
+end;
+
+function THttpClientFactory.WithUnixSocket(
+  const APath: string): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FUnixPath := APath;
+  // the rule lives in Http2.Common.UnixPath; an empty path has no problem
+  Result.FUnixPathError := '';
+  if APath <> '' then
+    Result.FUnixPathError := UnixPathProblem(APath);
 end;
 
 function THttpClientFactory.WithAllProxy(const AUrl: string): THttpClientFactory;
@@ -442,7 +465,10 @@ var
   Selector: IProxySelector;
   Client: THttpClient;
   Factory: IHttp2SocketFactory;
+  HasProxy: Boolean;
 begin
+  if FUnixPathError <> '' then
+    raise EHttpUnixSocketConfigError.Create(FUnixPathError);
   Factory := FSocketFactory;
   // an injected factory that cannot present identities would drop them
   // silently: refuse the combination
@@ -484,6 +510,18 @@ begin
       Env := ReadProxyEnvironmentUsing(FEnvLookup)
     else
       Env := ReadProxyEnvironment;
+  // a Unix socket carries no proxy: any proxy source is a configuration error
+  if FUnixPath <> '' then
+  begin
+    HasProxy := (FProxyHost <> '') or (FAllProxy <> '') or
+      Assigned(FProxySelector);
+    if FProxyEnvVars then
+      HasProxy := HasProxy or (Env.HttpProxy <> '') or
+        (Env.HttpsProxy <> '') or (Env.AllProxy <> '');
+    if HasProxy then
+      raise EHttpUnixSocketConfigError.Create(
+        'a Unix socket path cannot be used together with a proxy');
+  end;
   Selector := BuildProxySelector(FProxySelector, Fixed, FAllProxy,
     FProxyEnvVars, Env, FNoProxy);
   Client := THttpClient.Create(Factory, FMaxConnectionsPerHost,
