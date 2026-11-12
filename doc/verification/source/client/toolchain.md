@@ -68,7 +68,7 @@ above.
 | `go` | **absent** | the harness runs through Docker, not `go run`. |
 | `node` v26.10.0, `npm` | present | legacy `http2/http2-test` only (best-effort). |
 | `make` | present (`/usr/bin/make`) | build. **No `cmake`** (absent). |
-| `task` (go-task) | present `3.54.0` (`/opt/homebrew/bin/task`) | the primary build/test entry point (`task build`, `task test`, `task examples`, `task validate:*`); `Makefile` remains a thin mirror. Note go-task's embedded shell (mvdan/sh) does **not** support `ulimit`. |
+| `task` (go-task) | present `3.54.0` (`/opt/homebrew/bin/task`) | the build and test entry point (`task build`, `task test`, `task examples`, `task validate:*`). Note go-task's embedded shell (mvdan/sh) does **not** support `ulimit`. |
 | `openssl` CLI | present (3.6.5) | generate test certs. |
 | `h2spec` | absent | server-conformance only; optional appendix in [validation](validation.md). |
 
@@ -98,7 +98,7 @@ docker run --rm h2-test-harness --list   # lists the case ids
 
 ## Constraints
 
-- There is **no `cmake`**; the build is a Makefile with `fpc` invocations.
+- There is **no `cmake`**; the build is a set of Taskfiles with `fpc` invocations.
 - Every build must `-Fu` the units dir and the vendored mormot dir.
 - Generated test certificates live in `test/certs/`; they are regenerated with
   the openssl CLI.
@@ -132,7 +132,7 @@ lazbuild http2client.lpk
 `TLazPackageGraph.AddPackage failed to open: Package: http2client 0.0 uses
 mormot2` until the IDE has the `mormot2` package linked/installed, and
 mormot's own `.lpk` forces defines (`FPCMM_REPORTMEMORYLEAKS`,
-`FPCMM_SERVER`, …) that our Makefile build does not use. Putting the four
+`FPCMM_SERVER`, …) that our task build does not use. Putting the four
 mormot source dirs on `OtherUnitFiles` instead makes the package compile
 self-contained from within the repo, with no IDE package state.
 
@@ -163,8 +163,8 @@ Verified at 0.17.0: `85387 lines compiled`, with 16 `Http2.Client` units plus th
 auto-created `http2client` registration unit in `lib/aarch64-darwin/`. A stock
 Lazarus matched to its FPC does not need the `--opt` workaround.
 
-Last counted: `make test` reports **648 tests, 0 errors, 0 failures** and
-`make examples` builds eight programs.
+Last counted: `task test` reports **648 tests, 0 errors, 0 failures** and
+`task examples` builds eight programs.
 
 ## Example programs
 
@@ -173,7 +173,7 @@ Last counted: `make test` reports **648 tests, 0 errors, 0 failures** and
 Recorded example build and run commands:
 
 ```sh
-make examples          # or: task examples  ->  bin/<source-stem>
+task examples          # -> bin/<cpu>-<os>/<profile>/<source-stem>
 OPENSSL_LIBPATH=/opt/homebrew/opt/openssl@3/lib bin/basic_get
 ```
 
@@ -195,11 +195,11 @@ git clone --depth 1 https://github.com/nomadlabsinc/h2-client-test-harness.git \
     third_party/h2-client-test-harness
 brew install nghttp2
 docker build -t h2-test-harness third_party/h2-client-test-harness
-make && make test
+task build && task test
 ```
 
 `OPENSSL_LIBPATH` must be exported for any binary that loads TLS (the
-Makefile does this). Verified on this machine: `docker run --rm
+the build tasks do this). Verified on this machine: `docker run --rm
 h2-test-harness --list` lists **146** case ids, matching the harness README.
 
 ## Linux x86_64 (container)
@@ -213,11 +213,11 @@ missing. Verified on Ubuntu 24.04 x86_64:
 
 | Check | Result |
 |---|---|
-| `make test` | 884 tests, 0 errors, 0 failures |
-| `make validate-mtls` | PASS |
-| `make validate-sse`, `validate-websocket`, `validate-cleartext` | PASS |
-| `make validate-proxy` | PASS, all 10 cases |
-| `make validate-interop` | 11 pass, 0 fail, 3 skipped (A.8, and A.11/A.12 which need Apache in Docker) |
+| `task test` | 884 tests, 0 errors, 0 failures |
+| `task validate:client:mtls` | PASS |
+| `task validate:client:sse`, `validate:client:websocket`, `validate:client:cleartext` | PASS |
+| `task validate:client:proxy` | PASS, all 10 cases |
+| `task validate:client:interop` | 11 pass, 0 fail, 3 skipped (A.8, and A.11/A.12 which need Apache in Docker) |
 
 Not run on Linux: the Autobahn client run, the harness sweep and any load or
 overhead measurement.

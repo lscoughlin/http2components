@@ -94,8 +94,8 @@ The run of 2026-10-25 on macOS aarch64 validates the client certificate feature
 
 | Check | Command | Result |
 |---|---|---|
-| Unit suite | `make test` | 678 tests, 0 errors, 0 failures; the 21 tests of `test/Http2.Server.Mtls.Test.pas` are part of it |
-| Live validation against the sibling client | `make mtls-live` | 40 checks passed, 0 failed |
+| Unit suite | `task test` | 678 tests, 0 errors, 0 failures; the 21 tests of `test/Http2.Server.Mtls.Test.pas` are part of it |
+| Live validation against the sibling client | `task validate:server:mtls-live` | 40 checks passed, 0 failed |
 | Conformance after the change | `sh tools/validate/run.sh http2` | the `h2spec` package `http2` passes |
 | Heap trace of the live run | the live program built with `-gh -gl` | no unfreed block names the identity code |
 | Native `X509` leak | the leak check of the live run, five handshakes | the live `X509` count grows by 5 with the identity reader and by 5 without it |
@@ -116,7 +116,7 @@ Linux amd64 run is open.
 
 The run of 2026-10-25 on macOS aarch64 drives two servers in one process, one
 with the HTTP/1.1 fallback and one without it, through the TLS socket of the
-sibling client at `../http2client` (`make tls-live`). It holds no load.
+sibling client at `../http2client` (`task validate:server:tls-live`). It holds no load.
 
 | Offer of the client | Fallback on | Fallback off |
 |---|---|---|
@@ -219,7 +219,7 @@ refuses `curl --http1.1` and serves `curl --http2`.
 
 Gaps of this record: the request body of HTTP/1.1 is not streamed past
 `MaxBodySize`, because the async layer of mORMot2 has no supported call that pauses
-the reads of one connection (as described in [http1](../../../design/server/http1.md)). The run with 1,000,000 mutated requests is not part of `make test`,
+the reads of one connection (as described in [http1](../../../design/server/http1.md)). The run with 1,000,000 mutated requests is not part of `task test`,
 which runs 20,000; the environment variable `HTTP1_FUZZ_RUNS` sets the count.
 
 ### WebSocket
@@ -276,7 +276,7 @@ aarch64, FPC 3.2.4), at the version 0.24.0.
 
 | Run | Result |
 | --- | --- |
-| `make test` | 642 tests, no error, no failure |
+| `task test` | 642 tests, no error, no failure |
 | `h2spec` (package `http2`, server started with `no-http11`) | 94 of 94 pass, as before |
 | `tools/abuse/abuse.py` (strict profile) | 8 of 8 pass |
 | `tools/seam/seam.py` idle 10,000 connections | 32.27% of one core, against 32.60% in the earlier record |

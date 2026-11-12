@@ -49,9 +49,9 @@ commands, versions, counts, artifacts, and review limits.
 | Public API and isolation | The facade probe and six restricted compiler probes passed. |
 | Examples | All 25 examples compiled. They were not executed. |
 | Lazarus packages and group | All six packages built separately. The Lazarus group reader loaded all six targets. |
-| Source and documentation | 405 Pascal files, one include, 152 production units, and 58 documents passed. |
+| Source and documentation | 405 Pascal files, one include, and 58 documents passed under the rules of that time. The current checks are 29 simple rules in the tasks `source:check`, `docs:check`, `version:check`, and `packages:check`. |
 | Version and package inventory | Version 0.30.0 and all six package inventories passed. |
-| Test inventory | All 1,780 source records have checked accounting. This is not a runtime case count. |
+| Test inventory | The checker of that time covered 1,780 source records. This is not a runtime case count. The current checks do not include this accounting. |
 
 Each named TLS program completed within a 30-second outer limit, with exit 0
 and no skipped suite. The runtime checks used local buffers or loopback

@@ -66,16 +66,15 @@ taken on; what carries over is the difference between configurations. An otherwi
 ## Command
 
 ```sh
-make measure-observer MORMOT=third_party/mORMot2/src
-# or: task measure-observer
-# or, with the program already built:
-bin/observer_overhead [requests-per-round [rounds]]
+task examples
+# then, with the program built under bin/<cpu>-<os>/<profile>/:
+observer_overhead [requests-per-round [rounds]]
 ```
 
-It is not part of `make test` and needs no fixture and no network beyond
+It is not part of `task test` and needs no fixture and no network beyond
 loopback. The traffic is cleartext HTTP/1.1, so there is no TLS handshake in
-the timings; `make` passes `OPENSSL_LIBPATH` as for every other target, and a
-direct run of the program should export it too.
+the timings; a run of the program needs `OPENSSL_LIBPATH`, as for every other program,
+when the OpenSSL library is outside the system loader path.
 
 ## Results
 

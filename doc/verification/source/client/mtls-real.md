@@ -23,9 +23,9 @@ notes:
 
 > Historical source record. It describes the source repository and does not verify the merged tree.
 
-`make validate-mtls-real` (`tools/validate/mtls-real.sh`) drives the client,
+`task validate:client:mtls-real` (`tools/validate/mtls-real.sh`) drives the client,
 through `examples/mtls_get.pas`, against three server stacks that require a
-client certificate. It complements `make validate-mtls`, whose servers are a
+client certificate. It complements `task validate:client:mtls`, whose servers are a
 Python `ssl` script and `nghttpd`.
 
 ## Method

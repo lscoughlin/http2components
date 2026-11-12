@@ -23,44 +23,54 @@ invariants:
 
 Locked toolchain facts for the HTTP/2 server library.
 
+## Prerequisites
+
+| Tool | Version | Use |
+|---|---|---|
+| `fpc` | 3.2.4 | compiles every unit and program |
+| `git` | any recent version | fetches the pinned dependencies |
+| `task` (go-task) | 3.42.0 or later | the single entry point for build, test, check and validate |
+| Python 3 | the host version | runs only the interop peers, the load drivers, the abuse and seam tests, and `tools/server/validate/local_process.py` |
+
+A task that needs Python 3 or another optional program skips with a message
+when the program is missing.
+
 ## Compiler and platform
 
 | Fact | Value | Evidence |
 |---|---|---|
 | Compiler | `fpc 3.2.4` (`ppca64`), macOS aarch64 | `fpc -iV`, `fpc -iTP`, `fpc -iTO` |
-| Unit search root | `/usr/local/lib/fpc/3.2.4/units/aarch64-darwin/` | `Makefile:21`, `fpc -iTP`/`fpc -iTO` |
+| Unit search root | `/usr/local/lib/fpc/3.2.4/units/aarch64-darwin/` | `fpc -iTP`/`fpc -iTO` |
 | Mode | `{$mode delphi}{$H+}`, `{$modeswitch advancedrecords}`, `{$interfaces com}` | `src/Http2.Server.pas:20-23`, `test/Http2.Server.TestRunner.pas:16-18` |
 | Thread manager | `{$IFDEF UNIX}cthreads,{$ENDIF}` **before** threaded units | `test/Http2.Server.RunTests.pas:16-18`, `test/Http2.Server.TestRunner.pas:27-29` |
 
-The `Makefile` and `Taskfile.yaml` derive the unit directory from
+The Taskfiles derive the unit directory from
 `fpc -iV` (version), `fpc -iTP` (target CPU) and `fpc -iTO` (target OS). The
 Darwin default holds `/usr/local/lib/fpc/3.2.4/units/aarch64-darwin`. The
 Linux default holds `/usr/lib/fpc/<version>/units/<cpu>-<os>`. The variable
-`FPC_UNITS` overrides each default (`Makefile:13-26`,
-`Taskfile.yaml:33-50`).
+`FPC_UNITS` overrides each default.
 
 ## Build flags
 
 The shared flags are `-O2 -vw -Mdelphi -Fu./src -Fu$(FPC_UNITS)/fcl-fpcunit`
 plus the four mORMot2 unit directories `core`, `lib`, `net` and `crypt`
-(`Makefile:28-34`, `Taskfile.yaml:63`). The `-O2` flag optimises; `-vw` prints
+(`taskfiles/build.yml`). The `-O2` flag optimises; `-vw` prints
 warnings; `-Mdelphi` selects the Delphi mode; `-Fu` adds a unit directory.
 The library target adds `-Cn` (omit the linker stage) and `-FE$(BIN)` (place
-the output in the `bin/` directory) (`Makefile:44-45`).
+the output in the `bin/` directory).
 
 ## TLS and ALPN
 
 | Fact | Value | Evidence |
 |---|---|---|
-| mORMot checkout | `third_party/mORMot2` at `b2b195da1e0580058672a88620ef71bb47283eb1` | `Taskfile.yaml:53`, `git -C third_party/mORMot2 rev-parse HEAD` |
-| mORMot unit dirs | `core`, `lib`, `net`, `crypt` | `Makefile:34`, `Taskfile.yaml:63` |
-| `OPENSSL_LIBPATH` (Darwin) | `/opt/homebrew/opt/openssl@3/lib` | `Makefile:22`, `Taskfile.yaml:54-62` |
-| `OPENSSL_LIBPATH` (Linux) | `/usr/lib/x86_64-linux-gnu` | `Makefile:25`, `Taskfile.yaml:54-62` |
+| mORMot checkout | `third_party/mORMot2` at `b2b195da1e0580058672a88620ef71bb47283eb1` | `tools/dependencies.yml`, `git -C third_party/mORMot2 rev-parse HEAD` |
+| mORMot unit dirs | `core`, `lib`, `net`, `crypt` | `taskfiles/build.yml` |
+| `OPENSSL_LIBPATH` (Darwin) | `/opt/homebrew/opt/openssl@3/lib` | `taskfiles/build.yml` |
+| `OPENSSL_LIBPATH` (Linux) | `/usr/lib/x86_64-linux-gnu` | `taskfiles/build.yml` |
 
 The variable `OPENSSL_LIBPATH` names the directory of the OpenSSL 3 library.
 `mormot.lib.openssl11.pas` loads the library from this directory at run time.
-The `Makefile` exports the variable, so a test binary inherits it
-(`Makefile:33`, `Taskfile.yaml:66-67`).
+The build tasks export the variable, so a test binary inherits it.
 
 The server library uses mORMot2 for the TLS and ALPN layer. The language and
 TLS facts are recorded in [fpc-runtime](../../../design/server/fpc-runtime.md).
@@ -69,7 +79,7 @@ TLS facts are recorded in [fpc-runtime](../../../design/server/fpc-runtime.md).
 
 `task setup:deps` clones `https://github.com/synopse/mORMot2.git` into
 `third_party/mORMot2` and checks out the pinned revision
-(`Taskfile.yaml:76-93`). The task is idempotent: a directory that is already
+(`taskfiles/deps.yml`). The task is idempotent: a directory that is already
 at the revision prints `already at <rev>` and changes nothing. A fresh clone
 runs the task once; every later run is a no-op.
 
@@ -79,9 +89,9 @@ authority for the dependency, not the directory contents.
 
 ## The test suite
 
-`make test` builds `src/Http2.Server.pas`, then builds
+`task test` builds `src/Http2.Server.pas`, then builds
 `test/Http2.Server.RunTests.pas`, then runs the binary with
-`--all --format=plain --sparse` (`Makefile:50-52`). The runner is fpcunit
+`--all --format=plain --sparse` (`taskfiles/test.yml`). The runner is fpcunit
 with `consoletestrunner` (`test/Http2.Server.RunTests.pas:18`). The
 registration unit `Http2.Server.TestRunner` exposes `RegisterTests`, which adds
 one named suite to the global test registry
@@ -107,7 +117,7 @@ registry is invisible to the runner.
 The seam test opens 10,000 connections in one process. The per-process
 open-file limit is raised before that test runs. The `Taskfile.yaml` header
 documents the setting, and the task `setup:limits` reports the platform
-ceiling (`Taskfile.yaml:14-30`, `Taskfile.yaml:95-114`).
+ceiling (`taskfiles/test.yml`).
 
 | Platform | Soft limit command | Hard ceiling |
 |---|---|---|
@@ -152,8 +162,7 @@ the gap has two halves: no host, and no published toolchain for a host.
 A Linux amd64 run needs an amd64 host (or an amd64 emulator that starts an FPC
 3.2.4 toolchain) with FPC 3.2.4 and OpenSSL 3. The unit directory is then
 `/usr/lib/fpc/3.2.4/units/x86_64-linux` for a distribution package. The Linux
-defaults in the `Makefile` and `Taskfile.yaml` (`Makefile:23-25`,
-`Taskfile.yaml:42-50`, `Taskfile.yaml:54-62`) are unverified on hardware.
+defaults in the Taskfiles are unverified on hardware.
 
 ## Tools for the WebSocket and event-stream runs
 
@@ -169,14 +178,13 @@ The Autobahn run uses a configuration that selects the groups 1 to 7, 9 and 10. 
 `ulimit -n 60000`. The loopback interface offers about 16,000 client ports, so a run
 holds at most about 12,000 connections from one client host.
 
-## Recorded source commands commands
+## Recorded source commands
 
 ```sh
 fpc -iV                       # 3.2.4
 fpc -iTP                      # aarch64
 fpc -iTO                      # darwin
 task setup:deps               # idempotent mORMot2 pin
-make test                     # exit code 0
 task test                     # exit code 0
 ```
 
@@ -184,6 +192,9 @@ task test                     # exit code 0
 
 The repository holds no CI configuration. A hosted service needs an account and a
 decision about cost, and the maintainer has made neither. The gate that a CI file
-would run is the three commands `make all examples test` and `task docs:check`.
+would run is the three tasks `task build`, `task examples` and `task test`, and
+`task docs:check`. The `docs:check` task runs the simple documentation rules
+of the Taskfiles. Review and the repository guidelines cover the other
+documentation rules.
 A maintainer runs them before each commit, together with the `h2spec` runs of
 `tools/validate/run.sh`.

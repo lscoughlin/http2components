@@ -21,11 +21,11 @@ notes:
 
 > Historical source record. It describes the source repository and does not verify the merged tree.
 
-`make validate-proxy-real` (`task validate:proxy:real`) drives the client
+`task validate:client:proxy:real` drives the client
 through two real proxy servers, Apache httpd 2.4 (`mod_proxy`,
 `mod_proxy_connect`) and Squid 6.13 (the `ubuntu/squid` image), and reads
 their access logs to prove what each request did. The older gate
-(`make validate-proxy`, [validation](validation.md)) uses Python stand-ins
+(`task validate:client:proxy`, [validation](validation.md)) uses Python stand-ins
 for the proxies; this one uses the software deployments run.
 
 ## How it runs

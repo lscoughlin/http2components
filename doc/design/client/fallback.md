@@ -293,8 +293,8 @@ The table maps each area to its code and acceptance check:
 | `TClearTextPolicy` + factory methods | `client/src/Http2.Client.Tls.pas`, `client/src/Http2.Client.pas` | defaults stay strict (`ctReject`, `Http1Fallback=False`) |
 | h2c prior knowledge | `client/src/Http2.Client.pas` (`TConnectionPool.TryH2cUpgrade` path, preface at once) | a GET against `nghttpd --no-tls` succeeds (A.10) |
 | h2c upgrade | `client/src/Http2.Client.pas` (`AcquireUpgraded`, `BuildH2cUpgradeRequest`, `Http2SettingsBase64Url`) | a GET returns `101` then uses HTTP/2 (A.11) |
-| declined upgrade | `client/src/Http2.Client.pas` (`TConnectionPool.OpenForTxn`, `THttp1PooledConnection.Resume`), `client/src/Http2.Client.Http1.pas` (`ResumeResponse`) | the request reaches the server once and the connection serves the next request (`Http2.Client.ClearText.Test`, `make validate-cleartext`) |
-| HTTP/1.1 without a probe | `client/src/Http2.Client.Tls.pas` (`ctHttp1`), `client/src/Http2.Client.pas` | no `Upgrade` or `HTTP2-Settings` byte on the wire (`Http2.Client.ClearText.Test`, `make validate-cleartext`) |
+| declined upgrade | `client/src/Http2.Client.pas` (`TConnectionPool.OpenForTxn`, `THttp1PooledConnection.Resume`), `client/src/Http2.Client.Http1.pas` (`ResumeResponse`) | the request reaches the server once and the connection serves the next request (`Http2.Client.ClearText.Test`, `task validate:client:cleartext`) |
+| HTTP/1.1 without a probe | `client/src/Http2.Client.Tls.pas` (`ctHttp1`), `client/src/Http2.Client.pas` | no `Upgrade` or `HTTP2-Settings` byte on the wire (`Http2.Client.ClearText.Test`, `task validate:client:cleartext`) |
 | HTTP/1.1 codec | `client/src/Http2.Client.Http1.pas` (`THttp1Connection`) | GET and POST against a plain HTTP/1.1 server succeed (A.12) |
 | ALPN fallback | `client/src/Http2.Client.Http1.pas` + transport selection in `Http2.Client` | an `http/1.1`-only TLS server responds when fallback is on |
 | pool keys and limits | `TConnectionPool` selection | stream limit is 1 for HTTP/1.1; origins keep scheme apart |
@@ -315,7 +315,7 @@ Four interop cases live in the probe (`test/h2probe.pas`) and
 | A.12 | HTTP/1.1 fallback | a GET against an HTTP/1.1 server returns `200` |
 | A.13 | strict mode | a cleartext request raises `EHttpProtocolError` |
 
-The live cleartext gate (`make validate-cleartext`) is separate from the
+The live cleartext gate (`task validate:client:cleartext`) is separate from the
 interop table. It runs `GET`, `POST`, `DELETE` and `HEAD` without a body under
 `ctUpgrade` and `ctHttp1` against `tools/client/h1_counter_server.py`, an
 HTTP/1.1-only server that logs each request it receives. Every request appears

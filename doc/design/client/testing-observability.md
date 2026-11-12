@@ -37,7 +37,7 @@ the lease state machine run against it.
   environment). A scripted loopback server plays an HTTP `CONNECT` proxy, an
   https proxy and a SOCKS5 proxy, and acts as the origin inside the tunnel,
   which exercises TLS inside TLS on 127.0.0.1 only. An opt-in live gate,
-  `make validate-proxy`, drives the client through reference proxies in
+  `task validate:client:proxy`, drives the client through reference proxies in
   `tools/client/proxy_servers.py` and checks their logs for the route taken;
   with `nghttpd` installed it also runs strict-mode HTTP/2 through each proxy kind.
 - **Pure layers** — `THpackCodec`, `TWindow`, `TFrame`/`TFrameHeader`
@@ -83,7 +83,7 @@ is `test/client/Http2.Client.RunTests.pas`. One test unit per source area:
 
 Property-style checks (HPACK `Decode(Encode(H)) = H`, window arithmetic,
 and frame serialization) run alongside example-based cases. The source test
-runner uses `make test` or `task test` and exits non-zero on a failure.
+runner uses `task test` or `task test` and exits non-zero on a failure.
 
 ## Observability hooks
 
@@ -164,8 +164,8 @@ and the scripted peers, so nothing needs a live server.
 
 The recording observer in these tests is registered first, so its end callback
 runs last and a wait on it means the adapters have finished. The overhead
-measurement is not a test: it is `examples/observer_overhead.pas`, run by
-`make measure-observer` (as described in [observer-overhead](../../verification/source/client/observer-overhead.md)).
+measurement is not a test: it is `examples/observer_overhead.pas`, built by
+`task examples` and run by hand (as described in [observer-overhead](../../verification/source/client/observer-overhead.md)).
 
 ## WebSocket tests
 
@@ -184,16 +184,16 @@ message, abort, the close and ping timeouts, a raising listener, and a fresh
 masking key per frame. Tests wait on events with a bounded timeout and never
 sleep to wait for another thread.
 
-The opt-in live gate (`task validate:websocket`) starts
+The opt-in live gate (`task validate:client:websocket`) starts
 `tools/client/ws_servers.py` and the proxy servers of `proxy_servers.py`,
 runs `Http2.Client.WebSocketLive.Test` over `ws` and `wss`, directly and through an
 HTTP `CONNECT` proxy, an `https://` proxy and a SOCKS5 proxy, and then reads
 the servers' logs: every client frame carries the mask bit, the handshake
 headers are as required, and the close codes and the route are as expected.
-`task validate:cleartext` runs a bodyless `GET`, `POST`, `DELETE` and `HEAD`
+`task validate:client:cleartext` runs a bodyless `GET`, `POST`, `DELETE` and `HEAD`
 under `ctUpgrade` and `ctHttp1` against `tools/client/h1_counter_server.py`,
 an HTTP/1.1-only server that logs each request, and checks that each arrived
-once. `task validate:websocket:autobahn` runs the Autobahn|Testsuite fuzzing server
+once. `task validate:client:websocket:autobahn` runs the Autobahn|Testsuite fuzzing server
 (Docker) against `tools/client/autobahn_client.pas` and summarises its
 report; cases 12 and 13 (`permessage-deflate`) are excluded because the client
 offers no extension.
