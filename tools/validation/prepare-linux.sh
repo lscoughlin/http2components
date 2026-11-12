@@ -8,7 +8,8 @@ mormot_root=${1:?usage: prepare-linux.sh MORMOT_ROOT}
 checksum_file="$mormot_root/static/dev.sha256"
 archive_name=mormot2static.tgz
 archive_url="https://synopse.info/files/$archive_name"
-expected=$(awk -v name="$archive_name" '$2 == "*" name { print $1 }' "$checksum_file")
+# the upstream checksum file has CRLF line endings
+expected=$(tr -d '\r' < "$checksum_file" | awk -v name="$archive_name" '$2 == "*" name { print $1 }')
 
 case "$expected" in
   ""|*[!0-9a-fA-F]*) echo "No valid $archive_name checksum in $checksum_file" >&2; exit 1 ;;
