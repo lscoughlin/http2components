@@ -16,10 +16,123 @@ vars:
   PASCAL_DIRS: 'test examples tools common client server tls/openssl tls/tlslib'
 
 tasks:
+  # Builds every Lazarus package with lazbuild, with a private Lazarus
+  # configuration for each package. The .lpk files are maintained by hand and
+  # are not changed. The order is the order of build.py.
   packages:check:
-    desc: Check package files, source inventory, and versions
+    desc: Build every Lazarus package with lazbuild
+    silent: true
     cmds:
-      - python3 tools/build.py packages:check
+      - task: verify-dependencies
+      # lazbuild rewrites the package .pas file of each package it builds
+      # (the generated unit of the package). The files are kept by hand, so
+      # the task saves the .lpk and package .pas files and restores them when
+      # it ends, also after a failure.
+      - |
+        rm -rf '{{.OUT}}/package-backup'
+        mkdir -p '{{.OUT}}/package-backup'
+        for _f in common/http2common client/http2client client/http2clientreaders \
+                  server/http2server tls/openssl/http2openssl tls/tlslib/http2tlslib; do
+          mkdir -p "{{.OUT}}/package-backup/${_f%/*}"
+          cp -p "$_f.lpk" "$_f.pas" "{{.OUT}}/package-backup/${_f%/*}/"
+        done
+      - defer: |
+          cd '{{.OUT}}/package-backup' || exit 0
+          for _f in */*.lpk */*.pas tls/*/*.lpk tls/*/*.pas; do
+            [ -f "$_f" ] && cp -p "$_f" "{{.ROOT_DIR}}/$_f"
+          done
+          true
+      - |
+        {{.BUILD_SH}}
+        _lb=${LAZBUILD:-lazbuild}
+        if ! command -v "$_lb" >/dev/null 2>&1; then
+          echo "lazbuild is required to build the package files" >&2; exit 1
+        fi
+        for _p in common/http2common.lpk client/http2client.lpk server/http2server.lpk \
+                  tls/openssl/http2openssl.lpk client/http2clientreaders.lpk tls/tlslib/http2tlslib.lpk; do
+          [ -f "$_p" ] || { echo "Package file is missing: $_p" >&2; exit 1; }
+        done
+      - task: package-build
+        vars: {PACKAGE: http2common}
+      - task: package-build
+        vars: {PACKAGE: http2openssl}
+      - task: package-build
+        vars: {PACKAGE: http2client}
+      - task: package-build
+        vars: {PACKAGE: http2server}
+      - task: package-build
+        vars: {PACKAGE: http2clientreaders}
+      - task: package-build
+        vars: {PACKAGE: http2tlslib}
+
+  # Var: PACKAGE, the package name (for example http2client).
+  package-build:
+    internal: true
+    silent: true
+    requires:
+      vars: [PACKAGE]
+    cmds:
+      # The TlsLib package starts from a fresh, ordered bootstrap.
+      - cmd: rm -rf '{{.OUT}}/tlslib'
+        platforms: [linux, darwin]
+        ignore_error: false
+        if: '[ "{{.PACKAGE}}" = http2tlslib ]'
+      - task: component:build:tlslib
+        if: '[ "{{.PACKAGE}}" = http2tlslib ]'
+      - |
+        {{.BUILD_SH}}
+        _pkg='{{.PACKAGE}}'
+        _lb=${LAZBUILD:-lazbuild}
+        case $_pkg in
+          http2common) _comp=common; _lpk=common/http2common.lpk; _links= ;;
+          http2openssl) _comp=openssl; _lpk=tls/openssl/http2openssl.lpk; _links=common/http2common.lpk ;;
+          http2client) _comp=client; _lpk=client/http2client.lpk; _links=common/http2common.lpk ;;
+          http2server) _comp=server; _lpk=server/http2server.lpk; _links=common/http2common.lpk ;;
+          http2clientreaders) _comp=readers; _lpk=client/http2clientreaders.lpk
+            _links="common/http2common.lpk client/http2client.lpk" ;;
+          http2tlslib) _comp=tlslib; _lpk=tls/tlslib/http2tlslib.lpk; _links=common/http2common.lpk ;;
+          *) echo "Unknown package: $_pkg" >&2; exit 1 ;;
+        esac
+        _cpu=$("$FPC_BIN" -iTP); _os=$("$FPC_BIN" -iTO)
+        case $(printf '%s' "$_cpu" | tr 'A-Z' 'a-z') in
+          aarch64) _cid=ppca64 ;;
+          x86_64) _cid=ppcx64 ;;
+          i386) _cid=ppc386 ;;
+          arm) _cid=ppcarm ;;
+          *) echo "No Lazarus compiler ID is configured for CPU $_cpu" >&2; exit 1 ;;
+        esac
+        _pcp=$OUT/lazarus-config/$_pkg
+        mkdir -p "$_pcp"
+        _punits=$OUT/package-$_pkg/units; _pprog=$OUT/package-$_pkg/programs
+        rm -rf "$OUT/package-$_pkg"
+        mkdir -p "$_punits" "$_pprog"
+        # base_flags of the component without the common build units, the
+        # package units of the required packages after the first flag, then
+        # the package output directories.
+        _all=$OUT/package-$_pkg.flags
+        compose_flags "$_comp" false 1 | grep -v -e '^#' -e '^$' | grep -vxF -e "-Fu$OUT/common/units" > "$_all.base"
+        {
+          sed -n 1p "$_all.base"
+          if [ "$_comp" != common ]; then printf '%s\n' "-Fu$OUT/package-http2common/units"; fi
+          if [ "$_comp" = readers ]; then printf '%s\n' "-Fu$OUT/package-http2client/units"; fi
+          sed 1d "$_all.base" | grep -v -e '^-FU' -e '^-FE'
+          printf '%s\n' "-FU$_punits" "-FE$_pprog"
+        } > "$_all"
+        rm -f "$_all.base"
+        for _l in $_links; do dep_run "$_lb" "--pcp=$_pcp" --add-package-link "$_l" || exit 1; done
+        set -- "--pcp=$_pcp" "--cpu=$_cpu" "--os=$_os" "--compiler=$_cid"
+        if [ "$_comp" = tlslib ]; then
+          _real=$(command -v "$_cid") || { echo "Cannot resolve Lazarus compiler $_cid" >&2; exit 1; }
+          LAZBUILD_REAL_COMPILER=$_real; export LAZBUILD_REAL_COMPILER
+          shift 4
+          set -- "--pcp=$_pcp" "--cpu=$_cpu" "--os=$_os" "--compiler=$DEP_ROOT/tools/fpc/lazbuild-compiler.sh"
+        fi
+        while IFS= read -r _f; do set -- "$@" "--opt=$_f"; done < "$_all"
+        set -- "$@" "$_lpk"
+        case $_comp in
+          client|server|readers|openssl) open_ssl_env ;;
+        esac
+        dep_run "$_lb" "$@"
 
   source:check:
     desc: Check Pascal headers, sizes, names, and dependencies
