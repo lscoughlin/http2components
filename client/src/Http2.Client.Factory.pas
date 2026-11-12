@@ -499,6 +499,11 @@ begin
      ((FTlsContext <> nil) or (FProxyTlsContext <> nil)) then
     Factory := TDefaultSocketFactory(Factory as TObject).WithTlsContexts(
       FTlsContext, FProxyTlsContext);
+  // a Unix socket path makes the default factory dial the file; the clone
+  // keeps the shared factory on TCP, and an injected factory is left alone
+  if (FUnixPath <> '') and (Factory is TDefaultSocketFactory) then
+    Factory := TDefaultSocketFactory(Factory as TObject).WithUnixPath(
+      FUnixPath);
   // every proxy source collapses into one selector here (nil = all direct);
   // an unusable proxy value raises EHttpProxyConfigError before any request
   Fixed := nil;
