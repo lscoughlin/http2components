@@ -1,30 +1,69 @@
 version: '3'
 
+# Test tasks (PY-04). They replace run_tests, run_api_tests,
+# run_integration_tests and the test:tls targets of tools/build.py.
+#
+# Each task builds the components that the test needs, compiles the test
+# runner with compile-file (TESTS=true), and starts it with tools/test-run.sh.
+# The script applies the time limit and the rule that a run without tests
+# fails.
+#
+# Environment: TEST_SUITE (the runner gets --suite=<value>, else --all),
+# TEST_TIMEOUT (seconds, default 180), OPENSSL_LIBPATH (default as in
+# taskfiles/build.yml), and the variables of taskfiles/build.yml.
+#
+# Change from build.py: the script ends the runner and its descendants. It
+# does not use a process group (see tools/test-run.sh).
+
 tasks:
   test:common:
     desc: Run common unit tests
+    silent: true
     cmds:
-      - python3 tools/build.py test:common
+      - task: component:build:common
+      - task: run-suite
+        vars: {COMPONENT: common-test, SOURCE: test/common/Http2.Common.RunTests.pas}
 
   test:client:
     desc: Run client unit tests
+    silent: true
     cmds:
-      - python3 tools/build.py test:client
+      - task: component:build:common
+      - task: component:build:client
+      - task: component:build:openssl
+      - task: run-suite
+        vars: {COMPONENT: client-test, SOURCE: test/client/Http2.Client.RunTests.pas, OPENSSL: 'true'}
 
   test:server:
     desc: Run server unit tests
+    silent: true
     cmds:
-      - python3 tools/build.py test:server
+      - task: component:build:common
+      - task: component:build:server
+      - task: run-suite
+        vars: {COMPONENT: server-test, SOURCE: test/server/Http2.Server.RunTests.pas, OPENSSL: 'true'}
 
   test:
     desc: Run common, client, and server unit tests
+    silent: true
     cmds:
-      - python3 tools/build.py test
+      - task: test:common
+      - task: test:client
+      - task: test:server
 
   test:integration:
     desc: Run local integration tests
+    silent: true
     cmds:
-      - python3 tools/build.py test:integration
+      - task: component:build:openssl
+      - task: run-suite
+        vars:
+          COMPONENT: integration-test
+          SOURCE: test/integration/Http2.Integration.RunTests.pas
+          PROVIDERS: openssl
+          OPENSSL: 'true'
+          PKI: 'true'
+      - task: test:local-process
 
   test:local-process:
     desc: Run the two-process HTTP and HTTPS exchange
@@ -33,35 +72,122 @@ tasks:
 
   test:api:
     desc: Compile API identity and generic-reader probes
+    silent: true
+    vars:
+      PROBES:
+        sh: ls test/common/Http2.Common.ApiProbe.pas test/api/*.ApiProbe.pas
     cmds:
-      - python3 tools/build.py test:api
+      - task: run-suite
+        vars: {COMPONENT: api-test, SOURCE: test/api/Http2.Api.RunTests.pas, OPENSSL: 'true'}
+      - for:
+          var: PROBES
+          as: PROBE
+        task: api-probe
+        vars: {SOURCE: '{{.PROBE}}'}
 
   test:tls-contract:
     desc: Run the bounded common TLS contract suite
+    silent: true
     cmds:
-      - python3 tools/build.py test:tls:contract
+      - task: component:build:common
+      - task: run-suite
+        vars: {COMPONENT: common-test, SOURCE: test/common/Http2.Common.Tls.Contract.Run.pas, LIMIT: '30', IN_PROGRAMS: 'true'}
 
   test:tls-openssl:
     desc: Run the bounded OpenSSL TLS suite
+    silent: true
     cmds:
-      - python3 tools/build.py test:tls:openssl
+      - task: component:build:common
+      - task: component:build:openssl
+      - task: run-suite
+        vars: {COMPONENT: openssl-test, SOURCE: test/tls/openssl/Http2.Tls.OpenSSL.Tests.pas, OPENSSL: 'true', LIMIT: '30', IN_PROGRAMS: 'true'}
 
   test:tls-tlslib:
     desc: Run the bounded TlsLib TLS suite
+    silent: true
     cmds:
-      - python3 tools/build.py test:tls:tlslib
-
-  test:tls-integration:
-    desc: Run the bounded TLS integration suite
-    cmds:
-      - python3 tools/build.py test:tls:integration
+      - task: component:build:common
+      - task: component:build:tlslib
+      - task: run-suite
+        vars: {COMPONENT: tlslib-test, SOURCE: test/tls/tlslib/Http2.Tls.TlsLib.Tests.pas, LIMIT: '30', IN_PROGRAMS: 'true'}
 
   test:tls-client:
     desc: Run the bounded client TLS transport tests
+    silent: true
     cmds:
-      - make test-tls-client
+      - task: component:build:common
+      - task: component:build:client
+      - task: run-suite
+        vars: {COMPONENT: tls-client-test, SOURCE: test/client/Http2.Client.Tls.Session.Runner.pas, LIMIT: '30', IN_PROGRAMS: 'true'}
 
   test:tls-server:
     desc: Run the bounded server TLS transport tests
+    silent: true
     cmds:
-      - make test-tls-server
+      - task: component:build:common
+      - task: component:build:server
+      - task: run-suite
+        vars: {COMPONENT: tls-server-test, SOURCE: test/server/Http2.Server.Tls.Session.Runner.pas, LIMIT: '30', IN_PROGRAMS: 'true'}
+      - task: run-suite
+        vars: {COMPONENT: tls-server-test, SOURCE: test/server/Http2.Server.Tls.Lifecycle.Runner.pas, LIMIT: '30', IN_PROGRAMS: 'true'}
+
+  test:tls-integration:
+    desc: Run the bounded TLS integration suite
+    silent: true
+    cmds:
+      - task: component:build:common
+      - task: component:build:openssl
+      - task: component:build:tlslib
+      - task: compile-file
+        vars: {COMPONENT: tls-integration-test, SOURCE: test/api/Http2.Tls.ApiIdentity.Probe.pas, TESTS: 'true'}
+      - task: run-suite
+        vars: {COMPONENT: tls-integration-test, SOURCE: test/integration/tls/Http2.Tls.Integration.Tests.pas, OPENSSL: 'true', LIMIT: '30', IN_PROGRAMS: 'true'}
+      - task: run-suite
+        vars: {COMPONENT: tls-integration-test, SOURCE: test/integration/tls/Http2.Tls.Security.Tests.pas, OPENSSL: 'true', LIMIT: '30', IN_PROGRAMS: 'true'}
+
+  # Compile a test runner, then run it with tools/test-run.sh suite.
+  # Vars: COMPONENT, SOURCE; optional PROVIDERS, OPENSSL (true sets the
+  # OpenSSL library path), PKI (true makes a temporary PKI and sets
+  # HTTP2_TEST_PKI), LIMIT (seconds; else TEST_TIMEOUT), IN_PROGRAMS (true
+  # starts the runner in its programs directory).
+  run-suite:
+    internal: true
+    silent: true
+    requires:
+      vars: [COMPONENT, SOURCE]
+    cmds:
+      - task: compile-file
+        vars: {COMPONENT: '{{.COMPONENT}}', SOURCE: '{{.SOURCE}}', TESTS: 'true', PROVIDERS: '{{.PROVIDERS}}'}
+      - |
+        {{.OPENSSL_ENV_SH}}
+        _programs='{{.OUT}}/{{.COMPONENT}}/programs'
+        _bin=$_programs/$(basename '{{.SOURCE}}' .pas)
+        if [ ! -x "$_bin" ]; then echo "Test runner did not produce $_bin" >&2; exit 1; fi
+        if [ '{{.OPENSSL}}' = true ]; then open_ssl_env; fi
+        set -- suite
+        if [ -n '{{.LIMIT}}' ]; then set -- "$@" -t '{{.LIMIT}}'; fi
+        if [ '{{.IN_PROGRAMS}}' = true ]; then set -- "$@" -C "$_programs"; fi
+        if [ '{{.PKI}}' = true ]; then
+          if [ "$(uname -s)" = Darwin ] && [ -x "$(dirname "${OPENSSL_LIBPATH:-/nonexistent/lib}")/bin/openssl" ]; then
+            PATH="$(dirname "$OPENSSL_LIBPATH")/bin:$PATH"; export PATH
+          fi
+          set -- "$@" -p '{{.OUT}}/{{.COMPONENT}}'
+        fi
+        sh tools/test-run.sh "$@" "$_bin"
+
+  # Compile one API probe and run it with a 30 s limit. Var: SOURCE.
+  api-probe:
+    internal: true
+    silent: true
+    requires:
+      vars: [SOURCE]
+    vars:
+      PROBE_COMPONENT: '{{if contains "test/common/" .SOURCE}}common-test{{else}}api-test{{end}}'
+    cmds:
+      - task: compile-file
+        vars: {COMPONENT: '{{.PROBE_COMPONENT}}', SOURCE: '{{.SOURCE}}', TESTS: 'true'}
+      - |
+        {{.OPENSSL_ENV_SH}}
+        open_ssl_env
+        _bin='{{.OUT}}/{{.PROBE_COMPONENT}}/programs/'$(basename '{{.SOURCE}}' .pas)
+        sh tools/test-run.sh run -t 30 "$_bin"
