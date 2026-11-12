@@ -61,6 +61,7 @@ The server topic documents describe the merged `Http2.Server.*` and
 | [Threading](design/server/threading.md) | IO, handler, and cancellation work. |
 | [Configuration](design/server/configuration.md) | Server factory options and validation. |
 | [Public API](design/server/public-api.md) | Server, handler, and observer contracts. |
+| [Unix socket](design/server/unix-socket.md) | Unix domain socket listener, path checks, file mode and peer address. |
 | [Lifecycle](design/server/lifecycle.md) | Start, stop, drain, and shutdown. |
 | [Connection](design/server/connection.md) | Connection state and frame processing. |
 | [Admission](design/server/admission.md) | Bounded request admission and refusal. |
@@ -99,6 +100,10 @@ validation for version 0.30.0.
 The [native Linux record](verification/linux-tls-2026-11-11.md) identifies
 completed Docker checks, repairs, retained evidence, and acceptance work
 that is still in progress.
+
+The [Unix socket record](verification/unix-sockets-2026-11-12.md) states the
+macOS and Linux results of the Unix domain socket feature and one open client
+defect.
 
 The [client compiler probes](verification/client-probes/README.md) are
 historical compiler evidence. The source validation and toolchain records

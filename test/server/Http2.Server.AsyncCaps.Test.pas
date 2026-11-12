@@ -527,7 +527,7 @@ begin
       .WithKeepAliveCount(5)
       .WithSendBufferBytes(32768)
       .WithRecvBufferBytes(32768);
-    ApplySocketOptions(Client.Sock.Sock, Options);
+    ApplySocketOptions(Client.Sock.Sock, Options, False);
     // Darwin answers the flag bits (4) and not 1, so any nonzero value
     // means on
     AssertTrue('no-delay is on',
@@ -547,7 +547,7 @@ begin
       GetSockInt(Fd, SOL_SOCKET, SO_RCVBUF) >= 32768);
     // the chosen value is set even when it turns the option off
     ApplySocketOptions(Client.Sock.Sock,
-      TSocketOptions.Create.WithTcpNoDelay(False));
+      TSocketOptions.Create.WithTcpNoDelay(False), False);
     AssertEquals('no-delay is off', 0,
       GetSockInt(Fd, IPPROTO_TCP, TCP_NODELAY));
   finally

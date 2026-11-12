@@ -38,6 +38,7 @@ type
     FProxyIdentity: IClientIdentity;
     FTlsContext: ITLSContext;
     FProxyTlsContext: ITLSContext;
+    FUnixPath: string;
   public
     /// AIdentity is presented on every TLS connection to an origin; cleartext
     /// dials ignore it (doc/design/mtls.md).  AProxyIdentity is presented to
@@ -48,6 +49,8 @@ type
       const AProxyIdentity: IClientIdentity = nil;
       const ATlsContext: ITLSContext = nil;
       const AProxyTlsContext: ITLSContext = nil);
+    /// the Unix socket file that every dial uses; '' keeps TCP
+    procedure SetUnixPath(const APath: string);
     function DialProtocol(const AHost: string; const APort: Word;
       const AScheme: string; const AHttp1Fallback: Boolean;
       const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
@@ -78,7 +81,7 @@ function DialRoutedTransport(const AHost: string; const APort: Word;
   const AConnectTimeoutMs: Integer; const AProxy: IProxy;
   const AInsecure: Boolean; const ACACertFile: string;
   const AProxyIdentity: IClientIdentity; out AStream: Boolean;
-  const AProxyContext: ITLSContext): IHttp2Socket;
+  const AProxyContext: ITLSContext; const AUnixPath: string = ''): IHttp2Socket;
 
 implementation
 
@@ -269,13 +272,16 @@ function DialRoutedTransport(const AHost: string; const APort: Word;
   const AConnectTimeoutMs: Integer; const AProxy: IProxy;
   const AInsecure: Boolean; const ACACertFile: string;
   const AProxyIdentity: IClientIdentity; out AStream: Boolean;
-  const AProxyContext: ITLSContext): IHttp2Socket;
+  const AProxyContext: ITLSContext; const AUnixPath: string): IHttp2Socket;
 var
   Plain: TPlainSocket;
   Who: string;
 begin
   RejectLegacyTlsPolicy(AInsecure, ACACertFile);
   AStream := False;
+  // a Unix path takes the place of the whole route: the proxy is not used
+  if AUnixPath <> '' then
+    Exit(TPlainSocket.CreateUnix(AUnixPath, AConnectTimeoutMs));
   if AProxy = nil then
   begin
     Result := TPlainSocket.Create(AHost, APort, AConnectTimeoutMs);
@@ -286,9 +292,15 @@ begin
     raise EHttpTlsConfigError.Create('an explicit HTTPS proxy TLS context is required');
   if AProxy.Kind = pkHttps then
     RequireClientTlsContext(AProxyContext, 'HTTPS proxy');
-  Who := Format('%s:%d', [AProxy.Host, AProxy.Port]);
+  if AProxy.UnixPath <> '' then
+    Who := 'unix:' + AProxy.UnixPath
+  else
+    Who := Format('%s:%d', [AProxy.Host, AProxy.Port]);
   // plain TCP to the proxy first: no tunnel is requested by the constructor
-  Plain := TPlainSocket.Create(AProxy.Host, AProxy.Port, AConnectTimeoutMs);
+  if AProxy.UnixPath <> '' then
+    Plain := TPlainSocket.CreateUnix(AProxy.UnixPath, AConnectTimeoutMs)
+  else
+    Plain := TPlainSocket.Create(AProxy.Host, AProxy.Port, AConnectTimeoutMs);
   Result := Plain;
   Plain.SetReadTimeoutMs(AConnectTimeoutMs);
   Plain.SetWriteTimeoutMs(AConnectTimeoutMs);
@@ -340,6 +352,11 @@ begin
   FProxyPort := AProxyPort;
 end;
 
+procedure TProtocolSocketFactory.SetUnixPath(const APath: string);
+begin
+  FUnixPath := APath;
+end;
+
 function TProtocolSocketFactory.DialProtocol(const AHost: string;
   const APort: Word; const AScheme: string; const AHttp1Fallback: Boolean;
   const APolicy: TClearTextPolicy; const ATimeoutMs: Integer;
@@ -378,6 +395,9 @@ var
 begin
   Proxy := AProxy;
   if (Proxy = nil) and (FProxyHost <> '') then Proxy := TProxy.Create(FProxyHost, FProxyPort);
+  // a Unix path replaces the proxy: no proxy check applies to it
+  if FUnixPath <> '' then
+    Proxy := nil;
   if (AScheme <> 'http') and (FTlsContext = nil) then
     raise EHttpTlsConfigError.Create('an explicit origin TLS context is required');
   if (Proxy <> nil) and (Proxy.Kind = pkHttps) and (FProxyTlsContext = nil) then
@@ -397,14 +417,14 @@ begin
         begin
           AProtocol := npHttp1Cleartext;
           Result := TTlsSocket.DialCleartextVia(AHost, APort, ATimeoutMs, Proxy,
-            FInsecure, FCACertFile, FProxyIdentity, FProxyTlsContext);
+            FInsecure, FCACertFile, FProxyIdentity, FProxyTlsContext, FUnixPath);
         end;
     else
       // ctPriorKnowledge: speak HTTP/2 at once, the caller writes the preface
       begin
         AProtocol := npHttp2Cleartext;
         Result := TTlsSocket.DialCleartextVia(AHost, APort, ATimeoutMs, Proxy,
-          FInsecure, FCACertFile, FProxyIdentity, FProxyTlsContext);
+          FInsecure, FCACertFile, FProxyIdentity, FProxyTlsContext, FUnixPath);
       end;
     end;
     Exit;
@@ -414,7 +434,7 @@ begin
   // codec.  DialWithAlpn skips the strict check so we can map the name here.
   Sock := TTlsSocket.DialWithAlpnVia(AHost, APort, AlpnOfferFor(AHttp1Fallback),
     FInsecure, ATimeoutMs, FCACertFile, Proxy, AIdentity, FProxyIdentity,
-    FTlsContext, FProxyTlsContext, AIdentityExplicit);
+    FTlsContext, FProxyTlsContext, AIdentityExplicit, FUnixPath);
   Name := '';
   if Supports(Sock, IHttp2TlsSocketInfo, TlsInfo) then
     Name := TlsInfo.SelectedProtocol;
@@ -446,16 +466,19 @@ begin
   Proxy := AProxy;
   if (Proxy = nil) and (FProxyHost <> '') then
     Proxy := TProxy.Create(FProxyHost, FProxyPort);
+  // a Unix path replaces the proxy: no proxy check applies to it
+  if FUnixPath <> '' then
+    Proxy := nil;
   if (AScheme <> 'http') and (FTlsContext = nil) then
     raise EHttpTlsConfigError.Create('an explicit origin TLS context is required');
   if (Proxy <> nil) and (Proxy.Kind = pkHttps) and (FProxyTlsContext = nil) then
     raise EHttpTlsConfigError.Create('an explicit HTTPS proxy TLS context is required');
   if AScheme = 'http' then
     Exit(TTlsSocket.DialCleartextVia(AHost, APort, ATimeoutMs, Proxy,
-      FInsecure, FCACertFile, FProxyIdentity, FProxyTlsContext));
+      FInsecure, FCACertFile, FProxyIdentity, FProxyTlsContext, FUnixPath));
   Result := TTlsSocket.DialWithAlpnVia(AHost, APort,
     AlpnProtocolList([cHttp11AlpnProtocol]), FInsecure, ATimeoutMs,
-    FCACertFile, Proxy, AIdentity, FProxyIdentity, FTlsContext, FProxyTlsContext, AIdentityExplicit);
+    FCACertFile, Proxy, AIdentity, FProxyIdentity, FTlsContext, FProxyTlsContext, AIdentityExplicit, FUnixPath);
   Name := '';
   if Supports(Result, IHttp2TlsSocketInfo, TlsInfo) then
     Name := TlsInfo.SelectedProtocol;

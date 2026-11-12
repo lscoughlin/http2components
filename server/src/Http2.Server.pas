@@ -40,6 +40,8 @@ uses
   Http2.Server.Config,
   Http2.Server.Config.Limits,
   Http2.Server.Config.Socket,
+  Http2.Server.Config.Unix,
+  Http2.Server.Async.Options,
   Http2.Server.Encoding,
   Http2.Server.Runtime,
   Http2.Server.Sse.Encoder,
@@ -62,6 +64,7 @@ type
   TQueueRefusalMode = Http2.Server.Config.TQueueRefusalMode;
   TServerLimits = Http2.Server.Config.Limits.TServerLimits;
   TSocketOptions = Http2.Server.Config.Socket.TSocketOptions;
+  TUnixSocketOptions = Http2.Server.Config.Unix.TUnixSocketOptions;
   TTokenBucketOptions = Http2.Server.Limits.TTokenBucketOptions;
 
   /// mutual TLS: the modes, the principal setting and the client identity
@@ -334,6 +337,7 @@ begin
     raise EServerConfigError.Create('the server settings are not valid:' +
       LineEnding + Text);
   Settings := Self;
+  CheckListenerPath(Settings);
   Result := THttp2Server.Create(Settings, AObserver);
 end;
 

@@ -22,7 +22,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="11">
+    <Files Count="12">
       <Item1>
         <Filename Value="src/Http2.Common.Errors.pas" />
         <UnitName Value="Http2.Common.Errors" />
@@ -64,9 +64,13 @@
         <UnitName Value="Http2.Common.Tls.Types" />
       </Item10>
       <Item11>
+        <Filename Value="src/Http2.Common.UnixPath.pas" />
+        <UnitName Value="Http2.Common.UnixPath" />
+      </Item11>
+      <Item12>
         <Filename Value="src/Http2.Common.pas" />
         <UnitName Value="Http2.Common" />
-      </Item11>
+      </Item12>
     </Files>
     <RequiredPkgs Count="1">
       <Item1>

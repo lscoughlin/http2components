@@ -50,6 +50,10 @@ type
   ///   mrmStall   — block without returning, so no deadline can fire
   TMockReadMode = (mrmTimeout, mrmEof, mrmStall);
 
+  /// called for every frame the client writes, with the mock's lock held; the
+  /// hook answers through TMockSocket.FeedLocked
+  TMockFrameHook = procedure(const AFrame: TFrame) of object;
+
   /// an in-memory duplex IHttp2Socket that feeds canned inbound bytes and
   /// captures outbound bytes. Thread-safe: the connection thread reads/writes
   /// while the test thread scripts and asserts.
@@ -68,6 +72,7 @@ type
     FReadTimeoutMs: Integer;
     FWriteTimeoutMs: Integer;
     FAutoRespond: Boolean;
+    FFrameHook: TMockFrameHook;
     FResponseStatus: string;
     FResponseBody: TBytes;
     FResponseEndStream: Boolean;
@@ -116,6 +121,11 @@ type
     /// HEADERS only, leaving the lease registered.
     procedure AutoRespondToRequestHeaders(const AStatus: string;
       const ABody: TBytes; const AEndStream: Boolean);
+
+    /// append server bytes; only for a TMockFrameHook, which runs with the
+    /// lock held
+    procedure FeedLocked(const ABytes: TBytes);
+    property OnClientFrame: TMockFrameHook read FFrameHook write FFrameHook;
 
     // ---- capturing the outbound direction ----
     /// every byte written, a copy
@@ -198,6 +208,8 @@ public
 end;
 
 type
+  TMockSocketHook = procedure(const ASocket: TMockSocket) of object;
+
   /// hands out a fresh TMockSocket on every Dial, so the PUBLIC client
   /// (THttpClientFactory.WithSocketFactory) can drive the whole Send path
   /// with no real socket (plan S11 "Done when: the mock socket can drive the
@@ -214,9 +226,12 @@ type
     FStatus: string;
     FBody: TBytes;
     FEndStream: Boolean;
+    FOnDial: TMockSocketHook;
   public
     constructor Create;
     destructor Destroy; override;
+    /// called for every socket handed out, before the client sees it
+    property OnDial: TMockSocketHook read FOnDial write FOnDial;
     /// configure the canned response every handed-out socket will produce
     procedure SetResponse(const AStatus: string; const ABody: TBytes;
       const AEndStream: Boolean);
@@ -411,6 +426,11 @@ begin
   end;
 end;
 
+procedure TMockSocket.FeedLocked(const ABytes: TBytes);
+begin
+  AppendReadLocked(ABytes);
+end;
+
 procedure TMockSocket.EmitResponse(const AStreamId: LongWord);
 var
   Block: THeaderBlock;
@@ -451,8 +471,9 @@ end;
 
 procedure TMockSocket.ParseAvailable;
 var
-  Len, Typ, Total: Integer;
+  Len, Typ, Total, Next: Integer;
   StreamId: LongWord;
+  Frame: TFrame;
 begin
   if not FPrefaceDone then
   begin
@@ -473,6 +494,9 @@ begin
     if Length(FWritten) - FParsePos < FrameHeaderSize + Len then
       Exit;
     Total := FrameHeaderSize + Len;
+    if Assigned(FFrameHook) and
+       ParseFrameAt(FWritten, FParsePos, Frame, Next) then
+      FFrameHook(Frame);
     Inc(FParsePos, Total);
     if FAutoRespond and (Typ = Ord(ftHeaders)) and (StreamId <> 0) then
       EmitResponse(StreamId);
@@ -886,6 +910,8 @@ begin
   end;
   // the mock answers the client preface + SETTINGS and every request HEADERS
   S.AutoRespondToRequestHeaders(St, Bd, ES);
+  if Assigned(FOnDial) then
+    FOnDial(S);
   // a real server's first frame is its own SETTINGS; the client must apply it
   // before it may send DATA, so answer the client preface + SETTINGS exchange
   // here

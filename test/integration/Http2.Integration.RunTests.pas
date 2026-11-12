@@ -8,7 +8,8 @@ program Http2.Integration.RunTests;
 {$mode delphi}{$H+}
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  consoletestrunner, Http2.Integration.Http.Test, Http2.Integration.Events.Test;
+  consoletestrunner, Http2.Integration.Http.Test, Http2.Integration.Events.Test,
+  Http2.Integration.Unix.Test;
 var Runner: TTestRunner;
 begin
   Runner := TTestRunner.Create(nil);

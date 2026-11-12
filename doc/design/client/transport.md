@@ -43,10 +43,14 @@ Free Pascal 3.2.4 primitives (all choices below are probe-verified; see
 - **Arrival stamps.** The connection thread reads `Http2.Client.Clock.NowUs` once
   per received frame, right after the frame is read, and the stamp travels
   with the frame through the stream's inbound queue. A stream's queue is
-  bounded (`cDefaultQueueCapacity`, 128 frames) and `Push` blocks the thread
-  when it is full, so a consumer that stops reading for 128 frames delays the
-  stamps of every stream on that connection; window credit is returned on
-  arrival, so flow control is unaffected. See
+  unbounded, so `Push` on a lease queue never blocks the connection thread.
+  The thread therefore keeps reading connection frames (WINDOW_UPDATE,
+  SETTINGS, PING) while a consumer is idle, for example while the client
+  still sends a request body and has not yet read the response. Window credit
+  is returned on arrival, so the peer decides how many frames wait in the
+  queue. The connection's inbound queue for unclaimed frames is also
+  unbounded. The outbound queue keeps the bound
+  (`cDefaultQueueCapacity`, 128 frames). See
   [request-observability](request-observability.md), "Arrival stamping".
 - `TCriticalSection` (unit `SyncObjs`) — the pool guard, and per-connection
   stream-id allocation even though the object is free-threaded
@@ -111,7 +115,8 @@ One thread per connection, responsible for *both* directions:
   `HEADERS`. The single writer guarantees this by construction.
 - **Backpressure:** `TBlockingQueue` has a bounded depth; a full outbound
   queue blocks (or returns a retryable error) instead of growing unbounded.
-  A full inbound queue applies flow-control pressure via window updates. On
+  Inbound queues are unbounded, because a full inbound queue would stop the
+  reader from applying WINDOW_UPDATE frames. On
   shutdown, `Shutdown` unblocks waiters and pending calls fail with
   `EHttpConnectionClosed` rather than hanging.
 - **Contention:** the HPACK encoder is stateful and shared across streams.
@@ -233,6 +238,67 @@ idempotent methods (no body writer), and only on `ecRefusedStream` or a
   are separate from the origin context and identity. A `CONNECT` tunnel then
   carries the origin TLS layer. See [proxy](proxy.md) and [mutual TLS](mtls.md).
 
+
+## Unix domain sockets
+
+A client built with `WithUnixSocket` dials a Unix domain socket file in place of
+a TCP address. The socket file path replaces the TCP address for every connection
+of that client. TLS, ALPN, HTTP/1.1, HTTP/2, server-sent events and WebSocket
+run over the same byte stream, so the protocol code does not change. The option
+is described in [client API](client-api.md) and the route rules in [proxy](proxy.md).
+
+### Dial rule
+
+- `Build` gives the client a clone of the default socket factory that holds the
+  socket file path. The shared factory stays on TCP.
+- The clone sends every dial to the file: the pool, TLS, cleartext, the HTTP/1.1
+  dial that a WebSocket uses, and the dial of each redirect hop. The URL host and
+  port do not select the destination.
+- The client opens an `AF_UNIX` stream socket and connects it without blocking.
+  When the connect completes, the descriptor returns to blocking mode.
+- A connect that fails at once, or that reports an error through `SO_ERROR`,
+  raises `EHttpConnectionError`. The message holds the path and the system error
+  text.
+- A connect that reports `EAGAIN` is retried every 10 ms until the connect timeout
+  ends. A connect that is still pending at the deadline raises `EHttpTimeout`.
+  On macOS a full listen queue is reported as `ECONNREFUSED` instead, so that
+  case raises `EHttpConnectionError` at once.
+- The path rule is checked before the connect. A path that is not absolute,
+  holds a NUL byte or is longer than 103 UTF-8 bytes is refused by `Build`
+  with `EHttpUnixSocketConfigError`. A leading `@` is therefore refused: the
+  client does not use Linux abstract sockets.
+
+### Timeouts
+
+- The connect deadline is the connect timeout of the dial. For a Unix socket it
+  covers the connect only.
+- The read and write deadlines are fixed at 30 000 ms, as on a direct TCP
+  connection. The factory does not change them for a Unix socket.
+
+### Write path and SIGPIPE
+
+- Every write to the socket goes through `SocketWriteFully`, including the
+  ciphertext of TLS. That function calls `send` with the flag `cMsgNoSignal`.
+- On Linux the flag is `MSG_NOSIGNAL`. A write to a peer that has closed returns
+  `EPIPE` and does not raise `SIGPIPE`.
+- On macOS the flag is 0. The descriptor carries `SO_NOSIGPIPE`, which the client
+  sets when it creates the socket, and the write does not raise `SIGPIPE` for the
+  same reason. The return value of that `setsockopt` call is not checked.
+- A failed write raises `EHttpConnectionClosed`, and a write that times out raises
+  `EHttpTimeout`.
+- The OpenSSL provider moves TLS data through memory BIOs. OpenSSL does not write
+  the descriptor, so the production client path does not enter the per-call
+  SIGPIPE shield of `Http2.Client.SigPipe`. The shield is used by the tests only.
+- The client does not install a signal handler and does not change the signal
+  disposition of the process.
+
+### Authority rule
+
+- The URL host and port set the `Host` header, the TLS server name and the
+  certificate check. The socket file does not change them. For example,
+  `http://localhost/x` over a Unix socket sends `Host: localhost`.
+- A Unix path replaces the whole route. The proxy check does not apply to a Unix
+  dial, and a client with a Unix path refuses every proxy source at `Build`.
 
 ## WebSocket connections
 

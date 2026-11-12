@@ -1,0 +1,107 @@
+# Copyright 2026 Liam Seamus Coughlin
+# SPDX-License-Identifier: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+# Run the Unix socket suites and the full test targets on Linux amd64.
+#
+# The script tools/server/unix-linux.sh builds the toolchain stage of
+# tools/server/container/Dockerfile first, with the tag in TOOLCHAIN_IMAGE.
+# It then builds this file with a build context of the tracked files only.
+# Each suite runs in its own RUN step, so each suite has its own output in
+# the build log. A failed RUN stops the build.
+#
+# This file does not run the load, abuse, or conformance gates.
+
+ARG TOOLCHAIN_IMAGE=http2components-toolchain-amd64
+
+# ---------------------------------------------------------------------------
+# The run stage: the toolchain and the staged tracked files
+# ---------------------------------------------------------------------------
+FROM ${TOOLCHAIN_IMAGE} AS unix
+
+ARG FPC_PREFIX=/opt/fpc
+ARG MORMOT_DIR=/opt/mormot2
+
+# The tasks read these variables from the environment. TEST_TIMEOUT is the
+# limit of each suite run, in seconds.
+ENV MORMOT=${MORMOT_DIR}/src \
+    OPENSSL_LIBPATH=/usr/lib/x86_64-linux-gnu \
+    TEST_TIMEOUT=900 \
+    TEST_LIST_NAMES=1 \
+    HTTP2_TEST_TRACE=1
+
+WORKDIR /src
+COPY . .
+
+# Each RUN starts a new shell, so each RUN exports FPC_UNITS itself. The unit
+# directory depends on the compiler version.
+
+RUN tools/validation/prepare-linux.sh "${MORMOT_DIR}"
+
+RUN task setup:deps setup:harness
+
+# ---------------------------------------------------------------------------
+# The Unix suites, one RUN for each class
+# ---------------------------------------------------------------------------
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixPathTest task test:server
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TConfigUnixTest task test:server
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixServerTest task test:server
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixOptionsTest task test:server
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixFacadeTest task test:server
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixProtocolTest task test:server
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixSocketTest task test:client
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixDialTest task test:client
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixClientTest task test:client
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixClientWireTest task test:client
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixClientProtocolsTest task test:client
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixProxyTypeTest task test:client
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixProxyDialTest task test:client
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixProxyClientTest task test:client
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixIntegrationTest task test:integration
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && TEST_SUITE=TUnixPathRuleTest task test:common
+
+# ---------------------------------------------------------------------------
+# The unfiltered test targets, one RUN for each target
+# ---------------------------------------------------------------------------
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && task test:common
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && task test:client
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && task test:integration
+
+RUN export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)" \
+ && task test:server
+
+CMD ["/bin/sh", "-c", "echo unix suites passed"]

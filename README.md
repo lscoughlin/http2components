@@ -89,6 +89,19 @@ The integration examples are `examples/integration/tls_openssl.pas`,
 `tls_tlslib.pas`, `tls_dual_role.pas`, and `tls_https_proxy.pas`. They use the
 public common, client, server, and provider facades.
 
+## Unix domain sockets
+
+The server listens on a socket file with `WithUnixSocket(path)` and
+`WithUnixSocketMode(mode)`. The client connects to a socket file with
+`WithUnixSocket(path)`, or through a proxy that listens on a socket file with
+`WithUnixProxy(path, kind)`. HTTP/2, HTTP/1.1, server-sent events, WebSocket and
+TLS run over the same byte stream. The [server
+design](doc/design/server/unix-socket.md) and the [client
+transport](doc/design/client/transport.md) describe the rules. The examples are
+`examples/server/unix_server.pas` and `examples/client/unix_client.pas`. The
+[Unix socket verification record](doc/verification/unix-sockets-2026-11-12.md)
+states the results and one open client defect.
+
 ## TLS documentation
 
 - [Common TLS context](doc/design/common/tls-context.md)

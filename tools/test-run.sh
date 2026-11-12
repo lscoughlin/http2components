@@ -176,10 +176,13 @@ if [ -n "$pki_parent" ]; then
   export HTTP2_TEST_PKI
 fi
 
-echo_command "$binary" "$suite_arg" --format=plain --sparse
+# TEST_LIST_NAMES=1 drops --sparse, so the log names each passing test
+sparse_flag=--sparse
+[ "${TEST_LIST_NAMES:-}" = 1 ] && sparse_flag=
+echo_command "$binary" "$suite_arg" --format=plain $sparse_flag
 echo "Test start (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ); limit: ${limit}s"
 started=$(date +%s)
-run_limited "$binary" "$suite_arg" --format=plain --sparse
+run_limited "$binary" "$suite_arg" --format=plain $sparse_flag
 elapsed=$(($(date +%s) - started))
 if [ "$timed_out" = 1 ]; then
   echo "Test elapsed: ${elapsed}s (timeout)"

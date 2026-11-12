@@ -18,6 +18,12 @@
 - The default client runner passed 805 registered cases. Thirty-three
   environment-gated client cases did not run. The full server unit suite has no
   completed run in this record.
+- The server and the client support Unix domain sockets: `WithUnixSocket` on
+  both factories, `WithUnixSocketMode` on the server, and `WithUnixProxy` on the
+  client. Results are in the
+  [Unix socket verification record](doc/verification/unix-sockets-2026-11-12.md).
+- The client inbound queues are unbounded, so a large request body echo no longer
+  stalls the connection reader or fails with a flow-control timeout.
 - Linux validation, load checks, independent external conformance checks,
   and the full server unit result remain open.
 

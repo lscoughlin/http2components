@@ -340,7 +340,7 @@ begin
   FSendCreditWaiters := NewSendCreditWaiterRegistry;
   FSocket := ASocket;
   FOutbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
-  FInbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
+  FInbound := TBlockingQueue<TFrame>.Create(0); // unbounded: only the reader fills it
   FLocalSettings := ALocalSettings;
   FPeerSettings := TConnectionSettings.Defaults;
   FState := csOpening;
