@@ -80,6 +80,9 @@ function BuildProxySelector(const ACustom: IProxySelector;
 
 implementation
 
+uses
+  Http2.Client.Proxy.Unix;
+
 { ---- small helpers ---- }
 
 function HexVal(C: Char): Integer;
@@ -563,13 +566,24 @@ begin
 end;
 
 procedure ValidateProxy(const AProxy: IProxy);
+var
+  LProblem: string;
 begin
   if AProxy = nil then
     Exit;
-  if AProxy.Host = '' then
-    raise EHttpProxyConfigError.Create('proxy has an empty host');
-  if AProxy.Port = 0 then
-    raise EHttpProxyConfigError.CreateFmt('proxy %s has port 0', [AProxy.Host]);
+  if AProxy.UnixPath <> '' then
+  begin
+    LProblem := UnixProxyProblem(AProxy.UnixPath, AProxy.Kind);
+    if LProblem <> '' then
+      raise EHttpProxyConfigError.Create(LProblem);
+  end
+  else
+  begin
+    if AProxy.Host = '' then
+      raise EHttpProxyConfigError.Create('proxy has an empty host');
+    if AProxy.Port = 0 then
+      raise EHttpProxyConfigError.CreateFmt('proxy %s has port 0', [AProxy.Host]);
+  end;
   if (AProxy.Kind = pkSocks5) and
      ((Length(AProxy.UserName) > cSocksMaxCredentialLen) or
       (Length(AProxy.Password) > cSocksMaxCredentialLen)) then
@@ -594,7 +608,10 @@ begin
   end;
   if AProxy.UserName <> '' then
     Result := Result + AProxy.UserName + '@';
-  Result := Result + Host + ':' + IntToStr(AProxy.Port);
+  if AProxy.UnixPath <> '' then
+    Result := Result + 'unix:' + AProxy.UnixPath
+  else
+    Result := Result + Host + ':' + IntToStr(AProxy.Port);
 end;
 
 function ProxyBasicCredentials(const AUserName, APassword: string): string;

@@ -15,6 +15,22 @@ unit Http2.Client.Proxy.Unix;
 
 interface
 
+uses
+  Http2.Client.Proxy.Types, Http2.Common.UnixPath;
+
+/// the empty text for a usable Unix proxy, else a short text that names the
+/// broken rule
+// - a TLS proxy on a Unix socket is refused (pkHttps)
+// - the text never holds the path
+function UnixProxyProblem(const APath: string; const AKind: TProxyKind): string;
+
 implementation
+
+function UnixProxyProblem(const APath: string; const AKind: TProxyKind): string;
+begin
+  Result := UnixPathProblem(APath);
+  if (Result = '') and (AKind = pkHttps) then
+    Result := 'a Unix proxy cannot use TLS';
+end;
 
 end.
