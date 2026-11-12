@@ -115,6 +115,25 @@ type
     property ErrorText: string read FErrorText;
   end;
 
+  /// a thread that posts a body, reads the whole answer and keeps the result
+  TUnixPostThread = class(TThread)
+  private
+    FClient: IHttpClient;
+    FUrl: string;
+    FSent: TBytes;
+    FStatus: Integer;
+    FReceived: TBytes;
+    FErrorText: string;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AClient: IHttpClient; const AUrl: string;
+      const ASent: TBytes);
+    property Status: Integer read FStatus;
+    property Received: TBytes read FReceived;
+    property ErrorText: string read FErrorText;
+  end;
+
 /// the path of a file in the PKI directory of the test run
 function PkiFile(const AName: string): string;
 begin
@@ -308,6 +327,42 @@ begin
   end;
 end;
 
+constructor TUnixPostThread.Create(const AClient: IHttpClient;
+  const AUrl: string; const ASent: TBytes);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FClient := AClient;
+  FUrl := AUrl;
+  FSent := ASent;
+end;
+
+procedure TUnixPostThread.Execute;
+var
+  Response: IHttpResponse;
+begin
+  try
+    Response := FClient.Send(THttpRequest.Create(hmPost, FUrl)
+      .WithBody(THttpBody.FromBytes(FSent)));
+    FStatus := Response.StatusCode;
+    FReceived := ReadAllBodyBytes(Response.Body);
+  except
+    on E: Exception do
+      FErrorText := E.ClassName + ': ' + E.Message;
+  end;
+end;
+
+/// waits until the thread ends, at most AMs ms; answers True when it ended
+function WaitThreadEnd(const AThread: TThread; const AMs: Cardinal): Boolean;
+var
+  Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + AMs;
+  while (not AThread.Finished) and (GetTickCount64 < Deadline) do
+    Sleep(10);
+  Result := AThread.Finished;
+end;
+
 procedure TUnixIntegrationTest.SetUp;
 begin
   inherited SetUp;
@@ -404,37 +459,55 @@ begin
 end;
 
 procedure TUnixIntegrationTest.TestPostOneMiBodyEchoes;
+const
+  cLimitMs = 30000;
 var
   Client: IHttpClient;
-  Response: IHttpResponse;
-  Sent, Received: TBytes;
+  Worker: TUnixPostThread;
+  Sent: TBytes;
   I: Integer;
+  Ended: Boolean;
 begin
   StartServer(False);
   SetLength(Sent, 1024 * 1024);
   for I := 0 to High(Sent) do
     Sent[I] := Byte(I mod 251);
   Client := NewClient(False, ctPriorKnowledge);
+  Worker := TUnixPostThread.Create(Client, UrlOf(False, '/echo'), Sent);
   try
-    Response := Client.Send(THttpRequest.Create(hmPost, UrlOf(False, '/echo'))
-      .WithBody(THttpBody.FromBytes(Sent)));
-    AssertEquals('status', 200, Response.StatusCode);
-    Received := ReadAllBodyBytes(Response.Body);
-    AssertEquals('length of the echo', Length(Sent), Length(Received));
+    Worker.Start;
+    // the request runs on a thread, so a stalled body fails the test
+    Ended := WaitThreadEnd(Worker, cLimitMs);
+    if not Ended then
+    begin
+      // Close aborts the stream so that the thread can end
+      Client.Close;
+      if not WaitThreadEnd(Worker, 5000) then
+        Worker := nil; // the thread still blocks: it is not freed
+      Fail('the 1 MiB echo did not end within ' + IntToStr(cLimitMs div 1000) +
+        ' s (stalled flow control)');
+    end;
+    AssertEquals('no error: ' + Worker.ErrorText, '', Worker.ErrorText);
+    AssertEquals('status', 200, Worker.Status);
+    AssertEquals('length of the echo', Length(Sent), Length(Worker.Received));
     AssertTrue('the echo preserves every byte',
-      CompareMem(@Sent[0], @Received[0], Length(Sent)));
+      CompareMem(@Sent[0], @Worker.Received[0], Length(Sent)));
   finally
     Client.Close;
+    Worker.Free;
   end;
 end;
 
 procedure TUnixIntegrationTest.TestTenParallelRequests;
 const
   cWorkers = 10;
+  cLimitMs = 30000;
 var
   Client: IHttpClient;
   Workers: array of TUnixGetThread;
   I: Integer;
+  Deadline, Now: QWord;
+  Ended: Boolean;
 begin
   StartServer(False);
   Client := NewClient(False, ctPriorKnowledge);
@@ -444,16 +517,28 @@ begin
       Workers[I] := TUnixGetThread.Create(Client, UrlOf(False, '/'));
     for I := 0 to cWorkers - 1 do
       Workers[I].Start;
+    Deadline := GetTickCount64 + cLimitMs;
     for I := 0 to cWorkers - 1 do
     begin
-      Workers[I].WaitFor;
+      Now := GetTickCount64;
+      if Now >= Deadline then
+        Ended := Workers[I].Finished
+      else
+        Ended := WaitThreadEnd(Workers[I], Deadline - Now);
+      if not Ended then
+      begin
+        Client.Close;
+        Fail('worker ' + IntToStr(I) + ' did not end within ' +
+          IntToStr(cLimitMs div 1000) + ' s');
+      end;
       AssertTrue('worker ' + IntToStr(I) + ' answers 200 hi: ' +
         Workers[I].ErrorText, Workers[I].Ok);
     end;
   finally
-    for I := 0 to cWorkers - 1 do
-      Workers[I].Free;
     Client.Close;
+    for I := 0 to cWorkers - 1 do
+      if (Workers[I] <> nil) and Workers[I].Finished then
+        Workers[I].Free;
   end;
 end;
 
