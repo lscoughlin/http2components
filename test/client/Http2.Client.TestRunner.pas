@@ -20,7 +20,7 @@ uses
   SysUtils, fpcunit, testregistry, consoletestrunner,
   Http2.Client.BlockingQueue.Test, Http2.Client.ClearText.Test,
   Http2.Client.Api.Test, Http2.Client.Pool.Test, Http2.Client.Lifecycle.Test, Http2.Client.ClientCert.Test,
-  Http2.Client.Concurrency.Test, Http2.Client.ConnectionLifecycle.Test,
+  Http2.Client.Concurrency.Test, Http2.Client.FlowControl.Test,Http2.Client.ConnectionLifecycle.Test,
   Http2.Client.ConnectionSettings.Test,
   Http2.Client.ConnectionThread.Test, Http2.Client.Encoding.Test,
   Http2.Client.HpackOrder.Test, Http2.Client.Http1.Test,

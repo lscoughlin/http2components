@@ -336,7 +336,8 @@ begin
   FAllocator := AAllocator;
   FRequest := ARequest;
   FOutbound := FConnection.Outbound;
-  FInbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
+  // unbounded: a full queue would stop the reader from applying WINDOW_UPDATE
+  FInbound := TBlockingQueue<TFrame>.Create(0);
   FOwnsEncoder := AEncoder = nil;
   FOwnsDecoder := ADecoder = nil;
   if AEncoder <> nil then FEncoder := AEncoder else FEncoder := THpackCodec.Create;
