@@ -26,6 +26,11 @@ tasks:
     cmds:
       - python3 tools/build.py test:integration
 
+  test:local-process:
+    desc: Run the two-process HTTP and HTTPS exchange
+    cmds:
+      - python3 tools/server/validate/local_process.py
+
   test:api:
     desc: Compile API identity and generic-reader probes
     cmds:
