@@ -42,6 +42,25 @@ type
     property Inner: RawByteString read FInner;
   end;
 
+  /// a SOCKS5 proxy listener on a socket file. It accepts the greeting with
+  /// no authentication, accepts the CONNECT, then answers the origin request
+  /// inside the tunnel with 200.
+  TSocks5ProxyListener = class(TUnixListener)
+  private
+    FGreeting: RawByteString;
+    FRequest: RawByteString;
+    FInner: RawByteString;
+  public
+    /// reads the greeting, the CONNECT request and the origin request head
+    procedure Serve(AFd: Integer); override;
+    /// the greeting that the listener read: VER, NMETHODS, METHODS
+    property Greeting: RawByteString read FGreeting;
+    /// the CONNECT request that the listener read: VER, CMD, RSV, ATYP, host, port
+    property Request: RawByteString read FRequest;
+    /// the request head that arrived inside the tunnel
+    property Inner: RawByteString read FInner;
+  end;
+
   /// a selector that answers one fixed proxy for every URI
   TFixedProxySelector = class(TInterfacedObject, IProxySelector)
   private
@@ -67,6 +86,7 @@ type
     procedure TestSelectorReturningABadUnixProxyFailsAtDialAsProxyConfigError;
     procedure TestNoProxyHostGoesDirectOverTcp;
     procedure TestRequestGoesThroughTheUnixProxy;
+    procedure TestSocks5ThroughUnixProxyViaFactory;
   end;
 
 implementation
@@ -79,6 +99,14 @@ const
   /// the answer to the origin request inside the tunnel
   OriginAnswer = 'HTTP/1.1 200 OK'#13#10'Content-Length: 0'#13#10 +
     'Connection: close'#13#10#13#10;
+  /// the SOCKS5 greeting without credentials: VER 5, one method, no auth
+  Socks5GreetingNoAuth = #5#1#0;
+  /// the SOCKS5 answer to the greeting: VER 5, no authentication
+  Socks5MethodNoAuth = #5#0;
+  /// the SOCKS5 success answer to CONNECT with a bound IPv4 address 0.0.0.0:0
+  Socks5ConnectSucceeded = #5#0#0#1#0#0#0#0#0#0;
+  /// the SOCKS5 CONNECT request for example.test:80 with a domain name
+  Socks5ConnectExampleTest = #5#1#0#3#12 + 'example.test' + #0#80;
 
 /// reads from a descriptor until AMarker arrives, the peer closes or the
 /// timeout expires; returns what arrived
@@ -106,6 +134,31 @@ begin
   end;
 end;
 
+/// reads ACount bytes from a descriptor within ATimeoutMs; the result is
+/// shorter when the peer closes or the timeout expires
+function ReadExactWithin(AFd, ACount, ATimeoutMs: Integer): RawByteString;
+var
+  Pfd: pollfd;
+  Chunk: RawByteString;
+  Want, N: Integer;
+begin
+  Result := '';
+  while Length(Result) < ACount do
+  begin
+    Pfd.fd := AFd;
+    Pfd.events := POLLIN;
+    Pfd.revents := 0;
+    if fpPoll(@Pfd, 1, ATimeoutMs) <= 0 then
+      Break;
+    Want := ACount - Length(Result);
+    SetLength(Chunk, Want);
+    N := fpRecv(AFd, @Chunk[1], Want, 0);
+    if N <= 0 then
+      Break;
+    Result := Result + Copy(Chunk, 1, N);
+  end;
+end;
+
 /// the path of AChars bytes after the leading slash
 function AbsolutePathOfLength(const ALength: Integer): string;
 begin
@@ -130,6 +183,33 @@ procedure TConnectProxyListener.Serve(AFd: Integer);
 begin
   FHead := ReadHeadUntil(AFd, HeadEndMark, 3000);
   WriteAll(AFd, ConnectAnswer);
+  FInner := ReadHeadUntil(AFd, HeadEndMark, 3000);
+  WriteAll(AFd, OriginAnswer);
+end;
+
+{ TSocks5ProxyListener }
+
+procedure TSocks5ProxyListener.Serve(AFd: Integer);
+var
+  Hdr, Methods, Head, NameLen, Rest: RawByteString;
+begin
+  Hdr := ReadExactWithin(AFd, 2, 3000);
+  if Length(Hdr) <> 2 then
+    Exit;
+  Methods := ReadExactWithin(AFd, Ord(Hdr[2]), 3000);
+  FGreeting := Hdr + Methods;
+  WriteAll(AFd, Socks5MethodNoAuth);
+  // VER, CMD, RSV, ATYP, then the length of the name
+  Head := ReadExactWithin(AFd, 4, 3000);
+  if Length(Head) <> 4 then
+    Exit;
+  NameLen := ReadExactWithin(AFd, 1, 3000);
+  if Length(NameLen) <> 1 then
+    Exit;
+  // the name, then the two-byte port
+  Rest := ReadExactWithin(AFd, Ord(NameLen[1]) + 2, 3000);
+  FRequest := Head + NameLen + Rest;
+  WriteAll(AFd, Socks5ConnectSucceeded);
   FInner := ReadHeadUntil(AFd, HeadEndMark, 3000);
   WriteAll(AFd, OriginAnswer);
 end;
@@ -276,6 +356,32 @@ begin
     AssertEquals('one connection on the file', 1, L.Accepted);
     AssertTrue('CONNECT to the origin', Pos('CONNECT example.test:80 HTTP/1.1',
       L.Head) = 1);
+    AssertTrue('origin request in the tunnel', Pos('GET /x HTTP/1.1', L.Inner) = 1);
+    AssertTrue('Host header', Pos('Host: example.test', L.Inner) > 0);
+    Client.Close;
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TUnixProxyClientTest.TestSocks5ThroughUnixProxyViaFactory;
+var
+  L: TSocks5ProxyListener;
+  Client: IHttpClient;
+  R: IHttpResponse;
+begin
+  L := TSocks5ProxyListener.Create(FPath);
+  try
+    Client := THttpClientFactory.Create.WithUnixProxy(FPath, pkSocks5)
+      .WithClearText(ctHttp1).WithConnectTimeout(2000)
+      .WithHeaderTimeout(3000).Build;
+    R := Client.Send(THttpRequest.Create(hmGet, 'http://example.test/x'));
+    AssertEquals('status', 200, R.StatusCode);
+    AssertEquals('one connection on the file', 1, L.Accepted);
+    AssertEquals('greeting offers no authentication',
+      string(Socks5GreetingNoAuth), string(L.Greeting));
+    AssertEquals('CONNECT names example.test:80 by domain name',
+      string(Socks5ConnectExampleTest), string(L.Request));
     AssertTrue('origin request in the tunnel', Pos('GET /x HTTP/1.1', L.Inner) = 1);
     AssertTrue('Host header', Pos('Host: example.test', L.Inner) > 0);
     Client.Close;
