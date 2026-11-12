@@ -2,7 +2,7 @@
 # tools/client/container/remote-run.sh — run a command in the dev container on a remote Docker host.
 #
 # Usage: tools/client/container/remote-run.sh HOST COMMAND...   (each checkout gets its own remote directory)
-#   e.g. tools/client/container/remote-run.sh lscoughlin@liam-rzbox.local make test
+#   e.g. tools/client/container/remote-run.sh lscoughlin@liam-rzbox.local task test
 #
 # The image (tools/client/container/Dockerfile) is built once and reused: it is
 # rebuilt only when it is missing or HTTP2_REBUILD_IMAGE=1.  The working tree
@@ -43,7 +43,7 @@ if ! ssh "$HOST" "[ -d $DIR/src/third_party/mORMot2/src ]"; then
 fi
 
 # %q keeps each argument intact through the remote shell, so
-# `sh -c 'make test; make validate-proxy'` works as written
+# `sh -c 'task test; task validate:client:proxy'` works as written
 ARGS="$(printf '%q ' "$@")"
 ssh "$HOST" "cd $DIR/src && docker run --rm --user \$(id -u):\$(id -g) \
   -e HOME=/tmp -v \"\$PWD:/src\" -w /src $IMAGE $ARGS"

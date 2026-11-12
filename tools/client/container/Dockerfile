@@ -1,9 +1,11 @@
-# Dev container for http2client: Free Pascal, OpenSSL 3, nghttpd and Python.
+# Dev container for http2client: Free Pascal, OpenSSL 3, nghttpd, go-task and Python.
+# Python runs the interop peers and the gates that start them. The `make`
+# program builds the compiler only. The repository build uses `task`.
 #
 # FPC 3.2.4 has no published Linux binary and no release tag; the compiler is
 # built from the release_3_2_4_rc2 source tag with the distribution's FPC as
 # the bootstrap.  Build:  docker build -t http2client-dev tools/client/container
-# Run:  docker run --rm -v "$PWD:/src" -w /src http2client-dev make test
+# Run:  docker run --rm -v "$PWD:/src" -w /src http2client-dev task test
 # The tree must include third_party/mORMot2 (the pinned checkout).
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
@@ -12,6 +14,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       fpc python3 nghttp2-server iproute2 procps \
     && rm -rf /var/lib/apt/lists/*
 ARG FPC_TAG=release_3_2_4_rc2
+ARG TASK_VERSION=3.54.0
+ARG TASK_SHA256=680859dbb4d881a9c72d4d9a8f510825450849af8567deacd7302c01124416fb
 RUN set -eux; \
     mkdir /tmp/fpcsrc; \
     curl -fsSL "https://gitlab.com/freepascal.org/fpc/source/-/archive/${FPC_TAG}/source-${FPC_TAG}.tar.gz" \
@@ -24,6 +28,13 @@ RUN set -eux; \
     /usr/local/bin/fpcmkcfg -d basepath=/usr/local/lib/fpc/current -o /etc/fpc.cfg; \
     rm -rf /tmp/fpcsrc; \
     /usr/local/bin/fpc -iV
+# The task runner (go-task, minimum version 3.42.0), pinned by archive digest.
+RUN set -eux; \
+    curl -fsSL "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_amd64.tar.gz" -o /tmp/task.tar.gz; \
+    echo "${TASK_SHA256}  /tmp/task.tar.gz" | sha256sum --check --status; \
+    tar -xzf /tmp/task.tar.gz -C /usr/local/bin task; \
+    rm /tmp/task.tar.gz; \
+    task --version
 # tools the gate scripts call; kept after the compiler layer so adding one
 # reuses the cached build
 RUN apt-get update && apt-get install -y --no-install-recommends netcat-openbsd \

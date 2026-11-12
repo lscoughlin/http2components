@@ -199,7 +199,7 @@ task build && task test
 ```
 
 `OPENSSL_LIBPATH` must be exported for any binary that loads TLS (the
-the build tasks do this). Verified on this machine: `docker run --rm
+build tasks do this). Verified on this machine: `docker run --rm
 h2-test-harness --list` lists **146** case ids, matching the harness README.
 
 ## Linux x86_64 (container)
