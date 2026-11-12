@@ -19,6 +19,7 @@ primary_types:
 db_tables: None.
 related_docs:
   - doc/design/server/threading.md
+  - doc/design/server/unix-socket.md
   - doc/design/server/tls.md
   - doc/design/server/connection.md
   - doc/design/server/output.md
@@ -154,7 +155,10 @@ accepted socket starts with Nagle on and keep-alive off.
 
 `ApplySocketOptions` (`server/src/Http2.Server.Async.Socket.pas`) applies the factory
 `TSocketOptions` to each accepted socket from `AfterCreate`, before the first
-read. The chosen no-delay value is always set, on or off. Keep-alive goes on
+read. For a Unix socket the flag `AUnix` is true, and the no-delay and
+keep-alive steps are skipped, because the TCP options raise on a Unix socket.
+The buffer sizes still apply. For a TCP socket, the chosen no-delay value is
+always set, on or off. Keep-alive goes on
 with the exact idle time, interval and count when the idle time is above zero,
 and it stays off otherwise. A buffer size above zero sets the send or receive
 buffer, and zero keeps the operating system default. Each option is guarded,
@@ -173,6 +177,15 @@ Linux. Darwin answers the raw flag bits from `getsockopt` for `TCP_NODELAY`
 (4) and `SO_KEEPALIVE` (8) instead of 1. A buffer size is a hint on some
 systems: the kernel grants at least the asked size, so a read-back passes at
 or above it.
+
+## The Unix listener
+
+The bind text of a Unix listener is `unix:` followed by the socket file path
+(`ListenerBindText`, `server/src/Http2.Server.Async.Options.pas`). The IO pool
+does not read a bound port for a Unix listener. `THttp2AsyncServer.Start`
+skips the port read, and the shutdown wakes the accept by the path instead of
+by a port. The checks that run before the bind, and the socket file removal,
+are described in [unix-socket](unix-socket.md).
 
 ## The write wake-up
 

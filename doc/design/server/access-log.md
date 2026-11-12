@@ -18,6 +18,7 @@ primary_types:
 db_tables: None.
 related_docs:
   - doc/design/server/configuration.md
+  - doc/design/server/unix-socket.md
   - doc/design/server/public-api.md
   - doc/design/server/threading.md
   - doc/references/rfc7617.txt
@@ -68,6 +69,11 @@ It takes one lock for each line, so the lines of two threads never mix.
 
 The loopback address of IPv4 appears as `127.0.0.1`. The mORMot2 connection
 reports it as an empty text, and the server restores it.
+
+The remote address of a connection on a Unix socket is `unix:pid=<pid>`, where
+the pid is the process of the peer. When the pid is not known, the address is
+`unix`. The pid comes from the platform call that [unix-socket](unix-socket.md)
+describes.
 
 ## The principal
 

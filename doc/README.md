@@ -61,6 +61,7 @@ The server topic documents describe the merged `Http2.Server.*` and
 | [Threading](design/server/threading.md) | IO, handler, and cancellation work. |
 | [Configuration](design/server/configuration.md) | Server factory options and validation. |
 | [Public API](design/server/public-api.md) | Server, handler, and observer contracts. |
+| [Unix socket](design/server/unix-socket.md) | Unix domain socket listener, path checks, file mode and peer address. |
 | [Lifecycle](design/server/lifecycle.md) | Start, stop, drain, and shutdown. |
 | [Connection](design/server/connection.md) | Connection state and frame processing. |
 | [Admission](design/server/admission.md) | Bounded request admission and refusal. |

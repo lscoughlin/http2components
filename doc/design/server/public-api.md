@@ -18,6 +18,7 @@ primary_types:
 db_tables: []
 related_docs:
   - doc/design/server/configuration.md
+  - doc/design/server/unix-socket.md
   - doc/design/server/lifecycle.md
   - doc/design/server/seam.md
   - doc/design/server/admission.md
@@ -56,7 +57,7 @@ factory answers an `IHttp2Server` that is not yet started.
 
 ## The server
 
-`IHttp2Server` (`server/src/Http2.Server.Runtime.pas`) holds five methods:
+`IHttp2Server` (`server/src/Http2.Server.Runtime.pas`) holds six methods:
 
 - `Start` binds the port, starts the IO pool and the handler pool, and
   returns. A second call does nothing. A call after `Stop` raises
@@ -66,9 +67,13 @@ factory answers an `IHttp2Server` that is not yet started.
   timeout for the open streams, then stops the pools. A second call does
   nothing.
 - `Port` answers the bound port. A factory port of 0 leaves the port to the
-  operating system, and `Port` answers the real port after `Start`.
+  operating system, and `Port` answers the real port after `Start`. A Unix
+  listener has no port, so `Port` answers 0.
 - `Stats` answers the live counters.
 - `IsRunning` is true between `Start` and `Stop`.
+- `UnixSocketPath` answers the socket file path of a Unix listener, and an
+  empty text for a TCP listener. The path is the factory path, as set by
+  `WithUnixSocket` (see [unix-socket](unix-socket.md)).
 
 The implementation is `THttp2Server` (`server/src/Http2.Server.Runtime.pas`), which
 owns one `THttp2AsyncServer` (`server/src/Http2.Server.Async.pas`).
