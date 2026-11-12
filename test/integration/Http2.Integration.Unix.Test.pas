@@ -115,6 +115,17 @@ type
     property ErrorText: string read FErrorText;
   end;
 
+  /// a thread that closes a client or stops a server, so that a hang can be bounded
+  TUnixCloseThread = class(TThread)
+  private
+    FClient: IHttpClient;
+    FServer: IHttp2Server;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AClient: IHttpClient; const AServer: IHttp2Server);
+  end;
+
   /// a thread that posts a body, reads the whole answer and keeps the result
   TUnixPostThread = class(TThread)
   private
@@ -363,6 +374,45 @@ begin
   Result := AThread.Finished;
 end;
 
+constructor TUnixCloseThread.Create(const AClient: IHttpClient;
+  const AServer: IHttp2Server);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FClient := AClient;
+  FServer := AServer;
+end;
+
+procedure TUnixCloseThread.Execute;
+begin
+  try
+    if FClient <> nil then
+      FClient.Close;
+    if FServer <> nil then
+      FServer.Stop;
+  except
+    // a failure while the object closes does not change the test result
+  end;
+end;
+
+/// closes the client and stops the server within 10 s, each on its own thread
+// - a Close or a Stop that blocks fails the test; its thread is then not freed
+procedure CloseBounded(const AClient: IHttpClient; const AServer: IHttp2Server;
+  const AContext: string = '');
+var
+  Worker: TUnixCloseThread;
+begin
+  if (AClient = nil) and (AServer = nil) then
+    Exit;
+  Worker := TUnixCloseThread.Create(AClient, AServer);
+  Worker.Start;
+  if WaitThreadEnd(Worker, 10000) then
+    Worker.Free
+  else
+    raise EAssertionFailedError.Create(
+      'Client.Close or Server.Stop did not end within 10 s' + AContext);
+end;
+
 procedure TUnixIntegrationTest.SetUp;
 begin
   inherited SetUp;
@@ -372,9 +422,11 @@ end;
 
 procedure TUnixIntegrationTest.TearDown;
 begin
-  if FServer <> nil then
-    FServer.Stop;
-  FServer := nil;
+  try
+    CloseBounded(nil, FServer);
+  finally
+    FServer := nil;
+  end;
   if FPath <> '' then
     DeleteFile(FPath);
   inherited TearDown;
@@ -438,7 +490,7 @@ begin
     AssertEquals('status', 200, Response.StatusCode);
     AssertEquals('body', 'hi', ReadText(Response));
   finally
-    Client.Close;
+    CloseBounded(Client, nil);
   end;
 end;
 
@@ -454,7 +506,7 @@ begin
     AssertEquals('status', 200, Response.StatusCode);
     AssertEquals('body', 'hi', ReadText(Response));
   finally
-    Client.Close;
+    CloseBounded(Client, nil);
   end;
 end;
 
@@ -467,6 +519,7 @@ var
   Sent: TBytes;
   I: Integer;
   Ended: Boolean;
+  Cause: string;
 begin
   StartServer(False);
   SetLength(Sent, 1024 * 1024);
@@ -474,27 +527,41 @@ begin
     Sent[I] := Byte(I mod 251);
   Client := NewClient(False, ctPriorKnowledge);
   Worker := TUnixPostThread.Create(Client, UrlOf(False, '/echo'), Sent);
+  Cause := '';
   try
-    Worker.Start;
-    // the request runs on a thread, so a stalled body fails the test
-    Ended := WaitThreadEnd(Worker, cLimitMs);
-    if not Ended then
-    begin
-      // Close aborts the stream so that the thread can end
-      Client.Close;
-      if not WaitThreadEnd(Worker, 5000) then
-        Worker := nil; // the thread still blocks: it is not freed
-      Fail('the 1 MiB echo did not end within ' + IntToStr(cLimitMs div 1000) +
-        ' s (stalled flow control)');
+    try
+      Worker.Start;
+      // the request runs on a thread, so a stalled body fails the test
+      Ended := WaitThreadEnd(Worker, cLimitMs);
+      if not Ended then
+      begin
+        // Close aborts the stream so that the thread can end
+        CloseBounded(Client, nil);
+        if not WaitThreadEnd(Worker, 5000) then
+          Worker := nil; // the thread still blocks: it is not freed
+        Fail('the 1 MiB echo did not end within ' + IntToStr(cLimitMs div 1000) +
+          ' s (stalled flow control)');
+      end;
+      AssertEquals('no error: ' + Worker.ErrorText, '', Worker.ErrorText);
+      AssertEquals('status', 200, Worker.Status);
+      AssertEquals('length of the echo', Length(Sent), Length(Worker.Received));
+      AssertTrue('the echo preserves every byte',
+        CompareMem(@Sent[0], @Worker.Received[0], Length(Sent)));
+    except
+      on E: Exception do
+      begin
+        Cause := ' (the request failed first: ' + E.Message + ')';
+        raise;
+      end;
     end;
-    AssertEquals('no error: ' + Worker.ErrorText, '', Worker.ErrorText);
-    AssertEquals('status', 200, Worker.Status);
-    AssertEquals('length of the echo', Length(Sent), Length(Worker.Received));
-    AssertTrue('the echo preserves every byte',
-      CompareMem(@Sent[0], @Worker.Received[0], Length(Sent)));
   finally
-    Client.Close;
-    Worker.Free;
+    try
+      CloseBounded(Client, nil, Cause);
+    finally
+      // a thread that still runs is not freed, because Free waits for it
+      if (Worker <> nil) and Worker.Finished then
+        Worker.Free;
+    end;
   end;
 end;
 
@@ -527,7 +594,7 @@ begin
         Ended := WaitThreadEnd(Workers[I], Deadline - Now);
       if not Ended then
       begin
-        Client.Close;
+        CloseBounded(Client, nil);
         Fail('worker ' + IntToStr(I) + ' did not end within ' +
           IntToStr(cLimitMs div 1000) + ' s');
       end;
@@ -535,7 +602,7 @@ begin
         Workers[I].ErrorText, Workers[I].Ok);
     end;
   finally
-    Client.Close;
+    CloseBounded(Client, nil);
     for I := 0 to cWorkers - 1 do
       if (Workers[I] <> nil) and Workers[I].Finished then
         Workers[I].Free;
@@ -570,7 +637,7 @@ begin
     end;
     Response := nil;
   finally
-    Client.Close;
+    CloseBounded(Client, nil);
   end;
 end;
 
@@ -601,7 +668,7 @@ begin
     if Socket <> nil then
       Socket.Abort;
     Socket := nil;
-    Client.Close;
+    CloseBounded(Client, nil);
     KeepListener := nil;
   end;
 end;
@@ -620,7 +687,7 @@ begin
     AssertEquals('status', 200, Response.StatusCode);
     AssertEquals('body', 'hi', ReadText(Response));
   finally
-    Client.Close;
+    CloseBounded(Client, nil);
   end;
 end;
 
@@ -650,7 +717,7 @@ procedure TUnixIntegrationTest.TestStopRemovesTheFile;
 begin
   StartServer(False);
   AssertTrue('the socket file exists after Start', UnixPathIsSocket(FPath));
-  FServer.Stop;
+  CloseBounded(nil, FServer);
   FServer := nil;
   AssertFalse('Stop removes the socket file', UnixPathExists(FPath));
 end;
@@ -681,7 +748,7 @@ begin
     end;
   end;
   Elapsed := GetTickCount64 - Started;
-  Client.Close;
+  CloseBounded(Client, nil);
   AssertTrue('a missing path raises a connection error, got ' + Name, Raised);
   AssertTrue('the failure comes within the connect timeout, elapsed ms: ' +
     IntToStr(Elapsed), Elapsed < 3000);
