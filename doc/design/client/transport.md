@@ -46,9 +46,12 @@ Free Pascal 3.2.4 primitives (all choices below are probe-verified; see
   unbounded, so `Push` on a lease queue never blocks the connection thread.
   The thread therefore keeps reading connection frames (WINDOW_UPDATE,
   SETTINGS, PING) while a consumer is idle, for example while the client
-  still sends a request body and has not yet read the response. Window credit
-  is returned on arrival, so the peer decides how many frames wait in the
-  queue. The connection's own queues keep the bound
+  still sends a request body and has not yet read the response. Connection
+  window credit is returned on arrival (`TrackReceivedData`). Stream window
+  credit is returned when the lease consumes a DATA frame
+  (`TrackConsumedData`), so a stream queues at most its receive window of
+  DATA. The connection's inbound queue for unclaimed frames is also unbounded.
+  The outbound queue keeps the bound
   (`cDefaultQueueCapacity`, 128 frames). See
   [request-observability](request-observability.md), "Arrival stamping".
 - `TCriticalSection` (unit `SyncObjs`) — the pool guard, and per-connection

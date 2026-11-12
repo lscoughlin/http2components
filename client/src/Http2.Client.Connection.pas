@@ -158,6 +158,7 @@ type
     /// internal state operations used by the connection worker
     procedure SetState(const AValue: TConnectionState);
     procedure TrackReceivedData(const AStreamId, ALength: LongWord);
+    procedure TrackConsumedData(const AStreamId, ALength: LongWord);
     procedure ApplyWindowUpdate(const AStreamId, AIncrement: LongWord);
     /// release every sender parked on its per-sender event; each re-checks its own
     /// window and its AAbort flag, so a wake that is not for it is harmless
@@ -340,7 +341,7 @@ begin
   FSendCreditWaiters := NewSendCreditWaiterRegistry;
   FSocket := ASocket;
   FOutbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
-  FInbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
+  FInbound := TBlockingQueue<TFrame>.Create(0); // unbounded: only the reader fills it
   FLocalSettings := ALocalSettings;
   FPeerSettings := TConnectionSettings.Defaults;
   FState := csOpening;
@@ -800,55 +801,60 @@ end;
 procedure TConnection.TrackReceivedData(const AStreamId: LongWord;
   const ALength: LongWord);
 var
-  Pending: LongWord;
-  StreamId: LongWord;
-  Win: TWindow;
-  EmitConn, EmitStream: Boolean;
-  EmitConnInc, EmitStreamInc: LongWord;
+  EmitInc: LongWord;
 begin
+  // connection window: DATA counts against it on arrival, so one idle stream
+  // never stops the other streams. The stream window is returned when the
+  // lease consumes the frame (TrackConsumedData), which bounds the frames a
+  // stream queues to its receive window.
   if ALength = 0 then
     Exit;
-  EmitConn := False;
-  EmitStream := False;
-  StreamId := AStreamId;
-  EmitConnInc := 0;
-  EmitStreamInc := 0;
+  EmitInc := 0;
   FLock.Acquire;
   try
-    // connection window: DATA counts against it regardless of the stream
     FPendingConnCredit := FPendingConnCredit + ALength;
     if FPendingConnCredit >= cWindowUpdateBatchSize then
     begin
       FPendingConnCredit := 0;
-      EmitConnInc := cWindowUpdateBatchSize;
-    end;
-    // stream window: only for a stream we still track (an open lease)
-    if (StreamId <> 0) and FFlowControl.TryGetStream(StreamId, Win) then
-    begin
-      if not FPendingStreamCredit.TryGetValue(StreamId, Pending) then
-        Pending := 0;
-      Pending := Pending + ALength;
-      if Pending >= cWindowUpdateBatchSize then
-      begin
-        FPendingStreamCredit.AddOrSetValue(StreamId, 0);
-        EmitStreamInc := Pending;
-      end
-      else
-        FPendingStreamCredit.AddOrSetValue(StreamId, Pending);
+      EmitInc := cWindowUpdateBatchSize;
     end;
   finally
     FLock.Release;
   end;
-  if EmitConnInc > 0 then
+  if EmitInc > 0 then
   begin
-    PostFrame(BuildWindowUpdateFrame(0, EmitConnInc));
-    FNotifications.EmitWindowUpdate(0, EmitConnInc);
+    PostFrame(BuildWindowUpdateFrame(0, EmitInc));
+    FNotifications.EmitWindowUpdate(0, EmitInc);
   end;
-  if EmitStreamInc > 0 then
-  begin
-    PostFrame(BuildWindowUpdateFrame(StreamId, EmitStreamInc));
-    FNotifications.EmitWindowUpdate(StreamId, EmitStreamInc);
+end;
+
+procedure TConnection.TrackConsumedData(const AStreamId: LongWord;
+  const ALength: LongWord);
+var
+  Pending: LongWord;
+  Win: TWindow;
+begin
+  if (ALength = 0) or (AStreamId = 0) then
+    Exit;
+  FLock.Acquire;
+  try
+    // only for a stream we still track (an open lease)
+    if not FFlowControl.TryGetStream(AStreamId, Win) then
+      Exit;
+    if not FPendingStreamCredit.TryGetValue(AStreamId, Pending) then
+      Pending := 0;
+    Pending := Pending + ALength;
+    if Pending < cWindowUpdateBatchSize then
+    begin
+      FPendingStreamCredit.AddOrSetValue(AStreamId, Pending);
+      Exit;
+    end;
+    FPendingStreamCredit.AddOrSetValue(AStreamId, 0);
+  finally
+    FLock.Release;
   end;
+  PostFrame(BuildWindowUpdateFrame(AStreamId, Pending));
+  FNotifications.EmitWindowUpdate(AStreamId, Pending);
 end;
 
 procedure TConnection.SendWindowUpdate(const AStreamId: LongWord);

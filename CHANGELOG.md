@@ -22,8 +22,9 @@
   both factories, `WithUnixSocketMode` on the server, and `WithUnixProxy` on the
   client. Results are in the
   [Unix socket verification record](doc/verification/unix-sockets-2026-11-12.md).
-- The client lease inbound queue is unbounded, so a large request body echo no longer
-  stalls the connection reader and fails with a flow-control timeout.
+- The client returns stream window credit when the application consumes DATA, and
+  its inbound queues are unbounded, so a large request body echo no longer stalls
+  the connection reader or fails with a flow-control timeout.
 - Linux validation, load checks, independent external conformance checks,
   and the full server unit result remain open.
 

@@ -17,12 +17,19 @@ unit Http2.Client.FlowControl.Test;
 interface
 
 uses
-  SysUtils, Classes, fpcunit, testregistry,
+  SysUtils, Classes, Generics.Collections, fpcunit, testregistry,
+  Http2.Common.Frames, Http2.Client.MockSocket.Frames,
   Http2.Client.Messages, Http2.Client.Stream, Http2.Client,
   Http2.Client.MockSocket.Support;
 
 type
   TFlowControlTest = class(TTestCase)
+  private
+    FPeers: TObjectList<TObject>;
+    procedure AttachEchoPeer(const ASocket: TMockSocket);
+  protected
+    procedure SetUp; override;
+    procedure TearDown; override;
   published
     procedure TestLargeBodyEchoDoesNotStallTheReader;
   end;
@@ -34,6 +41,24 @@ const
   cWaitMs = 20000;
 
 type
+  /// a server that echoes the request body and honours the client's receive
+  /// windows: it sends response DATA only while both windows have credit, and
+  /// the client must return that credit with WINDOW_UPDATE frames
+  TEchoPeer = class
+  private
+    FSocket: TMockSocket;
+    FStreamId: LongWord;
+    FConnWindow: Int64;
+    FStreamWindow: Int64;
+    FPending: TBytes;
+    FEnd: Boolean;
+    FEndSent: Boolean;
+    procedure Flush;
+  public
+    constructor Create(const ASocket: TMockSocket);
+    procedure OnClientFrame(const AFrame: TFrame);
+  end;
+
   /// sends the request and reads the echoed body on its own thread, so the
   /// test can bound the wait
   TEchoWorker = class(TThread)
@@ -89,6 +114,88 @@ begin
   end;
 end;
 
+constructor TEchoPeer.Create(const ASocket: TMockSocket);
+begin
+  inherited Create;
+  FSocket := ASocket;
+  FConnWindow := 65535;
+  FStreamWindow := 65535;
+  FSocket.OnClientFrame := OnClientFrame;
+end;
+
+procedure TEchoPeer.Flush;
+var
+  N: Int64;
+  Chunk: TBytes;
+  Last: Boolean;
+begin
+  while (not FEndSent) and (FStreamId <> 0) do
+  begin
+    N := Length(FPending);
+    if N > 16384 then N := 16384;
+    if N > FConnWindow then N := FConnWindow;
+    if N > FStreamWindow then N := FStreamWindow;
+    Last := FEnd and (N = Length(FPending));
+    if (N = 0) and not Last then
+      Exit;
+    Chunk := Copy(FPending, 0, N);
+    FPending := Copy(FPending, N, Length(FPending) - N);
+    Dec(FConnWindow, N);
+    Dec(FStreamWindow, N);
+    FSocket.FeedLocked(FrameToBytes(BuildDataFrame(FStreamId, Chunk, Last)));
+    FEndSent := Last;
+  end;
+end;
+
+procedure TEchoPeer.OnClientFrame(const AFrame: TFrame);
+var
+  Data: TBytes;
+  Old: Integer;
+begin
+  case AFrame.Header.FrameType of
+    ftHeaders:
+      FStreamId := AFrame.Header.StreamId;
+    ftData:
+      begin
+        Data := ExtractDataPayload(AFrame);
+        Old := Length(FPending);
+        SetLength(FPending, Old + Length(Data));
+        if Length(Data) > 0 then
+          Move(Data[0], FPending[Old], Length(Data));
+        FEnd := FEnd or AFrame.IsEndStream;
+        // the server reads the request body at once, so it returns credit
+        if AFrame.DataLength > 0 then
+        begin
+          FSocket.FeedLocked(FrameToBytes(
+            BuildWindowUpdateFrame(0, AFrame.DataLength)));
+          FSocket.FeedLocked(FrameToBytes(
+            BuildWindowUpdateFrame(FStreamId, AFrame.DataLength)));
+        end;
+      end;
+    ftWindowUpdate:
+      if AFrame.Header.StreamId = 0 then
+        Inc(FConnWindow, ParseWindowUpdate(AFrame))
+      else
+        Inc(FStreamWindow, ParseWindowUpdate(AFrame));
+  end;
+  Flush;
+end;
+
+procedure TFlowControlTest.SetUp;
+begin
+  FPeers := TObjectList<TObject>.Create(True);
+end;
+
+procedure TFlowControlTest.TearDown;
+begin
+  FPeers.Free;
+end;
+
+procedure TFlowControlTest.AttachEchoPeer(const ASocket: TMockSocket);
+begin
+  FPeers.Add(TEchoPeer.Create(ASocket));
+end;
+
 procedure TFlowControlTest.TestLargeBodyEchoDoesNotStallTheReader;
 var
   FactoryRef: IHttp2SocketFactory;
@@ -98,14 +205,13 @@ var
   I: Integer;
   Deadline: QWord;
 begin
-  // the server echoes each request DATA frame and returns window credit.
-  // The client sends the whole body before it reads, so the echoed frames
-  // (more than the 128 a lease queue once held) must queue without stopping
-  // the connection reader from applying the WINDOW_UPDATE frames that open
-  // the send window.
+  // the server echoes the request body within the client's receive windows.
+  // The client sends the whole body before it reads, so echoed frames queue
+  // up (once more than the 128 a lease queue held) and the connection reader
+  // must still apply the WINDOW_UPDATE frames that open the send window.
   FactoryRef := TMockSocketFactory.Create;
   (FactoryRef as TMockSocketFactory).SetResponse('200', nil, False);
-  (FactoryRef as TMockSocketFactory).SetEcho(True);
+  (FactoryRef as TMockSocketFactory).OnDial := AttachEchoPeer;
   Client := THttpClientFactory.Create.WithSocketFactory(FactoryRef).Build;
   SetLength(Sent, cBodySize);
   for I := 0 to High(Sent) do
