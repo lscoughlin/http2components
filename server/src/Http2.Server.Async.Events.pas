@@ -35,9 +35,11 @@ type
   TServerCountProc = procedure of object;
 
 /// the peer address text of the access log
+// - an AUnixPeer text (see UnixPeerText) is answered first when it is not empty
 // - mORMot2 answers an empty text for the loopback address of IPv4, so the
 //   packed address AIp4 restores '127.0.0.1'
-function PeerAddressText(const ARemoteIp: RawUtf8; const AIp4: Cardinal): string;
+function PeerAddressText(const ARemoteIp: RawUtf8; const AIp4: Cardinal;
+  const AUnixPeer: string): string;
 
 type
 
@@ -74,9 +76,12 @@ type
 
 implementation
 
-function PeerAddressText(const ARemoteIp: RawUtf8; const AIp4: Cardinal): string;
+function PeerAddressText(const ARemoteIp: RawUtf8; const AIp4: Cardinal;
+  const AUnixPeer: string): string;
 begin
-  if ARemoteIp <> '' then
+  if AUnixPeer <> '' then
+    Result := AUnixPeer
+  else if ARemoteIp <> '' then
     Result := string(ARemoteIp)
   else if AIp4 = cLocalhost32 then
     Result := cLocalhost
