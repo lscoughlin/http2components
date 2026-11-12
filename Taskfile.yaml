@@ -31,7 +31,7 @@ includes:
 # Shared variables. A `sh:` variable is computed when a task that runs uses
 # it. `task --list` does not compute it, so a missing fpc does not break
 # the listing. Each of FPC, TARGET and PROFILE follows the environment
-# variable of the same name, as tools/build.py does.
+# variable of the same name.
 vars:
   ROOT: '{{.ROOT_DIR}}'
   FPC:

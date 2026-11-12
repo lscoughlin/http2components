@@ -1,6 +1,6 @@
 version: '3'
 
-# Contract of this file (PY-08).
+# Contract of this file.
 #
 # Each validate:client:* and validate:server:* task starts one gate script
 # that stays unchanged. A client gate runs the script with bash. A server

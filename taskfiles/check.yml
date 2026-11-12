@@ -18,7 +18,7 @@ vars:
 tasks:
   # Builds every Lazarus package with lazbuild, with a private Lazarus
   # configuration for each package. The .lpk files are maintained by hand and
-  # are not changed. The order is the order of build.py.
+  # are not changed. The packages build in a fixed order: common, OpenSSL, client, server, readers, TlsLib.
   packages:check:
     desc: Build every Lazarus package with lazbuild
     silent: true
@@ -64,6 +64,29 @@ tasks:
         vars: {PACKAGE: http2clientreaders}
       - task: package-build
         vars: {PACKAGE: http2tlslib}
+      # lazbuild rewrites each package .pas file from the units that the .lpk
+      # file lists. It rewrites the whole file, so the comparison covers the
+      # sorted unit names of the uses list only. The kept file differs from the
+      # regenerated file when the .pas uses list and the .lpk unit list
+      # disagree. The comparison runs before the deferred restore.
+      - |
+        _uses() {
+          awk '/^uses/ {on=1; sub(/^uses/, "")} on {print} on && /;/ {exit}' "$1" \
+            | tr ',;' '\n\n' | tr -d ' \t\r' | grep -v '^$' | LC_ALL=C sort
+        }
+        rc=0
+        for _f in common/http2common client/http2client client/http2clientreaders \
+                  server/http2server tls/openssl/http2openssl tls/tlslib/http2tlslib; do
+          _kept="{{.OUT}}/package-backup/${_f%/*}/${_f##*/}.pas"
+          _uses "$_kept" > "{{.OUT}}/package-backup/kept.uses"
+          _uses "$_f.pas" > "{{.OUT}}/package-backup/generated.uses"
+          if ! cmp -s "{{.OUT}}/package-backup/kept.uses" "{{.OUT}}/package-backup/generated.uses"; then
+            echo "FAIL the uses list of $_f.pas differs from the units that lazbuild generates from $_f.lpk" >&2
+            diff "{{.OUT}}/package-backup/kept.uses" "{{.OUT}}/package-backup/generated.uses" >&2 || true
+            rc=1
+          fi
+        done
+        exit "$rc"
 
   # Var: PACKAGE, the package name (for example http2client).
   package-build:
@@ -209,7 +232,7 @@ tasks:
 
   # R06, R07, R08. At least one Pascal file exists. A Pascal or include
   # file has fewer than 1000 lines. awk counts a last line without a
-  # newline, as Python splitlines() did.
+  # newline.
   check:file-length:
     silent: true
     cmds:
@@ -285,7 +308,7 @@ tasks:
     silent: true
     cmds:
       - |
-        if grep -rIl --exclude=doc_rules.sh 'TBD-LICENCE' test examples doc tools NOTICE LICENSE README.md Taskfile.yaml 2>/dev/null | grep -q .; then
+        if grep -rIl 'TBD-LICENCE' test examples doc tools NOTICE LICENSE README.md Taskfile.yaml 2>/dev/null | grep -q .; then
           echo "FAIL the placeholder licence is still present"
           exit 1
         fi

@@ -254,7 +254,7 @@ def long_lived():
         command('make-pki',['sh','tools/server/certs/make_mtls_pki.sh',temp],60)
         cert=str(pathlib.Path(temp)/'server.crt'); key=str(pathlib.Path(temp)/'server.key')
         ca=str(pathlib.Path(temp)/'ca.crt')
-        command('compile-provider-live',[sys.executable,'tools/build.py','compile:server-probe',
+        command('compile-provider-live',['task','compile:server:probe','--',
                                          'test/integration/server/tls/Http2.Server.ProviderLive.pas'],180)
         binary=integration_binary('Http2.Server.ProviderLive')
         if not binary.is_file(): raise RuntimeError(f'provider probe missing: {binary}')
