@@ -172,6 +172,7 @@ procedure TAbuseLimitTest.TestPingFloodGoAway;
 var
   Port: Integer;
   Client: TRawClient;
+  Frames: array[0..11] of TFrame;
   Code: THttp2ErrorCode;
   Last: LongWord;
   I: Integer;
@@ -182,18 +183,12 @@ begin
   try
     Client.SendPreface;
     SetLength(Payload, 8);
-    for I := 0 to 11 do
-      try
-        Client.SendFrame(BuildPingFrame(Payload, False));
-      except
-        on ENetSock do
-        begin
-          // The server can close on the first over-limit PING before the
-          // remaining flood frames reach it. The GOAWAY check below proves
-          // that this was the expected close.
-          Break;
-        end;
-      end;
+    for I := 0 to High(Frames) do
+      Frames[I] := BuildPingFrame(Payload, False);
+    // one write, so no flood frame reaches the server after it closes: a
+    // close with unread input makes Linux send RST, and the RST can destroy
+    // the GOAWAY in the receive queue of the client
+    Client.SendFrames(Frames);
     AssertTrue('the PING flood ends in GOAWAY',
       Client.WaitGoAway(Code, Last, ResponseTimeoutMs));
     AssertEquals('the GOAWAY code is ENHANCE_YOUR_CALM',
@@ -210,14 +205,17 @@ var
   Client: TRawClient;
   Code: THttp2ErrorCode;
   Last: LongWord;
+  Frames: array[0..11] of TFrame;
   I: Integer;
 begin
   Port := StartServer(SmallBucket(1000000), SmallBucket(5));
   Client := TRawClient.Create(Port);
   try
     Client.SendPreface;
-    for I := 0 to 11 do
-      Client.SendFrame(BuildSettingsFrame(TConnectionSettings.Defaults));
+    for I := 0 to High(Frames) do
+      Frames[I] := BuildSettingsFrame(TConnectionSettings.Defaults);
+    // one write, see TestPingFloodGoAway
+    Client.SendFrames(Frames);
     AssertTrue('the SETTINGS flood ends in GOAWAY',
       Client.WaitGoAway(Code, Last, ResponseTimeoutMs));
     AssertEquals('the GOAWAY code is ENHANCE_YOUR_CALM',
@@ -234,6 +232,7 @@ var
   Client: TRawClient;
   Code: THttp2ErrorCode;
   Last: LongWord;
+  Frames: array[0..12] of TFrame;
   I: Integer;
   Empty: TBytes;
 begin
@@ -244,9 +243,11 @@ begin
     Empty := nil;
     // an empty DATA frame on an open stream only charges the empty-DATA bucket;
     // on stream zero it would be a PROTOCOL_ERROR at once
-    Client.SendFrame(Client.OpenFrame(1, '/'));
-    for I := 0 to 11 do
-      Client.SendFrame(BuildDataFrame(1, Empty, False));
+    Frames[0] := Client.OpenFrame(1, '/');
+    for I := 1 to High(Frames) do
+      Frames[I] := BuildDataFrame(1, Empty, False);
+    // one write, see TestPingFloodGoAway
+    Client.SendFrames(Frames);
     AssertTrue('the empty DATA flood ends in GOAWAY',
       Client.WaitGoAway(Code, Last, ResponseTimeoutMs));
     AssertEquals('the GOAWAY code is ENHANCE_YOUR_CALM',
@@ -263,14 +264,17 @@ var
   Client: TRawClient;
   Code: THttp2ErrorCode;
   Last: LongWord;
+  Frames: array[0..11] of TFrame;
   I: Integer;
 begin
   Port := StartServer(SmallBucket(1000000), SmallBucket(5));
   Client := TRawClient.Create(Port);
   try
     Client.SendPreface;
-    for I := 0 to 11 do
-      Client.SendFrame(BuildWindowUpdateFrame(0, 1024));
+    for I := 0 to High(Frames) do
+      Frames[I] := BuildWindowUpdateFrame(0, 1024);
+    // one write, see TestPingFloodGoAway
+    Client.SendFrames(Frames);
     AssertTrue('the WINDOW_UPDATE flood ends in GOAWAY',
       Client.WaitGoAway(Code, Last, ResponseTimeoutMs));
     AssertEquals('the GOAWAY code is ENHANCE_YOUR_CALM',
