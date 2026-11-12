@@ -33,6 +33,8 @@ uses
   Http2.Server.Observer,
   Http2.Server.Duplex,
   Http2.Server.Config,
+  Http2.Server.Config.Unix,
+  Http2.Server.Unix.Path,
   Http2.Server.Async,
   Http2.Server.WebSocket.Environment;
 
@@ -55,6 +57,8 @@ type
     function Stats: TServerStats;
     /// true while the server accepts new connections
     function IsRunning: Boolean;
+    /// the socket file path of a Unix listener; '' for a TCP listener
+    function UnixSocketPath: string;
   end;
 
   /// the server that runs on the mORMot2 async IO pool
@@ -66,6 +70,8 @@ type
     FWsEnvRef: IInterface;
     FObserver: IHttp2ServerObserver;
     FGracefulStopMs: Integer;
+    /// the Unix socket options of the factory; Enabled is False for TCP
+    FUnix: TUnixSocketOptions;
     FStarted: Boolean;
     FStopped: Boolean;
     /// 1 once a Stop call took the stop
@@ -83,6 +89,7 @@ type
     function Port: Integer;
     function Stats: TServerStats;
     function IsRunning: Boolean;
+    function UnixSocketPath: string;
 
     /// the async listener under this server (test and wire-up seam)
     property Async: THttp2AsyncServer read FAsync;
@@ -102,6 +109,7 @@ begin
   inherited Create;
   FObserver := AObserver;
   FGracefulStopMs := AFactory.GracefulStopTimeoutMs;
+  FUnix := AFactory.Unix;
   FAsync := THttp2AsyncServer.Create(AFactory);
   FAsync.Observer := FObserver;
   FAsync.Handlers.Observer := FObserver;
@@ -130,6 +138,10 @@ begin
     Exit;
   try
     FAsync.Start;
+    // the mode is set after the bind; a failure here stops the listener and
+    // removes the socket file through the same path as a failed bind
+    if FUnix.Enabled then
+      ApplyUnixSocketMode(FUnix.Path, FUnix.Mode);
   except
     // a failed start leaves nothing bound: the stop path frees the port and
     // the threads, and the server is spent like a stopped one
@@ -180,7 +192,8 @@ end;
 
 function THttp2Server.Port: Integer;
 begin
-  if FAsync = nil then
+  // a Unix listener has no port; its address is the socket file
+  if FUnix.Enabled or (FAsync = nil) then
     Exit(0);
   Result := FAsync.BoundPort;
 end;
@@ -219,6 +232,15 @@ end;
 function THttp2Server.IsRunning: Boolean;
 begin
   Result := FStarted and not FStopped;
+end;
+
+function THttp2Server.UnixSocketPath: string;
+begin
+  // the factory path of a Unix listener; empty for a TCP listener
+  if FUnix.Enabled then
+    Result := FUnix.Path
+  else
+    Result := '';
 end;
 
 end.
