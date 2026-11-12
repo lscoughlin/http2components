@@ -1,0 +1,174 @@
+version: '3'
+
+# Contract of this file. Other Taskfiles rely on these names.
+#
+# Public tasks:
+#   setup:deps           Clone or update every pinned dependency under
+#                        third_party/<Name>, then run verify-dependencies.
+#   setup:harness        Clone or update third_party/h2-client-test-harness.
+#   verify-dependencies  Run verify-dependency for every name in
+#                        DEPENDENCY_NAMES.
+# Internal tasks (call with `task:` from another task):
+#   verify-dependency    var NAME (for example mORMot2). Fails with the
+#                        messages when
+#                        the checkout is missing, has another HEAD or origin,
+#                        has local changes, or has no license notice.
+#   dependency-root      var NAME. Prints the resolved checkout directory on
+#                        standard output.
+# To get a dependency root, start a shell command or a `sh:` variable with
+# the snippet {{.DEPENDENCY_SH}} and call:
+#   dependency_root mORMot2 MORMOT2
+# The second argument is the upper-case name of the dependency. The function
+# reads <UPPER>_ROOT. For mORMot2 it then reads MORMOT_ROOT and MORMOT. A
+# relative path is relative to the repository root. For mORMot2 a path that
+# ends in /src is cut to its parent. The function prints the resolved path.
+# A task variable can be:
+#   sh: '{{.DEPENDENCY_SH}} dependency_root mORMot2 MORMOT2'
+# The snippet also defines DEP_ROOT (the repository root) and dep_run (it
+# prints "+ <command>" and runs it).
+# Pins come from the variables in tools/dependencies.yml:
+#   <UPPER NAME>_ORIGIN, <UPPER NAME>_REVISION, HARNESS_ORIGIN, HARNESS_REV.
+# Environment: TLS_DEPENDENCY_CACHE_ROOT (local clone source), <UPPER>_ROOT,
+#   MORMOT_ROOT, MORMOT.
+# The hint in the "is missing" message is "run task setup:deps".
+
+vars:
+  # POSIX shell functions. The text is put at the start of a command.
+  DEPENDENCY_SH: |
+    DEP_ROOT=$(cd '{{.ROOT_DIR}}' && pwd -P)
+    dependency_root() {
+      _n=$1; _up=$2
+      _o=$(eval "printf '%s' \"\${${_up}_ROOT:-}\"")
+      if [ "$_n" = mORMot2 ] && [ -z "$_o" ]; then
+        _o=${MORMOT_ROOT:-}
+        [ -n "$_o" ] || _o=${MORMOT:-}
+      fi
+      if [ -n "$_o" ]; then _p=$_o; else _p=$DEP_ROOT/third_party/$_n; fi
+      case $_p in /*) ;; *) _p=$DEP_ROOT/$_p ;; esac
+      while [ "${_p%/}" != "$_p" ]; do _p=${_p%/}; done
+      if [ "$_n" = mORMot2 ] && [ "${_p##*/}" = src ]; then _p=${_p%/*}; fi
+      if [ -d "$_p" ]; then (cd "$_p" && pwd -P); else printf '%s\n' "$_p"; fi
+    }
+    dep_run() { echo "+ $*"; "$@"; }
+
+tasks:
+  setup:deps:
+    desc: Fetch the exact pinned build and TLS provider dependencies
+    cmds:
+      - for:
+          var: DEPENDENCY_NAMES
+          as: NAME
+        task: setup-checkout
+        vars:
+          URL: '{{index . (printf "%s_ORIGIN" (upper .NAME))}}'
+          RELPATH: 'third_party/{{.NAME}}'
+          PIN: '{{index . (printf "%s_REVISION" (upper .NAME))}}'
+          LOCAL: '{{.NAME}}'
+          USE_CACHE: "1"
+      - task: verify-dependencies
+
+  setup:harness:
+    desc: Fetch the pinned client validation harness
+    cmds:
+      - task: setup-checkout
+        vars:
+          URL: '{{.HARNESS_ORIGIN}}'
+          RELPATH: third_party/h2-client-test-harness
+          PIN: '{{.HARNESS_REV}}'
+
+  # Vars: URL, RELPATH, PIN. With USE_CACHE=1, LOCAL is the dependency name
+  # that is looked up under TLS_DEPENDENCY_CACHE_ROOT.
+  setup-checkout:
+    internal: true
+    silent: true
+    cmds:
+      - |
+        {{.DEPENDENCY_SH}}
+        url='{{.URL}}'; relpath='{{.RELPATH}}'; pin='{{.PIN}}'
+        path=$DEP_ROOT/$relpath
+        mkdir -p "$(dirname "$path")"
+        if [ -d "$path" ]; then resolved=$(cd "$path" && pwd -P)
+        else resolved=$(cd "$(dirname "$path")" && pwd -P)/$(basename "$path"); fi
+        case $resolved in
+          "$DEP_ROOT"|"$DEP_ROOT"/*) ;;
+          *) echo "Setup target must stay inside this worktree: $relpath" >&2; exit 1 ;;
+        esac
+        local_src=
+        if [ '{{.USE_CACHE}}' = 1 ] && [ -n "${TLS_DEPENDENCY_CACHE_ROOT:-}" ]; then
+          cache=$TLS_DEPENDENCY_CACHE_ROOT
+          case $cache in "~") cache=$HOME ;; "~/"*) cache=$HOME/${cache#"~/"} ;; esac
+          local_src=$cache/{{.LOCAL}}
+        fi
+        if [ ! -e "$path/.git" ]; then
+          if [ -n "$local_src" ] && [ -e "$local_src/.git" ]; then
+            dep_run git clone --local --no-hardlinks "$local_src" "$path" || exit 1
+          else
+            dep_run git clone "$url" "$path" || exit 1
+          fi
+        fi
+        current=$(git -C "$path" rev-parse HEAD) || exit 1
+        if [ "$current" != "$pin" ]; then
+          dep_run git -C "$path" fetch --all --tags || exit 1
+          dep_run git -C "$path" checkout "$pin" || exit 1
+        fi
+        dep_run git -C "$path" remote set-url origin "$url" || exit 1
+        echo "Pinned $relpath at $pin"
+
+  verify-dependencies:
+    desc: Verify that every pinned dependency is at its pinned revision
+    cmds:
+      - for:
+          var: DEPENDENCY_NAMES
+          as: NAME
+        task: verify-dependency
+        vars:
+          NAME: '{{.NAME}}'
+
+  # Var: NAME.
+  verify-dependency:
+    internal: true
+    silent: true
+    requires:
+      vars: [NAME]
+    cmds:
+      - |
+        {{.DEPENDENCY_SH}}
+        name='{{.NAME}}'
+        url='{{index . (printf "%s_ORIGIN" (upper .NAME))}}'
+        revision='{{index . (printf "%s_REVISION" (upper .NAME))}}'
+        license_file='{{default "" (index . (printf "%s_LICENSE_FILE" (upper .NAME)))}}'
+        notice='{{default "" (index . (printf "%s_PROJECT_NOTICE" (upper .NAME)))}}'
+        repo=$(dependency_root "$name" '{{upper .NAME}}')
+        if [ ! -e "$repo/.git" ]; then
+          echo "Pinned $name is missing; run task setup:deps (expected $revision)" >&2; exit 1
+        fi
+        current=$(git -C "$repo" rev-parse HEAD 2>/dev/null) &&
+          origin=$(git -C "$repo" remote get-url origin 2>/dev/null) || {
+          echo "Cannot verify $name checkout at $repo" >&2; exit 1; }
+        if [ "$current" != "$revision" ]; then
+          echo "$name revision is $current; expected $revision" >&2; exit 1
+        fi
+        if [ "${origin%/}" != "${url%/}" ]; then
+          echo "$name origin is $origin; expected $url" >&2; exit 1
+        fi
+        status=$(git -C "$repo" status --porcelain --untracked-files=all) || exit 1
+        if [ -n "$status" ]; then
+          echo "$name checkout has local changes; restore it to the pinned revision" >&2; exit 1
+        fi
+        if [ ! -f "$repo/$license_file" ]; then
+          echo "$name license notice is missing: $repo/$license_file" >&2; exit 1
+        fi
+        if [ -n "$notice" ] && [ ! -f "$DEP_ROOT/$notice" ]; then
+          echo "$name project license notice is missing: $DEP_ROOT/$notice" >&2; exit 1
+        fi
+
+  # Var: NAME. Prints the resolved checkout directory.
+  dependency-root:
+    internal: true
+    silent: true
+    requires:
+      vars: [NAME]
+    cmds:
+      - |
+        {{.DEPENDENCY_SH}}
+        dependency_root '{{.NAME}}' '{{upper .NAME}}'

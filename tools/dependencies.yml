@@ -1,0 +1,45 @@
+version: '3'
+
+# Pinned dependency revisions. Each dependency has the variables
+# <NAME>_ORIGIN, <NAME>_REVISION, <NAME>_LICENSE and <NAME>_LICENSE_FILE.
+# The variable names are the upper-case dependency names.
+
+vars:
+  TLSLIB4PASCAL_ORIGIN: "https://github.com/Xor-el/TlsLib4Pascal.git"
+  TLSLIB4PASCAL_REVISION: "2b47b18f61e5039a990e623353df88a0379ca948"
+  TLSLIB4PASCAL_LICENSE: "MIT"
+  TLSLIB4PASCAL_LICENSE_FILE: "LICENSE"
+
+  CRYPTOLIB4PASCAL_ORIGIN: "https://github.com/Xor-el/CryptoLib4Pascal.git"
+  CRYPTOLIB4PASCAL_REVISION: "f559d27462ddd149ef9d1880f97854a8a4cc8368"
+  CRYPTOLIB4PASCAL_LICENSE: "MIT"
+  CRYPTOLIB4PASCAL_LICENSE_FILE: "LICENSE"
+
+  HASHLIB4PASCAL_ORIGIN: "https://github.com/Xor-el/HashLib4Pascal.git"
+  HASHLIB4PASCAL_REVISION: "465c0c7c2c9a78596dd07e022f81073c11775a52"
+  HASHLIB4PASCAL_LICENSE: "MIT"
+  HASHLIB4PASCAL_LICENSE_FILE: "LICENSE"
+
+  SIMPLEBASELIB4PASCAL_ORIGIN: "https://github.com/Xor-el/SimpleBaseLib4Pascal.git"
+  SIMPLEBASELIB4PASCAL_REVISION: "9310af083d398ed62f01d8c82d39f85ad194dc93"
+  SIMPLEBASELIB4PASCAL_LICENSE: "MIT"
+  SIMPLEBASELIB4PASCAL_LICENSE_FILE: "LICENSE"
+
+  MORMOT2_ORIGIN: "https://github.com/synopse/mORMot2.git"
+  MORMOT2_REVISION: "b2b195da1e0580058672a88620ef71bb47283eb1"
+  MORMOT2_LICENSE: "MPL 1.1 or later, GPL 2.0 or later, or LGPL 2.1 or later with the FPC modified LGPL linking exception"
+  MORMOT2_LICENSE_FILE: "LICENCE.md"
+  MORMOT2_PROJECT_NOTICE: "LICENSES/NOTICE-http2client.txt"
+
+  # Compile order of the TlsLib dependency closure, space separated.
+  TLSLIB_COMPILE_ORDER: "HashLib4Pascal SimpleBaseLib4Pascal CryptoLib4Pascal TlsLib4Pascal"
+
+  # Names of the pinned dependencies, space separated, in the order of
+  # the pins above. taskfiles/deps.yml loops over this list and
+  # reads <UPPER NAME>_ORIGIN and <UPPER NAME>_REVISION for each name.
+  DEPENDENCY_NAMES: "TlsLib4Pascal CryptoLib4Pascal HashLib4Pascal SimpleBaseLib4Pascal mORMot2"
+
+  # Client validation harness. It is not a build dependency. It is
+  # fetched by setup:harness and has no license record.
+  HARNESS_ORIGIN: "https://github.com/nomadlabsinc/h2-client-test-harness.git"
+  HARNESS_REV: "0bc075cc21e5a247dfd222e005d1e7e5679d2bff"

@@ -37,7 +37,7 @@ def compile_probe():
         if not binary.is_file():
             raise RuntimeError(f"provider probe binary does not exist: {binary}")
         return binary, f"Using supplied provider probe binary: {binary}\nCompilation skipped.\n"
-    result = run([sys.executable, "tools/build.py", "compile:server:probe", SOURCE], timeout=180)
+    result = run(["task", "compile:server:probe", "--", SOURCE], timeout=180)
     target = os.environ.get("TARGET")
     if not target:
         cpu = run([os.environ.get("FPC", "fpc"), "-iTP"], text=True).stdout.strip()

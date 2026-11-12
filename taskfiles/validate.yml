@@ -1,0 +1,183 @@
+version: '3'
+
+# Contract of this file.
+#
+# Each validate:client:* and validate:server:* task starts one gate script
+# that stays unchanged. A client gate runs the script with bash. A server
+# gate runs the script with sh and the environment value SERVER_BIN. The
+# deps: list of a gate names the compile tasks that the gate needs. The tasks
+# are in taskfiles/build.yml.
+#
+# validate:fast and validate run the existing tasks in order. They stop at
+# the first failure.
+#
+# The two live gates start tools/server/validate/live.sh. The script compiles
+# the live program, makes a temporary PKI and runs the program under a 180 s
+# limit.
+
+tasks:
+  validate:fast:
+    desc: Run bounded required validation gates
+    cmds:
+      - task: test:common
+      - task: test:client
+      - task: test:server
+      - task: test:api
+      - task: test:integration
+      - task: source:check
+      - task: docs:check
+      - task: version:check
+      - task: packages:check
+
+  "validate:client:sanity":
+    desc: Run the client sanity gate
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/h2probe-sanity.sh
+
+  "validate:client:interop":
+    desc: Run the client interop gate
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/interop.sh
+
+  "validate:client:harness":
+    desc: Run the client conformance harness
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/harness.sh
+
+  "validate:client:sse":
+    desc: Run the client SSE gate
+    deps:
+      - compile:client-test-runner
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/sse-live.sh
+
+  "validate:client:proxy":
+    desc: Run the client proxy gate
+    deps:
+      - compile:client-test-runner
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/proxy-live.sh
+
+  "validate:client:proxy:real":
+    desc: Run the client live proxy gate
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/proxy-real.sh
+
+  "validate:client:websocket":
+    desc: Run the client WebSocket gate
+    deps:
+      - compile:client-test-runner
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/websocket-live.sh live
+
+  "validate:client:websocket:autobahn":
+    desc: Run the client Autobahn gate
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/websocket-live.sh autobahn
+
+  "validate:client:cleartext":
+    desc: Run the client cleartext gate
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/cleartext-live.sh
+
+  "validate:client:mtls":
+    desc: Run the client mTLS gate
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/mtls-live.sh
+
+  "validate:client:mtls-real":
+    desc: Run the client live mTLS gate
+    cmds:
+      - bash {{.ROOT}}/tools/client/validate/mtls-real.sh
+
+  "validate:server:conformance":
+    desc: Run the server conformance gate
+    deps:
+      - compile:server-examples
+    env:
+      SERVER_BIN: '{{.OUT}}/examples-server/programs'
+    cmds:
+      - sh {{.ROOT}}/tools/server/validate/run.sh conformance
+
+  "validate:server:fast":
+    desc: Run the server fast gate
+    deps:
+      - compile:server-examples
+    env:
+      SERVER_BIN: '{{.OUT}}/examples-server/programs'
+    cmds:
+      - sh {{.ROOT}}/tools/server/validate/run.sh fast
+
+  "validate:server:tls-live":
+    desc: Run the server TLS live gate
+    env:
+      LIVE_OUT: '{{.OUT}}'
+    cmds:
+      - sh {{.ROOT}}/tools/server/validate/live.sh tls
+
+  "validate:server:mtls-live":
+    desc: Run the server mTLS live gate
+    env:
+      LIVE_OUT: '{{.OUT}}'
+    cmds:
+      - sh {{.ROOT}}/tools/server/validate/live.sh mtls
+
+  "validate:server:websocket":
+    desc: Run the server WebSocket gate
+    deps:
+      - compile:server-examples
+    env:
+      SERVER_BIN: '{{.OUT}}/examples-server/programs'
+    cmds:
+      - sh {{.ROOT}}/tools/server/validate/run.sh websocket
+
+  "validate:server:websocket:h2":
+    desc: Run the server HTTP/2 WebSocket gate
+    deps:
+      - compile:server-examples
+    env:
+      SERVER_BIN: '{{.OUT}}/examples-server/programs'
+    cmds:
+      - sh {{.ROOT}}/tools/server/validate/run.sh websocket:h2
+
+  "validate:server:sse":
+    desc: Run the server SSE gate
+    deps:
+      - compile:server-examples
+    env:
+      SERVER_BIN: '{{.OUT}}/examples-server/programs'
+    cmds:
+      - sh {{.ROOT}}/tools/server/validate/run.sh sse
+
+  "validate:server:abuse":
+    desc: Run the server abuse gate
+    deps:
+      - compile:server-examples
+    env:
+      SERVER_BIN: '{{.OUT}}/examples-server/programs'
+    cmds:
+      - sh {{.ROOT}}/tools/server/validate/run.sh abuse
+
+  validate:
+    desc: Run the documented validation sequence
+    cmds:
+      - task: validate:fast
+      - task: "validate:client:sanity"
+      - task: "validate:client:interop"
+      - task: "validate:client:harness"
+      - task: "validate:client:sse"
+      - task: "validate:client:proxy"
+      - task: "validate:client:proxy:real"
+      - task: "validate:client:websocket"
+      - task: "validate:client:websocket:autobahn"
+      - task: "validate:client:cleartext"
+      - task: "validate:client:mtls"
+      - task: "validate:client:mtls-real"
+      - task: "validate:server:conformance"
+      - task: "validate:server:fast"
+      - task: "validate:server:tls-live"
+      - task: "validate:server:mtls-live"
+      - task: "validate:server:websocket"
+      - task: "validate:server:websocket:h2"
+      - task: "validate:server:sse"
+      - task: "validate:server:abuse"

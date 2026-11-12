@@ -82,7 +82,7 @@ compiler version in the merged tree is Free Pascal 3.2.4.
 
 ## The build line
 
-The Makefile and Taskfile call `tools/build.py`. The driver compiles library
+The Taskfile tasks compile library
 units from `common/src` and `server/src`; it stores compiler outputs and
 programs in `bin/<cpu>-<os>/<profile>/`. The server unit test command is
 `task test:server`. It compiles and runs the server test runner with the

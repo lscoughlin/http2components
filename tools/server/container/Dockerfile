@@ -7,6 +7,7 @@
 #   docker build --build-arg FULL_SUITE_TIMEOUT=1500 \
 #     -f tools/server/container/Dockerfile -t http2components-amd64 .
 #
+# The `make` program builds the compiler only. The repository build uses `task`.
 # Stage "toolchain" holds every tool and every dependency. It does not read the
 # project sources, so Docker keeps its layers in the cache until a build
 # argument changes. Stage "build" copies the sources, checks out every pinned
@@ -29,6 +30,8 @@ ARG FPC_TAG=release_3_2_4_rc2
 ARG MORMOT_REV=b2b195da1e0580058672a88620ef71bb47283eb1
 ARG FPC_PREFIX=/opt/fpc
 ARG MORMOT_DIR=/opt/mormot2
+ARG TASK_VERSION=3.54.0
+ARG TASK_SHA256=680859dbb4d881a9c72d4d9a8f510825450849af8567deacd7302c01124416fb
 ARG H2SPEC_VERSION=2.6.0
 ARG H2SPEC_SHA256=157ee0de702e01ad40e752dbf074b366027e550c8e7504f9450da2809e279318
 
@@ -41,6 +44,17 @@ RUN apt-get update \
       python3 python3-yaml python3-h2 python3-wsproto \
       golang-go nghttp2-client \
  && rm -rf /var/lib/apt/lists/*
+
+# Pin the task runner (go-task) by both release and archive digest. The
+# minimum version is 3.42.0.
+RUN curl --fail --location --silent --show-error \
+      "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_amd64.tar.gz" \
+      -o /tmp/task.tar.gz \
+ && echo "${TASK_SHA256}  /tmp/task.tar.gz" | sha256sum --check --status \
+ && tar -xzf /tmp/task.tar.gz -C /usr/local/bin task \
+ && chmod 0755 /usr/local/bin/task \
+ && rm /tmp/task.tar.gz \
+ && task --version
 
 # Pin the HTTP/2 conformance tool by both release and archive digest.
 RUN curl --fail --location --silent --show-error \
@@ -103,7 +117,7 @@ ARG FPC_PREFIX=/opt/fpc
 ARG MORMOT_DIR=/opt/mormot2
 ARG FULL_SUITE_TIMEOUT=1200
 
-# The Makefile reads these variables from the environment.
+# The tasks read these variables from the environment.
 ENV MORMOT=${MORMOT_DIR}/src \
     OPENSSL_LIBPATH=/usr/lib/x86_64-linux-gnu
 
@@ -119,9 +133,9 @@ RUN set -e; \
     export FPC_UNITS="${FPC_PREFIX}/lib/fpc/$(fpc -iV)/units/$(fpc -iTP)-$(fpc -iTO)"; \
     echo "unit directory: ${FPC_UNITS}"; \
     TEST_TIMEOUT="${FULL_SUITE_TIMEOUT}" HTTP2_TEST_TRACE=1 \
-    make setup-deps setup-harness all examples test test-api test-integration \
-      test-tls-contract test-tls-openssl test-tls-tlslib test-tls-client \
-      test-tls-server test-tls-integration packages-check source-check \
-      docs-check version-check
+    task setup:deps setup:harness build examples test test:api test:integration \
+      test:tls-contract test:tls-openssl test:tls-tlslib test:tls-client \
+      test:tls-server test:tls-integration packages:check source:check \
+      docs:check version:check
 
 CMD ["/bin/sh", "-c", "ls -l /src/bin"]

@@ -32,10 +32,8 @@ OpenSSL 4.1.0, dated 2026-10-23. These are separate runtime and fixture tools.
 | HashLib4Pascal | `465c0c7c2c9a78596dd07e022f81073c11775a52` |
 | SimpleBaseLib4Pascal | `9310af083d398ed62f01d8c82d39f85ad194dc93` |
 
-The origins and license notices are recorded in `tools/dependencies.json`.
-The dependency checkouts stayed clean. The macOS/FPC CryptoLib random-source
-patch is a versioned overlay under generated output. It does not modify the
-pinned checkout. Other platforms were not validated.
+The origins and license notices are recorded in `tools/dependencies.yml`.
+The dependency checkouts stayed clean. Other platforms were not validated.
 
 ## Executed bounded checks
 
@@ -50,15 +48,15 @@ pinned checkout. Other platforms were not validated.
 | HTTP integration | 29 | 6.375 | Passed; exit 0; no timeout. |
 | Security integration | 200 | 0.883 | Passed; exit 0; no timeout. |
 
-The commands were `python3 tools/build.py` with these targets:
+The runs used the build driver of that time. The matching `task` names are:
 
 ```text
-test:tls:contract
-test:tls:openssl
-test:tls:tlslib
-test:tls:client
-test:tls:server
-test:tls:integration
+test:tls-contract
+test:tls-openssl
+test:tls-tlslib
+test:tls-client
+test:tls-server
+test:tls-integration
 ```
 
 The final runs started at 15:26:36 UTC and ended at 15:27:14 UTC.
@@ -102,15 +100,15 @@ suite pass for the replacement.
 
 | Check | Command or artifact | Result |
 | --- | --- | --- |
-| Source and test accounting | `python3 tools/build.py source:check` | 405 Pascal files, one include, 152 production units, and all 1,780 source records passed. |
-| Documentation | `python3 tools/build.py docs:check` | 58 documents passed after this record was added. |
-| Version | `python3 tools/build.py version:check` | VERSION and six package files passed. |
-| Generated package inventory | `python3 tools/packages.py --check` | All six inventories matched. |
-| Lazarus package builds | `python3 tools/build.py packages:check` | All six packages built separately; exit 0; 123.974 seconds. |
-| Examples | `python3 tools/build.py examples` | All 25 compiled; exit 0; 261.178 seconds. |
+| Source rules | `task source:check` | The record covered 405 Pascal files and one include. The check of that time also counted production units and test-accounting records. Those two counts are not part of the current check. |
+| Documentation | `task docs:check` | 58 documents passed after this record was added, under the rule set of that time. |
+| Version | `task version:check` | VERSION and six package files passed. |
+| Package inventory | `task packages:check` | The package inventory check of that time matched all six inventories. The current check compares the `.lpk` file lists with the source file names. |
+| Lazarus package builds | `task packages:check` | All six packages built separately; exit 0; 123.974 seconds. |
+| Examples | `task examples` | All 25 compiled; exit 0; 261.178 seconds. |
 | Restricted compiler probes | `bin/tls-coordinator/tls10-artifacts/isolation-*.trace.txt` | All six component/provider probes compiled with the required closure. |
 | Lazarus project group | `bin/tls-coordinator/tls10-lazarus-group.log` | One check passed; all six targets loaded. |
-| Public API compile probe | Included in `test:tls:integration` | Passed on the merged source. |
+| Public API compile probe | Included in `test:tls-integration` | Passed on the merged source. |
 
 The final source, documentation, version, inventory, and package build logs
 are in `bin/tls-coordinator/final/`. Their command records are
@@ -132,9 +130,10 @@ The original source-test inventory retains all 913 client and 867 server
 origin records in their original order. Eighty-seven TLS rows have explicit
 migration records. Two native-accessor assertions are obsolete and identify
 the replacement contract without claiming equivalent native coverage.
-The checker rejects uncovered rows, absent methods, and absent assertion
+The checker of that time rejected uncovered rows, absent methods, and absent assertion
 markers. Six negative/static controls passed. The 1,780 records are inventory
-checks, not 1,780 executed runtime tests.
+checks, not 1,780 executed runtime tests. The current repository checks are 29
+simple rules in Taskfile tasks. They do not include this test accounting.
 
 ## Provider isolation
 
@@ -160,12 +159,9 @@ without `OPENSSL_LIBPATH`. It passed 87 cases in 0.854 seconds, exit 0.
 It loaded 82 images, with no `libssl` or `libcrypto` image. Its complete
 log is `bin/tls-coordinator/final/test-tls-tlslib.log`.
 
-The first image check failed despite 87 passing functional cases: macOS
-framework dependencies loaded LibreSSL 3.3.6 system libraries. A separate
-Security.framework probe showed the same issue. The reviewed random-source
-overlay reads `/dev/urandom` with interrupted-operation and short-read handling,
-rejects failed reads, and has no weak fallback. It removed that dependency.
-The small RNG probe passed three cases before the full exchange check.
+On macOS, the upstream CryptoLib random provider loads the LibreSSL system
+libraries through the macOS frameworks. The build does not patch this
+behavior. The image checks above predate this decision.
 
 Lazarus forces `-B` for an unbuilt package. The TlsLib-only build wrapper
 removes that exact argument after a fresh ordered dependency bootstrap, which

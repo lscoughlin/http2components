@@ -82,7 +82,7 @@ These facts are compiled and run against the actual toolchain
 | `specialize TDictionary<K,V>` under `objfpc` | requires the `specialize` keyword in `uses`-visible code | handled by the `delphi` mode |
 | `UTF8String` as a distinct `TypeInfo` kind | on FPC 3.2.4 `UTF8String` is **`tkAString`** — the same branch as `AnsiString` | `TResponseReader<string>`, `TResponseReader<UTF8String>`, and `ReadText` all take the byte-preserving path; no transcoding is attempted |
 | `fpjson.GetJSON` in a unit that does not name `jsonparser` | raises `EJSON: No JSON parser handler installed` | `Http2.Client.Readers` names `jsonparser` explicitly |
-| FPC output name for a program | the binary is named after the **source file** (`examples/basic_get.pas` → `basic_get`), not the unit | `make examples`/`task examples` write `bin/<source-stem>` |
+| FPC output name for a program | the binary is named after the **source file** (`examples/basic_get.pas` → `basic_get`), not the unit | `task examples` writes `bin/<source-stem>` |
 
 Probe sources are preserved in
 [`reference/fpc-verified/`](../../verification/client-probes/README.md) (see its

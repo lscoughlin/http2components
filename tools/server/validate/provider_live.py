@@ -49,7 +49,7 @@ def provider_binary():
 def compile_probe():
     if os.environ.get("PROVIDER_LIVE_BINARY"):
         return provider_binary()
-    run([sys.executable, "tools/build.py", "compile:server:probe", SOURCE],
+    run(["task", "compile:server:probe", "--", SOURCE],
         cwd=ROOT, timeout=180)
     binary = provider_binary()
     if not binary.is_file():

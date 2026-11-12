@@ -1,0 +1,766 @@
+version: '3'
+
+# Contract of this file. Other Taskfiles rely on these names.
+#
+# Public tasks:
+#   build, build:common, build:client, build:server, build:readers,
+#   build:openssl, build:tlslib, examples, clean
+# Component tasks:
+#   component:build:common|client|server|readers|openssl|tlslib
+#                          One component, no dependency build.
+#   clean:component:common|client|server|readers|openssl|tlslib
+#                          Remove the output directories of one component.
+#   isolation:compile, isolation:tlslib:runtime
+#                          The isolation probes.
+#   compile:client-test-runner
+#                          Build common, client and openssl. Compile the
+#                          client test runner (client-test).
+#   compile:server-examples
+#                          Build common, server and the needed providers.
+#                          Compile every server example.
+#   compile:server:probe   Source in CLI_ARGS. Build common, server and the
+#                          needed providers. Compile the source as
+#                          integration-test. The program is
+#                          bin/<target>/<profile>/integration-test/programs/<stem>.
+#                          The output is the "+ <command>" lines of the
+#                          build.
+# Internal task (call with `task:` from another task):
+#   compile-file           vars COMPONENT, SOURCE (path relative to the
+#                          repository root); optional TESTS (true or false,
+#                          default false), PROVIDERS (a list such as
+#                          "openssl tlslib": the flags of example_provider_flags),
+#                          EXTRA (more flags, separated by blanks), VERIFIED
+#                          (true skips the pin check; the caller has done it).
+#                          It checks the
+#                          pins that the role needs, writes the response file
+#                          <OUT>/<COMPONENT>/cfg/flags-<stem>.cfg and runs fpc.
+#                          The program is <OUT>/<COMPONENT>/programs/<stem>.
+# Shell snippets (put one at the start of a command, then call the functions):
+#   {{.BUILD_SH}}          Includes DEPENDENCY_SH and OPENSSL_ENV_SH. Defines
+#                          compile_file, build_component, build_openssl,
+#                          build_tlslib, compose_flags, tlslib_closure,
+#                          fpc_run and the helpers of this file.
+#   {{.OPENSSL_ENV_SH}}    Defines open_ssl_env. It exports OPENSSL_LIBPATH
+#                          with its default when the variable is
+#                          unset. Call it in a subshell to scope the value.
+#
+# Flags: tools/fpc/*.cfg holds the static flags of each role, one flag for
+# each line. The generator functions write every flag that depends on TARGET,
+# PROFILE, FPC_UNITS or a dependency path, and compose one flag file per
+# compile in <OUT>/<component>/cfg/ on every compile. The build does not
+# cache. The function fpc_cfg puts the lines of the file on the fpc command
+# line in the same order. The file is not given to fpc as @file for two
+# reasons. fpc does not read a response file inside a response file, and
+# fpc searches the -Fu directories of a response file in the reverse order
+# (a measured fpc 3.2.4 behavior). The reverse order changes the TlsLib
+# bootstrap order and so the unit that fpc picks.
+# Environment: FPC, FPCFLAGS, FPC_UNITS, TARGET, PROFILE, DEBUG, the *_ROOT
+# overrides and OPENSSL_LIBPATH.
+# Notes: no 300 s limit on compiles; no lock file for the
+# common build; the Pascal parser is a grep (see example_programs);
+# FPCFLAGS is split at blanks, without shell quotes.
+
+vars:
+  OPENSSL_ENV_SH: |
+    open_ssl_env() {
+      if [ -z "${OPENSSL_LIBPATH+x}" ]; then
+        case $(uname -s) in
+          Darwin)
+            case $(uname -m) in arm64|aarch64) _pf=/opt/homebrew ;; *) _pf=/usr/local ;; esac
+            OPENSSL_LIBPATH=$_pf/opt/openssl@3/lib; export OPENSSL_LIBPATH ;;
+          Linux)
+            case $(uname -m) in
+              x86_64) OPENSSL_LIBPATH=/usr/lib/x86_64-linux-gnu; export OPENSSL_LIBPATH ;;
+              aarch64) OPENSSL_LIBPATH=/usr/lib/aarch64-linux-gnu; export OPENSSL_LIBPATH ;;
+            esac ;;
+        esac
+      fi
+    }
+
+  BUILD_SH: |
+    {{.DEPENDENCY_SH}}
+    {{.OPENSSL_ENV_SH}}
+    FPC_BIN='{{.FPC}}'
+    OUT='{{.OUT}}'
+    TARGET='{{.TARGET}}'
+    TLSLIB_ORDER='{{.TLSLIB_COMPILE_ORDER}}'
+    FPCDIR=$DEP_ROOT/tools/fpc
+
+    # Print "+ <command>", then run the command.
+    fpc_run() {
+      _line="$*"
+      if [ "${#_line}" -gt 1200 ]; then
+        printf '+ %s ... [%s arguments, %s characters]\n' "$(printf '%s' "$_line" | cut -c1-900)" "$#" "${#_line}"
+      else
+        printf '+ %s\n' "$_line"
+      fi
+      "$@"
+    }
+
+    # Run fpc with the lines of a flag file as arguments (a line that is empty
+    # or starts with # is skipped), then -FU, -FE and the source. The
+    # arguments after the fourth are put before the flags. The flags are not
+    # given as an @file: fpc searches the -Fu directories of a response file
+    # in the reverse order, so the unit order would change.
+    # Arguments: flag file, unit directory, program directory, source, options.
+    FPC_RUN=fpc_run
+    quiet_run() { "$@"; }
+    fpc_cfg() {
+      _cf=$1; _u=$2; _e=$3; _s=$4; shift 4
+      while IFS= read -r _l || [ -n "$_l" ]; do
+        case $_l in ''|'#'*) ;; *) set -- "$@" "$_l" ;; esac
+      done < "$_cf"
+      $FPC_RUN "$FPC_BIN" "$@" "-FU$_u" "-FE$_e" "$_s"
+    }
+
+    # FPCFLAGS words, one for each line.
+    user_flags() {
+      set -f
+      for _w in ${FPCFLAGS:-}; do printf '%s\n' "$_w"; done
+      set +f
+    }
+
+    fpc_unit_root() {
+      if [ -n "${FPC_UNITS:-}" ]; then printf '%s\n' "$FPC_UNITS"; return 0; fi
+      _v=$("$FPC_BIN" -iV) || return 1
+      if [ "$(uname -s)" = Darwin ]; then
+        printf '%s\n' "/usr/local/lib/fpc/$_v/units/$TARGET"
+      else
+        printf '%s\n' "/usr/lib/fpc/$_v/units/$TARGET"
+      fi
+    }
+
+    mormot_lines() {
+      _m=$(dependency_root mORMot2 MORMOT2)
+      for _p in core lib net crypt; do printf '%s\n' "-Fu$_m/src/$_p"; done
+    }
+
+    mormot_static() {
+      printf '%s\n' "-Fl$(dependency_root mORMot2 MORMOT2)/static/$TARGET"
+    }
+
+    # The closure of the TlsLib, CryptoLib, HashLib and SimpleBaseLib source
+    # trees: every directory of a .pas file as -Fu (the two CryptoLib
+    # multiplier directories first, the rest sorted), then every directory of
+    # a .pas or .inc file as -Fi (sorted).
+    tlslib_closure() {
+      _t=$(dependency_root TlsLib4Pascal TLSLIB4PASCAL)/TlsLib/src
+      _c=$(dependency_root CryptoLib4Pascal CRYPTOLIB4PASCAL)/CryptoLib/src
+      _h=$(dependency_root HashLib4Pascal HASHLIB4PASCAL)/HashLib/src
+      _s=$(dependency_root SimpleBaseLib4Pascal SIMPLEBASELIB4PASCAL)/SimpleBaseLib/src
+      _p1=$_c/Math/EC/Multiplier
+      _p2=$_c/Math/EC
+      if [ -d "$_p1" ]; then printf '%s\n' "-Fu$_p1"; fi
+      if [ -d "$_p2" ]; then printf '%s\n' "-Fu$_p2"; fi
+      find "$_t" "$_c" "$_h" "$_s" -type f -name '*.pas' 2>/dev/null | sed 's|/[^/]*$||' |
+        LC_ALL=C sort -u | grep -vxF -e "$_p1" -e "$_p2" | sed 's|^|-Fu|' || true
+      find "$_t" "$_c" "$_h" "$_s" -type f \( -name '*.pas' -o -name '*.inc' \) 2>/dev/null |
+        sed 's|/[^/]*$||' | LC_ALL=C sort -u | sed 's|^|-Fi|'
+    }
+
+    # Sets ROLE and TLS_INT from a component name, as base_flags does.
+    role_of() {
+      ROLE=${1%-test}
+      TLS_INT=0
+      case $ROLE in
+        tls-client) ROLE=client ;;
+        tls-server) ROLE=server ;;
+        tls-integration) TLS_INT=1; ROLE=integration ;;
+        examples-*) ROLE=examples ;;
+      esac
+    }
+
+    # The flags that depend on a dependency path or on OUT, for the role.
+    role_deps() {
+      case $ROLE in
+        client|server|readers|api|integration|examples)
+          mormot_lines
+          mormot_static
+          printf '%s\n' "-Fu$OUT/common/units" ;;
+        openssl)
+          printf '%s\n' "-dUSE_OPENSSL"
+          mormot_lines
+          mormot_static ;;
+        tlslib)
+          if [ -d "$OUT/tlslib/units/bootstrap" ]; then printf '%s\n' "-Fu$OUT/tlslib/units/bootstrap"; fi
+          printf '%s\n' "-Fu$OUT/tlslib/units"
+          tlslib_closure ;;
+      esac
+      if [ "$TLS_INT" = 1 ]; then
+        printf '%s\n' "-Futls/openssl/src" "-Fu$OUT/openssl/units" "-Futls/tlslib/src" "-Fu$OUT/tlslib/units" "-Fu$OUT/tlslib/units/bootstrap"
+        tlslib_closure
+        printf '%s\n' "-dUSE_OPENSSL"
+      fi
+    }
+
+    # The base flags of a component as a response file on standard output.
+    # Arguments: component, tests (true or false), user flags (1 or 0).
+    compose_flags() {
+      role_of "$1"
+      case $ROLE in
+        client|readers) cat "$FPCDIR/role-client.cfg" ;;
+        server) cat "$FPCDIR/role-server.cfg" ;;
+        openssl) cat "$FPCDIR/role-openssl.cfg" ;;
+        tlslib) cat "$FPCDIR/role-tlslib.cfg" ;;
+        api|integration|examples) cat "$FPCDIR/role-app.cfg" ;;
+        *) cat "$FPCDIR/role-common.cfg" ;;
+      esac
+      role_deps
+      if [ "$ROLE" = examples ]; then cat "$FPCDIR/examples-paths.cfg"; fi
+      if [ "$2" = true ]; then
+        printf '%s\n' "-Fu$(fpc_unit_root)/fcl-fpcunit"
+        if [ "$1" = common-test ]; then cat "$FPCDIR/test-common.cfg"; else cat "$FPCDIR/test-all.cfg"; fi
+        if [ "$1" = client-test ]; then
+          printf '%s\n' "-dUSE_OPENSSL" "-Futls/openssl/src"
+          mormot_lines
+          printf '%s\n' "-Fu$OUT/openssl/units"
+        fi
+      fi
+      if [ "$3" = 1 ]; then user_flags; fi
+    }
+
+    # The flags that an example needs for one provider.
+    provider_flags() {
+      compose_flags "$1" false 0
+      printf '%s\n' "-Fu$OUT/$1/units"
+    }
+
+    # Compile one source file. Arguments: component, source, tests,
+    # providers, extra flags.
+    compile_file() {
+      _c=$1; _src=$2; _t=$3; _prov=$4; _extra=$5
+      if [ ! -f "$_src" ]; then echo "Required $_c source is missing: $_src" >&2; return 1; fi
+      _stem=$(basename "$_src" .pas)
+      _units=$OUT/$_c/units; _programs=$OUT/$_c/programs; _cfg=$OUT/$_c/cfg
+      case $_c in
+        examples-*) _units=$_units/$_stem; rm -rf "$_units" ;;
+      esac
+      mkdir -p "$_units" "$_programs" "$_cfg"
+      _flags=$_cfg/flags-$_stem.cfg
+      {
+        compose_flags "$_c" "$_t" 1
+        for _pv in $_prov; do provider_flags "$_pv"; done
+        if [ -n "$_extra" ]; then printf '%s\n' $_extra; fi
+      } > "$_flags"
+      (
+        case $_c in
+          client|server|readers|examples|api-test|integration-test|openssl|openssl-test|tls-integration-test|examples-*) open_ssl_env ;;
+        esac
+        fpc_cfg "$_flags" "$_units" "$_programs" "$_src"
+      )
+    }
+
+    # The compile of one component facade, with no dependency build.
+    build_component() {
+      case $1 in
+        common) compile_file common common/src/Http2.Common.pas false "" "" ;;
+        client) compile_file client client/src/Http2.Client.pas false "" "" ;;
+        server) compile_file server server/src/Http2.Server.pas false "" "" ;;
+        readers) compile_file readers client/src/Http2.Client.Readers.pas false "" "" ;;
+      esac
+    }
+
+    build_openssl() {
+      mkdir -p "$OUT/openssl/units" "$OUT/openssl/programs" "$OUT/openssl/cfg"
+      _f=$OUT/openssl/cfg/flags-http2openssl.cfg
+      { cat "$FPCDIR/openssl-direct.cfg"; mormot_lines; mormot_static; user_flags; } > "$_f"
+      (
+        open_ssl_env
+        fpc_cfg "$_f" "$OUT/openssl/units" "$OUT/openssl/programs" tls/openssl/http2openssl.pas
+      )
+    }
+
+    # The package units are compiled in the order of TLS-02 into
+    # units/bootstrap. Compiled package units precede the dependency source
+    # directories. Otherwise fpc enters the CryptoLib ClpMultipliers cycle.
+    build_tlslib() {
+      _units=$OUT/tlslib/units; _programs=$OUT/tlslib/programs; _boot=$_units/bootstrap
+      _cfg=$OUT/tlslib/cfg
+      mkdir -p "$_units" "$_programs" "$_boot" "$_cfg"
+      _f=$_cfg/flags-package.cfg
+      {
+        printf '%s\n' "-Fu$_boot"
+        cat "$FPCDIR/base.cfg"
+        tlslib_closure
+        user_flags
+      } > "$_f"
+      for _pk in HashLib4Pascal:HashLib4PascalPackage:HASHLIB4PASCAL:HashLib \
+                 SimpleBaseLib4Pascal:SimpleBaseLib4PascalPackage:SIMPLEBASELIB4PASCAL:SimpleBaseLib \
+                 CryptoLib4Pascal:CryptoLib4PascalPackage:CRYPTOLIB4PASCAL:CryptoLib; do
+        _n=${_pk%%:*}; _r=${_pk#*:}; _pn=${_r%%:*}; _r=${_r#*:}; _up=${_r%%:*}; _sub=${_r#*:}
+        _file=$(dependency_root "$_n" "$_up")/$_sub/src/Packages/FPC/$_pn.pas
+        if [ ! -f "$_file" ]; then echo "Pinned TlsLib dependency package is missing: $_file" >&2; return 1; fi
+        fpc_cfg "$_f" "$_boot" "$_programs" "$_file" || return 1
+      done
+      _f2=$_cfg/flags-facade.cfg
+      { cat "$_f"; printf '%s\n' "-Fucommon/src" "-Futls/tlslib/src"; } > "$_f2"
+      fpc_cfg "$_f2" "$_units" "$_programs" tls/tlslib/http2tlslib.pas
+    }
+
+    # Program files under examples/<role>, sorted, as "<role> <path>". A
+    # program file has a line that starts with "program " in any case.
+    example_programs() {
+      for _role in $1; do
+        if [ -d "examples/$_role" ]; then
+          find "examples/$_role" -type f -name '*.pas' | LC_ALL=C sort | while read -r _f; do
+            if grep -qiE '^program ' "$_f"; then printf '%s %s\n' "$_role" "$_f"; fi
+          done
+        fi
+      done
+    }
+
+    # The providers that a source file names, as words.
+    file_providers() {
+      _r=
+      if grep -qiE 'http2\.openssl' "$1"; then _r="$_r openssl"; fi
+      if grep -qiE 'http2\.tlslib' "$1"; then _r="$_r tlslib"; fi
+      printf '%s\n' "$_r"
+    }
+
+    # Pin names that a role or a provider list needs, without repeats.
+    # Arguments: component, providers.
+    role_dep_names() {
+      _names=
+      role_of "$1"
+      case $ROLE in
+        client|server|readers|api|integration|examples|openssl) _names=mORMot2 ;;
+        tlslib) _names=$TLSLIB_ORDER ;;
+      esac
+      for _pv in $2; do
+        case $_pv in
+          openssl) _add=mORMot2 ;;
+          tlslib) _add=$TLSLIB_ORDER ;;
+        esac
+        for _a in $_add; do
+          case " $_names " in *" $_a "*) ;; *) _names="$_names $_a" ;; esac
+        done
+      done
+      printf '%s\n' $_names
+    }
+
+  # Pin names of the TlsLib closure and the mORMot2 provider path.
+  ALL_PROVIDER_NAMES: mORMot2 {{.TLSLIB_COMPILE_ORDER}}
+
+tasks:
+  build:
+    desc: Build common, client, server, and TLS providers
+    silent: true
+    cmds:
+      - task: build:common
+      - task: build:client-only
+      - task: build:server-only
+      - task: build:openssl-only
+      - task: build:tlslib-only
+
+  build:common:
+    desc: Build common protocol units without mORMot2
+    silent: true
+    cmds:
+      - task: component:build:common
+
+  build:client:
+    desc: Build the client
+    silent: true
+    cmds:
+      - task: component:build:common
+      - task: component:build:client
+
+  build:server:
+    desc: Build the server
+    silent: true
+    cmds:
+      - task: component:build:common
+      - task: component:build:server
+
+  build:readers:
+    desc: Build optional JSON and XML readers
+    silent: true
+    cmds:
+      - task: component:build:common
+      - task: component:build:client
+      - task: component:build:readers
+
+  build:openssl:
+    desc: Build the OpenSSL provider
+    silent: true
+    cmds:
+      - task: component:build:common
+      - task: component:build:openssl
+
+  build:tlslib:
+    desc: Build the TlsLib provider
+    silent: true
+    cmds:
+      - task: component:build:common
+      - task: component:build:tlslib
+
+  # Steps of `build`. The names are internal.
+  build:client-only:
+    internal: true
+    silent: true
+    cmds:
+      - task: component:build:client
+  build:server-only:
+    internal: true
+    silent: true
+    cmds:
+      - task: component:build:server
+  build:openssl-only:
+    internal: true
+    silent: true
+    cmds:
+      - task: component:build:openssl
+  build:tlslib-only:
+    internal: true
+    silent: true
+    cmds:
+      - task: component:build:tlslib
+
+  component:build:common:
+    desc: Compile the common units only
+    silent: true
+    cmds:
+      - task: compile-file
+        vars: {COMPONENT: common, SOURCE: common/src/Http2.Common.pas}
+
+  component:build:client:
+    desc: Compile the client units only
+    silent: true
+    cmds:
+      - task: compile-file
+        vars: {COMPONENT: client, SOURCE: client/src/Http2.Client.pas}
+
+  component:build:server:
+    desc: Compile the server units only
+    silent: true
+    cmds:
+      - task: compile-file
+        vars: {COMPONENT: server, SOURCE: server/src/Http2.Server.pas}
+
+  component:build:readers:
+    desc: Compile the optional readers only
+    silent: true
+    cmds:
+      - task: compile-file
+        vars: {COMPONENT: readers, SOURCE: client/src/Http2.Client.Readers.pas}
+
+  component:build:openssl:
+    desc: Compile the OpenSSL provider only
+    silent: true
+    cmds:
+      - task: verify-names
+        vars: {NAMES: mORMot2}
+      - |
+        {{.BUILD_SH}}
+        build_openssl
+
+  component:build:tlslib:
+    desc: Compile the TlsLib provider only
+    silent: true
+    cmds:
+      - task: verify-names
+        vars: {NAMES: '{{.TLSLIB_COMPILE_ORDER}}'}
+      - |
+        {{.BUILD_SH}}
+        build_tlslib
+
+  # Var: NAMES, blank separated dependency names.
+  verify-names:
+    internal: true
+    silent: true
+    cmds:
+      - for:
+          var: NAMES
+          as: NAME
+        task: verify-dependency
+        vars:
+          NAME: '{{.NAME}}'
+
+  compile-file:
+    internal: true
+    silent: true
+    requires:
+      vars: [COMPONENT, SOURCE]
+    vars:
+      NAMES:
+        sh: |
+          {{.BUILD_SH}}
+          if [ '{{.VERIFIED}}' = true ]; then exit 0; fi
+          role_dep_names '{{.COMPONENT}}' '{{.PROVIDERS}}'
+    cmds:
+      - task: verify-names
+        vars: {NAMES: '{{.NAMES}}'}
+      - |
+        {{.BUILD_SH}}
+        compile_file '{{.COMPONENT}}' '{{.SOURCE}}' '{{default "false" .TESTS}}' '{{.PROVIDERS}}' '{{.EXTRA}}'
+
+  compile:client-test-runner:
+    desc: Build common, client and openssl, then compile the client test runner
+    silent: true
+    cmds:
+      - task: component:build:common
+      - task: component:build:client
+      - task: component:build:openssl
+      - task: compile-file
+        vars: {COMPONENT: client-test, SOURCE: test/client/Http2.Client.RunTests.pas, TESTS: 'true', VERIFIED: 'true'}
+
+  compile:server-examples:
+    desc: Compile every server example
+    silent: true
+    vars:
+      NAMES:
+        sh: |
+          {{.BUILD_SH}}
+          _prov=
+          _all=mORMot2
+          for _f in $(example_programs server | cut -d' ' -f2); do _prov="$_prov $(file_providers "$_f")"; done
+          case " $_prov " in *" tlslib "*) _all="$_all $TLSLIB_ORDER" ;; esac
+          printf '%s\n' "$_all"
+    cmds:
+      - task: verify-names
+        vars: {NAMES: '{{.NAMES}}'}
+      - |
+        {{.BUILD_SH}}
+        _list=$(example_programs server)
+        if [ -z "$_list" ]; then echo "No server example programs are present" >&2; exit 1; fi
+        build_component common
+        build_component server
+        _prov=
+        for _f in $(printf '%s\n' "$_list" | cut -d' ' -f2); do _prov="$_prov $(file_providers "$_f")"; done
+        case " $_prov " in *" openssl "*) build_openssl ;; esac
+        case " $_prov " in *" tlslib "*) build_tlslib ;; esac
+        printf '%s\n' "$_list" | while read -r _role _f; do
+          compile_file examples-server "$_f" false "$(file_providers "$_f")" ""
+        done
+
+  examples:
+    desc: Compile client, server, and combined examples
+    silent: true
+    vars:
+      NAMES:
+        sh: |
+          {{.BUILD_SH}}
+          _all=mORMot2
+          _prov=
+          for _f in $(example_programs 'client server integration' | cut -d' ' -f2); do _prov="$_prov $(file_providers "$_f")"; done
+          case " $_prov " in *" tlslib "*) _all="$_all $TLSLIB_ORDER" ;; esac
+          printf '%s\n' "$_all"
+    cmds:
+      - task: verify-names
+        vars: {NAMES: '{{.NAMES}}'}
+      - |
+        {{.BUILD_SH}}
+        _list=$(example_programs 'client server integration')
+        if [ -z "$_list" ]; then echo "No example programs are present; M09 supplies them" >&2; exit 1; fi
+        build_component common
+        _roles=$(printf '%s\n' "$_list" | cut -d' ' -f1 | sort -u | tr '\n' ' ')
+        case " $_roles " in *" client "*|*" integration "*) build_component client ;; esac
+        case " $_roles " in *" server "*|*" integration "*) build_component server ;; esac
+        _prov=
+        for _f in $(printf '%s\n' "$_list" | cut -d' ' -f2); do _prov="$_prov $(file_providers "$_f")"; done
+        case " $_prov " in *" openssl "*) build_openssl ;; esac
+        case " $_prov " in *" tlslib "*) build_tlslib ;; esac
+        printf '%s\n' "$_list" | while read -r _role _f; do
+          compile_file "examples-$_role" "$_f" false "$(file_providers "$_f")" ""
+        done
+
+  # The source is in CLI_ARGS: task compile:server:probe -- <source>
+  compile:server:probe:
+    desc: Compile a server probe source as integration-test (source after --)
+    silent: true
+    cmds:
+      - |
+        {{.BUILD_SH}}
+        _arg='{{.CLI_ARGS}}'
+        if [ -z "$_arg" ] || [ "${_arg#* }" != "$_arg" ]; then
+          echo "Usage: task compile:server:probe -- <source>" >&2; exit 1
+        fi
+        case $_arg in /*) _abs=$_arg ;; *) _abs=$PWD/$_arg ;; esac
+        _dir=$(cd "$(dirname "$_abs")" 2>/dev/null && pwd -P) || _dir=$(dirname "$_abs")
+        _abs=$_dir/$(basename "$_abs")
+        case $_abs in
+          "$DEP_ROOT"/*) ;;
+          *) echo "Server probe must be under the repository root: $_abs" >&2; exit 1 ;;
+        esac
+        case $(basename "$_abs" | tr 'A-Z' 'a-z') in
+          *.pas) ;;
+          *) echo "Server probe must be a Pascal source file: $_abs" >&2; exit 1 ;;
+        esac
+      - task: compile-server-probe
+        vars: {SOURCE: '{{.CLI_ARGS}}'}
+
+  compile-server-probe:
+    internal: true
+    silent: true
+    vars:
+      REL:
+        sh: |
+          {{.BUILD_SH}}
+          _arg='{{.SOURCE}}'
+          case $_arg in /*) _abs=$_arg ;; *) _abs=$PWD/$_arg ;; esac
+          _dir=$(cd "$(dirname "$_abs")" && pwd -P)
+          _abs=$_dir/$(basename "$_abs")
+          printf '%s\n' "${_abs#"$DEP_ROOT"/}"
+      PROVIDERS:
+        sh: |
+          {{.BUILD_SH}}
+          _arg='{{.SOURCE}}'
+          if [ -f "$_arg" ]; then file_providers "$_arg"; fi
+      NAMES:
+        sh: |
+          {{.BUILD_SH}}
+          role_dep_names server '{{.PROVIDERS}}'
+    cmds:
+      - task: verify-names
+        vars: {NAMES: '{{.NAMES}}'}
+      - |
+        {{.BUILD_SH}}
+        build_component common
+        build_component server
+        for _pv in {{.PROVIDERS}}; do
+          case $_pv in
+            openssl) build_openssl ;;
+            tlslib) build_tlslib ;;
+          esac
+        done
+        compile_file integration-test '{{.REL}}' true '{{.PROVIDERS}}' ""
+
+  isolation:compile:
+    desc: Compile the isolation probes with a unit trace
+    silent: true
+    cmds:
+      - task: verify-names
+        vars: {NAMES: '{{.ALL_PROVIDER_NAMES}}'}
+      - rm -rf '{{.OUT}}/tlslib'
+      - task: component:build:tlslib
+      - |
+        {{.BUILD_SH}}
+        probe() {  # name, source, flag component, forbidden pattern, extra fpc options
+          _name=$1; _srcf=tools/studies/tls/tls10/$2; _fc=$3; _bad=$4; _pre=$5
+          rm -rf "$OUT/isolation-$_name"
+          mkdir -p "$OUT/isolation-$_name/units" "$OUT/isolation-$_name/programs" "$OUT/isolation-$_name/cfg"
+          _trace=$OUT/isolation-$_name/programs/${2%.pas}.trace.txt
+          compose_flags "$_fc" false 0 > "$OUT/isolation-$_name/cfg/flags.cfg"
+          if ! (
+            if [ "$_name" = openssl ]; then open_ssl_env; fi
+            FPC_RUN=quiet_run
+            fpc_cfg "$OUT/isolation-$_name/cfg/flags.cfg" "$OUT/isolation-$_name/units" "$OUT/isolation-$_name/programs" "$_srcf" -vu $_pre > "$_trace" 2>&1
+          ); then
+            echo "Isolation compile failed for $_name; see $_trace" >&2; return 1
+          fi
+          if grep -Eiq "$_bad" "$_trace"; then
+            echo "Forbidden unit appears in $_name compiler trace: $_trace" >&2; return 1
+          fi
+          echo "Compiled $_name isolation probe; trace: ${_trace#"$DEP_ROOT"/}"
+        }
+        probe common CommonOnly.pas common 'http2\.(client|server|openssl|tlslib)|mormot\.' -B
+        probe client ClientOnly.pas client 'http2\.(server|openssl|tlslib)' -B
+        probe server ServerOnly.pas server 'http2\.(client|openssl|tlslib)' -B
+        probe openssl OpenSSLOnly.pas openssl 'http2\.(client|server|tlslib)' -B
+        probe tlslib TlsLibOnly.pas tlslib 'http2\.(client|server|openssl)|mormot\.' ""
+        # The pair uses only explicitly named provider paths and a fresh output.
+        rm -rf "$OUT/isolation-both"
+        mkdir -p "$OUT/isolation-both/units" "$OUT/isolation-both/programs" "$OUT/isolation-both/cfg"
+        _trace=$OUT/isolation-both/programs/BothProviders.trace.txt
+        {
+          cat "$FPCDIR/both-providers.cfg"
+          mormot_lines
+          printf '%s\n' "-Fu$OUT/openssl/units" "-Fu$OUT/tlslib/units/bootstrap" "-Fu$OUT/tlslib/units"
+          tlslib_closure
+        } > "$OUT/isolation-both/cfg/flags.cfg"
+        if ! (
+          open_ssl_env
+          FPC_RUN=quiet_run
+          fpc_cfg "$OUT/isolation-both/cfg/flags.cfg" "$OUT/isolation-both/units" "$OUT/isolation-both/programs" tools/studies/tls/tls10/BothProviders.pas -vu > "$_trace" 2>&1
+        ); then
+          echo "Isolation compile failed for both providers; see $_trace" >&2; exit 1
+        fi
+        if grep -Eiq 'http2\.(client|server)' "$_trace"; then
+          echo "Role unit appears in both-provider compiler trace: $_trace" >&2; exit 1
+        fi
+        echo "Compiled both-providers isolation probe; trace: ${_trace#"$DEP_ROOT"/}"
+
+  isolation:tlslib:runtime:
+    desc: Compile the TlsLib exchange runner with a unit trace
+    silent: true
+    cmds:
+      - |
+        {{.BUILD_SH}}
+        if [ ! -f test/tls/tlslib/Http2.Tls.TlsLib.Tests.pas ]; then
+          echo "Required TlsLib exchange runner is missing: test/tls/tlslib/Http2.Tls.TlsLib.Tests.pas" >&2; exit 1
+        fi
+      - task: component:build:common
+      - task: component:build:tlslib
+      - |
+        {{.BUILD_SH}}
+        rm -rf "$OUT/isolation-tlslib-runtime"
+        mkdir -p "$OUT/isolation-tlslib-runtime/units" "$OUT/isolation-tlslib-runtime/programs" "$OUT/isolation-tlslib-runtime/cfg"
+        _trace=$OUT/isolation-tlslib-runtime/programs/Http2.Tls.TlsLib.Tests.trace.txt
+        compose_flags tlslib-test true 0 > "$OUT/isolation-tlslib-runtime/cfg/flags.cfg"
+        FPC_RUN=quiet_run
+        if ! fpc_cfg "$OUT/isolation-tlslib-runtime/cfg/flags.cfg" "$OUT/isolation-tlslib-runtime/units" "$OUT/isolation-tlslib-runtime/programs" test/tls/tlslib/Http2.Tls.TlsLib.Tests.pas -vu > "$_trace" 2>&1; then
+          echo "TlsLib exchange runner compile failed; see $_trace" >&2; exit 1
+        fi
+        if grep -Eiq 'http2\.openssl|mormot\.' "$_trace"; then
+          echo "OpenSSL or mORMot unit appears in TlsLib exchange trace: $_trace" >&2; exit 1
+        fi
+        echo "Compiled TlsLib exchange runner: ${OUT#"$DEP_ROOT"/}/isolation-tlslib-runtime/programs/Http2.Tls.TlsLib.Tests"
+        echo "Compiler trace: ${_trace#"$DEP_ROOT"/}"
+
+  clean:
+    desc: Remove generated files under bin
+    silent: true
+    cmds:
+      - rm -rf '{{.ROOT}}/bin'
+
+  # Var: NAMES, blank separated output directory names under OUT.
+  clean-outputs:
+    internal: true
+    silent: true
+    cmds:
+      - for:
+          var: NAMES
+          as: NAME
+        cmd: rm -rf '{{.OUT}}/{{.NAME}}'
+
+  clean:component:common:
+    desc: Remove the generated files of the common component
+    silent: true
+    cmds:
+      - task: clean-outputs
+        vars: {NAMES: common common-test package-http2common}
+
+  clean:component:client:
+    desc: Remove the generated files of the client component
+    silent: true
+    cmds:
+      - task: clean-outputs
+        vars: {NAMES: client readers tls-client-test package-http2client package-http2clientreaders}
+
+  clean:component:readers:
+    desc: Remove the generated files of the readers component
+    silent: true
+    cmds:
+      - task: clean-outputs
+        vars: {NAMES: readers package-http2clientreaders}
+
+  clean:component:server:
+    desc: Remove the generated files of the server component
+    silent: true
+    cmds:
+      - task: clean-outputs
+        vars: {NAMES: server tls-server-test package-http2server}
+
+  clean:component:openssl:
+    desc: Remove the generated files of the OpenSSL provider
+    silent: true
+    cmds:
+      - task: clean-outputs
+        vars: {NAMES: openssl openssl-test package-http2openssl}
+
+  clean:component:tlslib:
+    desc: Remove the generated files of the TlsLib provider
+    silent: true
+    cmds:
+      - task: clean-outputs
+        vars: {NAMES: tlslib tlslib-test package-http2tlslib}

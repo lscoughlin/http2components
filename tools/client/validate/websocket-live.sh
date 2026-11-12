@@ -7,8 +7,8 @@
 # observed-session cases attach a request observer and assert one start, one
 # end, the close code and the message gaps of a /chatter session.
 #
-#   bash tools/client/validate/websocket-live.sh              # or: make validate-websocket
-#   bash tools/client/validate/websocket-live.sh autobahn     # or: make validate-websocket-autobahn
+#   bash tools/client/validate/websocket-live.sh              # or: task validate:client:websocket
+#   bash tools/client/validate/websocket-live.sh autobahn     # or: task validate:client:websocket:autobahn
 #
 # The default unit suite skips TWebSocketLiveTest (WS_LIVE_PORTS unset), so
 # this script is the only runner that executes it.  The autobahn mode runs the
@@ -57,7 +57,7 @@ wait_ready() { # file name
 live() {
   local RUNNER="$BIN/Http2.Client.RunTests"
   if [ ! -x "$RUNNER" ]; then
-    echo "websocket-live: $RUNNER is missing; run 'make test' first" >&2
+    echo "websocket-live: $RUNNER is missing; run 'task test:client' first" >&2
     exit 2
   fi
   cat "$ROOT/test/fixtures/client/certs/other.crt" "$ROOT/test/fixtures/client/certs/localhost.crt" > "$WORK/ca.pem"

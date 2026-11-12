@@ -6,7 +6,7 @@
 # proxy-live.sh gate uses Python stand-ins; this one uses the software
 # deployments run.
 #
-#   bash tools/client/validate/proxy-real.sh            # or: make validate-proxy-real
+#   bash tools/client/validate/proxy-real.sh            # or: task validate:client:proxy:real
 #
 # It runs on a Docker host.  With no argument the script copies the tree to
 # the host named by PROXY_REAL_HOST (default lscoughlin@liam-rzbox.local; set

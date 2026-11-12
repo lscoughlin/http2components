@@ -32,31 +32,38 @@ setup is an explicit operation. The build writes compiler units and programs
 under `bin/<cpu>-<os>/<profile>/`.
 
 ```sh
-make build
-make build-readers
-make build-openssl
-make build-tlslib
-make packages-check
-make source-check
-make docs-check
-make version-check
-make examples
+task build
+task build:readers
+task build:openssl
+task build:tlslib
+task packages:check
+task source:check
+task docs:check
+task version:check
+task examples
 ```
 
-`task build` runs the same five-component build. `make setup-deps` or
-`task setup:deps` is the explicit dependency setup target. It prepares the
-pins recorded in `tools/dependencies.json`. The setup operation is separate
-from `make build`. The Readers package is optional. The root Makefile builds
-common, client, server, OpenSSL, and TlsLib in dependency order. A component
-Makefile also supports direct `build`, `check`, and `clean` operations. Root
-`make clean` removes generated output from this repository's `bin/` directory.
+`task build` runs the five-component build. `task setup:deps` is the explicit
+dependency setup task. It prepares the pins recorded in
+`tools/dependencies.yml`. The setup operation is separate from `task build`.
+The Readers package is optional. The root build compiles common, client,
+server, OpenSSL, and TlsLib in dependency order. `task build:<component>`
+builds one component. `task clean` removes generated output from this
+repository's `bin/` directory. `task --list` shows every task.
+The repository checks are Taskfile tasks. `source:check`, `docs:check`,
+`version:check`, and `packages:check` run 29 simple rules over the file lists.
+Each rule is one shell command. Review and the repository guidelines cover the
+other rules.
 Six relative Lazarus package targets are listed in `http2components.lpg`.
 Package outputs and Lazarus primary configuration directories are isolated
 under `bin/`. The root build does not run tests, examples, external peers, or
 load checks.
 
-The expected local toolchain is Free Pascal 3.2.4 and Lazarus 4.0 for package
-builds. The OpenSSL provider needs OpenSSL 3 at runtime. The TLS fixture and
+The required tools are `fpc` 3.2.4, `git`, and `task` (go-task, version 3.42.0
+or later). Lazarus 4.0 is needed for package builds. Python 3 is needed only
+where an interop peer, a load driver, an abuse or seam test, or
+`tools/server/validate/local_process.py` runs. The gate scripts skip with a
+message when a program is missing. The OpenSSL provider needs OpenSSL 3 at runtime. The TLS fixture and
 interop tools use the OpenSSL command-line program. The pinned provider and
 mORMot sources are local inputs. Dependency path overrides are
 `MORMOT2_ROOT`, `TLSLIB4PASCAL_ROOT`, `CRYPTOLIB4PASCAL_ROOT`,
@@ -65,20 +72,18 @@ selects the OpenSSL runtime library directory when it is outside the system
 loader path.
 
 The TlsLib package uses the pinned TlsLib, CryptoLib, HashLib, and
-SimpleBaseLib sources. On macOS with Free Pascal, a hash-checked CryptoLib
-random-provider overlay is generated under `bin/`; the dependency checkout is
-not modified. Its bootstrap unit order is retained. Lazarus package builds
+SimpleBaseLib sources. The bootstrap unit order is retained. Lazarus package builds
 use a private configuration and a scoped compiler wrapper. The wrapper
 removes only the forced `-B` argument from the TlsLib `lazbuild` invocation,
 after the fresh ordered bootstrap, so its PPUs remain available through the
 upstream source cycle. No user's compiler settings or IDE profile are changed.
 
-`make examples` compiles the example programs only. It does not send external
-requests or run network examples. The bounded TLS targets are
-`make test-tls-contract`, `make test-tls-openssl`, `make test-tls-tlslib`,
-`make test-tls-client`, `make test-tls-server`, and
-`make test-tls-integration`. The integration target contains protocol and
-security runners. These targets do not run as part of `make build`.
+`task examples` compiles the example programs only. It does not send external
+requests or run network examples. The bounded TLS tasks are
+`task test:tls-contract`, `task test:tls-openssl`, `task test:tls-tlslib`,
+`task test:tls-client`, `task test:tls-server`, and
+`task test:tls-integration`. The integration task contains protocol and
+security runners. These tasks do not run as part of `task build`.
 
 The integration examples are `examples/integration/tls_openssl.pas`,
 `tls_tlslib.pas`, `tls_dual_role.pas`, and `tls_https_proxy.pas`. They use the

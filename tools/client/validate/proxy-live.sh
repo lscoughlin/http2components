@@ -10,7 +10,7 @@
 # PROXY_BASE, proxies requiring bob:pw on PROXY_BASE+10), runs just the live
 # suite, checks the logs, and always stops the servers again.
 #
-#   bash tools/client/validate/proxy-live.sh          # or: make validate-proxy
+#   bash tools/client/validate/proxy-live.sh          # or: task validate:client:proxy
 #
 # Env overrides: PROXY_BASE (default 8481), BIN (default bin), and the usual
 # OPENSSL_LIBPATH.
@@ -33,7 +33,7 @@ LOG_OPEN="$WORK/open.log"
 LOG_AUTH="$WORK/auth.log"
 
 if [ ! -x "$RUNNER" ]; then
-  echo "proxy-live: $RUNNER is missing; run 'make test' first" >&2
+  echo "proxy-live: $RUNNER is missing; run 'task test:client' first" >&2
   exit 2
 fi
 

@@ -38,7 +38,7 @@ All three targeted tests passed. Field semantics remain validated by the
 lease; HPACK failures apply to the connection. The implementation contract
 is described in [transport](../../../design/client/transport.md).
 
-The final `make test` run passed 913 tests, with zero errors and zero
+The final `task test` run passed 913 tests, with zero errors and zero
 failures, on macOS 27.2 (26B123), aarch64, Free Pascal 3.2.4-rc2
 [2026/08/26], and OpenSSL 3 from `/opt/homebrew/opt/openssl@3/lib`.
 This was the default local suite. External-service gates were not enabled,
@@ -46,7 +46,7 @@ and no Linux check was run.
 
 ## Multiplexed wait regression check, 2026-11-04
 
-`make test` passed on macOS 27.2 (26B123), aarch64, with Free Pascal
+`task test` passed on macOS 27.2 (26B123), aarch64, with Free Pascal
 3.2.4-rc2 [2026/08/26] and `OPENSSL_LIBPATH=/opt/homebrew/opt/openssl@3/lib`.
 The default suite reported 910 tests, zero errors, and zero failures.
 Optional external-service gates were not enabled. No Linux check was run.
@@ -66,7 +66,7 @@ the header acquisition lock. The threading contract is described in
 
 ## SSE content-coding regression check, 2026-11-04
 
-`make test` passed on macOS 27.2 (26B123), aarch64, with Free Pascal
+`task test` passed on macOS 27.2 (26B123), aarch64, with Free Pascal
 3.2.4-rc2 [2026/08/26] and `OPENSSL_LIBPATH=/opt/homebrew/opt/openssl@3/lib`.
 The runner reported 907 tests, zero errors, and zero failures. This was the
 default local suite; optional external-service gates were not enabled.
@@ -103,7 +103,7 @@ Each suite is used according to what it can demonstrate:
 
 ```sh
 export OPENSSL_LIBPATH=/opt/homebrew/opt/openssl@3/lib
-tools/validate/interop.sh          # or: make validate-interop
+tools/validate/interop.sh          # or: task validate:client:interop
 ```
 
 The script starts `nghttpd` twice itself: `--echo-upload` with TLS+ALPN
@@ -129,7 +129,7 @@ cert**. `INTEROP_HTDOCS` (default `/tmp/nghttpd-root`) holds `index.html`
 | A.12 | HTTP/1.1 fallback | a GET against an HTTP/1.1 server returns `200` |
 | A.13 | strict mode | a cleartext request raises `EHttpProtocolError` |
 
-Acceptance command: `make validate-interop` (wraps the above) exits 0.
+Acceptance command: `task validate:client:interop` (wraps the above) exits 0.
 
 The cleartext cases (A.10–A.13) need two cleartext servers, which `nghttpd`
 cannot provide for the upgrade: `nghttpd` is HTTP/2-only, so it cannot
@@ -173,7 +173,7 @@ at `cWindowUpdateBatchSize = 32768`) and is documented in
 ```sh
 # the whole sweep (reference verifier + our probe for every id). Needs
 # Docker/Rancher Desktop; ~30 minutes. Writes a target/profile results table and run-scoped evidence under bin/<target>/<profile>/validation/.
-tools/client/validate/harness.sh                 # or: make validate-harness
+tools/client/validate/harness.sh                 # or: task validate:client:harness
 
 # one id by hand
 docker run --rm h2-test-harness --list                 # enumerate 146 ids
@@ -292,9 +292,9 @@ matter is `validated` while A and B are green.
 | Container runtime | Rancher Desktop `docker` (`~/.rd/bin/docker`) |
 | Unit suite | 648 tests, 0 errors, 0 failures |
 | Library units | 20 in `src/` (19 core + optional `Http2.Client.Readers`) |
-| Example programs | 8 in `examples/` (`make examples`) |
+| Example programs | 8 in `examples/` (`task examples`) |
 
-The opt-in WebSocket gate (`make validate-websocket`) runs the real client
+The opt-in WebSocket gate (`task validate:client:websocket`) runs the real client
 against `tools/validate/ws_servers.py` over `ws` and `wss` and through an HTTP
 `CONNECT` proxy, an `https://` proxy and a SOCKS5 proxy, and reads the
 servers' logs. It passes: every client frame carried the mask bit, the
@@ -302,14 +302,14 @@ handshake headers were as RFC 6455 requires, the close codes (client `1000`,
 echoed `1001`, `1007` for invalid UTF-8) and the subprotocol list were as
 sent, `wss` negotiated `http/1.1` alone and a server without ALPN was accepted, and the proxy logs show the name sent unresolved over SOCKS5 and TLS
 inside TLS for `wss` behind an `https://` proxy. The Autobahn|Testsuite client
-run (`make validate-websocket-autobahn`) needs Docker; when the daemon is not
+run (`task validate:client:websocket-autobahn`) needs Docker; when the daemon is not
 running the script prints a SKIP. The run against the `crossbario/autobahn-testsuite`
 fuzzing server excludes cases 12 and 13, which cover `permessage-deflate`;
 it covers 301 cases: 296 OK, 2 NON-STRICT (6.4.3 and 6.4.4, invalid UTF-8
 split across fragments, which the client rejects with the next fragment) and
 3 INFORMATIONAL (7.1.6, 7.13.1, 7.13.2), with no FAILED and no UNIMPLEMENTED.
 
-The opt-in cleartext gate (`make validate-cleartext`) runs a bodyless `GET`,
+The opt-in cleartext gate (`task validate:client:cleartext`) runs a bodyless `GET`,
 `POST`, `DELETE` and `HEAD` under `ctUpgrade` and `ctHttp1` against
 `tools/validate/h1_counter_server.py` and counts the requests in the server's
 log. Each request arrives once; under `ctHttp1` none carries an `Upgrade`
@@ -324,7 +324,7 @@ draft-09 suite.
 
 ### B results: full sweep (146 ids)
 
-Command: `make validate-harness` (or `bash tools/client/validate/harness.sh`), run
+Command: `task validate:client:harness` (or `bash tools/client/validate/harness.sh`), run
 detached because 146 x (~3.1 s reference verifier + ~8 s probe) is ~30 min.
 Positive control `6.5/1`: **pass** (when it does not, every row is scored
 `fail invalid`). Historical results table: `bin/validation-results.md`; raw
@@ -476,7 +476,7 @@ rule above.
 ## Sanity checks (non-vacuity)
 
 The probe is shown able to fail before A or B is trusted. `tools/validate/h2probe-sanity.sh`
-(also `task validate:sanity`, a few seconds) runs five conditions and asserts a
+(also `task validate:client:sanity`, a few seconds) runs five conditions and asserts a
 distinct exit code for each outcome class:
 
 | # | Condition | Expected |
