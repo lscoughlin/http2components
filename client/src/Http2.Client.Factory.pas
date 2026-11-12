@@ -465,6 +465,7 @@ var
   Selector: IProxySelector;
   Client: THttpClient;
   Factory: IHttp2SocketFactory;
+  HasProxy: Boolean;
 begin
   if FUnixPathError <> '' then
     raise EHttpUnixSocketConfigError.Create(FUnixPathError);
@@ -510,11 +511,17 @@ begin
     else
       Env := ReadProxyEnvironment;
   // a Unix socket carries no proxy: any proxy source is a configuration error
-  if (FUnixPath <> '') and ((FProxyHost <> '') or (FAllProxy <> '') or
-     (FProxySelector <> nil) or (FProxyEnvVars and
-     ((Env.HttpProxy <> '') or (Env.HttpsProxy <> '') or (Env.AllProxy <> '')))) then
-    raise EHttpUnixSocketConfigError.Create(
-      'a Unix socket path cannot be used together with a proxy');
+  if FUnixPath <> '' then
+  begin
+    HasProxy := (FProxyHost <> '') or (FAllProxy <> '') or
+      Assigned(FProxySelector);
+    if FProxyEnvVars then
+      HasProxy := HasProxy or (Env.HttpProxy <> '') or
+        (Env.HttpsProxy <> '') or (Env.AllProxy <> '');
+    if HasProxy then
+      raise EHttpUnixSocketConfigError.Create(
+        'a Unix socket path cannot be used together with a proxy');
+  end;
   Selector := BuildProxySelector(FProxySelector, Fixed, FAllProxy,
     FProxyEnvVars, Env, FNoProxy);
   Client := THttpClient.Create(Factory, FMaxConnectionsPerHost,
