@@ -144,6 +144,12 @@ tasks:
       - task: run-suite
         vars: {COMPONENT: tls-integration-test, SOURCE: test/integration/tls/Http2.Tls.Security.Tests.pas, OPENSSL: 'true', LIMIT: '30', IN_PROGRAMS: 'true'}
 
+  unix:linux:
+    desc: Run the Unix socket suites and the full test targets on the Linux host
+    silent: true
+    cmds:
+      - sh {{.ROOT}}/tools/server/unix-linux.sh
+
   # Compile a test runner, then run it with tools/test-run.sh suite.
   # Vars: COMPONENT, SOURCE; optional PROVIDERS, OPENSSL (true sets the
   # OpenSSL library path), PKI (true makes a temporary PKI and sets
