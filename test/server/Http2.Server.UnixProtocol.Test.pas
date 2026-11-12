@@ -72,9 +72,6 @@ type
 const
   CRLF = #13#10;
   CRLF2 = #13#10#13#10;
-  /// the certificate pair of the loopback TLS fixtures, relative to the repository
-  cTlsCertFile = 'test/fixtures/client/certs/localhost.crt';
-  cTlsKeyFile = 'test/fixtures/client/certs/localhost.key';
 
 procedure TUnixHiHandler.Handle(const ARequest: IServerRequest;
   const AResponse: IServerResponse);
