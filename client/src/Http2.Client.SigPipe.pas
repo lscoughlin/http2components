@@ -8,18 +8,20 @@ notes:
   - Unit references use the common and client namespaces.
 ---
 }
-/// scoped SIGPIPE suppression for writes the library does not make itself
-// - Linux has no SO_NOSIGPIPE, and OpenSSL writes a socket descriptor with
-//   write(), so a write to a peer that has closed raises SIGPIPE, whose default
-//   action kills the process.  A library must not change the host program's
-//   signal disposition, so the library never installs a handler or SIG_IGN.
-//   Instead each OpenSSL call that can write is bracketed by a shield:
-//   SIGPIPE is blocked in the calling thread only, the signal the call may
-//   have generated is consumed with a zero-timeout sigtimedwait, and the
-//   thread's previous mask is restored, so nothing is delivered later.
-//   (A SIGPIPE raised by write() is directed at the writing thread.)
-// - plain sends do not need this: they use send() with MSG_NOSIGNAL
-//   (cMsgNoSignal below).
+/// scoped SIGPIPE suppression for OpenSSL calls, used by the tests only
+// - Linux has no SO_NOSIGPIPE. A write to a peer that has closed raises SIGPIPE,
+//   whose default action kills the process.  The library never installs a
+//   handler or SIG_IGN, so it does not change the host program's signal
+//   disposition.
+// - plain sends in the client do not need this: they use send() with
+//   MSG_NOSIGNAL (cMsgNoSignal below).
+// - the OpenSSL provider moves TLS data through memory BIOs, so OpenSSL does not
+//   write the descriptor. The production client path does not call the shield.
+//   The shield procedures are called only from the tests
+//   (Http2.Client.SigPipe.Test and Http2.Client.Test.OpenSSL.SigPipe).
+// - where the shield is used, it blocks SIGPIPE in the calling thread only,
+//   consumes the signal the call may have generated with a zero-timeout
+//   sigtimedwait, and restores the thread's previous mask.
 // - on every other platform the shield is a no-op: macOS sets SO_NOSIGPIPE
 //   per socket.
 unit Http2.Client.SigPipe;

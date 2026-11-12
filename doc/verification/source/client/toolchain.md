@@ -225,12 +225,12 @@ overhead measurement.
 Linux differences the code handles: `clock_gettime` is declared in
 `Http2.Client.Clock`; SIGPIPE is never ignored or handled, because the library does
 not change a signal disposition: there is no `SO_NOSIGPIPE`, so plain sends use
-`send` with `MSG_NOSIGNAL` (`cMsgNoSignal` in `Http2.Client.SigPipe`), and each OpenSSL
-Each OpenSSL function that can write (`SSL_connect`, `SSL_read`, `SSL_write`,
-`SSL_shutdown`) runs inside a shield that blocks SIGPIPE in the calling thread only, consumes
-any SIGPIPE the call raised with a zero-timeout `sigtimedwait`, and restores
-the thread's mask (a TLS layer over another transport writes through that
-transport, which is covered the same way); an expired socket deadline is recognised from OpenSSL's
-want-read or want-write result as well as `errno`. The live-gate servers set
+`send` with `MSG_NOSIGNAL` (`cMsgNoSignal` in `Http2.Client.SigPipe`). The OpenSSL
+provider moves TLS data through memory BIOs, so OpenSSL does not write the descriptor,
+and the production client path does not use the SIGPIPE shield of `Http2.Client.SigPipe`.
+The shield is used by the tests only, around the OpenSSL calls that the tests make. It
+blocks SIGPIPE in the calling thread only, consumes any SIGPIPE the call raised with a
+zero-timeout `sigtimedwait`, and restores the thread's mask. An expired socket deadline is
+recognised from OpenSSL's want-read or want-write result as well as `errno`. The live-gate servers set
 `TCP_NODELAY`, because Nagle plus the client's delayed ACK adds about 40 ms to
 the timed WebSocket cases.
