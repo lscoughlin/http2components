@@ -15,17 +15,20 @@
   documentation checks, and explicit validation gates.
 - Common, API, facade, local integration, server TLS, and server mTLS results
   are recorded in the [current verification record](doc/verification/current-status.md).
-- The default client runner passed 805 registered cases. Thirty-three
-  environment-gated client cases did not run. The full server unit suite has no
-  completed run in this record.
+- The default client runner passes 854 registered cases on macOS and on Linux,
+  with no error and no failure. The full server unit suite passes 775 tests on
+  Linux. The full server unit suite has no completed run on macOS, because it
+  does not finish in the time limit on the development host.
 - The server and the client support Unix domain sockets: `WithUnixSocket` on
   both factories, `WithUnixSocketMode` on the server, and `WithUnixProxy` on the
   client. Results are in the
   [Unix socket verification record](doc/verification/unix-sockets-2026-11-12.md).
 - The client inbound queues are unbounded, so a large request body echo no longer
   stalls the connection reader or fails with a flow-control timeout.
-- Linux validation, load checks, independent external conformance checks,
-  and the full server unit result remain open.
+- The Unix socket suites and the unfiltered common, client, integration and
+  server targets pass on Linux amd64.
+- Load checks, independent external conformance checks, and the full server
+  unit run on macOS remain open.
 
 This entry describes the current source tree. It does not state that version
 0.30.0 is a published release. The client 0.23.0 and server 0.29.0 records
