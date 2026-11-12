@@ -101,6 +101,10 @@ The [native Linux record](verification/linux-tls-2026-11-11.md) identifies
 completed Docker checks, repairs, retained evidence, and acceptance work
 that is still in progress.
 
+The [Unix socket record](verification/unix-sockets-2026-11-12.md) states the
+macOS and Linux results of the Unix domain socket feature and one open client
+defect.
+
 The [client compiler probes](verification/client-probes/README.md) are
 historical compiler evidence. The source validation and toolchain records
 are grouped by role:
