@@ -47,6 +47,8 @@ type
   EHttpTooManySseRetries = class(EHttpError);
   EHttpNotReplayable = class(EHttpError);
   EHttpProxyConfigError = class(EHttpError);
+  /// a Unix socket option that is not valid
+  EHttpUnixSocketConfigError = class(EHttpError);
   EHttpTlsConfigError = class(EHttpError);
   EHttpTlsClientAuthError = class(EHttpConnectionError)
   private
