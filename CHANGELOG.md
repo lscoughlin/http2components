@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.31.0 — in development
+
+- Version bump after the 0.30.0 source release. No other change yet.
+
 ## 0.30.0 — 2026-11-12 (source release)
 
 - Client and server source now share one repository and the common protocol
