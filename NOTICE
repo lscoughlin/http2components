@@ -22,3 +22,51 @@ doc/migration-0.30.0.md.
 The repository owner confirmed ownership of the project copyright and
 authorized this dual-license choice for project-owned code and documentation.
 Third-party works and specification text keep their own terms.
+
+Third-party dependencies
+------------------------
+
+The repository does not contain the code of these dependencies. The command
+`task setup:deps` fetches each one at the pinned revision in
+tools/dependencies.yml. Each dependency keeps its own license.
+
+1. mORMot2
+   Copyright (C) 2026 Arnaud Bouchez
+   Origin: https://github.com/synopse/mORMot2.git
+   License: a choice of MPL 1.1 or later, GPL 2.0 or later, or LGPL 2.1 or
+   later with the FPC modified LGPL linking exception. This project uses
+   mORMot2 under the LGPL 2.1 or later with the linking exception. The
+   units in use are in mormot.core, mormot.net, mormot.crypt and
+   mormot.lib.openssl11. The license text is in LICENCE.md of the pinned
+   checkout. The project does not modify mORMot2.
+
+2. TlsLib4Pascal
+   Copyright (c) 2026 Ugochukwu Mmaduekwe
+   Origin: https://github.com/Xor-el/TlsLib4Pascal.git
+   License: MIT.
+
+3. CryptoLib4Pascal
+   Copyright (c) 2018 - 2026 Ugochukwu Mmaduekwe
+   Origin: https://github.com/Xor-el/CryptoLib4Pascal.git
+   License: MIT.
+
+4. HashLib4Pascal
+   Copyright (c) 2016 - 2026 Ugochukwu Mmaduekwe
+   Origin: https://github.com/Xor-el/HashLib4Pascal.git
+   License: MIT.
+
+5. SimpleBaseLib4Pascal
+   Copyright (c) 2018 - 2026 Ugochukwu Mmaduekwe
+   Origin: https://github.com/Xor-el/SimpleBaseLib4Pascal.git
+   License: MIT.
+
+A binary distribution of this project includes the copyright notices above,
+the LICENCE.md file of mORMot2 and the MIT license text of each MIT
+dependency. A binary distribution also states where the source of mORMot2 is
+available.
+
+OpenSSL 3 is loaded at run time from the system. It is not included. Its
+license is the Apache License, Version 2.0.
+
+The test harness h2-client-test-harness has no license. It is a test tool
+only. The repository and its binaries do not include it.

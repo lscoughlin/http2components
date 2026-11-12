@@ -15,8 +15,8 @@ They are not covered by the Apache License, Version 2.0.
    Copyright (C) Arnaud Bouchez.
    License: a choice of MPL 1.1, GPL 2.0, or LGPL 2.1 with the FPC modified
    LGPL linking exception.
-   This project uses the mORMot2 OpenSSL and ALPN units at build time and at
-   run time. The mORMot2 checkout is a pinned external dependency. It is not
+   This project uses the mORMot2 core, net, crypt and OpenSSL units at build
+   time and at run time. The mORMot2 checkout is a pinned external dependency. It is not
    part of the http2client source distribution.
 
 2. h2-client-test-harness (third_party/h2-client-test-harness,
