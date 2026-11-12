@@ -47,6 +47,7 @@ uses
   Http2.Common.Tls.Context,
   Http2.Common.Tls.Types,
   Http2.Server.Config.Limits, Http2.Server.Config.Socket,
+  Http2.Server.Config.Unix,
   Http2.Server.Seam;
 
 const
@@ -116,6 +117,7 @@ type
     FWs: TWsOptions;
     FWsEnabled: Boolean;
     FServerLimits: TServerLimits; FSocket: TSocketOptions;
+    FUnix: TUnixSocketOptions;
     FMaxConcurrentStreams: LongWord;
     FInitialStreamWindow: LongWord;
     FInitialConnectionWindow: LongWord;
@@ -210,6 +212,15 @@ type
     function WithWebSockets(const AOptions: TWsOptions): THttp2ServerFactory;
     function WithServerLimits(const ALimits: TServerLimits): THttp2ServerFactory;
     function WithSocketOptions(const AOptions: TSocketOptions): THttp2ServerFactory;
+
+    // ---- Unix socket ----
+
+    /// the absolute path of a Unix socket listener; an empty text keeps the
+    /// TCP listener, and Host and Port are then unused
+    function WithUnixSocket(const APath: string): THttp2ServerFactory;
+    /// the file mode of the socket file, set after the bind; -1 keeps the
+    /// umask
+    function WithUnixSocketMode(const AMode: Integer): THttp2ServerFactory;
 
     // ---- streams ----
 
@@ -325,6 +336,7 @@ type
     property WebSocketsEnabled: Boolean read FWsEnabled;
     property ServerLimits: TServerLimits read FServerLimits;
     property Socket: TSocketOptions read FSocket;
+    property Unix: TUnixSocketOptions read FUnix;
 
     // ---- streams ----
 
@@ -426,6 +438,7 @@ begin
   Result.FWs := TWsOptions.Create;
   Result.FWsEnabled := False;
   Result.FServerLimits := TServerLimits.Create; Result.FSocket := TSocketOptions.Create;
+  Result.FUnix := TUnixSocketOptions.Create;
   Result.FMaxConcurrentStreams := 100;
   Result.FInitialStreamWindow := 65535;
   Result.FInitialConnectionWindow := 65535;
@@ -594,6 +607,20 @@ begin Result := Self; Result.FServerLimits := ALimits; end;
 function THttp2ServerFactory.WithSocketOptions(
   const AOptions: TSocketOptions): THttp2ServerFactory;
 begin Result := Self; Result.FSocket := AOptions; end;
+
+function THttp2ServerFactory.WithUnixSocket(
+  const APath: string): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FUnix := Result.FUnix.WithPath(APath);
+end;
+
+function THttp2ServerFactory.WithUnixSocketMode(
+  const AMode: Integer): THttp2ServerFactory;
+begin
+  Result := Self;
+  Result.FUnix := Result.FUnix.WithMode(AMode);
+end;
 
 function THttp2ServerFactory.WithHttp11Fallback(
   const AValue: Boolean): THttp2ServerFactory;
@@ -779,9 +806,11 @@ var
 begin
   Problems := nil;
 
-  if (FPort < 0) or (FPort > High(Word)) then
+  if not FUnix.Enabled and ((FPort < 0) or (FPort > High(Word))) then
     Add('the port ' + IntToStr(FPort) + ' is outside 0 to ' +
       IntToStr(High(Word)));
+  if FUnix.Enabled and FSocket.ReusePort then
+    Add('the reuse-port option does not apply to a Unix socket');
   if FBacklog < 1 then
     Add('the listen backlog is below 1');
   if FIOThreads < 1 then
@@ -805,6 +834,7 @@ begin
   FHttp11.Problems(Problems);
   FWs.Problems(Problems);
   FServerLimits.Validate(Problems); FSocket.Validate(Problems);
+  FUnix.Validate(Problems);
   if FQueue.Depth < 0 then
     Add('the queue depth is below 0');
   if FQueue.MaxWaitMs < 0 then
