@@ -825,10 +825,8 @@ begin
   FChannelImpl.SourceProvider := FStreamPool.NewSource;
   FObserver := nil;
   FAdmission := NewConnectionAdmission(AFactory.ServerLimits.MaxConnections);
-  Options := ASYNC_OPTION_PROD;
-  if AFactory.Socket.ReusePort then
-    include(Options, acoReusePort);
-  inherited Create(BindAddressText(AFactory.Host, AFactory.Port), nil, nil,
+  Options := BuildListenerOptions(AFactory);
+  inherited Create(ListenerBindText(AFactory), nil, nil,
     THttp2AsyncConnection, 'http2', nil, Options, AFactory.IOThreads);
   // ConnectionNew reserves the configured bound before AfterCreate and the
   // first-read queue. Disable mORMot's separate limits, whose accept backoff
@@ -946,10 +944,14 @@ begin
   // mORMot2 uses fSockPort as a numeric port when it opens the temporary
   // connection that wakes its poll threads during Shutdown. The bind input
   // includes host:port, so replace it with the actual numeric value.
-  Port := BoundPort;
-  if Port <= 0 then
-    raise EHttpConnectionError.Create('The listener has no bound port');
-  fSockPort := RawUtf8(IntToStr(Port));
+  // a Unix listener has no port; its shutdown wakes the accept by the path
+  if not FFactory.Unix.Enabled then
+  begin
+    Port := BoundPort;
+    if Port <= 0 then
+      raise EHttpConnectionError.Create('The listener has no bound port');
+    fSockPort := RawUtf8(IntToStr(Port));
+  end;
   FStarted := True;
 end;
 
