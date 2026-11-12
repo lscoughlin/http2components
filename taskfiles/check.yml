@@ -1,5 +1,20 @@
 version: '3'
 
+# Repository checks. A rule prints "FAIL <text>" for each fault. A task
+# exits 1 when it prints at least one FAIL line. The public tasks
+# source:check, docs:check and version:check run all of their rules and
+# report every fault, not only the first one.
+vars:
+  # The one license string that the kept rules compare with.
+  LICENSE_SPDX: 'Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)'
+  COPYRIGHT_LINE: 'copyright: Copyright 2026 Liam Seamus Coughlin'
+  # The current version. The VERSION file and each .lpk file agree with it.
+  VERSION_EXPECTED: '0.30.0'
+  # The component directories. Each has a src directory and the .lpk files.
+  COMPONENT_DIRS: 'common client server tls/openssl tls/tlslib'
+  # The directories that hold maintained Pascal files.
+  PASCAL_DIRS: 'test examples tools common client server tls/openssl tls/tlslib'
+
 tasks:
   packages:check:
     desc: Check package files, source inventory, and versions
@@ -8,15 +23,242 @@ tasks:
 
   source:check:
     desc: Check Pascal headers, sizes, names, and dependencies
+    silent: true
     cmds:
-      - python3 tools/build.py source:check
+      - |
+        rc=0
+        for t in check:pascal-headers check:file-length check:packages-files check:placeholder-license; do
+          {{.TASK_EXE}} --silent "$t" || rc=1
+        done
+        if [ "$rc" -ne 0 ]; then echo "source:check failed"; fi
+        exit "$rc"
 
   docs:check:
     desc: Check documentation rules, links, index, and YAML
+    silent: true
     cmds:
-      - python3 tools/build.py docs:check
+      - |
+        rc=0
+        for t in check:doc-headers check:doc-index; do
+          {{.TASK_EXE}} --silent "$t" || rc=1
+        done
+        if [ "$rc" -ne 0 ]; then echo "docs:check failed"; fi
+        exit "$rc"
 
   version:check:
     desc: Check current version agreement
+    silent: true
     cmds:
-      - python3 tools/build.py version:check
+      - |
+        rc=0
+        for t in check:version-file check:package-versions; do
+          {{.TASK_EXE}} --silent "$t" || rc=1
+        done
+        if [ "$rc" -ne 0 ]; then echo "version:check failed"; fi
+        exit "$rc"
+
+  # R01, R02.
+  check:version-file:
+    silent: true
+    cmds:
+      - |
+        out=$(
+          if [ ! -f VERSION ]; then
+            echo "FAIL VERSION is missing"
+          elif ! printf '%s\n' '{{.VERSION_EXPECTED}}' | cmp -s - VERSION; then
+            echo "FAIL VERSION must contain exactly {{.VERSION_EXPECTED}} followed by one newline"
+          fi
+        )
+        if [ -n "$out" ]; then printf '%s\n' "$out"; exit 1; fi
+
+  # R04. The Version element of each .lpk equals the expected version.
+  check:package-versions:
+    silent: true
+    cmds:
+      - |
+        v='{{.VERSION_EXPECTED}}'
+        major=${v%%.*}
+        rest=${v#*.}
+        minor=${rest%%.*}
+        release=${rest#*.}
+        out=$(
+          for d in {{.COMPONENT_DIRS}}; do
+            for f in "$d"/*.lpk; do
+              [ -f "$f" ] || continue
+              if ! grep -q "<Version Major=\"$major\" Minor=\"$minor\" Release=\"$release\" Build=\"0\" />" "$f"; then
+                found=$(grep '<Version Major=' "$f" | head -n 1 | sed 's/^[^"]*"\([^"]*\)"[^"]*"\([^"]*\)"[^"]*"\([^"]*\)".*/\1.\2.\3/')
+                echo "FAIL $f declares version ${found:-none}; expected $v"
+              fi
+            done
+          done
+        )
+        if [ -n "$out" ]; then printf '%s\n' "$out"; exit 1; fi
+
+  # R06, R07, R08. At least one Pascal file exists. A Pascal or include
+  # file has fewer than 1000 lines. awk counts a last line without a
+  # newline, as Python splitlines() did.
+  check:file-length:
+    silent: true
+    cmds:
+      - |
+        list=$( { find {{.PASCAL_DIRS}} -name '*.pas'; find . -maxdepth 1 -name '*.pas' | sed 's|^\./||'; find doc/verification/client-probes -maxdepth 1 -name '*.pas' 2>/dev/null; find {{.COMPONENT_DIRS}} -name '*.inc'; } | LC_ALL=C sort -u )
+        out=$(
+          if ! find {{.PASCAL_DIRS}} -name '*.pas' | grep -q .; then
+            echo "FAIL no maintained Pascal files exist"
+          fi
+          printf '%s\n' "$list" | while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            awk -v f="$f" 'END{if(NR>=1000)print "FAIL " f " has " NR " lines; the maximum is 999"}' "$f"
+          done
+        )
+        if [ -n "$out" ]; then printf '%s\n' "$out"; exit 1; fi
+
+  # R05, R43, R48, R52, R53, R54, R56, R57.
+  check:packages-files:
+    silent: true
+    cmds:
+      - |
+        t=$(mktemp -d)
+        out=$(
+          for d in {{.COMPONENT_DIRS}}; do
+            if [ ! -d "$d/src" ]; then
+              case "$d" in
+                tls/*)
+                  ls "$d"/*.lpk >/dev/null 2>&1 || continue ;;
+              esac
+              echo "FAIL Required component source directory is missing: $d/src"
+            fi
+          done
+          if [ ! -f http2components.lpg ]; then echo "FAIL http2components.lpg is missing"; fi
+          for p in common/http2common client/http2client client/http2clientreaders server/http2server tls/openssl/http2openssl tls/tlslib/http2tlslib; do
+            if [ ! -f "$p.lpk" ]; then echo "FAIL required package ${p##*/}.lpk is missing"; fi
+          done
+          for d in {{.COMPONENT_DIRS}}; do
+            for f in "$d"/*.lpk; do
+              [ -f "$f" ] || continue
+              pkg=$(basename "$f" .lpk)
+              if ! grep -qF '<License Value="{{.LICENSE_SPDX}}"' "$f"; then
+                echo "FAIL $pkg does not declare the approved dual license"
+              fi
+              if ! grep -qE 'UnitOutputDirectory Value="(\.\./)+bin/' "$f"; then
+                echo "FAIL $pkg must write compiler units under bin/"
+              fi
+              awk -v p="$pkg" '
+                /<Files Count=/ { match($0, /Count="[0-9]+"/); n = substr($0, RSTART + 7, RLENGTH - 8) }
+                /<Filename/ { m++ }
+                END { if (n + 0 != m + 0) printf "FAIL %s lists %d files but has %d entries\n", p, n, m }' "$f"
+            done
+          done
+          if grep -qi 'OtherUnitFiles.*mormot' common/http2common.lpk 2>/dev/null; then
+            echo "FAIL http2common.lpk must not depend on mORMot2"
+          fi
+          for d in {{.COMPONENT_DIRS}}; do
+            [ -d "$d/src" ] || continue
+            (cd "$d" && find src -name '*.pas' | LC_ALL=C sort) > "$t/src"
+            cat "$d"/*.lpk 2>/dev/null | grep '<Filename' | sed 's/.*Value="\([^"]*\)".*/\1/' | LC_ALL=C sort > "$t/lpk"
+            LC_ALL=C comm -23 "$t/src" "$t/lpk" | while IFS= read -r n; do
+              echo "FAIL $d/$n is not listed in a package file of $d"
+            done
+            LC_ALL=C comm -13 "$t/src" "$t/lpk" | while IFS= read -r n; do
+              echo "FAIL $d/$n is listed in a package file but is not in $d/src"
+            done
+          done
+        )
+        rm -rf "$t"
+        if [ -n "$out" ]; then printf '%s\n' "$out"; exit 1; fi
+
+  # D03. The placeholder license is absent.
+  check:placeholder-license:
+    silent: true
+    cmds:
+      - |
+        if grep -rIl --exclude=doc_rules.sh 'TBD-LICENCE' test examples doc tools NOTICE LICENSE README.md Taskfile.yaml 2>/dev/null | grep -q .; then
+          echo "FAIL the placeholder licence is still present"
+          exit 1
+        fi
+
+  # Y07 to Y11. Pascal header shape, license line, copyright line.
+  check:pascal-headers:
+    silent: true
+    cmds:
+      - |
+        list=$( { find {{.PASCAL_DIRS}} -name '*.pas'; find . -maxdepth 1 -name '*.pas' | sed 's|^\./||'; find doc/verification/client-probes -maxdepth 1 -name '*.pas' 2>/dev/null; find {{.COMPONENT_DIRS}} -name '*.inc'; } | LC_ALL=C sort -u )
+        out=$(
+          printf '%s\n' "$list" | while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            awk -v f="$f" -v lic='license: {{.LICENSE_SPDX}}' -v cp='{{.COPYRIGHT_LINE}}' '
+              NR == 1 { l1 = $0 }
+              NR == 2 { l2 = $0 }
+              NR == 3 { l3 = $0 }
+              NR > 2 && cl == 0 && $0 == "---" { cl = NR; next }
+              NR > 2 && cl == 0 && $0 == cp { hascp = 1 }
+              cl > 0 && NR == cl + 1 { after = $0 }
+              END {
+                if (l1 != "{**" || l2 != "---" || cl == 0 || after != "}") {
+                  print "FAIL " f ": pasdoc YAML header must start on line 1 and close without a blank line"
+                } else {
+                  if (l3 != lic) {
+                    print "FAIL " f ": license must follow the opening front matter line"
+                    print "FAIL " f ": license value is not the approved SPDX expression"
+                  }
+                  if (!hascp) print "FAIL " f ": copyright value is missing or incorrect"
+                }
+              }' "$f"
+          done
+        )
+        if [ -n "$out" ]; then printf '%s\n' "$out"; exit 1; fi
+
+  # Y01, Y02, Y03, Y05, Y06. Document front matter.
+  check:doc-headers:
+    silent: true
+    cmds:
+      - |
+        out=$(
+          find doc -name '*.md' | LC_ALL=C sort | while IFS= read -r f; do
+            awk -v f="$f" -v lic='license: {{.LICENSE_SPDX}}' -v cp='{{.COPYRIGHT_LINE}}' '
+              NR == 1 { l1 = $0 }
+              NR == 2 { l2 = $0 }
+              NR > 1 && cl == 0 && $0 == "---" { cl = NR; next }
+              NR > 1 && cl == 0 && $0 == cp { hascp = 1 }
+              END {
+                if (l1 != "---") {
+                  print "FAIL " f ": front matter must start on line 1"
+                } else if (cl == 0) {
+                  print "FAIL " f ": closing front matter line is missing"
+                } else {
+                  if (l2 != lic) {
+                    print "FAIL " f ": license must be on line 2"
+                    print "FAIL " f ": license value is not the approved SPDX expression"
+                  }
+                  if (!hascp) print "FAIL " f ": copyright value is missing or incorrect"
+                }
+              }' "$f"
+          done
+        )
+        if [ -n "$out" ]; then printf '%s\n' "$out"; exit 1; fi
+
+  # R36, R37, R38, R40. Document set, index, and forbidden references.
+  check:doc-index:
+    silent: true
+    cmds:
+      - |
+        out=$(
+          if ! find doc -name '*.md' | grep -q .; then
+            echo "FAIL doc/ has no Markdown documents"
+          fi
+          if [ ! -f doc/README.md ]; then
+            echo "FAIL doc/README.md is missing; the document index is required"
+          fi
+          grep -rliE '(^|[^[:alnum:]_])(plan/|story([^[:alnum:]_]|$))|\.ai/' doc --include='*.md' | LC_ALL=C sort | while IFS= read -r f; do
+            echo "FAIL $f refers to plan/, .ai/, or a story"
+          done
+          if [ -f doc/README.md ]; then
+            find doc -name '*.md' | LC_ALL=C sort | while IFS= read -r f; do
+              case "$f" in doc/README.md|doc/references/README.md) continue ;; esac
+              if ! grep -qF "${f#doc/}" doc/README.md; then
+                echo "FAIL $f is not listed in doc/README.md"
+              fi
+            done
+          fi
+        )
+        if [ -n "$out" ]; then printf '%s\n' "$out"; exit 1; fi
