@@ -146,22 +146,23 @@ The stale factory source paths found during that run are corrected; its
 part of the comparison record and require classification if they recur.
 
 
-## Execution status at 2026-11-11 23:22 UTC
+## Execution status at 2026-11-12 00:06 UTC
 
 | IDs | Status |
 | --- | --- |
-| V00 | Each candidate has a Git archive and command/result records. Candidate a3298bd is in affected acceptance after the reviewed admission repair. The absent 610a86b nested artifacts are an explicit evidence gap; source and top-level logs remain. |
-| V01 | All 146 expected harness rows are present: MATCH 30, BETTER 39, WORSE 0, CLASS-DIFF 15, UNKNOWN 62. Non-matching outcomes have source and trace classifications. |
-| V02, V12 | Full server conformance passed 94 HTTP/2 and eight HPACK cases with no skips on 97aca1d. Required gates run again after the admission repair. |
-| V03 | Client Autobahn, independent server HTTP/2 WebSocket, HTTP/1 WebSocket, and SSE checks passed. |
-| V04, V13 | Real mTLS passed 54 rows; real proxy passed 65 rows with three explicit Squid build limitations. Client interoperation passed all 13 required cases with its existing A8 limitation. |
-| V05, V07, V11 | Abuse passed all required cases on 97aca1d. The first performance stage exposed excess pending-handshake admission. A strict old-code control fails all four cases. The repaired listener passes all four, including prompt rejection, timeout, recovery, and descriptor cleanup. Other performance stages remain pending. |
-| V06 | Candidate 5ecf0fc passed five builds, 25 examples, seven idle/header cases, two integration runs, and all 777 client tests. Package-only update 97aca1d passed all six packages and all 721 server tests. The admission repair has three new unit cases; affected server acceptance runs on a3298bd. |
-| V09, V10 | Bounded provider/security matrices, independent client checks, and 32 independent server identity rows passed. Affected server checks run again. |
-| V14 | The 13 adapter and 13 listener cases, 40 live mTLS cases, and 20 repeated shutdown cases passed on 97aca1d. They run again after the admission repair. |
-| V08 | Release review remains incomplete. No release is published. |
+| V00 | Complete. Final candidate 9f0f8de has a Git archive and exact command/result records. The final evidence archive has 6,264 files with verified hashes. The absent 610a86b nested artifacts remain an explicit historical gap; its source and top-level logs remain. |
+| V01 | Complete with classifications. All 146 expected rows are present: MATCH 30, BETTER 39, WORSE 0, CLASS-DIFF 15, UNKNOWN 62. Non-matching outcomes have source and trace classifications. This is not 146 strict passes. |
+| V02, V12 | Passed. Full server conformance passed 94 HTTP/2 and eight HPACK cases with no skips; final affected conformance gates pass on a3298bd production, unchanged in 9f0f8de. |
+| V03 | Passed. Client Autobahn and independent HTTP/2 WebSocket, HTTP/1 WebSocket, and SSE checks retain their original scope and exclusions. |
+| V04, V13 | Passed with explicit peer limits. Real mTLS passed 54 rows; real proxy passed 65 rows with three Squid build limitations. Client interoperation passed all 13 required cases with its existing A8 limitation. |
+| V05, V07, V11 | Passed. Final abuse, all four incomplete-handshake cases, fresh and sequential connection load up to 10,000, combined 10,000 WebSocket/10,000 SSE load, and all four million-request TLS runs pass. Each million-request run used exactly one connection and returned one million HTTP 200 responses. Cleanup completed normally. |
+| V06 | Passed. Five production builds, 25 examples, six packages, 777 client tests, and final 724 server tests pass. Final server errors/failures are both zero. The earlier failures remain in the evidence. |
+| V09, V10 | Passed. Provider/security matrices, independent client checks, and all 32 independent server identity rows pass. |
+| V14 | Passed. All 13 adapter and 13 listener cases, 40 live mTLS cases, and 20 repeated shutdown cases pass after the final production repair. |
+| V08 | Evidence review is complete with the stated harness classifications, peer limits, and historical artifact gap. No release approval or publication is recorded. |
 
-The evidence record is `doc/verification/linux-tls-2026-11-11.md`. Initial
-failures remain in the artifacts. Focused passes do not replace complete
-affected acceptance. The original TLS replacement input remains unchanged
-and outside the tested source archives.
+The evidence record is `doc/verification/linux-tls-2026-11-11.md`. All agent
+worktrees and branches are removed after review and merge. The validation
+container is removed after archive verification. The remote run directory
+and local expanded evidence remain. The original TLS replacement input and
+both sibling repository revisions are unchanged.

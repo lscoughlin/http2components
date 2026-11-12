@@ -730,3 +730,21 @@ release, and failed-creation checks; deleting the old assertion alone is
 not sufficient. Source checks, focused limit tests, and the complete Linux
 server suite validate the repair. Root reviews and merges the test change,
 then resumes affected acceptance and all performance stages.
+
+
+## Final execution result
+
+All implemented repairs through LV-38 are reviewed and merged. Candidate
+9f0f8de passes the complete 724-case server suite, with zero errors and
+failures. Its production code is identical to a3298bd, whose affected TLS,
+identity, conformance, abuse, and shutdown checks pass. The unchanged client
+code passes all 777 tests. The final four performance stages pass, including
+four separate one-million-request runs. Each uses one TLS connection and
+returns one million HTTP 200 responses without failed or errored requests.
+The final performance stage ended on 2026-11-12 at 00:03:14 UTC.
+
+The old-code negative controls and initial failed runs remain in the
+verified evidence archive. The known peer limitations, classified harness
+rows, and missing nested artifacts from 610a86b remain explicit. All agent
+worktrees and branches are removed. The validation container is removed
+after evidence verification. No release is published.

@@ -8,20 +8,27 @@ notes:
 
 # Current verification status
 
-Native Linux Docker validation is in progress on 2026-11-11. The
-[Linux verification record](linux-tls-2026-11-11.md) contains the current
-candidates, repairs, executed checks, failures, and peer limitations.
-Candidate `5ecf0fc` passed all 777 client tests, five production builds,
-25 example builds, seven idle/header cases, and two general integration
-runs. The package-only update in `97aca1d` passed all six packages and the
-complete server suite: 721 tests, zero errors, and zero failures. Server TLS,
-independent identities, conformance, abuse, and repeated shutdown checks also
-passed. The remaining client peer checks passed. The first performance stage found
-an incomplete-handshake admission failure at the configured connection
-limit. The admission repair passes all four focused cases. Its final
-acceptance candidate `9f0f8de` passes all 724 server tests and all affected
-TLS, identity, conformance, abuse, and shutdown checks. Performance has resumed.
-There is no release approval.
+Native Linux Docker validation completed on 2026-11-12. The
+[Linux verification record](linux-tls-2026-11-11.md) contains the candidates,
+repairs, commands, results, peer limits, and retained failure evidence.
+The unchanged client code passed all 777 tests. Final acceptance candidate
+`9f0f8de` passed all 724 server tests, with zero errors and failures. Five
+production builds, six packages, 25 examples, and the required TLS, identity,
+proxy, conformance, abuse, and shutdown checks have passing results.
+
+All four final performance stages pass: incomplete-handshake admission,
+connection load up to 10,000, combined 10,000 WebSocket and 10,000 SSE load,
+and four million-request TLS runs. Every million-request run used one
+connection and returned one million HTTP 200 responses without failed or
+errored requests. The archive contains 6,264 files with verified hashes.
+Agent worktrees, branches, and the validation container were removed.
+
+The independent harness has 146 classified rows: MATCH 30, BETTER 39,
+WORSE 0, CLASS-DIFF 15, and UNKNOWN 62. These are not 146 strict passes.
+Three Squid cases and the nghttpd A8 case retain their documented peer
+limitations. Nested artifacts from one early failed candidate are missing;
+its source archive and top-level logs remain. These limits remain part of
+the evidence. No release approval or publication is recorded.
 
 The earlier bounded implementation candidate was `15feb54`, checked on
 macOS 27.2 arm64 with Free Pascal 3.2.4, Lazarus 4.0, and OpenSSL 3.5.9.
@@ -60,15 +67,12 @@ as current TLS replacement results.
 
 ## Linux validation status
 
-Linux builds, packages, examples, both full unit suites, provider matrices,
-independent server peers, conformance, and abuse have passing results. The
-real proxy matrix passed 65 cases with three documented Squid limitations.
-The client mTLS upload matrix passed all 54 rows, and client interoperation
-passed all 13 required cases with its existing peer limitation. Performance
-found and corrected an incomplete-handshake admission defect. Complete
-affected acceptance passes after the repair; the resource checks continue. The Linux
-record distinguishes strict passes from explicit peer limitations and
-classified harness rows.
+The Linux run is complete with the explicit limits above. The real proxy
+matrix passed 65 cases with three documented Squid limitations. The client
+mTLS upload matrix passed all 54 rows, and client interoperation passed all
+13 required cases with its existing peer limitation. The repaired admission
+guard and all final resource checks passed. The Linux record distinguishes
+strict passes from peer limitations and classified harness rows.
 
 The [repository README](../../README.md) describes the build and validation
 commands. The detailed TLS record identifies unsupported provider features
