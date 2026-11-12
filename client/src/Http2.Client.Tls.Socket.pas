@@ -78,33 +78,34 @@ type
       const AInsecure: Boolean = False; const AConnectTimeoutMs: Integer = cDefaultSocketTimeoutMs;
       const ACACertFile: string = ''; const AProxyHost: string = '';
       const AProxyPort: Word = 0; const AIdentity: IClientIdentity = nil;
-      const AContext: ITLSContext = nil): IHttp2Socket;
+      const AContext: ITLSContext = nil; const AUnixPath: string = ''): IHttp2Socket;
     class function DialWithAlpn(const AHost: string; const APort: Word;
       const AAlpnOffer: TBytes; const AInsecure: Boolean = False;
       const AConnectTimeoutMs: Integer = cDefaultSocketTimeoutMs;
       const ACACertFile: string = ''; const AProxyHost: string = '';
       const AProxyPort: Word = 0; const AIdentity: IClientIdentity = nil;
-      const AContext: ITLSContext = nil): IHttp2Socket;
+      const AContext: ITLSContext = nil; const AUnixPath: string = ''): IHttp2Socket;
     class function DialCleartext(const AHost: string; const APort: Word;
       const AConnectTimeoutMs: Integer = cDefaultSocketTimeoutMs;
-      const AProxyHost: string = ''; const AProxyPort: Word = 0): IHttp2Socket;
+      const AProxyHost: string = ''; const AProxyPort: Word = 0; const AUnixPath: string = ''): IHttp2Socket;
     class function DialVia(const AHost: string; const APort: Word;
       const AInsecure: Boolean; const AConnectTimeoutMs: Integer;
       const ACACertFile: string; const AProxy: IProxy;
       const AIdentity: IClientIdentity = nil; const AProxyIdentity: IClientIdentity = nil;
-      const AContext: ITLSContext = nil; const AProxyContext: ITLSContext = nil): IHttp2Socket;
+      const AContext: ITLSContext = nil; const AProxyContext: ITLSContext = nil;
+      const AUnixPath: string = ''): IHttp2Socket;
     class function DialWithAlpnVia(const AHost: string; const APort: Word;
       const AAlpnOffer: TBytes; const AInsecure: Boolean;
       const AConnectTimeoutMs: Integer; const ACACertFile: string;
       const AProxy: IProxy; const AIdentity: IClientIdentity = nil;
       const AProxyIdentity: IClientIdentity = nil; const AContext: ITLSContext = nil;
       const AProxyContext: ITLSContext = nil;
-      const AIdentityExplicit: Boolean = False): IHttp2Socket;
+      const AIdentityExplicit: Boolean = False; const AUnixPath: string = ''): IHttp2Socket;
     class function DialCleartextVia(const AHost: string; const APort: Word;
       const AConnectTimeoutMs: Integer; const AProxy: IProxy;
       const AInsecure: Boolean = False; const ACACertFile: string = '';
       const AProxyIdentity: IClientIdentity = nil;
-      const AProxyContext: ITLSContext = nil): IHttp2Socket;
+      const AProxyContext: ITLSContext = nil; const AUnixPath: string = ''): IHttp2Socket;
     function ReadSome(var ABuffer; ACount: Integer): Integer;
     function Read(var ABuffer; ACount: Integer): Integer;
     function Write(const ABuffer; ACount: Integer): Integer;
@@ -664,12 +665,16 @@ end;
 class function TTlsSocket.Dial(const AHost: string; const APort: Word;
   const AInsecure: Boolean; const AConnectTimeoutMs: Integer;
   const ACACertFile, AProxyHost: string; const AProxyPort: Word;
-  const AIdentity: IClientIdentity; const AContext: ITLSContext): IHttp2Socket;
+  const AIdentity: IClientIdentity; const AContext: ITLSContext;
+  const AUnixPath: string): IHttp2Socket;
 var T: IHttp2Socket;
 begin
   RejectLegacyTlsPolicy(AInsecure, ACACertFile);
   RequireClientTlsContext(AContext, 'origin');
-  T := TPlainSocket.Create(AHost, APort, AConnectTimeoutMs, AProxyHost, AProxyPort);
+  if AUnixPath <> '' then
+    T := TPlainSocket.CreateUnix(AUnixPath, AConnectTimeoutMs)
+  else
+    T := TPlainSocket.Create(AHost, APort, AConnectTimeoutMs, AProxyHost, AProxyPort);
   Result := TTlsSocket.Create(T, AHost, AContext, AIdentity, [cHttp2AlpnProtocol], AConnectTimeoutMs);
 end;
 
@@ -677,29 +682,37 @@ class function TTlsSocket.DialWithAlpn(const AHost: string; const APort: Word;
   const AAlpnOffer: TBytes; const AInsecure: Boolean;
   const AConnectTimeoutMs: Integer; const ACACertFile, AProxyHost: string;
   const AProxyPort: Word; const AIdentity: IClientIdentity;
-  const AContext: ITLSContext): IHttp2Socket;
+  const AContext: ITLSContext; const AUnixPath: string): IHttp2Socket;
 var T: IHttp2Socket;
 begin
   RejectLegacyTlsPolicy(AInsecure, ACACertFile);
   RequireClientTlsContext(AContext, 'origin');
-  T := TPlainSocket.Create(AHost, APort, AConnectTimeoutMs, AProxyHost, AProxyPort);
+  if AUnixPath <> '' then
+    T := TPlainSocket.CreateUnix(AUnixPath, AConnectTimeoutMs)
+  else
+    T := TPlainSocket.Create(AHost, APort, AConnectTimeoutMs, AProxyHost, AProxyPort);
   Result := TTlsSocket.Create(T, AHost, AContext, AIdentity, DecodeAlpn(AAlpnOffer), AConnectTimeoutMs);
 end;
 
 class function TTlsSocket.DialCleartext(const AHost: string; const APort: Word;
   const AConnectTimeoutMs: Integer; const AProxyHost: string;
-  const AProxyPort: Word): IHttp2Socket;
-begin Result := TPlainSocket.Create(AHost, APort, AConnectTimeoutMs, AProxyHost, AProxyPort); end;
+  const AProxyPort: Word; const AUnixPath: string): IHttp2Socket;
+begin
+  if AUnixPath <> '' then
+    Exit(TPlainSocket.CreateUnix(AUnixPath, AConnectTimeoutMs));
+  Result := TPlainSocket.Create(AHost, APort, AConnectTimeoutMs, AProxyHost, AProxyPort);
+end;
 
 class function TTlsSocket.DialVia(const AHost: string; const APort: Word;
   const AInsecure: Boolean; const AConnectTimeoutMs: Integer;
   const ACACertFile: string; const AProxy: IProxy;
   const AIdentity, AProxyIdentity: IClientIdentity;
-  const AContext, AProxyContext: ITLSContext): IHttp2Socket;
+  const AContext, AProxyContext: ITLSContext; const AUnixPath: string): IHttp2Socket;
 begin
   RejectLegacyTlsPolicy(AInsecure, ACACertFile);
   Result := DialWithAlpnVia(AHost, APort, AlpnProtocolList([cHttp2AlpnProtocol]),
-    AInsecure, AConnectTimeoutMs, ACACertFile, AProxy, AIdentity, AProxyIdentity, AContext, AProxyContext);
+    AInsecure, AConnectTimeoutMs, ACACertFile, AProxy, AIdentity, AProxyIdentity,
+    AContext, AProxyContext, False, AUnixPath);
 end;
 
 class function TTlsSocket.DialWithAlpnVia(const AHost: string; const APort: Word;
@@ -707,12 +720,12 @@ class function TTlsSocket.DialWithAlpnVia(const AHost: string; const APort: Word
   const AConnectTimeoutMs: Integer; const ACACertFile: string;
   const AProxy: IProxy; const AIdentity, AProxyIdentity: IClientIdentity;
   const AContext, AProxyContext: ITLSContext;
-  const AIdentityExplicit: Boolean): IHttp2Socket;
+  const AIdentityExplicit: Boolean; const AUnixPath: string): IHttp2Socket;
 var T: IHttp2Socket; IsStream: Boolean;
 begin
   RejectLegacyTlsPolicy(AInsecure, ACACertFile);
   RequireClientTlsContext(AContext, 'origin');
-  T := DialRoutedTransport(AHost, APort, AConnectTimeoutMs, AProxy, AInsecure, ACACertFile, AProxyIdentity, IsStream, AProxyContext);
+  T := DialRoutedTransport(AHost, APort, AConnectTimeoutMs, AProxy, AInsecure, ACACertFile, AProxyIdentity, IsStream, AProxyContext, AUnixPath);
   Result := TTlsSocket.Create(T, AHost, AContext, AIdentity,
     DecodeAlpn(AAlpnOffer), AConnectTimeoutMs, AIdentityExplicit);
 end;
@@ -720,12 +733,13 @@ end;
 class function TTlsSocket.DialCleartextVia(const AHost: string; const APort: Word;
   const AConnectTimeoutMs: Integer; const AProxy: IProxy;
   const AInsecure: Boolean; const ACACertFile: string;
-  const AProxyIdentity: IClientIdentity; const AProxyContext: ITLSContext): IHttp2Socket;
+  const AProxyIdentity: IClientIdentity; const AProxyContext: ITLSContext;
+  const AUnixPath: string): IHttp2Socket;
 var IsStream: Boolean;
 begin
   RejectLegacyTlsPolicy(AInsecure, ACACertFile);
   Result := DialRoutedTransport(AHost, APort, AConnectTimeoutMs, AProxy,
-    AInsecure, ACACertFile, AProxyIdentity, IsStream, AProxyContext);
+    AInsecure, ACACertFile, AProxyIdentity, IsStream, AProxyContext, AUnixPath);
 end;
 
 function TTlsSocket.ReadSome(var ABuffer; ACount: Integer): Integer;

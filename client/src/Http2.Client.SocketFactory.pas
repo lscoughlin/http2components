@@ -40,9 +40,12 @@ type
     FProxyTlsContext: ITLSContext;
     FLogger: IHttpLogger;
     FProtocols: TProtocolSocketFactory;
+    FUnixPath: string;
     /// debug line naming the identity a TLS dial to AHost:APort installs
     procedure LogIdentity(const AHost: string; const APort: Word;
       const AIdentity: IClientIdentity);
+    /// sets the Unix socket file of this factory; only a clone calls it
+    procedure SetUnix(const APath: string);
   public
     /// AIdentity is presented on every TLS connection to an origin and
     /// AProxyIdentity on the TLS leg to an https proxy, never the other way
@@ -61,6 +64,9 @@ type
       const AProxyIdentity: IClientIdentity = nil): TDefaultSocketFactory;
     function WithTlsContexts(const ATlsContext,
       AProxyTlsContext: ITLSContext): TDefaultSocketFactory;
+    /// a copy of this factory whose dials go to the Unix socket file APath
+    // - the proxy arguments of the factory are ignored by the copy
+    function WithUnixPath(const APath: string): TDefaultSocketFactory;
     function Dial(const AHost: string; const APort: Word;
       const ATimeoutMs: Integer): IHttp2Socket;
     function DialProtocol(const AHost: string; const APort: Word;
@@ -150,6 +156,7 @@ function TDefaultSocketFactory.WithIdentity(const AIdentity: IClientIdentity;
 begin
   Result := TDefaultSocketFactory.Create(FCACertFile, FInsecure, FProxyHost,
     FProxyPort, AIdentity, ALogger, AProxyIdentity, FTlsContext, FProxyTlsContext);
+  Result.SetUnix(FUnixPath);
 end;
 
 function TDefaultSocketFactory.WithTlsContexts(const ATlsContext,
@@ -158,6 +165,20 @@ begin
   Result := TDefaultSocketFactory.Create(FCACertFile, FInsecure, FProxyHost,
     FProxyPort, FIdentity, FLogger, FProxyIdentity, ATlsContext,
     AProxyTlsContext);
+  Result.SetUnix(FUnixPath);
+end;
+
+function TDefaultSocketFactory.WithUnixPath(const APath: string): TDefaultSocketFactory;
+begin
+  Result := TDefaultSocketFactory.Create(FCACertFile, FInsecure, FProxyHost,
+    FProxyPort, FIdentity, FLogger, FProxyIdentity, FTlsContext, FProxyTlsContext);
+  Result.SetUnix(APath);
+end;
+
+procedure TDefaultSocketFactory.SetUnix(const APath: string);
+begin
+  FUnixPath := APath;
+  FProtocols.SetUnixPath(APath);
 end;
 
 function TDefaultSocketFactory.TlsContextPoolKey: string;
@@ -193,7 +214,7 @@ function TDefaultSocketFactory.Dial(const AHost: string; const APort: Word;
 begin
   LogIdentity(AHost, APort, FIdentity);
   Result := TTlsSocket.Dial(AHost, APort, FInsecure, ATimeoutMs, FCACertFile,
-    FProxyHost, FProxyPort, FIdentity, FTlsContext);
+    FProxyHost, FProxyPort, FIdentity, FTlsContext, FUnixPath);
 end;
 
 function TDefaultSocketFactory.DialProtocol(const AHost: string;
@@ -252,6 +273,10 @@ begin
   if (Proxy = nil) and (FProxyHost <> '') then
     Proxy := TProxy.Create(FProxyHost, FProxyPort);
 
+  // a Unix path replaces the proxy: no proxy check applies to it
+  if FUnixPath <> '' then
+    Proxy := nil;
+
   // cleartext never involves ALPN, so the shared selector is correct there
   if AScheme = 'http' then
     Exit(FProtocols.DialProtocolVia(AHost, APort, AScheme, AHttp1Fallback,
@@ -264,7 +289,7 @@ begin
   LogIdentity(AHost, APort, AIdentity);
   Sock := TTlsSocket.DialWithAlpnVia(AHost, APort, AlpnOfferFor(AHttp1Fallback),
     FInsecure, ATimeoutMs, FCACertFile, Proxy, AIdentity, FProxyIdentity,
-    FTlsContext, FProxyTlsContext, AIdentityExplicit);
+    FTlsContext, FProxyTlsContext, AIdentityExplicit, FUnixPath);
   Name := '';
   if Supports(Sock, IHttp2TlsSocketInfo, TlsInfo) then
     Name := TlsInfo.SelectedProtocol;
