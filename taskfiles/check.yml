@@ -1,0 +1,22 @@
+version: '3'
+
+tasks:
+  packages:check:
+    desc: Check package files, source inventory, and versions
+    cmds:
+      - python3 tools/build.py packages:check
+
+  source:check:
+    desc: Check Pascal headers, sizes, names, and dependencies
+    cmds:
+      - python3 tools/build.py source:check
+
+  docs:check:
+    desc: Check documentation rules, links, index, and YAML
+    cmds:
+      - python3 tools/build.py docs:check
+
+  version:check:
+    desc: Check current version agreement
+    cmds:
+      - python3 tools/build.py version:check

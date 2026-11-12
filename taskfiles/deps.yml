@@ -1,0 +1,12 @@
+version: '3'
+
+tasks:
+  setup:deps:
+    desc: Fetch the exact pinned build and TLS provider dependencies
+    cmds:
+      - python3 tools/build.py setup:deps
+
+  setup:harness:
+    desc: Fetch the pinned client validation harness
+    cmds:
+      - python3 tools/build.py setup:harness

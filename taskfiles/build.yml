@@ -1,0 +1,47 @@
+version: '3'
+
+tasks:
+  build:
+    desc: Build common, client, server, and TLS providers
+    cmds:
+      - make build
+
+  build:common:
+    desc: Build common protocol units without mORMot2
+    cmds:
+      - make build-common
+
+  build:client:
+    desc: Build the client
+    cmds:
+      - make build-client
+
+  build:server:
+    desc: Build the server
+    cmds:
+      - make build-server
+
+  build:readers:
+    desc: Build optional JSON and XML readers
+    cmds:
+      - make build-readers
+
+  examples:
+    desc: Compile client, server, and combined examples
+    cmds:
+      - python3 tools/build.py examples
+
+  clean:
+    desc: Remove generated files under bin
+    cmds:
+      - python3 tools/build.py clean
+
+  build:openssl:
+    desc: Build the OpenSSL provider
+    cmds:
+      - make build-openssl
+
+  build:tlslib:
+    desc: Build the TlsLib provider
+    cmds:
+      - make build-tlslib

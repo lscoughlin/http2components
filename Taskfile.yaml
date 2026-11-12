@@ -1,225 +1,66 @@
+# The build driver. The minimum go-task version is 3.42.0. The files use
+# `requires`, `for`, and `includes` with `flatten`. The installed version
+# when this file was written is 3.54.0.
 version: '3'
 
-tasks:
-  setup:deps:
-    desc: Fetch the exact pinned build and TLS provider dependencies
-    cmds:
-      - python3 tools/build.py setup:deps
-
-  setup:harness:
-    desc: Fetch the pinned client validation harness
-    cmds:
-      - python3 tools/build.py setup:harness
-
+includes:
+  pins:
+    taskfile: ./tools/dependencies.yml
+    flatten: true
+  deps:
+    taskfile: ./taskfiles/deps.yml
+    flatten: true
+    dir: '{{.ROOT_DIR}}'
   build:
-    desc: Build common, client, server, and TLS providers
-    cmds:
-      - make build
-
-  build:common:
-    desc: Build common protocol units without mORMot2
-    cmds:
-      - make build-common
-
-  build:client:
-    desc: Build the client
-    cmds:
-      - make build-client
-
-  build:server:
-    desc: Build the server
-    cmds:
-      - make build-server
-
-  build:readers:
-    desc: Build optional JSON and XML readers
-    cmds:
-      - make build-readers
-
-  test:common:
-    desc: Run common unit tests
-    cmds:
-      - python3 tools/build.py test:common
-
-  test:client:
-    desc: Run client unit tests
-    cmds:
-      - python3 tools/build.py test:client
-
-  test:server:
-    desc: Run server unit tests
-    cmds:
-      - python3 tools/build.py test:server
-
+    taskfile: ./taskfiles/build.yml
+    flatten: true
+    dir: '{{.ROOT_DIR}}'
   test:
-    desc: Run common, client, and server unit tests
-    cmds:
-      - python3 tools/build.py test
-
-  test:integration:
-    desc: Run local integration tests
-    cmds:
-      - python3 tools/build.py test:integration
-
-  test:api:
-    desc: Compile API identity and generic-reader probes
-    cmds:
-      - python3 tools/build.py test:api
-
-  test:tls-contract:
-    desc: Run the bounded common TLS contract suite
-    cmds:
-      - python3 tools/build.py test:tls:contract
-
-  test:tls-openssl:
-    desc: Run the bounded OpenSSL TLS suite
-    cmds:
-      - python3 tools/build.py test:tls:openssl
-
-  test:tls-tlslib:
-    desc: Run the bounded TlsLib TLS suite
-    cmds:
-      - python3 tools/build.py test:tls:tlslib
-
-  test:tls-integration:
-    desc: Run the bounded TLS integration suite
-    cmds:
-      - python3 tools/build.py test:tls:integration
-
-  test:tls-client:
-    desc: Run the bounded client TLS transport tests
-    cmds:
-      - make test-tls-client
-
-  test:tls-server:
-    desc: Run the bounded server TLS transport tests
-    cmds:
-      - make test-tls-server
-
-  packages:check:
-    desc: Check package files, source inventory, and versions
-    cmds:
-      - python3 tools/build.py packages:check
-
-  source:check:
-    desc: Check Pascal headers, sizes, names, and dependencies
-    cmds:
-      - python3 tools/build.py source:check
-
-  docs:check:
-    desc: Check documentation rules, links, index, and YAML
-    cmds:
-      - python3 tools/build.py docs:check
-
-  version:check:
-    desc: Check current version agreement
-    cmds:
-      - python3 tools/build.py version:check
-
-  examples:
-    desc: Compile client, server, and combined examples
-    cmds:
-      - python3 tools/build.py examples
-
-  validate:fast:
-    desc: Run bounded required validation gates
-    cmds:
-      - python3 tools/build.py validate:fast
-
-  "validate:client:sanity":
-    desc: Run the client sanity gate
-    cmds:
-      - python3 tools/build.py validate:client:sanity
-  "validate:client:interop":
-    desc: Run the client interop gate
-    cmds:
-      - python3 tools/build.py validate:client:interop
-  "validate:client:harness":
-    desc: Run the client conformance harness
-    cmds:
-      - python3 tools/build.py validate:client:harness
-  "validate:client:sse":
-    desc: Run the client SSE gate
-    cmds:
-      - python3 tools/build.py validate:client:sse
-  "validate:client:proxy":
-    desc: Run the client proxy gate
-    cmds:
-      - python3 tools/build.py validate:client:proxy
-  "validate:client:proxy:real":
-    desc: Run the client live proxy gate
-    cmds:
-      - python3 tools/build.py validate:client:proxy:real
-  "validate:client:websocket":
-    desc: Run the client WebSocket gate
-    cmds:
-      - python3 tools/build.py validate:client:websocket
-  "validate:client:websocket:autobahn":
-    desc: Run the client Autobahn gate
-    cmds:
-      - python3 tools/build.py validate:client:websocket:autobahn
-  "validate:client:cleartext":
-    desc: Run the client cleartext gate
-    cmds:
-      - python3 tools/build.py validate:client:cleartext
-  "validate:client:mtls":
-    desc: Run the client mTLS gate
-    cmds:
-      - python3 tools/build.py validate:client:mtls
-  "validate:client:mtls-real":
-    desc: Run the client live mTLS gate
-    cmds:
-      - python3 tools/build.py validate:client:mtls-real
-
-  "validate:server:conformance":
-    desc: Run the server conformance gate
-    cmds:
-      - python3 tools/build.py validate:server:conformance
-  "validate:server:fast":
-    desc: Run the server fast gate
-    cmds:
-      - python3 tools/build.py validate:server:fast
-  "validate:server:tls-live":
-    desc: Run the server TLS live gate
-    cmds:
-      - python3 tools/build.py validate:server:tls-live
-  "validate:server:mtls-live":
-    desc: Run the server mTLS live gate
-    cmds:
-      - python3 tools/build.py validate:server:mtls-live
-  "validate:server:websocket":
-    desc: Run the server WebSocket gate
-    cmds:
-      - python3 tools/build.py validate:server:websocket
-  "validate:server:websocket:h2":
-    desc: Run the server HTTP/2 WebSocket gate
-    cmds:
-      - python3 tools/build.py validate:server:websocket:h2
-  "validate:server:sse":
-    desc: Run the server SSE gate
-    cmds:
-      - python3 tools/build.py validate:server:sse
-  "validate:server:abuse":
-    desc: Run the server abuse gate
-    cmds:
-      - python3 tools/build.py validate:server:abuse
-
+    taskfile: ./taskfiles/test.yml
+    flatten: true
+    dir: '{{.ROOT_DIR}}'
   validate:
-    desc: Run the documented validation sequence
-    cmds:
-      - python3 tools/build.py validate
+    taskfile: ./taskfiles/validate.yml
+    flatten: true
+    dir: '{{.ROOT_DIR}}'
+  check:
+    taskfile: ./taskfiles/check.yml
+    flatten: true
+    dir: '{{.ROOT_DIR}}'
 
-  clean:
-    desc: Remove generated files under bin
-    cmds:
-      - python3 tools/build.py clean
-
-  build:openssl:
-    desc: Build the OpenSSL provider
-    cmds:
-      - make build-openssl
-
-  build:tlslib:
-    desc: Build the TlsLib provider
-    cmds:
-      - make build-tlslib
+# Shared variables. A `sh:` variable is computed when a task that runs uses
+# it. `task --list` does not compute it, so a missing fpc does not break
+# the listing. Each of FPC, TARGET and PROFILE follows the environment
+# variable of the same name, as tools/build.py does.
+vars:
+  ROOT: '{{.ROOT_DIR}}'
+  FPC:
+    sh: echo "${FPC:-fpc}"
+  # The value is a letter, digit, dot, underscore or dash string. "." and ".."
+  # are not valid. The default is <fpc -iTP>-<fpc -iTO>.
+  TARGET:
+    sh: |
+      fpc="${FPC:-fpc}"
+      if ! command -v "$fpc" >/dev/null 2>&1; then
+        echo "fpc is missing: '$fpc' is not on PATH. Install the Free Pascal compiler or set FPC." >&2
+        exit 1
+      fi
+      t="${TARGET:-$("$fpc" -iTP)-$("$fpc" -iTO)}"
+      case "$t" in
+        ''|.|..|*[!A-Za-z0-9._-]*)
+          echo "TARGET must contain only letters, numbers, dot, underscore, or dash" >&2
+          exit 1 ;;
+      esac
+      echo "$t"
+  # PROFILE follows the same rule. The default is debug when DEBUG is not
+  # empty, else default.
+  PROFILE:
+    sh: |
+      if [ -n "${PROFILE:-}" ]; then p="$PROFILE"; elif [ -n "${DEBUG:-}" ]; then p=debug; else p=default; fi
+      case "$p" in
+        .|..|*[!A-Za-z0-9._-]*)
+          echo "PROFILE must contain only letters, numbers, dot, underscore, or dash" >&2
+          exit 1 ;;
+      esac
+      echo "$p"
+  OUT: '{{.ROOT}}/bin/{{.TARGET}}/{{.PROFILE}}'

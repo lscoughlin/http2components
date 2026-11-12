@@ -1,0 +1,62 @@
+version: '3'
+
+tasks:
+  test:common:
+    desc: Run common unit tests
+    cmds:
+      - python3 tools/build.py test:common
+
+  test:client:
+    desc: Run client unit tests
+    cmds:
+      - python3 tools/build.py test:client
+
+  test:server:
+    desc: Run server unit tests
+    cmds:
+      - python3 tools/build.py test:server
+
+  test:
+    desc: Run common, client, and server unit tests
+    cmds:
+      - python3 tools/build.py test
+
+  test:integration:
+    desc: Run local integration tests
+    cmds:
+      - python3 tools/build.py test:integration
+
+  test:api:
+    desc: Compile API identity and generic-reader probes
+    cmds:
+      - python3 tools/build.py test:api
+
+  test:tls-contract:
+    desc: Run the bounded common TLS contract suite
+    cmds:
+      - python3 tools/build.py test:tls:contract
+
+  test:tls-openssl:
+    desc: Run the bounded OpenSSL TLS suite
+    cmds:
+      - python3 tools/build.py test:tls:openssl
+
+  test:tls-tlslib:
+    desc: Run the bounded TlsLib TLS suite
+    cmds:
+      - python3 tools/build.py test:tls:tlslib
+
+  test:tls-integration:
+    desc: Run the bounded TLS integration suite
+    cmds:
+      - python3 tools/build.py test:tls:integration
+
+  test:tls-client:
+    desc: Run the bounded client TLS transport tests
+    cmds:
+      - make test-tls-client
+
+  test:tls-server:
+    desc: Run the bounded server TLS transport tests
+    cmds:
+      - make test-tls-server
