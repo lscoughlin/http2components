@@ -38,12 +38,15 @@ type
     function GetKind: TProxyKind;
     function GetUserName: string;
     function GetPassword: string;
+    function GetUnixPath: string;
     property Host: string read GetHost;
     property Port: Word read GetPort;
     /// how the proxy is spoken to; also decides whether the leg to it is TLS
     property Kind: TProxyKind read GetKind;
     property UserName: string read GetUserName;
     property Password: string read GetPassword;
+    /// the Unix socket path of the proxy; '' for a TCP proxy
+    property UnixPath: string read GetUnixPath;
   end;
 
   /// chooses the route for one request URI
@@ -60,6 +63,7 @@ type
     FKind: TProxyKind;
     FUserName: string;
     FPassword: string;
+    FUnixPath: string;
   public
     constructor Create(const AHost: string; const APort: Word); overload;
     constructor Create(const AHost: string; const APort: Word;
@@ -68,11 +72,15 @@ type
       const APort: Word); overload;
     constructor Create(const AKind: TProxyKind; const AHost: string;
       const APort: Word; const AUserName, APassword: string); overload;
+    /// a proxy on a Unix socket file; the host is '' and the port is 0
+    constructor CreateUnix(const AKind: TProxyKind; const APath: string;
+      const AUserName, APassword: string);
     function GetHost: string;
     function GetPort: Word;
     function GetKind: TProxyKind;
     function GetUserName: string;
     function GetPassword: string;
+    function GetUnixPath: string;
   end;
 
   /// the proxy variables of the process environment, captured once
@@ -139,6 +147,18 @@ end;
 function TProxy.GetPassword: string;
 begin
   Result := FPassword;
+end;
+
+constructor TProxy.CreateUnix(const AKind: TProxyKind; const APath: string;
+  const AUserName, APassword: string);
+begin
+  Create(AKind, '', 0, AUserName, APassword);
+  FUnixPath := APath;
+end;
+
+function TProxy.GetUnixPath: string;
+begin
+  Result := FUnixPath;
 end;
 
 { ---- literals ---- }
