@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.30.0 — merged source tree (unreleased)
+## 0.30.0 — 2026-11-12 (source release)
 
 - Client and server source now share one repository and the common protocol
   units.
@@ -30,6 +30,6 @@
 - Load checks, independent external conformance checks, and the full server
   unit run on macOS remain open.
 
-This entry describes the current source tree. It does not state that version
-0.30.0 is a published release. The client 0.23.0 and server 0.29.0 records
-remain historical source package histories at [doc/README.md](doc/README.md).
+This release is a source release. It has no binary artifacts. The client 0.23.0
+and server 0.29.0 records remain historical source package histories at
+[doc/README.md](doc/README.md).
