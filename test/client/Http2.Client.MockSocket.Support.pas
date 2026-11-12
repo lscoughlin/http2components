@@ -68,6 +68,7 @@ type
     FReadTimeoutMs: Integer;
     FWriteTimeoutMs: Integer;
     FAutoRespond: Boolean;
+    FEchoData: Boolean;
     FResponseStatus: string;
     FResponseBody: TBytes;
     FResponseEndStream: Boolean;
@@ -79,6 +80,8 @@ type
     procedure AppendReadLocked(const ABytes: TBytes);
     procedure ParseAvailable;
     procedure EmitResponse(const AStreamId: LongWord);
+    procedure EchoDataFrame(const AStreamId: LongWord; const AOffset,
+      ALength: Integer; const AEndStream: Boolean);
   public
     constructor Create;
     destructor Destroy; override;
@@ -116,6 +119,11 @@ type
     /// HEADERS only, leaving the lease registered.
     procedure AutoRespondToRequestHeaders(const AStatus: string;
       const ABody: TBytes; const AEndStream: Boolean);
+
+    /// echo every client DATA frame back as DATA on the same stream and
+    /// return window credit for it, like a server that streams its response
+    /// while it still reads the request body
+    procedure EchoRequestData;
 
     // ---- capturing the outbound direction ----
     /// every byte written, a copy
@@ -214,9 +222,13 @@ type
     FStatus: string;
     FBody: TBytes;
     FEndStream: Boolean;
+    FEcho: Boolean;
   public
     constructor Create;
     destructor Destroy; override;
+    /// every handed-out socket echoes request DATA back (see
+    /// TMockSocket.EchoRequestData)
+    procedure SetEcho(const AEcho: Boolean);
     /// configure the canned response every handed-out socket will produce
     procedure SetResponse(const AStatus: string; const ABody: TBytes;
       const AEndStream: Boolean);
@@ -411,6 +423,29 @@ begin
   end;
 end;
 
+procedure TMockSocket.EchoRequestData;
+begin
+  FLock.Acquire;
+  try
+    FEchoData := True;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TMockSocket.EchoDataFrame(const AStreamId: LongWord; const AOffset,
+  ALength: Integer; const AEndStream: Boolean);
+begin
+  // reached from ParseAvailable while FLock is held: append directly
+  AppendReadLocked(FrameToBytes(BuildDataFrame(AStreamId,
+    Copy(FWritten, AOffset, ALength), AEndStream)));
+  if ALength > 0 then
+  begin
+    AppendReadLocked(FrameToBytes(BuildWindowUpdateFrame(0, ALength)));
+    AppendReadLocked(FrameToBytes(BuildWindowUpdateFrame(AStreamId, ALength)));
+  end;
+end;
+
 procedure TMockSocket.EmitResponse(const AStreamId: LongWord);
 var
   Block: THeaderBlock;
@@ -473,6 +508,9 @@ begin
     if Length(FWritten) - FParsePos < FrameHeaderSize + Len then
       Exit;
     Total := FrameHeaderSize + Len;
+    if FEchoData and (Typ = Ord(ftData)) and (StreamId <> 0) then
+      EchoDataFrame(StreamId, FParsePos + FrameHeaderSize, Len,
+        (FWritten[FParsePos + 4] and 1) <> 0);
     Inc(FParsePos, Total);
     if FAutoRespond and (Typ = Ord(ftHeaders)) and (StreamId <> 0) then
       EmitResponse(StreamId);
@@ -852,6 +890,16 @@ begin
   inherited Destroy;
 end;
 
+procedure TMockSocketFactory.SetEcho(const AEcho: Boolean);
+begin
+  FLock.Acquire;
+  try
+    FEcho := AEcho;
+  finally
+    FLock.Release;
+  end;
+end;
+
 procedure TMockSocketFactory.SetResponse(const AStatus: string;
   const ABody: TBytes; const AEndStream: Boolean);
 begin
@@ -871,7 +919,7 @@ var
   S: TMockSocket;
   St: string;
   Bd: TBytes;
-  ES: Boolean;
+  ES, Echo: Boolean;
 begin
   S := TMockSocket.Create;
   FLock.Acquire;
@@ -881,9 +929,12 @@ begin
     St := FStatus;
     Bd := FBody;
     ES := FEndStream;
+    Echo := FEcho;
   finally
     FLock.Release;
   end;
+  if Echo then
+    S.EchoRequestData;
   // the mock answers the client preface + SETTINGS and every request HEADERS
   S.AutoRespondToRequestHeaders(St, Bd, ES);
   // a real server's first frame is its own SETTINGS; the client must apply it
