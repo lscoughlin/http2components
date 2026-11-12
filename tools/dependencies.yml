@@ -33,3 +33,13 @@ vars:
 
   # Compile order of the TlsLib dependency closure, space separated.
   TLSLIB_COMPILE_ORDER: "HashLib4Pascal SimpleBaseLib4Pascal CryptoLib4Pascal TlsLib4Pascal"
+
+  # Names of the pinned dependencies, space separated, in the order of
+  # tools/dependencies.json. taskfiles/deps.yml loops over this list and
+  # reads <UPPER NAME>_ORIGIN and <UPPER NAME>_REVISION for each name.
+  DEPENDENCY_NAMES: "TlsLib4Pascal CryptoLib4Pascal HashLib4Pascal SimpleBaseLib4Pascal mORMot2"
+
+  # Client validation harness. It is not in tools/dependencies.json. It is
+  # fetched by setup:harness and has no license record.
+  HARNESS_ORIGIN: "https://github.com/nomadlabsinc/h2-client-test-harness.git"
+  HARNESS_REV: "0bc075cc21e5a247dfd222e005d1e7e5679d2bff"
