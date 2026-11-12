@@ -41,6 +41,7 @@ uses
   Http2.Server.Config.Limits,
   Http2.Server.Config.Socket,
   Http2.Server.Config.Unix,
+  Http2.Server.Async.Options,
   Http2.Server.Encoding,
   Http2.Server.Runtime,
   Http2.Server.Sse.Encoder,
@@ -336,6 +337,7 @@ begin
     raise EServerConfigError.Create('the server settings are not valid:' +
       LineEnding + Text);
   Settings := Self;
+  CheckListenerPath(Settings);
   Result := THttp2Server.Create(Settings, AObserver);
 end;
 

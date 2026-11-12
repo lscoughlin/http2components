@@ -37,6 +37,16 @@ function BindAddressText(const AHost: string; const APort: Integer): RawUtf8;
 function BuildListenerOptions(
   const AFactory: THttp2ServerFactory): TAsyncConnectionsOptions;
 
+/// the text that mORMot2 binds: unix:<path> for a Unix socket, else the TCP text
+function ListenerBindText(const AFactory: THttp2ServerFactory): RawUtf8;
+
+/// refuses a Unix socket path that a bind must not take over
+// - the check reads the path and changes nothing. A path that is free or
+//   holds a stale socket passes; the bind replaces a stale socket
+// - the caller runs this before the server object is built, so a refusal
+//   never runs the destructor of a half-built object
+procedure CheckListenerPath(const AFactory: THttp2ServerFactory);
+
 /// the period of the idle callback, in whole seconds
 // - the callback is the one place that checks both timeouts, so it runs at the
 //   earlier of the two. A sub-second timeout rounds up to one second, because
@@ -148,6 +158,9 @@ function HeaderDeadlineSec(const ANowMs: QWord;
 
 implementation
 
+uses
+  Http2.Server.Unix.Path;
+
 function IdleCheckSeconds(const AIdleMs, AHeaderMs: Integer): Cardinal;
 
   function Seconds(const AValue: Integer): Cardinal;
@@ -182,6 +195,25 @@ begin
   result := ASYNC_OPTION_PROD;
   if AFactory.Socket.ReusePort then
     include(result, acoReusePort);
+end;
+
+function ListenerBindText(const AFactory: THttp2ServerFactory): RawUtf8;
+begin
+  if AFactory.Unix.Enabled then
+    result := RawUtf8('unix:' + AFactory.Unix.Path)
+  else
+    result := BindAddressText(AFactory.Host, AFactory.Port);
+end;
+
+procedure CheckListenerPath(const AFactory: THttp2ServerFactory);
+var
+  State: TUnixPathState;
+begin
+  if not AFactory.Unix.Enabled then
+    exit;
+  State := CheckUnixPath(AFactory.Unix.Path);
+  if (State <> upFree) and (State <> upStale) then
+    raise EHttpConnectionError.Create(UnixStateProblem(State));
 end;
 
 function BuildConnectionCoreOptions(
