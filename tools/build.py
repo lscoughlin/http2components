@@ -466,7 +466,7 @@ def run_integration_tests() -> None:
         run(["sh", "tools/server/certs/make_mtls_pki.sh", directory], env=env, timeout=30)
         env["HTTP2_TEST_PKI"] = directory
         run_suite(binary, True, env)
-    run([sys.executable, "tools/check/local_process.py"])
+    run([sys.executable, "tools/server/validate/local_process.py"])
 
 
 def run_server_live(kind: str) -> None:
