@@ -25,6 +25,7 @@ ARG MORMOT_DIR=/opt/mormot2
 ENV MORMOT=${MORMOT_DIR}/src \
     OPENSSL_LIBPATH=/usr/lib/x86_64-linux-gnu \
     TEST_TIMEOUT=900 \
+    TEST_LIST_NAMES=1 \
     HTTP2_TEST_TRACE=1
 
 WORKDIR /src
