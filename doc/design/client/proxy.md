@@ -383,6 +383,34 @@ for `ws` as well.
   without a proxy; the selector is still consulted, so pool keys reflect the route, but the
   injected factory ignores the proxy.
 
+## A proxy on a Unix socket
+
+`WithUnixProxy(APath, AKind)` names a proxy that listens on a socket file. The
+route is still proxied. The client opens the socket and negotiates the tunnel
+to the origin over it before TLS, h2c or HTTP/1.1 begins. For `pkHttp` the
+tunnel is an HTTP `CONNECT`. For `pkSocks5` the tunnel is a SOCKS5 `CONNECT`.
+The proxy has no host and no port, so the connection to the proxy is a
+connection to the file.
+
+- `pkHttp` is the default kind. It sends the HTTP `CONNECT` exchange over the
+  socket.
+- `pkSocks5` sends the SOCKS5 handshake over the socket. The factory gives the
+  proxy no user name and no password.
+- `pkHttps` is refused at `Build`. A TLS leg verifies the certificate of the
+  proxy against the proxy host name, and a socket file has no host name. The
+  refusal keeps the Unix proxy on a plain leg.
+- The path follows the rule of `WithUnixSocket` ([client API](client-api.md#unix-domain-sockets)).
+  A `WithUnixProxy` call with an empty path clears the proxy.
+- The route key of a Unix proxy is ` via unix:<path>`, with the prefix
+  `socks5:` before `unix:` for a SOCKS5 proxy. The connection pool keys each
+  origin on the route key, so a Unix proxy never shares a connection with a
+  direct route or with a TCP proxy.
+
+A Unix socket path given to `WithUnixSocket` replaces the route. A client that
+has a Unix socket path refuses every proxy source at `Build`, so the two options
+never combine. A selector result that carries a Unix proxy with a broken path, or
+the kind `pkHttps`, raises `EHttpProxyConfigError` at `Send`.
+
 ## mORMot2 as a reference
 
 > [!info] mORMot2 is the reference implementation for most of the pieces

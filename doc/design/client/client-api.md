@@ -211,6 +211,41 @@ begin
 end;
 ```
 
+### Unix domain sockets
+
+`WithUnixSocket(APath)` sends every connection of the client to the socket file
+at `APath`. The URL host and port still name the authority: they set the `Host`
+header, the TLS server name and the certificate check. They do not select the
+destination. `WithUnixSocket('')` clears the option.
+
+`APath` must be absolute, hold no NUL byte and be at most 103 bytes long in
+UTF-8. The same rule applies to the server option and to `WithUnixProxy`. The
+dial is described in [transport](transport.md#unix-domain-sockets).
+
+`WithUnixProxy(APath, AKind)` sets a proxy that listens on a socket file. `AKind`
+is `pkHttp` by default; `pkSocks5` is also accepted. `pkHttps` is refused at
+`Build`. The proxy replaces a `WithProxy` value, and the later call wins. The
+route rules are in [proxy](proxy.md#a-proxy-on-a-unix-socket).
+
+`Build` raises `EHttpUnixSocketConfigError` in these cases:
+
+- the `WithUnixSocket` path breaks the path rule;
+- the `WithUnixProxy` path breaks the path rule, or `AKind` is `pkHttps`;
+- a Unix socket path is set together with any proxy source: `WithProxy`,
+  `WithUnixProxy`, `WithAllProxy`, `WithProxySelector`, or a non-empty
+  `http_proxy`, `https_proxy` or `all_proxy` value read from the environment.
+  The environment is read only when `WithProxyEnvironmentVars` is enabled, which
+  is off by default.
+
+`EHttpUnixSocketConfigError` derives from `EHttpError`. A connect that fails
+raises `EHttpConnectionError` at `Send`, and a connect that times out raises
+`EHttpTimeout`.
+
+A redirect is a new request on the same client, so the redirect target also
+dials the socket file. An `http://` origin on a Unix socket follows the cleartext
+policy of the client, which is `ctReject` by default; see
+[fallback](fallback.md).
+
 ## HttpClient
 
 ```pascal
