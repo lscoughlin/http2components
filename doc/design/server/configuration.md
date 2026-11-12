@@ -20,6 +20,7 @@ primary_types:
 db_tables: None.
 related_docs:
   - doc/design/server/limits.md
+  - doc/design/server/unix-socket.md
   - doc/design/server/lifecycle.md
   - doc/design/server/protocol.md
   - doc/design/server/tls.md
@@ -96,6 +97,29 @@ sets a value.
 | `ClearTextAllowed` | `WithClearTextAllowed` | allows cleartext connections (HTTP/2 with prior knowledge, and HTTP/1.1 when the fallback is on); off by default |
 
 The listener fields are at `server/src/Http2.Server.Config.pas` (host, port, backlog, cleartext) and at `server/src/Http2.Server.Config.pas` (fallback, HTTP/1.1 limits, WebSocket).
+
+### The Unix socket settings
+
+| Setting | `WithX` | Meaning |
+|---|---|---|
+| `Unix` | `WithUnixSocket` | the record `TUnixSocketOptions`; a non-empty path selects a Unix socket listener, and `Host` and `Port` do not apply |
+| `Unix` mode | `WithUnixSocketMode` | the file mode of the socket file, set after the bind; -1 keeps the umask |
+
+The record is at `server/src/Http2.Server.Config.Unix.pas`. The path rule is
+at `common/src/Http2.Common.UnixPath.pas`. The checks of the path, the mode and
+the socket options are described in [unix-socket](unix-socket.md).
+
+The validation rules of the Unix settings are these:
+
+| Rule | Problem message |
+|---|---|
+| the path is absolute, is not empty, holds no NUL byte, and is at most 103 UTF-8 bytes | one of: the Unix socket path is empty; the Unix socket path is not absolute; the Unix socket path holds a NUL byte; the Unix socket path is N bytes long; the limit is 103 |
+| the path holds no colon | the Unix socket path holds a colon |
+| the mode is -1 to 511 (`$1FF`), checked even when no path is set | the Unix socket mode is out of range |
+| reuse-port is off when a path is set | the reuse-port option does not apply to a Unix socket |
+
+The port is not checked when a path is set. A Unix listener does not use the
+TCP checks of the port.
 
 ### TLS context selection
 
@@ -285,7 +309,7 @@ The rules are:
 
 | Rule | Problem message |
 |---|---|
-| the port is 0 to 65535 | the port is outside the range |
+| the port is 0 to 65535 when no Unix path is set | the port is outside the range |
 | the backlog is at least 1 | the listen backlog is below 1 |
 | the IO thread count is at least 1 | the IO thread count is below 1 |
 | the handler thread count is at least 1 | the handler thread count is below 1 |

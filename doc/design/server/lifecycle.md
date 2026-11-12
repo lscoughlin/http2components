@@ -13,6 +13,7 @@ primary_types:
 db_tables: []
 related_docs:
   - doc/design/server/public-api.md
+  - doc/design/server/unix-socket.md
   - doc/design/server/io-pool.md
   - doc/design/server/admission.md
   - doc/design/server/configuration.md
@@ -51,10 +52,19 @@ a stopped server is built again rather than started again.
 
 ## The port
 
-A factory port of 0 asks the operating system for a free port.
+A factory port of 0 asks the operating system for a free port. A Unix listener
+has no port. Its start skips the port read, and `Port` answers 0.
 `THttp2AsyncServer.BoundPort` reads the port
 back from the bound socket, so `IHttp2Server.Port` answers the real port after
 `Start`.
+
+## The socket file of a Unix listener
+
+For a Unix listener, `Start` sets the file mode after the async start returns.
+A failed mode change runs the stop path, as a failed bind does. The file of the
+listener is removed in `Stop`, and a stopped server leaves no socket file on
+disk. The checks before the bind, and the stale socket rules, are described in
+[unix-socket](unix-socket.md).
 
 ## The server timeouts
 
@@ -202,6 +212,10 @@ link and not a freed object.
 
 The stop is idempotent at both levels. The caller flag covers `THttp2Server`,
 and the queue and pool flags cover the two pools.
+
+The stop of a Unix listener follows the same six steps. The IO pool shutdown in
+step 6 closes the listener, and the listener removes the socket file that the
+process bound.
 
 ## The GOAWAY of a stop
 
