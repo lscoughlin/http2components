@@ -26,8 +26,10 @@ uses
 //   accepted async socket at the operating system defaults
 // - a buffer size of 0 keeps the operating system default
 // - an idle time of 0 leaves keep-alive off
+// - AUnix is True for a Unix socket: the TCP options are skipped, and the
+//   buffer sizes still apply
 procedure ApplySocketOptions(const ASocket: TNetSocket;
-  const AOptions: TSocketOptions);
+  const AOptions: TSocketOptions; const AUnix: Boolean);
 /// read bytes still queued in the kernel TCP send queue when supported
 // - the result is false on platforms without the Linux TIOCOUTQ query
 function TryGetSocketSendQueue(const ASocket: TNetSocket;
@@ -103,16 +105,19 @@ end;
 {$ENDIF}
 
 procedure ApplySocketOptions(const ASocket: TNetSocket;
-  const AOptions: TSocketOptions);
+  const AOptions: TSocketOptions; const AUnix: Boolean);
 begin
-  try
-    ASocket.SetNoDelay(AOptions.TcpNoDelay);
-  except
-    on ENetSock do
-      ; // Nagle keeps its default, and the connection still proceeds
+  if not AUnix then
+  begin
+    try
+      ASocket.SetNoDelay(AOptions.TcpNoDelay);
+    except
+      on ENetSock do
+        ; // Nagle keeps its default, and the connection still proceeds
+    end;
+    ApplyKeepAlive(ASocket, AOptions.KeepAliveIdleSec,
+      AOptions.KeepAliveIntervalSec, AOptions.KeepAliveCount);
   end;
-  ApplyKeepAlive(ASocket, AOptions.KeepAliveIdleSec,
-    AOptions.KeepAliveIntervalSec, AOptions.KeepAliveCount);
   if AOptions.SendBufferBytes > 0 then
   try
     ASocket.SendBufferSize := AOptions.SendBufferBytes;

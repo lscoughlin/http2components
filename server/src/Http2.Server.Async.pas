@@ -44,7 +44,7 @@ uses
   Http2.Server.Async.Counters,
   Http2.Server.Async.Waker,
   Http2.Server.Async.Sweep,
-  Http2.Server.Async.Socket,
+  Http2.Server.Async.Socket, Http2.Server.Unix.Path,
   Http2.Server.Tls.Binding, Http2.Server.Tls.Adapter,
   Http2.Common.Tls.Context, Http2.Common.Tls.Session,
   Http2.Common.Tls.Types;
@@ -291,7 +291,8 @@ end;
 procedure THttp2AsyncConnection.AfterCreate;
 begin
   FServer := THttp2AsyncServer(fOwner);
-  ApplySocketOptions(fSocket, FServer.Factory.Socket);
+  ApplySocketOptions(fSocket, FServer.Factory.Socket,
+    FServer.Factory.Unix.Enabled);
   FAcceptedMs := mormot.core.os.GetTickCount64; FJitterPermille := Random(101);
   if FServer.FTlsBinding <> nil then
     FHandshakeDeadlineMs := TlsHandshakeDeadline(FAcceptedMs,
@@ -309,7 +310,8 @@ procedure THttp2AsyncConnection.StartHttp2;
 begin
   FEvents := THttp2ConnectionEvents.Create(FServer.Handlers, FServer.Notify,
     FServer.Counters.StreamResetted, FServer.Counters.BucketTripped,
-    PeerAddressText(RemoteIP, fRemoteIP4), FClientCert);
+    PeerAddressText(RemoteIP, fRemoteIP4, UnixPeerText(
+      FServer.Factory.Unix.Enabled, LongInt(fSocket.Socket))), FClientCert);
   FCore := TServerConnectionCore.Create(FServer.CoreOptions, FEvents,
     BuildConnectionLimits(FServer.Factory), FServer.Factory.Clock);
   FMethodWaker := TMethodWaker.Create(WakeOutput);
@@ -324,7 +326,8 @@ var
   Core: TH1Core;
 begin
   FH1Events := THttp1ConnectionEvents.Create(FServer.Handlers,
-    PeerAddressText(RemoteIP, fRemoteIP4), FClientCert);
+    PeerAddressText(RemoteIP, fRemoteIP4, UnixPeerText(
+      FServer.Factory.Unix.Enabled, LongInt(fSocket.Socket))), FClientCert);
   Core := TH1Core.Create(
     BuildH1CoreOptions(FServer.Factory, FTlsAdapter <> nil), FH1Events);
   Core.OnRetired := H1RetireNotified;

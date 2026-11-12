@@ -51,9 +51,13 @@ type
     procedure TestPathOf103BytesBinds;
     procedure TestStopWithOpenConnection;
     procedure TestTcpStillWorks;
+    procedure TestRemoteAddressIsUnix;
   end;
 
 implementation
+
+uses
+  SyncObjs, Generics.Collections, Http2.Server.AccessLog;
 
 type
   /// a handler that answers every request with the body hi
@@ -63,8 +67,78 @@ type
       const AResponse: IServerResponse);
   end;
 
+  /// keeps every access log record that it receives
+  TUnixRecordingWriter = class(TInterfacedObject, IAccessLogWriter)
+  private
+    FLock: TCriticalSection;
+    FRecords: TList<TAccessLogRecord>;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    procedure Write(const ARecord: TAccessLogRecord);
+    function Count: Integer;
+    function At(const AIndex: Integer): TAccessLogRecord;
+    /// wait until ACount records exist
+    function WaitFor(const ACount, ATimeoutMs: Integer): Boolean;
+  end;
+
 const
   CRLF2 = #13#10#13#10;
+
+constructor TUnixRecordingWriter.Create;
+begin
+  inherited Create;
+  FLock := TCriticalSection.Create;
+  FRecords := TList<TAccessLogRecord>.Create;
+end;
+
+destructor TUnixRecordingWriter.Destroy;
+begin
+  FRecords.Free;
+  FLock.Free;
+  inherited Destroy;
+end;
+
+procedure TUnixRecordingWriter.Write(const ARecord: TAccessLogRecord);
+begin
+  FLock.Acquire;
+  try
+    FRecords.Add(ARecord);
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TUnixRecordingWriter.Count: Integer;
+begin
+  FLock.Acquire;
+  try
+    Result := FRecords.Count;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TUnixRecordingWriter.At(const AIndex: Integer): TAccessLogRecord;
+begin
+  FLock.Acquire;
+  try
+    Result := FRecords[AIndex];
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TUnixRecordingWriter.WaitFor(const ACount,
+  ATimeoutMs: Integer): Boolean;
+var
+  Stop: QWord;
+begin
+  Stop := GetTickCount64 + QWord(ATimeoutMs);
+  while (Count < ACount) and (GetTickCount64 < Stop) do
+    Sleep(5);
+  Result := Count >= ACount;
+end;
 
 procedure THiHandler.Handle(const ARequest: IServerRequest;
   const AResponse: IServerResponse);
@@ -309,6 +383,29 @@ begin
   finally
     C.Free;
   end;
+end;
+
+procedure TUnixServerTest.TestRemoteAddressIsUnix;
+var
+  LogWriter: TUnixRecordingWriter;
+  WriterRef: IAccessLogWriter;
+  Rec: TAccessLogRecord;
+  Expected, Line: string;
+begin
+  LogWriter := TUnixRecordingWriter.Create;
+  WriterRef := LogWriter;
+  FServer := Factory(FPath).WithAccessLogWriter(WriterRef).Build;
+  FServer.Start;
+  AssertAnswersHi(GetOverUnix(FPath));
+  AssertTrue('one record', LogWriter.WaitFor(1, ResponseMs));
+  Rec := LogWriter.At(0);
+  // the client runs in this process, so its pid is this process id
+  Expected := 'unix:pid=' + IntToStr(fpGetPid);
+  AssertEquals('the remote address is the peer pid', Expected,
+    Rec.RemoteAddress);
+  Line := FormatCommonLog(Rec);
+  AssertTrue('the first field of the log line is the address: ' + Line,
+    Pos(Expected + ' ', Line) = 1);
 end;
 
 initialization
