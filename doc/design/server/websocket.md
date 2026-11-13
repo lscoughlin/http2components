@@ -250,6 +250,21 @@ server no rule, so these are policy choices.
 - A foreign origin is refused with 403. The 81 vectors of the research notes are the
   test list.
 
+## The host allow-list
+
+The default origin policy compares the `Origin` field with the `Host` field or the
+`:authority` value of the same request. A DNS rebinding attack makes the browser send
+a `Host` value and an `Origin` value that both name the attacker's domain, so the
+default policy passes it. The default policy does not close this attack.
+
+The host allow-list `WsAllowedHosts` closes it. The default is an empty list, which
+turns the check off, so the server behaves as before. When the list holds entries, the
+`Host` field (HTTP/1.1) or the `:authority` value (HTTP/2, extended CONNECT) must match
+an entry. The match is exact and case-insensitive on the host and the port. An entry
+without a port matches the default port of the scheme of the transport. A value that
+is not a usable authority never matches a non-empty list. A request that does not
+match is refused with 403. The check runs after the origin policy.
+
 ## The HTTP/1.1 handshake
 
 An application accepts an upgrade inside an ordinary handler:
@@ -406,6 +421,7 @@ defaults live in `Create`.
 | `WsEarlyBytes` | 262144 | the octets that the channel holds before the session takes it |
 | `OriginPolicy` | `opSameOrAbsent` | as described in above |
 | `AllowedOrigins` | none | the allow-list, each entry `scheme://host[:port]` |
+| `WsAllowedHosts` | none | the host allow-list, each entry `host[:port]`; an empty list turns the check off |
 | `Subprotocols` | none | the subprotocols the server picks from, in order of preference |
 
 The record `TServerLimits` holds `MaxWsQueuedBytes` (default 128 MiB, at least 1 MiB) and

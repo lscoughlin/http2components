@@ -75,6 +75,13 @@ function WsCheckOrigin(const APolicy: TWsOriginPolicy;
   const AAllowed: TArray<string>; const AScheme, AAuthority: string;
   const AOriginValues: TArray<string>): TWsOriginVerdict;
 
+/// true when the host allow-list accepts the authority of the request
+// - an empty list accepts every host, so the check is off
+// - a non-empty list needs an exact match of the host and the port, in lower case
+// - an entry without a port matches the default port of AScheme
+// - an authority that is not usable never matches a non-empty list
+function WsHostAllowed(const AAllowed: TArray<string>; const AScheme, AAuthority: string): Boolean;
+
 implementation
 
 uses
@@ -336,6 +343,21 @@ begin
       Exit(Refuse(403, 'the origin differs from the origin of the server'));
   end;
   Result := Allow;
+end;
+
+function WsHostAllowed(const AAllowed: TArray<string>; const AScheme, AAuthority: string): Boolean;
+var
+  Server, Entry: TWsOrigin;
+  I: Integer;
+begin
+  if Length(AAllowed) = 0 then
+    Exit(True);
+  if not WsServerOrigin(AScheme, AAuthority, Server) then
+    Exit(False);
+  for I := 0 to High(AAllowed) do
+    if WsServerOrigin(AScheme, AAllowed[I], Entry) and SameOrigin(Server, Entry) then
+      Exit(True);
+  Result := False;
 end;
 
 end.

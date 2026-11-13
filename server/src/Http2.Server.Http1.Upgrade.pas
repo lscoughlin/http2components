@@ -159,6 +159,12 @@ begin
     Refuse(AResponse, Verdict.Status);
     Exit;
   end;
+  // the host allow-list (an empty list turns the check off)
+  if not WsHostAllowed(Env.Options.WsAllowedHosts, ARequest.Scheme, ARequest.Authority) then
+  begin
+    Refuse(AResponse, 403);
+    Exit;
+  end;
   if AUpgrade.HasRequestBody or (AUpgrade.BufferedAfterHead > 0) then
   begin
     Refuse(AResponse, 400);
