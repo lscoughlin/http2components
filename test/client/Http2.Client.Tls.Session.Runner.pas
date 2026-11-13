@@ -771,6 +771,48 @@ begin
   Context := nil;
 end;
 
+procedure TestAlertReadDoesNotHoldSessionLock;
+var
+  Raw: TPartialStream;
+  RawSocket, Socket: IHttp2Socket;
+  Context: ITLSContext;
+  Alerting, Probe: TTlsWriteWorker;
+  ProbeDone, AlertingDone: Boolean;
+begin
+  Raw := TPartialStream.Create;
+  Raw.EnableReadBlocking;
+  Raw.HoldBlockedReadUntilReleased;
+  RawSocket := Raw;
+  Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 0);
+  Socket := TTlsSocket.Create(RawSocket, 'example.test', Context, nil,
+    ['h2'], 1000);
+  Alerting := TTlsWriteWorker.Create(Socket);
+  Probe := TTlsWriteWorker.Create(Socket);
+  try
+    Raw.FailNextWrite;
+    Alerting.Start;
+    Check(Raw.WaitForReadStart(1000), 'peer-alert read did not start');
+    Probe.Start;
+    ProbeDone := Probe.WaitDone(1000);
+    AlertingDone := Alerting.WaitDone(0);
+    Raw.ReleaseBlockedRead;
+    Check(ProbeDone,
+      'a peer-alert read held the session lock and stopped another writer');
+    Check(not AlertingDone, 'the alert read ended before the probe finished');
+    Check(Alerting.WaitDone(1000), 'the alert read did not end after release');
+    Check(Pos('scripted socket write failed', Alerting.Error) > 0,
+      'alert read changed the original write error');
+  finally
+    Raw.ReleaseBlockedRead;
+    Socket.Close;
+    Probe.Free;
+    Alerting.Free;
+    Socket := nil;
+    RawSocket := nil;
+    Context := nil;
+  end;
+end;
+
 var
   Cases: Integer;
 begin
@@ -817,5 +859,7 @@ begin
   TestWriteFailureDoesNotDeadlockWithBusyReader; Inc(Cases);
   WriteLn('RUN write-failure-zero-feed'); Flush(Output);
   TestWriteFailureZeroFeedDoesNotRetryOutput; Inc(Cases);
+  WriteLn('RUN alert-read-session-lock'); Flush(Output);
+  TestAlertReadDoesNotHoldSessionLock; Inc(Cases);
   WriteLn('PASS ', Cases, ' cases');
 end.

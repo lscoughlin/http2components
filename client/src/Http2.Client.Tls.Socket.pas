@@ -336,6 +336,7 @@ var
   Data: TBytes;
   Deadline, NowMs: QWord;
   Used: SizeInt;
+  ReadNeeded: Boolean;
 begin
   // Some TLS 1.3 servers reject a client certificate only after they receive
   // application data.  With HTTP/2, the connection preface is the first data;
@@ -343,25 +344,38 @@ begin
   // write completes.  Read until a terminal TLS result or a short absolute
   // deadline so a preceding record fragment cannot hide the alert.  A timeout
   // or EOF leaves the original write error as the connection failure.
-  FSessionLock.Acquire;
+  // The caller does not hold the session lock.  The method holds it only to
+  // look at or to change the session state, and never across the transport
+  // read, so other threads can use the session while the read waits.
+  // Do not invert the ordinary reader -> session lock order.
+  if not FReadLock.TryEnter then
+    Exit;
   try
-    // Do not invert the ordinary reader -> session lock order.
-    if not FReadLock.TryEnter then
-      Exit;
+    PreviousTimeout := FTransport.ReadTimeoutMs;
     try
-      PreviousTimeout := FTransport.ReadTimeoutMs;
-      try
-        Deadline := mormot.core.os.GetTickCount64 + 100;
-        repeat
-          NowMs := mormot.core.os.GetTickCount64;
-          if NowMs >= Deadline then
-            Break;
-          FTransport.ReadTimeoutMs := Integer(Deadline - NowMs);
+      Deadline := mormot.core.os.GetTickCount64 + 100;
+      repeat
+        NowMs := mormot.core.os.GetTickCount64;
+        if NowMs >= Deadline then
+          Break;
+        FTransport.ReadTimeoutMs := Integer(Deadline - NowMs);
+        try
+          N := 0;
+          FSessionLock.Acquire;
           try
-            if Length(FEncryptedPending) = 0 then
+            ReadNeeded := Length(FEncryptedPending) = 0;
+          finally
+            FSessionLock.Release;
+          end;
+          if ReadNeeded then
+          begin
+            SetLength(Data, TlsMaxEncryptedInput);
+            N := FReader.ReadSome(Data[0], Length(Data));
+          end;
+          FSessionLock.Acquire;
+          try
+            if ReadNeeded then
             begin
-              SetLength(Data, TlsMaxEncryptedInput);
-              N := FReader.ReadSome(Data[0], Length(Data));
               if N <= 0 then
               begin
                 FTransportEof := True;
@@ -393,22 +407,22 @@ begin
             InterlockedIncrement(FInputGeneration);
             RTLEventSetEvent(FInputProgress);
             AdvanceSession;
-          except
-            on E: EHttpTlsClientAuthError do
-              raise;
-            on Exception do
-              Break; // keep the transport write error without a TLS auth alert
+          finally
+            FSessionLock.Release;
           end;
-        until False;
-      finally
-        FTransport.ReadTimeoutMs := PreviousTimeout;
-      end;
+        except
+          on E: EHttpTlsClientAuthError do
+            raise;
+          on Exception do
+            Break; // keep the transport write error without a TLS auth alert
+        end;
+      until False;
     finally
-      FReadLock.Release;
-      RTLEventSetEvent(FInputProgress);
+      FTransport.ReadTimeoutMs := PreviousTimeout;
     end;
   finally
-    FSessionLock.Release;
+    FReadLock.Release;
+    RTLEventSetEvent(FInputProgress);
   end;
 end;
 
