@@ -27,6 +27,7 @@ uses
   Http2.Common.HpackProps.ClientOrigin.Test,
   Http2.Common.HpackProps.ServerOrigin.Test,
   Http2.Common.Hpack.Directions.Test,
+  Http2.Common.HpackInteger.Test,
   Http2.Common.Frames.ClientOrigin.Test,
   Http2.Common.Frames.ServerOrigin.Test,
   Http2.Common.FlowControl.ClientOrigin.Test,

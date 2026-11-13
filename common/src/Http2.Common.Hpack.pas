@@ -374,11 +374,14 @@ begin
   repeat
     if Pos >= Length(Data) then
       CompressionError('HPACK: truncated integer continuation');
+    // at most five continuation octets (the shift stays at 28 or below)
+    if Shift > 28 then
+      CompressionError('HPACK: integer overflow');
     B := Data[Pos];
     Inc(Pos);
-    V := V + (UInt64(B and $7f) shl Shift);
-    if V > HpackMaxInteger then
+    if UInt64(B and $7f) > (UInt64(HpackMaxInteger) - V) shr Shift then
       CompressionError('HPACK: integer overflow');
+    V := V + (UInt64(B and $7f) shl Shift);
     Shift := Shift + 7;
   until (B and $80) = 0;
   Result := LongWord(V);
