@@ -236,6 +236,8 @@ type
     /// add an externally-built connection under AOrigin (test seam)
     procedure AddForTest(const AOrigin: string;
       const AConn: IPooledConnection);
+    /// mark AConn as used now, so that it counts as idle from now on (test seam)
+    procedure TouchForTest(const AConn: IPooledConnection);
   end;
 
 implementation
@@ -555,6 +557,7 @@ begin
   finally
     FLock.Release;
   end;
+  CloseVictims;                      // outside FLock: a close can join a thread
 end;
 
 procedure TPoolState.ReapIdleLocked;
@@ -581,7 +584,7 @@ begin
         Continue;
       if Now - Since < QWord(FIdleTimeoutMs) then
         Continue;
-      C.Drain;                       // closes now, since it is idle
+      FVictims.Add(C);               // closes after FLock is released
       FIdleSince.Remove(C.Key);
       FCreatedAt.Remove(C.Key);
       L.Delete(I);
@@ -719,23 +722,29 @@ end;
 procedure TPoolState.Close;
 var
   Origin: string;
-  L: TList<IPooledConnection>;
+  Taken: TList<IPooledConnection>;
   C: IPooledConnection;
 begin
-  FLock.Acquire;
+  Taken := TList<IPooledConnection>.Create;
   try
-    if FClosed then
-      Exit;
-    FClosed := True;
-    for Origin in FByOrigin.Keys do
-    begin
-      L := FByOrigin[Origin];
-      for C in L do
-        C.Drain;
+    FLock.Acquire;
+    try
+      if FClosed then
+        Exit;
+      FClosed := True;
+      for Origin in FByOrigin.Keys do
+        Taken.AddRange(FByOrigin[Origin]);
+    finally
+      FLock.Release;
     end;
+    // a Drain can close a connection and join its reader thread: never
+    // under FLock
+    for C in Taken do
+      C.Drain;
   finally
-    FLock.Release;
+    Taken.Free;
   end;
+  CloseVictims;
 end;
 
 function TPoolState.Stats: TPoolStats;
@@ -907,6 +916,16 @@ begin
     ListFor(AOrigin).Add(AConn);
     Inc(FTotalConnections);
     FCreatedAt.AddOrSetValue(AConn.Key, GetTickCount64);
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TPoolState.TouchForTest(const AConn: IPooledConnection);
+begin
+  FLock.Acquire;
+  try
+    MarkUsed(AConn);
   finally
     FLock.Release;
   end;

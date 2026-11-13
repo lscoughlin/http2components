@@ -475,30 +475,38 @@ begin
 end;
 
 procedure TConnection.Close;
+var
+  First, Mine: Boolean;
 begin
-  if FClosed then
+  // the reader cannot join itself: it only terminates; the next Close joins
+  Mine := (FThread <> nil) and (GetCurrentThreadId = FThread.ThreadID);
+  First := not FClosed;
+  if not First and (FThread = nil) then
     Exit;
   FClosed := True;
-  // GOAWAY must be queued even while the preface is still being written: the
-  // worker sets csOpen only *after* DoPreface returns, so a Close racing with
-  // startup would otherwise skip the GOAWAY entirely. Queued frames are
-  // drained after the preface, preserving the wire ordering (preface,
-  // SETTINGS, then GOAWAY).
-  if (FThread <> nil) and (GetState in [csOpening, csOpen]) then
-    FOutbound.Push(BuildGoAwayFrame(FHighestStreamId, ecNoError, nil));
+  // GOAWAY is queued even while the preface is still being written (csOpen
+  // comes only after DoPreface returns); queued frames drain after the
+  // preface, so the wire order is preface, SETTINGS, GOAWAY.
+  if First and (FThread <> nil) and (GetState in [csOpening, csOpen]) then
+    if Mine then                     // only the reader drains FOutbound
+      FControl.TryPost(BuildGoAwayFrame(FHighestStreamId, ecNoError, nil))
+    else
+      FOutbound.Push(BuildGoAwayFrame(FHighestStreamId, ecNoError, nil));
   if FThread <> nil then
-  begin
     FThread.Terminate;
-    FThread.WaitFor;
-    FThread.Free;
-    FThread := nil;
+  if not Mine then
+  begin
+    if FThread <> nil then
+      FThread.WaitFor;
+    FreeAndNil(FThread);
+    FOutbound.Shutdown;
+    FInbound.Shutdown;
+    if FSocket <> nil then
+      FSocket.Close;
   end;
-  FOutbound.Shutdown;
-  FInbound.Shutdown;
-  if FSocket <> nil then
-    FSocket.Close;
   SetState(csClosed);
-  FNotifications.EmitConnectionClose('', ecNoError);
+  if First then
+    FNotifications.EmitConnectionClose('', ecNoError);
 end;
 
 function TConnection.PostFrame(const AFrame: TFrame): Boolean;

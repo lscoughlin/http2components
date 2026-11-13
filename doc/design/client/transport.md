@@ -179,12 +179,14 @@ lock that is earlier in the list.
    request body. The lease releases it only during the wait for flow-control
    credit (`AcquireCredit` in `Http2.Client.Stream.Send.pas`). A thread that
    reads a response body holds it, except during the wait for the next frame.
-   A thread that closes the connection holds it while it queues the GOAWAY
-   frame and while it waits for the reader thread to end (`TConnection.Close`).
+   A thread that closes the connection does not hold it. `Drain` and
+   `ReleaseIfIdle` of `THttpConnection` decide under the encoder lock, release
+   it, and then call `TConnection.Close`, which queues the GOAWAY frame and
+   waits for the reader thread to end. A flag that is set under the encoder
+   lock lets only one thread close the connection.
    The pool lock (`TPoolState` in `Http2.Client.Pool.State.pas`) is outside
-   this order. The pool holds its lock while it drains an idle connection, so
-   the pool lock is taken before the encoder lock. Library code does not take
-   the pool lock while it holds the encoder lock.
+   this order. The pool does not hold its lock while it closes a connection.
+   Library code does not take the pool lock while it holds the encoder lock.
 2. The connection lock (`TConnection.FLock`). It guards the state, the peer
    settings, the stream table, the flow control windows and the receive
    credit counters. Each section under this lock is short. No section waits,
@@ -229,13 +231,38 @@ with `TryEnter`. When the lock is busy, the reader leaves the size in the
 header table hand-off, and the stream thread that holds the lock applies the
 size to the encoder before it encodes the next header block.
 
-`TConnection.Close` waits for the reader thread to end. When the pool drains a
-connection, the caller holds the pool lock and the encoder lock during that
-wait. The reader never takes the encoder lock with a blocking call, so the
-wait does not form a cycle with the encoder lock. The reader can run exchange
-callbacks on a connection failure and on a GOAWAY frame. A callback that waits
-for the pool lock or for the encoder lock of the same connection blocks the
-wait, and the two threads then deadlock.
+`TConnection.Close` waits for the reader thread to end. The caller of
+`TConnection.Close` holds no pool lock and no encoder lock during that wait.
+The pool removes the connections that it closes from its tables under the pool
+lock and puts them in a list of victims (`ReapIdleLocked`, the eviction of an
+idle connection of another identity). `TPoolState.Close` copies the
+connections. `CloseVictims` and the loop of `TPoolState.Close` close them after
+the pool lock is released. The reader can run exchange callbacks on a
+connection failure and on a GOAWAY frame. A callback that waits for the pool
+lock or for the encoder lock of the same connection would block such a wait,
+and this is why the wait runs with both locks released.
+
+The reader thread can call `TConnection.Close` from a callback, for example
+when an observer calls `Close` of the client. The reader thread cannot join
+itself. `TConnection.Close` compares the current thread with the reader thread.
+On the reader thread it queues the GOAWAY frame in the control frame queue
+(the reader is the only thread that drains the outbound queue, so a push
+there could wait for ever), sets the closing flag, terminates the thread, sets
+the state to closed and emits the close event. It does not join the thread, it
+does not shut down the queues and it does not close the socket, because the
+reader still uses them until the callback returns. The next `Close` from
+another thread, or the destructor, joins the thread and ends the shutdown.
+
+A callback on the reader thread can also drop the last reference to the pooled
+connection, for example when it releases the last reference to the client. The
+destructor of `THttpConnection` then runs on the reader thread. The reader
+thread still uses the connection, the header codecs and the encoder lock when
+the callback returns, so the destructor does not free them. It hands them to a
+cleanup thread, which closes the connection (this joins the reader thread,
+which has returned from the callback by then) and then frees the parts. The
+function `PendingConnectionCleanups` in `Http2.Client.Pool.Http2` counts the
+cleanup threads that still run. A direct free of a `TConnection` on its own
+reader thread is not supported.
 
 A write timeout is not an idle poll. Only a read that returns no byte before
 the poll interval ends is an idle poll, and the reader then continues its loop.
@@ -332,7 +359,7 @@ queue, and the reader thread never waits for it.
 
 ### Where the pattern is used
 
-The pool applies the pattern in the wait for a dial in flight, in the close of idle connections, and in the locks of the HTTP/1 pooled connection. The sections of the units that apply it name the lock levels that they use.
+The pool applies the pattern in the wait for a dial in flight, in the close of idle connections, and in the locks of the HTTP/1 pooled connection. The close of a connection (idle reap, eviction, `Close` of the pool, `Drain` and `ReleaseIfIdle`) runs after the pool lock and the encoder lock are released. The sections of the units that apply it name the lock levels that they use.
 
 ## Receive flow control
 
