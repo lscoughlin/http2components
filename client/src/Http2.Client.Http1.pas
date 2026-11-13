@@ -614,6 +614,9 @@ begin
   FSendRequest := ARequest;
   FBeginDone := False;
 
+  // one deadline covers the whole head (status line, fields, interim heads)
+  if FTimeoutMs > 0 then
+    FReader.SetDeadline(GetTickCount64 + QWord(FTimeoutMs));
   // Read ONLY the status line, with no read-ahead: an h2c upgrade must leave
   // the bytes after the 101 in the socket for the HTTP/2 connection.
   if not FReader.ReadLineNoReadAhead(Line, True) then
@@ -644,6 +647,9 @@ begin
       'FinishResponse called before BeginResponse', ecInternalError);
   FBeginDone := False;   // consume: one status line per response
 
+  // a head started by BeginResponse keeps its deadline; a resumed head starts one
+  if (FTimeoutMs > 0) and not FReader.HasDeadline then
+    FReader.SetDeadline(GetTickCount64 + QWord(FTimeoutMs));
   Interim := 0;
   while True do
   begin
@@ -662,6 +668,10 @@ begin
           IntToStr(cHttp1MaxHeaderBytes) + '-byte limit', ecProtocolError);
       if Line = '' then
         Break;
+      if Length(Head) >= cHttp1MaxHeadLines then
+        raise EHttpProtocolError.Create(
+          'HTTP/1.1 response has more than ' +
+          IntToStr(cHttp1MaxHeadLines) + ' header lines', ecProtocolError);
       SetLength(Head, Length(Head) + 1);
       Head[High(Head)] := Line;
     end;
@@ -687,6 +697,9 @@ begin
         ecStreamClosed);
     ParseStatusLine(Line, FVersion, FStatusCode, FReason);
   end;
+
+  // the head is complete: the body reads have no head deadline
+  FReader.ClearDeadline;
 
   // bodyless responses: HEAD, 204 and 304 never carry a body even when a
   // content-length is present (RFC 9110 section 6.4.1)

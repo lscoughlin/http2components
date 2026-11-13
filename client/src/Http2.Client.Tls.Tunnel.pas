@@ -77,9 +77,12 @@ type
 procedure EstablishProxyTunnelFd(AFd: Integer; const AHost: string;
   const APort: Word; const ATimeoutMs: Integer;
   const AUserName, APassword: string);
-/// negotiate an HTTP CONNECT tunnel over ACh (see the implementation)
+/// negotiate an HTTP CONNECT tunnel over ACh (see the implementation).
+// ADeadlineMs bounds the whole reply (the status lines, the 1xx replies and the
+// header block) in milliseconds; 0 sets no deadline.
 procedure EstablishConnectTunnel(const ACh: ISocksChannel; const AHost: string;
-  const APort: Word; const AUserName, APassword: string);
+  const APort: Word; const AUserName, APassword: string;
+  const ADeadlineMs: Integer = 0);
 function DialRoutedTransport(const AHost: string; const APort: Word;
   const AConnectTimeoutMs: Integer; const AProxy: IProxy;
   const AInsecure: Boolean; const ACACertFile: string;
@@ -94,33 +97,61 @@ uses
   Http2.Common.Tls.Types, Http2.Common.Headers;
 
 type
+  /// a channel whose reads of one CONNECT reply stay within one deadline
+  IReplyDeadline = interface
+    ['{5A0E3C21-7B4D-4E8A-9F10-2C6D8B1E4A77}']
+    /// the reply must end by ADeadlineMs (GetTickCount64 milliseconds); 0 clears it
+    procedure SetReplyDeadline(const ADeadlineMs: QWord);
+  end;
+
   /// the proxy exchange over a raw descriptor
-  TFdChannel = class(TInterfacedObject, ISocksChannel)
+  TFdChannel = class(TInterfacedObject, ISocksChannel, IReplyDeadline)
   private
     FFd: Integer;
     FTimeoutMs: Integer;
+    FDeadlineMs: QWord;
   public
     constructor Create(const AFd, ATimeoutMs: Integer);
     procedure WriteAll(const AData: TBytes);
     function ReadSome(var ABuffer; const ACount: Integer): Integer;
+    procedure SetReplyDeadline(const ADeadlineMs: QWord);
   end;
 
   /// the proxy exchange over an IHttp2Socket (for example a TLS socket to an
   /// https proxy)
-  TSocketChannel = class(TInterfacedObject, ISocksChannel)
+  TSocketChannel = class(TInterfacedObject, ISocksChannel, IReplyDeadline)
   private
     FSock: IHttp2Socket;
+    FDeadlineMs: QWord;
   public
     constructor Create(const ASock: IHttp2Socket);
     procedure WriteAll(const AData: TBytes);
     function ReadSome(var ABuffer; const ACount: Integer): Integer;
+    procedure SetReplyDeadline(const ADeadlineMs: QWord);
   end;
+
+const
+  /// the 1xx replies a CONNECT reply may carry before the tunnel is refused
+  cConnectMaxInterimReplies = 16;
+
+/// the time that remains of a reply deadline, in milliseconds (at least 1).
+// Raises EHttpTimeout when the deadline has passed.
+function ReplyTimeoutLeft(const ADeadlineMs: QWord): Integer;
+var
+  Now: QWord;
+begin
+  Now := mormot.core.os.GetTickCount64;
+  if Now >= ADeadlineMs then
+    raise EHttpTimeout.Create('proxy CONNECT reply deadline passed');
+  Result := Integer(ADeadlineMs - Now);
+end;
 
 constructor TFdChannel.Create(const AFd, ATimeoutMs: Integer);
 begin
   inherited Create;
   FFd := AFd;
   FTimeoutMs := ATimeoutMs;
+  FDeadlineMs := 0;
 end;
 
 procedure TFdChannel.WriteAll(const AData: TBytes);
@@ -132,14 +163,26 @@ end;
 function TFdChannel.ReadSome(var ABuffer; const ACount: Integer): Integer;
 begin
   // reads exactly ACount (or to EOF): callers ask for exactly what the
-  // protocol still needs, so nothing past the proxy reply is consumed
-  Result := SocketReadFully(FFd, ACount, FTimeoutMs, ABuffer);
+  // protocol still needs, so nothing past the proxy reply is consumed.  Under
+  // a reply deadline one read waits at most the time left, so a timeout of
+  // that read is the deadline itself.
+  if FDeadlineMs = 0 then
+    Result := SocketReadFully(FFd, ACount, FTimeoutMs, ABuffer)
+  else
+    Result := SocketReadFully(FFd, ACount, ReplyTimeoutLeft(FDeadlineMs),
+      ABuffer);
+end;
+
+procedure TFdChannel.SetReplyDeadline(const ADeadlineMs: QWord);
+begin
+  FDeadlineMs := ADeadlineMs;
 end;
 
 constructor TSocketChannel.Create(const ASock: IHttp2Socket);
 begin
   inherited Create;
   FSock := ASock;
+  FDeadlineMs := 0;
 end;
 
 procedure TSocketChannel.WriteAll(const AData: TBytes);
@@ -149,20 +192,38 @@ begin
 end;
 
 function TSocketChannel.ReadSome(var ABuffer; const ACount: Integer): Integer;
+var
+  Saved: Integer;
 begin
-  Result := FSock.Read(ABuffer, ACount);
+  if FDeadlineMs = 0 then
+    Exit(FSock.Read(ABuffer, ACount));
+  Saved := FSock.ReadTimeoutMs;
+  FSock.ReadTimeoutMs := ReplyTimeoutLeft(FDeadlineMs);
+  try
+    Result := FSock.Read(ABuffer, ACount);
+  finally
+    FSock.ReadTimeoutMs := Saved;
+  end;
+end;
+
+procedure TSocketChannel.SetReplyDeadline(const ADeadlineMs: QWord);
+begin
+  FDeadlineMs := ADeadlineMs;
 end;
 
 /// read one CRLF/LF-terminated line from the tunnel handshake; False only at
 // EOF.  Byte-at-a-time so it never consumes bytes past the CONNECT response
-// (any payload beyond the blank line belongs to the tunnel)
+// (any payload beyond the blank line belongs to the tunnel).  ADeadlineMs
+// (0 for none) is checked before each byte, so a trickle is cut at the deadline.
 function ProxyReadLineCh(const ACh: ISocksChannel;
-  out ALine: AnsiString): Boolean;
+  out ALine: AnsiString; const ADeadlineMs: QWord): Boolean;
 var
   C: AnsiChar;
 begin
   ALine := '';
   repeat
+    if (ADeadlineMs > 0) and (mormot.core.os.GetTickCount64 >= ADeadlineMs) then
+      raise EHttpTimeout.Create('proxy CONNECT reply deadline passed');
     if ACh.ReadSome(C, 1) <= 0 then
       Exit(False);
     if C = #10 then
@@ -216,12 +277,22 @@ end;
 /// truncated response is a connection failure, not a fallback.  Credentials
 /// never appear in a message.
 procedure EstablishConnectTunnel(const ACh: ISocksChannel; const AHost: string;
-  const APort: Word; const AUserName, APassword: string);
+  const APort: Word; const AUserName, APassword: string;
+  const ADeadlineMs: Integer);
 var
   Req, Line, Auth: AnsiString;
-  Code: Integer;
+  Code, Interim: Integer;
   Bytes: TBytes;
+  Deadline: QWord;
+  Reply: IReplyDeadline;
 begin
+  Deadline := 0;
+  if ADeadlineMs > 0 then
+  begin
+    Deadline := mormot.core.os.GetTickCount64 + QWord(ADeadlineMs);
+    if Supports(ACh, IReplyDeadline, Reply) then
+      Reply.SetReplyDeadline(Deadline);
+  end;
   Auth := ConnectAuthority(AHost, APort);
   Req := 'CONNECT ' + Auth + ' HTTP/1.1'#13#10'Host: ' + Auth + #13#10;
   if AUserName <> '' then
@@ -232,22 +303,31 @@ begin
   Move(Req[1], Bytes[0], Length(Req));
   ACh.WriteAll(Bytes);
   // skip any informational (1xx) response and any blank separators, then
-  // require a 2xx; a blank line must not be treated as a status
+  // require a 2xx; a blank line must not be treated as a status.  At most
+  // cConnectMaxInterimReplies 1xx replies are skipped.
   Code := 100;
+  Interim := 0;
   repeat
-    if not ProxyReadLineCh(ACh, Line) then
+    if not ProxyReadLineCh(ACh, Line, Deadline) then
       raise EHttpConnectionError.Create(
         'proxy closed the connection during CONNECT');
     if Line = '' then
       Continue;
     Code := ProxyStatusCode(Line);
+    if (Code >= 100) and (Code < 200) then
+    begin
+      Inc(Interim);
+      if Interim > cConnectMaxInterimReplies then
+        raise EHttpConnectionError.Create(
+          'too many interim replies to CONNECT');
+    end;
   until (Code < 100) or (Code >= 200);
   if (Code < 200) or (Code >= 300) then
     raise EHttpConnectionError.CreateFmt('proxy CONNECT failed: %s',
       [string(Line)]);
   // drain the response headers up to the blank line
   repeat
-    if not ProxyReadLineCh(ACh, Line) then
+    if not ProxyReadLineCh(ACh, Line, Deadline) then
       Break;
   until Line = '';
 end;
@@ -257,18 +337,19 @@ procedure EstablishProxyTunnelFd(AFd: Integer; const AHost: string;
   const AUserName: string; const APassword: string);
 begin
   EstablishConnectTunnel(TFdChannel.Create(AFd, ATimeoutMs), AHost, APort,
-    AUserName, APassword);
+    AUserName, APassword, ATimeoutMs);
 end;
 
-/// run the tunnel exchange the proxy kind calls for over ACh
+/// run the tunnel exchange the proxy kind calls for over ACh.  ATimeoutMs
+/// bounds the CONNECT reply of an HTTP proxy (SOCKS5 has no reply deadline).
 procedure EstablishTunnelOver(const ACh: ISocksChannel; const AProxy: IProxy;
-  const AHost: string; const APort: Word);
+  const AHost: string; const APort: Word; const ATimeoutMs: Integer);
 begin
   if AProxy.Kind = pkSocks5 then
     EstablishSocksTunnel(ACh, AProxy, AHost, APort)
   else
     EstablishConnectTunnel(ACh, AHost, APort, AProxy.UserName,
-      AProxy.Password);
+      AProxy.Password, ATimeoutMs);
 end;
 
 { TPlainSocket }
@@ -326,11 +407,12 @@ begin
             'TLS to proxy %s failed: %s', [Who, E.Message]);
       end;
       AStream := True;
-      EstablishTunnelOver(TSocketChannel.Create(Result), AProxy, AHost, APort);
+      EstablishTunnelOver(TSocketChannel.Create(Result), AProxy, AHost, APort,
+        AConnectTimeoutMs);
     end
     else
       EstablishTunnelOver(TFdChannel.Create(Plain.Handle, AConnectTimeoutMs),
-        AProxy, AHost, APort);
+        AProxy, AHost, APort, AConnectTimeoutMs);
   except
     Result.Close;
     raise;

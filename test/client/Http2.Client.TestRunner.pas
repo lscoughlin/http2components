@@ -47,6 +47,7 @@ uses
   Http2.Client.Redirect.Test,
   Http2.Client.Http1Strict.Test,
   Http2.Client.PoolDial.Test,
-  Http2.Client.Receive.Test, Http2.Client.ReceiveCredit.Test;
+  Http2.Client.Receive.Test, Http2.Client.ReceiveCredit.Test,
+  Http2.Client.PhaseDeadline.Test;
 
 end.
