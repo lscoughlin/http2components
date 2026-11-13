@@ -82,6 +82,9 @@ var
   I, J: Integer;
   B: TBytes;
 begin
+  if not IsValidTargetPart(ARequest.Path) then
+    raise EHttpProtocolError.Create('invalid h2c upgrade request target',
+      ecProtocolError);
   Head := ARequest.Method;
   if Head = '' then
     Head := 'GET';
@@ -97,6 +100,9 @@ begin
     Host := ARequest.Authority;
   if Host = '' then
     raise EHttpProtocolError.Create('h2c upgrade request has no Host',
+      ecProtocolError);
+  if not IsValidTargetPart(Host) then
+    raise EHttpProtocolError.Create('invalid h2c upgrade Host value',
       ecProtocolError);
   Head := Head + 'Host: ' + Host + #13#10;
 

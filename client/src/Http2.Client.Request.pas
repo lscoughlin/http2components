@@ -253,6 +253,12 @@ end;
 
 function THttpRequest.WithHeader(const AName, AValue: string): THttpRequest;
 begin
+  // a name or a value with a control byte would split the header block
+  if not IsValidHeaderName(AName) then
+    raise EHttpProtocolError.Create('invalid HTTP header name', ecProtocolError);
+  if not IsValidHeaderValue(AValue) then
+    raise EHttpProtocolError.Create('invalid HTTP header value for ' + AName,
+      ecProtocolError);
   Result := Self;
   if not Assigned(Result.FHeaders) then
     Result.FHeaders := NewHttpHeaders;

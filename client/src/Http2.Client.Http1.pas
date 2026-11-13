@@ -308,6 +308,9 @@ var
   Ch, All: TBytes;
   I, J: Integer;
 begin
+  if not IsValidTargetPart(ARequest.Path) then
+    raise EHttpProtocolError.Create('invalid HTTP/1.1 request target',
+      ecProtocolError);
   Head := ARequest.Method;
   if Head = '' then
     Head := 'GET';
@@ -324,6 +327,9 @@ begin
     Host := ARequest.Authority;
   if Host = '' then
     raise EHttpProtocolError.Create('HTTP/1.1 request has no Host',
+      ecProtocolError);
+  if not IsValidTargetPart(Host) then
+    raise EHttpProtocolError.Create('invalid HTTP/1.1 Host value',
       ecProtocolError);
   Head := Head + 'Host: ' + Host + cCrLf;
 

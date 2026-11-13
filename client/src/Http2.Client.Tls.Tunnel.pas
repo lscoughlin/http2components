@@ -77,6 +77,9 @@ type
 procedure EstablishProxyTunnelFd(AFd: Integer; const AHost: string;
   const APort: Word; const ATimeoutMs: Integer;
   const AUserName, APassword: string);
+/// negotiate an HTTP CONNECT tunnel over ACh (see the implementation)
+procedure EstablishConnectTunnel(const ACh: ISocksChannel; const AHost: string;
+  const APort: Word; const AUserName, APassword: string);
 function DialRoutedTransport(const AHost: string; const APort: Word;
   const AConnectTimeoutMs: Integer; const AProxy: IProxy;
   const AInsecure: Boolean; const ACACertFile: string;
@@ -88,7 +91,7 @@ implementation
 uses
   Http2.Client.Tls.Plain, Http2.Client.Tls.Socket,
   Http2.Client.SigPipe, mormot.core.base, mormot.core.os,
-  Http2.Common.Tls.Types;
+  Http2.Common.Tls.Types, Http2.Common.Headers;
 
 type
   /// the proxy exchange over a raw descriptor
@@ -197,6 +200,8 @@ end;
 
 function ConnectAuthority(const AHost: string; const APort: Word): AnsiString;
 begin
+  if not IsValidTargetPart(AHost) then
+    raise EHttpProtocolError.Create('invalid CONNECT host', ecProtocolError);
   // an IPv6 literal is bracketed in a request target (RFC 3986)
   if (Pos(':', AHost) > 0) and (Copy(AHost, 1, 1) <> '[') then
     Result := '[' + AnsiString(AHost) + ']'
