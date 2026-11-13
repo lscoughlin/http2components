@@ -88,6 +88,7 @@ uses
   Http2.Server.WsHardening.Test,
   Http2.Server.Lifecycle.Test,
   Http2.Server.ConfigRanges.Test,
+  Http2.Server.RapidResetGaps.Test,
   Http2.Server.Facade.Test,
   Http2.Server.Http1.Hardening.Test,
   Http2.Server.Runtime.Test,

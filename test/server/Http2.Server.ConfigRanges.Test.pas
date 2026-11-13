@@ -41,7 +41,7 @@ type
     procedure TestBucketWithoutCapacityIsRejected;
     procedure TestZeroWindowsAreRejected;
     procedure TestZeroStreamLimitIsRejected;
-    procedure TestHeaderTableAbove2To31IsRejected;
+    procedure TestHeaderTableAbove16MiBIsRejected;
     procedure TestQueueDepthZeroStaysValid;
     procedure TestAllProblemsComeInOneMessage;
     procedure TestBindAddressTextUsesTheHost;
@@ -147,11 +147,12 @@ begin
   AssertTrue(Rejects(Base.WithMaxConcurrentStreams(0), 'concurrent stream'));
 end;
 
-procedure TConfigRangesTest.TestHeaderTableAbove2To31IsRejected;
+procedure TConfigRangesTest.TestHeaderTableAbove16MiBIsRejected;
 begin
-  AssertTrue(Rejects(Base.WithHeaderTableSize(LongWord(2147483648)),
+  // the bound is 16 MiB, which is 16777216 octets
+  AssertTrue(Rejects(Base.WithHeaderTableSize(16777217),
     'header table'));
-  AssertFalse(Rejects(Base.WithHeaderTableSize(LongWord(2147483647)),
+  AssertFalse(Rejects(Base.WithHeaderTableSize(16777216),
     'header table'));
 end;
 

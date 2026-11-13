@@ -72,7 +72,8 @@ reset after dispatch costs more than a reset before it, because the handler
 keeps running after the cancel. Every other bucket takes its cost from the
 caller of `TryTake`.
 
-No numeric limit is in the unit. Every limit comes from the options record.
+The bounds that `Validate` accepts are constants of the unit. The default of
+every option comes from the options record.
 The configuration unit holds the defaults.
 
 ## The bucket
@@ -138,6 +139,33 @@ the reset bucket on each client `RST_STREAM` frame, and it charges the
 control bucket on each limited control frame. A `False` answer starts the
 close sequence. The observer receives the bucket trip, and then the
 `GOAWAY` sent event.
+
+The connection core also charges the reset bucket with `CostAfterDispatch`
+for each `RST_STREAM` that the server sends for a fault of the peer. These
+resets are a refused stream over the stream limit, a request that fails
+validation, and a body that passes its declared content-length. A refusal
+of a HEADERS frame that arrives after a `GOAWAY` is not charged, because the
+peer sent the frame before it saw the `GOAWAY`.
+
+## Bounds of the options
+
+`THttp2ServerFactory.Validate` refuses an option that is outside these
+bounds. The bounds are constants of `server/src/Http2.Server.Limits.pas`.
+
+| Option | Accepted values | Default |
+|---|---|---|
+| `MaxHeaderListSize` | 1024 to 1073741823 | 65536 |
+| `HeaderTableSize` | 0 to 16777216 | 4096 |
+| `MaxContinuationFrames` | 1 to 1024 | 16 |
+| `MaxConcurrentStreams` | 1 to 100000 | 100 |
+
+The cost of each reset bucket field, `CostBeforeDispatch` and
+`CostAfterDispatch`, must be 1 or more. A cost of 0 never empties the bucket,
+so the rapid-reset limit would be off.
+
+The initial windows must be 1 or more. A window of 1 gives a
+`WINDOW_UPDATE` threshold of 1. The server never sends a `WINDOW_UPDATE` with
+an increment of 0.
 
 ## Three different limits
 
