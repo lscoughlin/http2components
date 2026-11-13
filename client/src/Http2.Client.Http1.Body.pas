@@ -69,12 +69,15 @@ type
     /// read exactly ACount bytes; shorter only when the peer closed early
     function ReadExact(var ABuffer; const ACount: Integer): Integer;
     /// read one CRLF- or LF-terminated line, stripping the terminator.  False
-    /// only when the stream ends before any byte of the line arrives.
-    function ReadLine(out ALine: string): Boolean;
+    /// only when the stream ends before any byte of the line arrives.  AStrict
+    /// refuses a bare LF (no CR before it) and a bare CR inside the line, as
+    /// RFC 9112 section 2.2 allows a recipient to refuse them (the client does).
+    function ReadLine(out ALine: string; const AStrict: Boolean = False): Boolean;
     /// read one CRLF- or LF-terminated line WITHOUT reading past it.  Used at
     /// the HTTP/1.1 -> HTTP/2 upgrade boundary, where a buffered read would
     /// swallow the first HTTP/2 bytes that follow the status line.
-    function ReadLineNoReadAhead(out ALine: string): Boolean;
+    function ReadLineNoReadAhead(out ALine: string;
+      const AStrict: Boolean = False): Boolean;
     /// true when no buffered byte remains (may still pull more later)
     function Buffered: Integer;
   end;
@@ -151,6 +154,11 @@ type
   end;
 
 
+/// parse the field lines of one head or trailer block (RFC 9112 section 5).
+/// A line that starts with SP or HTAB continues the previous field value
+/// (obs-fold, section 5.2); a space before the colon raises (section 5.1).
+function ParseFieldLines(const ALines: TArray<string>): TArray<THttp1HeaderField>;
+
 implementation
 
 const
@@ -179,22 +187,41 @@ begin
   else Result := Ord(ACh) - Ord('A') + 10;
 end;
 
-function ParseHeaders(const ALines: TArray<string>): TArray<THttp1HeaderField>;
+function ParseFieldLines(const ALines: TArray<string>): TArray<THttp1HeaderField>;
 var
   I, J, P: Integer;
   Line, Name, Value: string;
   Ch: Char;
   Found: Boolean;
-  Count: Integer;
+  Count, Last: Integer;
 begin
   Result := nil;
   Count := 0;
+  Last := -1;
   for I := 0 to High(ALines) do
   begin
     Line := ALines[I];
+    // obs-fold (RFC 9112 section 5.2): the user agent replaces the fold with SP
+    if (Line <> '') and ((Line[1] = ' ') or (Line[1] = #9)) then
+    begin
+      if Last < 0 then
+        raise EHttpProtocolError.Create('field line folded before any field',
+          ecProtocolError);
+      Value := Trim(Line);
+      if Value <> '' then
+        if Result[Last].Value = '' then
+          Result[Last].Value := Value
+        else
+          Result[Last].Value := Result[Last].Value + ' ' + Value;
+      Continue;
+    end;
     P := Pos(':', Line);
     if P <= 1 then
       raise EHttpProtocolError.Create('malformed header field: ' + Line,
+        ecProtocolError);
+    // RFC 9112 section 5.1: no whitespace between the field name and the colon
+    if (Line[P - 1] = ' ') or (Line[P - 1] = #9) then
+      raise EHttpProtocolError.Create('whitespace before colon: ' + Line,
         ecProtocolError);
     Name := Trim(Copy(Line, 1, P - 1));
     Value := Trim(Copy(Line, P + 1, Length(Line)));
@@ -216,6 +243,7 @@ begin
         begin
           Result[J].Value := Result[J].Value + ', ' + Value;
           Found := True;
+          Last := J;
           Break;
         end;
     if not Found then
@@ -223,6 +251,7 @@ begin
       SetLength(Result, Count + 1);
       Result[Count].Name := Name;
       Result[Count].Value := Value;
+      Last := Count;
       Inc(Count);
     end;
   end;
@@ -388,7 +417,8 @@ begin
   end;
 end;
 
-function TBufferedReader.ReadLineNoReadAhead(out ALine: string): Boolean;
+function TBufferedReader.ReadLineNoReadAhead(out ALine: string;
+  const AStrict: Boolean): Boolean;
 var
   One: array[0..0] of Byte;
   Bytes: TBytes;
@@ -426,16 +456,26 @@ begin
   if Length(Bytes) = 0 then
     Exit(False);
   if Bytes[High(Bytes)] = 10 then
+  begin
     SetLength(Bytes, Length(Bytes) - 1);
+    // strict: the LF must follow a CR (a bare LF is refused)
+    if AStrict and ((Length(Bytes) = 0) or (Bytes[High(Bytes)] <> 13)) then
+      raise EHttpProtocolError.Create('bare LF in HTTP/1.1 line',
+        ecProtocolError);
+  end;
   if (Length(Bytes) > 0) and (Bytes[High(Bytes)] = 13) then
     SetLength(Bytes, Length(Bytes) - 1);
   SetLength(ALine, Length(Bytes));
   if Length(Bytes) > 0 then
     Move(Bytes[0], ALine[1], Length(Bytes));
+  if AStrict and (Pos(#13, ALine) > 0) then
+    raise EHttpProtocolError.Create('bare CR in HTTP/1.1 line',
+      ecProtocolError);
   Result := True;
 end;
 
-function TBufferedReader.ReadLine(out ALine: string): Boolean;
+function TBufferedReader.ReadLine(out ALine: string;
+  const AStrict: Boolean): Boolean;
 var
   I, Start, Len: Integer;
 begin
@@ -447,12 +487,20 @@ begin
       begin
         Start := FPos;
         Len := I - FPos;
+        // strict: the LF must follow a CR, so a bare LF is refused
+        if AStrict and ((Len = 0) or (FBuf[I - 1] <> 13)) then
+          raise EHttpProtocolError.Create('bare LF in HTTP/1.1 line',
+            ecProtocolError);
         SetLength(ALine, Len);
         if Len > 0 then
           Move(FBuf[Start], ALine[1], Len);
         FPos := I + 1;
         if (Length(ALine) > 0) and (ALine[Length(ALine)] = #13) then
           SetLength(ALine, Length(ALine) - 1);
+        // strict: a CR inside the line is a bare CR
+        if AStrict and (Pos(#13, ALine) > 0) then
+          raise EHttpProtocolError.Create('bare CR in HTTP/1.1 line',
+            ecProtocolError);
         Exit(True);
       end;
     // a single unterminated line is bounded by the header ceiling as well
@@ -504,7 +552,7 @@ begin
   N := 0;
   while True do
   begin
-    if not FReader.ReadLine(Line) then
+    if not FReader.ReadLine(Line, True) then
       raise EHttpProtocolError.Create('truncated chunked trailer block',
         ecStreamClosed);
     if Line = '' then
@@ -515,7 +563,7 @@ begin
   end;
   if (N > 0) and (FTrailers <> nil) then
   begin
-    Fields := ParseHeaders(Lines);
+    Fields := ParseFieldLines(Lines);
     for I := 0 to High(Fields) do
       if not IsForbiddenField(LowerCase(Fields[I].Name)) then
         FTrailers.Add(Fields[I].Name, Fields[I].Value);
@@ -569,7 +617,7 @@ begin
     end;
     if FAtChunkEnd then
     begin
-      if not FReader.ReadLine(Term) then
+      if not FReader.ReadLine(Term, True) then
         raise EHttpProtocolError.Create('truncated chunked body',
           ecStreamClosed);
       if Term <> '' then
@@ -577,7 +625,7 @@ begin
           ecProtocolError);
       FAtChunkEnd := False;
     end;
-    if not FReader.ReadLine(Line) then
+    if not FReader.ReadLine(Line, True) then
       raise EHttpProtocolError.Create('truncated chunk-size line',
         ecStreamClosed);
     Size := ParseChunkSize(Line);

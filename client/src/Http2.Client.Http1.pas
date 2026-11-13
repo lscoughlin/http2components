@@ -45,6 +45,9 @@ const
   cHttp1MaxHeaderBytes = 64 * 1024;
   /// one transport read fills at most this many bytes
   cHttp1ReadBufferSize = 16 * 1024;
+  /// most 1xx interim responses (other than 101) read before the final one
+  /// (RFC 9110 section 15.2).  A peer that sends more is refused.
+  cHttp1MaxInterimResponses = 16;
   bfNone = Http2.Client.Http1.Body.bfNone;
   bfContentLength = Http2.Client.Http1.Body.bfContentLength;
   bfChunked = Http2.Client.Http1.Body.bfChunked;
@@ -190,6 +193,9 @@ function DecodeChunked(const AReader: TBufferedReader;
   out ATrailers: IHttpHeaders): TBytes;
 
 implementation
+
+uses
+  Http2.Client.Http1.Parse;
 
 const
   cCrLf = #13#10;
@@ -426,52 +432,9 @@ begin
 end;
 
 function ParseHeaders(const ALines: TArray<string>): TArray<THttp1HeaderField>;
-var
-  I, J, P: Integer;
-  Line, Name, Value: string;
-  Ch: Char;
-  Found: Boolean;
-  Count: Integer;
 begin
-  Result := nil;
-  Count := 0;
-  for I := 0 to High(ALines) do
-  begin
-    Line := ALines[I];
-    P := Pos(':', Line);
-    if P <= 1 then
-      raise EHttpProtocolError.Create('malformed header field: ' + Line,
-        ecProtocolError);
-    Name := Trim(Copy(Line, 1, P - 1));
-    Value := Trim(Copy(Line, P + 1, Length(Line)));
-    if Name = '' then
-      raise EHttpProtocolError.Create('empty header field name',
-        ecProtocolError);
-    for J := 1 to Length(Name) do
-    begin
-      Ch := Name[J];
-      if Pos(Ch, cTokenChars) = 0 then
-        raise EHttpProtocolError.Create('invalid header field name: ' + Name,
-          ecProtocolError);
-    end;
-    // join repeats (RFC 9110 section 5.2) except set-cookie
-    Found := False;
-    if not SameText(Name, HeaderSetCookie) then
-      for J := 0 to Count - 1 do
-        if SameText(Result[J].Name, Name) then
-        begin
-          Result[J].Value := Result[J].Value + ', ' + Value;
-          Found := True;
-          Break;
-        end;
-    if not Found then
-    begin
-      SetLength(Result, Count + 1);
-      Result[Count].Name := Name;
-      Result[Count].Value := Value;
-      Inc(Count);
-    end;
-  end;
+  // one copy of the field rules (obs-fold, colon, repeats) lives in the Body unit
+  Result := Http2.Client.Http1.Body.ParseFieldLines(ALines);
 end;
 
 function HeaderFieldValue(const AFields: TArray<THttp1HeaderField>;
@@ -536,7 +499,7 @@ begin
   Result := nil;
   while True do
   begin
-    if not AReader.ReadLine(Line) then
+    if not AReader.ReadLine(Line, True) then
       raise EHttpProtocolError.Create('truncated chunk-size line',
         ecStreamClosed);
     Size := ParseChunkSize(Line);
@@ -551,7 +514,7 @@ begin
           ecStreamClosed);
     end;
     Result := ConcatBytes(Result, Chunk);
-    if not AReader.ReadLine(Term) then
+    if not AReader.ReadLine(Term, True) then
       raise EHttpProtocolError.Create('truncated chunked body',
         ecStreamClosed);
     if Term <> '' then
@@ -562,7 +525,7 @@ begin
   N := 0;
   while True do
   begin
-    if not AReader.ReadLine(Line) then
+    if not AReader.ReadLine(Line, True) then
       raise EHttpProtocolError.Create('truncated chunked trailer block',
         ecStreamClosed);
     if Line = '' then
@@ -653,7 +616,7 @@ begin
 
   // Read ONLY the status line, with no read-ahead: an h2c upgrade must leave
   // the bytes after the 101 in the socket for the HTTP/2 connection.
-  if not FReader.ReadLineNoReadAhead(Line) then
+  if not FReader.ReadLineNoReadAhead(Line, True) then
     Exit(False);
   ParseStatusLine(Line, FVersion, FStatusCode, FReason);
   FBeginDone := True;
@@ -670,7 +633,8 @@ var
   Framing: TBodyFraming;
   ContentLength: Int64;
   CL, TE, Connection: string;
-  Bodyless: Boolean;
+  Bodyless, ChunkedWithLength, Known: Boolean;
+  Interim: Integer;
   Body: THttp1BodyStream;
   Trailers: IHttpHeaders;
   Resp: THttp1Response;
@@ -680,31 +644,49 @@ begin
       'FinishResponse called before BeginResponse', ecInternalError);
   FBeginDone := False;   // consume: one status line per response
 
-  // read the remaining header field lines, bounded
-  Total := 0;
-  SetLength(Head, 0);
+  Interim := 0;
   while True do
   begin
-    if not FReader.ReadLine(Line) then
-      raise EHttpProtocolError.Create('unexpected EOF in response head',
-        ecStreamClosed);
-    Inc(Total, Length(Line) + 2);
-    if Total > cHttp1MaxHeaderBytes then
-      raise EHttpProtocolError.Create(
-        'HTTP/1.1 response header block exceeds the ' +
-        IntToStr(cHttp1MaxHeaderBytes) + '-byte limit', ecProtocolError);
-    if Line = '' then
-      Break;
-    SetLength(Head, Length(Head) + 1);
-    Head[High(Head)] := Line;
-  end;
+    // read the remaining header field lines, bounded
+    Total := 0;
+    SetLength(Head, 0);
+    while True do
+    begin
+      if not FReader.ReadLine(Line, True) then
+        raise EHttpProtocolError.Create('unexpected EOF in response head',
+          ecStreamClosed);
+      Inc(Total, Length(Line) + 2);
+      if Total > cHttp1MaxHeaderBytes then
+        raise EHttpProtocolError.Create(
+          'HTTP/1.1 response header block exceeds the ' +
+          IntToStr(cHttp1MaxHeaderBytes) + '-byte limit', ecProtocolError);
+      if Line = '' then
+        Break;
+      SetLength(Head, Length(Head) + 1);
+      Head[High(Head)] := Line;
+    end;
 
-  SetLength(Fields, 0);
-  if Length(Head) > 0 then
-    Fields := ParseHeaders(Head);
-  FFields := Fields;
-  Headers := FieldsToHttpHeaders(Fields);
-  FHeaders := Headers;
+    SetLength(Fields, 0);
+    if Length(Head) > 0 then
+      Fields := ParseHeaders(Head);
+    FFields := Fields;
+    Headers := FieldsToHttpHeaders(Fields);
+    FHeaders := Headers;
+
+    // RFC 9110 section 15.2: a 1xx response other than 101 is interim; the
+    // final response follows its own status line.  The fields above belong
+    // to the interim response and are replaced by the next pass.
+    if (FStatusCode < 100) or (FStatusCode > 199) or (FStatusCode = 101) then
+      Break;
+    Inc(Interim);
+    if Interim > cHttp1MaxInterimResponses then
+      raise EHttpProtocolError.Create('too many interim HTTP/1.1 responses',
+        ecProtocolError);
+    if not FReader.ReadLine(Line, True) then
+      raise EHttpProtocolError.Create('unexpected EOF before the final response',
+        ecStreamClosed);
+    ParseStatusLine(Line, FVersion, FStatusCode, FReason);
+  end;
 
   // bodyless responses: HEAD, 204 and 304 never carry a body even when a
   // content-length is present (RFC 9110 section 6.4.1)
@@ -715,13 +697,23 @@ begin
   TE := HeaderFieldValue(Fields, 'transfer-encoding');
   Connection := HeaderFieldValue(Fields, 'connection');
   ContentLength := 0;
+  ChunkedWithLength := False;
   if Bodyless then
     Framing := bfNone
-  else if (TE <> '') and (Pos('chunked', LowerCase(TE)) > 0) then
-    Framing := bfChunked
+  else if TE <> '' then
+  begin
+    // RFC 9112 section 6.1: chunked must be the last coding, and the client
+    // knows no other transfer coding
+    if not (TransferEncodingIsChunked(TE, Known) and Known) then
+      raise EHttpProtocolError.Create('unsupported transfer coding: ' + TE,
+        ecProtocolError);
+    // RFC 9112 section 6.3, item 3: Transfer-Encoding overrides Content-Length
+    Framing := bfChunked;
+    ChunkedWithLength := CL <> '';
+  end
   else if CL <> '' then
   begin
-    if not TryStrToInt64(CL, ContentLength) or (ContentLength < 0) then
+    if not TryParseContentLength(CL, ContentLength) then
       raise EHttpProtocolError.Create('invalid content-length: ' + CL,
         ecProtocolError);
     Framing := bfContentLength;
@@ -740,6 +732,10 @@ begin
     (Framing <> bfUntilClose) and
     ((FVersion = 'HTTP/1.1') or
      (Pos('keep-alive', LowerCase(Connection)) > 0));
+  // RFC 9112 section 6.3, item 3: the peer sent a conflicting length, so the
+  // connection is not reused after this response
+  if ChunkedWithLength then
+    FReusable := False;
 
   Body.BindReuseFlag(FReuse);
   Body.AttachExchange(FSendRequest.Exchange, FSentBodyBytes);
