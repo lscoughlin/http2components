@@ -235,7 +235,7 @@ end;
 
 procedure TH1Parser.Feed(const AData; const ACount: Integer);
 var
-  Need: Integer;
+  Need: Int64;
 begin
   if (FState = pwFailed) or (ACount <= 0) then
     Exit;
@@ -247,11 +247,11 @@ begin
       Exit;
     end;
   Compact;
-  Need := FEnd + ACount;
+  Need := Int64(FEnd) + ACount;
   if Need > Length(FBuf) then
     SetLength(FBuf, GrownLength(Need, Length(FBuf)));
   Move(AData, FBuf[FEnd], ACount);
-  FEnd := Need;
+  FEnd := Integer(Need);
   if FState = pwReading then
     Run;
 end;

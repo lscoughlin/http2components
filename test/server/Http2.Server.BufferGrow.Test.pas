@@ -30,6 +30,7 @@ type
     procedure TestNeedNearOneAndAHalfGiBDoesNotOverflow;
     procedure TestNeedAtHighIntegerIsKept;
     procedure TestNeedAboveHighIntegerIsRefused;
+    procedure TestSumOfIntegersAboveHighIntegerIsRefused;
     procedure TestBodyLimitAboveHighIntegerIsReported;
     procedure TestBodyLimitAtHighIntegerIsAccepted;
     procedure TestZeroBodyLimitIsAccepted;
@@ -84,6 +85,21 @@ begin
       Raised := E.ErrorCode = ecInternalError;
   end;
   AssertTrue('a need above High(Integer) raises EHttpProtocolError', Raised);
+end;
+
+procedure TBufferGrowTest.TestSumOfIntegersAboveHighIntegerIsRefused;
+var
+  Raised: Boolean;
+begin
+  // the call sites add two Integer values; the Int64 sum is above High(Integer)
+  Raised := False;
+  try
+    GrownLength(Int64(High(Integer)) + 5, 0);
+  except
+    on E: EHttpProtocolError do
+      Raised := E.ErrorCode = ecInternalError;
+  end;
+  AssertTrue('an Int64 sum above High(Integer) raises EHttpProtocolError', Raised);
 end;
 
 procedure TBufferGrowTest.TestBodyLimitAboveHighIntegerIsReported;
