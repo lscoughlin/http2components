@@ -25,7 +25,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="77">
+    <Files Count="78">
       <Item1>
         <Filename Value="src/Http2.Server.AccessLog.Handler.pas" />
         <UnitName Value="Http2.Server.AccessLog.Handler" />
@@ -334,6 +334,10 @@
         <Filename Value="src/Http2.Server.Http1.BodyBudget.pas" />
         <UnitName Value="Http2.Server.Http1.BodyBudget" />
       </Item77>
+      <Item78>
+        <Filename Value="src/Http2.Server.HandlerDeadline.pas" />
+        <UnitName Value="Http2.Server.HandlerDeadline" />
+      </Item78>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>

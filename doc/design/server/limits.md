@@ -265,6 +265,20 @@ a stream only when the handler reads. So the unread body of one stream is bounde
 by the stream window, and the unread bodies of all open streams are bounded by
 the window times the number of open streams.
 
+## The handler time limit
+
+The option `MaxHandlerTimeMs` of `TServerLimits` bounds the time of one handler
+call, in milliseconds. The default is 0, which turns the limit off. A negative
+value is not valid. The time runs from the start of the handler call.
+
+When a handler passes the limit, the server answers 503 with an empty body if no
+response head went out. The server then cancels the handler side of the stream.
+When a head already went out, the server resets the stream on HTTP/2 and closes
+the connection on HTTP/1.1. A handler thread is not killed. A handler that never
+checks for cancel keeps its thread until it returns. The server counts these
+handlers and gives the count to the observer with each timeout. The full
+description is in [admission](admission.md).
+
 ## The default limits
 
 `THttp2ServerFactory.Create` sets the default of every bucket

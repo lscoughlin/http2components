@@ -88,6 +88,7 @@ uses
   Http2.Server.WebSocket.SessionCore,
   Http2.Server.WebSocket.Types,
   Http2.Server.WebSocket.Utf8,
+  Http2.Server.HandlerDeadline,
   Http2.Server;
 
 implementation

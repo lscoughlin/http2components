@@ -9,6 +9,7 @@ scope: The bounded request queue, the handler pool, the refusal modes, the queue
 primary_types:
   - TRequestQueue
   - THandlerPool
+  - THandlerDeadlineWatch
   - TServerStreamRequest
   - TServerStreamResponse
   - TQueueOptions
@@ -23,6 +24,7 @@ invariants:
   - A stream that a peer cancels while it waits in the queue leaves the queue at once and its handler never runs.
   - The handler pool runs one synchronous handler per worker thread.
   - The queue is the only admission point of a request.
+  - A handler thread is never killed. The time limit answers, cancels and counts the handler.
   - The HPACK codec runs only on an IO thread, so a response header block is queued, not encoded, on the handler side.
 ---
 
@@ -123,6 +125,56 @@ hook receives the stream and a flag. The flag is `True` when the handler had
 not sent the response headers, and `False` after a header send. The core later
 answers with a 500 before the headers and with `RST_STREAM` after them. The
 pool records the error and does not build the 500 or the reset itself.
+
+## The handler time limit
+
+The option `MaxHandlerTimeMs` of `TServerLimits` bounds the time of one handler
+call. The time runs from the start of the handler call. The default is 0, which
+turns the limit off. With the value 0 the pool creates no deadline thread and
+adds no lock to a request.
+
+The unit `server/src/Http2.Server.HandlerDeadline.pas` holds the limit. The
+tracker `THandlerDeadlines` lists each running handler with its start time. The
+`THandlerDeadlineWatch` class is a tracker with one thread. The thread checks
+the list at a short period, which is a quarter of the limit and is between 5 and
+100 milliseconds.
+
+A handler thread is not killed. A killed thread can leave a lock held and memory
+in a bad state. At the deadline the watch does these steps in this order:
+
+1. The watch takes the response with one atomic claim. When no response head went
+   out, the watch queues a 503 response with an empty body. The head and the
+   detach of the handler pass the same claim through a response wrapper, so the
+   503 and a late head of the handler cannot both reach the wire. A late head of
+   the handler raises `EStreamCancelled`.
+2. For an HTTP/2 stream, the watch waits until the IO side has encoded the
+   queued 503. The wait is bounded at 250 milliseconds.
+3. The watch resets the stream with `RST_STREAM` and the code `CANCEL`. The reset
+   sets the cancel flag, so the handler gets `EStreamCancelled` on its next read
+   or write. The core closes the stream at its next flush, and the stream slot is
+   free.
+4. When a head went out before the deadline, the watch skips the 503 and resets
+   the stream at once.
+
+An HTTP/1.1 exchange follows the same order through its own method. The
+exchange answers 503 when no head went out, closes the connection, and then
+cancels the handler side. When a head went out, the exchange closes the
+connection, so a chunked body does not end like a whole body. The close frees
+the connection slot.
+
+A handler that never reads, never writes and never checks for cancel keeps its
+thread until it returns. The tracker counts each handler that is past the limit
+and has not returned. The count is `StuckCount`. A handler leaves the count when
+it returns. The observer receives the count with each timeout. An observer that
+implements `IHttp2HandlerTimeoutObserver` (`server/src/Http2.Server.Observer.pas`)
+receives `OnHandlerTimeout(AStreamId, AStuckCount)` on the deadline thread. The
+base class `TNullServerObserver` implements the event as a no-op.
+
+The locks follow the lock order of the server. The tracker lock is a leaf lock.
+A report runs with no tracker lock held, and the stream is held by a reference
+until the report ends. The watch takes the connection lock and the stream lock
+only through the stream methods, one at a time. The pool lock is not held while
+the watch runs.
 
 ## Counters and shutdown
 
