@@ -330,7 +330,7 @@ queue, and the reader thread never waits for it.
 
 ### Where the pattern is used
 
-Stories R10, R12 and R13 apply it.
+The pool applies the pattern in the wait for a dial in flight, in the close of idle connections, and in the locks of the HTTP/1 pooled connection. The sections of the units that apply it name the lock levels that they use.
 
 ## Receive flow control
 
