@@ -52,6 +52,17 @@ type
     procedure TestNamesExcludesPseudoHeaders;
   end;
 
+  /// tests for the byte check helpers (plan S-02, story S-37)
+  THeaderByteCheckTest = class(TTestCase)
+  published
+    procedure TestHeaderNameTokensAccepted;
+    procedure TestHeaderNameNonTokensRefused;
+    procedure TestHeaderValueAccepted;
+    procedure TestHeaderValueRefusesCrLfNul;
+    procedure TestTargetPartAccepted;
+    procedure TestTargetPartRefusesSpaceControlAndDel;
+  end;
+
 implementation
 
 { helpers }
@@ -329,7 +340,73 @@ begin
   AssertTrue(':path not listed', IndexOfName(N, HeaderPath) < 0);
 end;
 
+{ THeaderByteCheckTest }
+
+procedure THeaderByteCheckTest.TestHeaderNameTokensAccepted;
+begin
+  AssertTrue('lower case', IsValidHeaderName('content-type'));
+  AssertTrue('mixed case', IsValidHeaderName('X-Custom-Id'));
+  AssertTrue('one letter', IsValidHeaderName('a'));
+  AssertTrue('digits', IsValidHeaderName('x-1-2'));
+  AssertTrue('tchar punctuation', IsValidHeaderName('!#$%&''*+-.^_`|~'));
+end;
+
+procedure THeaderByteCheckTest.TestHeaderNameNonTokensRefused;
+begin
+  AssertFalse('empty', IsValidHeaderName(''));
+  AssertFalse('pseudo method', IsValidHeaderName(':method'));
+  AssertFalse('pseudo path', IsValidHeaderName(':path'));
+  AssertFalse('space', IsValidHeaderName('bad name'));
+  AssertFalse('colon inside', IsValidHeaderName('a:b'));
+  AssertFalse('slash', IsValidHeaderName('a/b'));
+  AssertFalse('paren', IsValidHeaderName('a(b'));
+  AssertFalse('comma', IsValidHeaderName('a,b'));
+  AssertFalse('equals', IsValidHeaderName('a=b'));
+  AssertFalse('quote', IsValidHeaderName('a"b'));
+  AssertFalse('tab', IsValidHeaderName('a'#9'b'));
+  AssertFalse('CR', IsValidHeaderName('a'#13'b'));
+  AssertFalse('LF', IsValidHeaderName('a'#10'b'));
+  AssertFalse('NUL', IsValidHeaderName('a'#0'b'));
+  AssertFalse('DEL', IsValidHeaderName('a'#127'b'));
+  AssertFalse('high byte', IsValidHeaderName('a'#200'b'));
+end;
+
+procedure THeaderByteCheckTest.TestHeaderValueAccepted;
+begin
+  AssertTrue('empty value', IsValidHeaderValue(''));
+  AssertTrue('plain value', IsValidHeaderValue('text/plain; charset=utf-8'));
+  AssertTrue('spaces', IsValidHeaderValue('a b c'));
+  AssertTrue('horizontal tab', IsValidHeaderValue('a'#9'b'));
+end;
+
+procedure THeaderByteCheckTest.TestHeaderValueRefusesCrLfNul;
+begin
+  AssertFalse('CR', IsValidHeaderValue('a'#13'b'));
+  AssertFalse('LF', IsValidHeaderValue('a'#10'b'));
+  AssertFalse('CRLF', IsValidHeaderValue('a'#13#10'Set-Cookie: x'));
+  AssertFalse('trailing CR', IsValidHeaderValue('a'#13));
+  AssertFalse('NUL', IsValidHeaderValue('a'#0'b'));
+end;
+
+procedure THeaderByteCheckTest.TestTargetPartAccepted;
+begin
+  AssertTrue('root', IsValidTargetPart('/'));
+  AssertTrue('path and query', IsValidTargetPart('/a/b?c=d&e=%20'));
+  AssertTrue('asterisk', IsValidTargetPart('*'));
+end;
+
+procedure THeaderByteCheckTest.TestTargetPartRefusesSpaceControlAndDel;
+begin
+  AssertFalse('space', IsValidTargetPart('/a b'));
+  AssertFalse('tab', IsValidTargetPart('/a'#9'b'));
+  AssertFalse('LF', IsValidTargetPart('/a'#10));
+  AssertFalse('CR', IsValidTargetPart('/a'#13));
+  AssertFalse('NUL', IsValidTargetPart('/a'#0));
+  AssertFalse('DEL', IsValidTargetPart('/a'#127));
+end;
+
 initialization
   RegisterTest(TClientOriginHeadersTest);
+  RegisterTest(THeaderByteCheckTest);
 
 end.

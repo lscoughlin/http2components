@@ -48,6 +48,7 @@ const
   HeaderLastEventId   = 'last-event-id';
 
 type
+  // the map does not validate; the caller enforces RFC 9110 and RFC 9113 section 8.2
   /// case-insensitive, multi-valued HTTP/2 header map
   IHttpHeaders = interface
     /// append AValue under AName; a repeated name grows the value list
@@ -70,6 +71,15 @@ type
 
 /// construct a fresh empty header map
 function NewHttpHeaders: IHttpHeaders;
+
+/// true for a non-empty RFC 9110 token; a leading ':' is not a token
+function IsValidHeaderName(const AName: string): Boolean;
+
+/// true when AValue holds no CR, LF or NUL
+function IsValidHeaderValue(const AValue: string): Boolean;
+
+/// true when AValue holds no byte at or below 0x20 and no 0x7F
+function IsValidTargetPart(const AValue: string): Boolean;
 
 implementation
 
@@ -250,6 +260,37 @@ function THttpHeaders.GetPseudo(const AName: string): string;
 begin
   Result := '';
   FPseudo.TryGetValue(Normalize(AName), Result);
+end;
+
+function IsValidHeaderName(const AName: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := AName <> '';
+  for I := 1 to Length(AName) do
+    if not (AName[I] in ['0'..'9', 'a'..'z', 'A'..'Z', '!', '#', '$', '%',
+      '&', '''', '*', '+', '-', '.', '^', '_', '`', '|', '~']) then
+      Exit(False);
+end;
+
+function IsValidHeaderValue(const AValue: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := True;
+  for I := 1 to Length(AValue) do
+    if AValue[I] in [#0, #10, #13] then
+      Exit(False);
+end;
+
+function IsValidTargetPart(const AValue: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := True;
+  for I := 1 to Length(AValue) do
+    if (Ord(AValue[I]) <= $20) or (Ord(AValue[I]) = $7F) then
+      Exit(False);
 end;
 
 end.

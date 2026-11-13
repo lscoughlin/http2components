@@ -240,6 +240,15 @@ value `trailers`, and any other value raises `EHttpStreamError` with
 `ecProtocolError` while the response headers are decoded
 (`TStreamLease.HandleInboundFrame` in `client/src/Http2.Client.Stream.pas`).
 
+The header map does not validate names or values. The caller enforces
+RFC 9110 and RFC 9113 section 8.2. The unit `Http2.Common.Headers` provides
+three helper functions for this check. `IsValidHeaderName` accepts a
+non-empty RFC 9110 token and refuses a leading `:`. `IsValidHeaderValue`
+refuses a value that holds CR, LF or NUL. `IsValidTargetPart` refuses a
+target that holds a byte at or below 0x20 or the byte 0x7F. The map keeps
+its current behavior. Each builder of a message calls these functions for
+the names and values that it sends.
+
 Header names are a set of constants of common HTTP header names:
 
 ```pascal
