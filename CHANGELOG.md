@@ -47,6 +47,32 @@ Server:
   header table size is bounded.
 - The request pseudo-headers of RFC 9113 section 8.3.1 are checked.
 
+Follow-up work on the same review:
+
+- Client: a receive queue that overflows ends only its own stream with a flow-control error.
+  The queue is a lock-free single-producer single-consumer ring with a frame cap of 1024 frames
+  and a byte cap. The consumer side raises an error when a second reader enters.
+- Client: `ReadAllBodyBytes`, `ReadText` and `TResponseReader<T>.Read` have overloads with a byte
+  cap.
+- Client: an HTTP/1.1 or TLS connection that holds unread input is not reused. A TLS 1.3 session
+  ticket alone does not count as unread input. Both TLS engines report pending plaintext.
+- Client: an HTTP/1 response that needed header unfolding is never reused. A fold in a framing or
+  hop-by-hop header is refused. An empty or repeated `Transfer-Encoding` is refused.
+- Client: the HTTP/1 SSE idle time (`SseMaxIdleTimeMs`) bounds each body read.
+- Client: the pool waits for a dial with a per-origin event and not with sleep polling. The pool,
+  the HTTP/2 connection, the HTTP/1 pooled connection and the WebSocket close their sockets with
+  no pool, encoder or send lock held. A close that runs on the reader thread of the connection
+  does not join that thread. The document of the transport describes the lock levels.
+- Client: a TLS alert read after a failed write no longer holds the session lock.
+- Server: a handler that returns without `Finish` is answered with a 500 or a reset on HTTP/2, and
+  with a 500 and a close, or a cut response, on HTTP/1.
+- Server: a detached handler (for example a WebSocket) is not expired by `MaxHandlerTimeMs`.
+- Server: the `:path` rule follows Go. Control bytes and DEL are refused. A space and bytes above
+  0x7E are accepted. A `%` needs two hexadecimal digits.
+- Server: a request with a `Transfer-Encoding` that does not end in `chunked` gets 400.
+- Server: the async server no longer drops the first output of a connection when the read thread
+  closes the connection while another thread holds output that it took from the connection core.
+
 ### Behavior changes
 
 - Redirect policy: the default policy is `rpAnyHost`. Credential headers are
@@ -75,34 +101,48 @@ Server:
 - Pool: one dial in flight is allowed for each origin and route.
 - Control frames: the client keeps control frames in their own queue of 1000
   frames. A full queue is a connection error. Peer frames are rate-limited by type.
+- Handlers: on HTTP/1 a handler that writes its whole body and returns without `Finish` now gets
+  its response cut and the connection closed. Before, the server finished the response for it.
+- HTTP/1 SSE: a stream ends after `SseMaxIdleTimeMs` of silence. Before, it ended at the socket
+  timeout.
+- Server `:path`: a space and bytes above 0x7E are accepted, as in Go. A `%` that does not have
+  two hexadecimal digits after it is refused.
+- Server `Transfer-Encoding`: a value that does not end in `chunked`, such as `gzip`, gets 400
+  and not 501.
+- Receive queue: a stream that receives more than 1024 frames before the reader takes them gets a
+  stream error. A queue that passes its byte cap does the same. Before, the whole connection failed.
+- Pool: a waiter on a full connection cap can wait up to one 50 ms slice for a wake-up.
 
 ### Test counts
 
 Counts on the integration branch. All runs had 0 errors and 0 failures.
 
-- macOS: common 282 tests, client 1032 tests.
-- Linux x86-64 (Ubuntu 24.04, FPC 3.2.4, idle host): common 282, client 1032, API 16,
-  integration 19, full server suite 877 (232 s, so `TEST_TIMEOUT` above the default 180 s is
-  needed for the server suite).
-- Linux, 14 busy loops on a 16-core host: every client and server test class was run alone in
-  three passes. Passes 1 and 3 were clean. Pass 2 showed one test that depended on thread order
-  (fixed) and one server stall of a new connection, which also exists in the code from before this
-  work (see the notes below). The loaded passes have not been repeated since that fix.
+- macOS: common 301 tests, client 1080 tests (the server suite has 899 tests).
+- Linux x86-64 (Ubuntu 24.04, FPC 3.2.4, idle host): common 301, client 1080, API 16, full
+  server suite 899 (about 255 s, so `TEST_TIMEOUT` above the default 180 s is needed for the
+  server suite), TLS client 22 cases, OpenSSL session 140 cases, tlslib session 88 cases, TLS server
+  13. The source check and the documentation check pass.
+- Linux, ring stress: the lock-free ring passes 20 million items, on an idle host and under 14 busy
+  loops.
+- Linux, 14 busy loops on a 16-core host: 200 runs of the abuse test class all passed. Before the
+  fix of the server stall, about 3 runs in 100 failed.
 - Validation gates on Linux (a throwaway container with the host Docker socket, an open-file limit
   of 65536 and the repository mounted at the same path as on the host): sanity, interop (13 passed,
   1 skipped), SSE, proxy, WebSocket, Autobahn (296 OK, 3 informational, 2 non-strict, as the gate
   expects), cleartext, mTLS, server conformance, server fast, server TLS live, server mTLS live,
   server WebSocket over HTTP/1 and over HTTP/2, server SSE and server abuse passed. Two gates were
   not run: `validate:client:proxy:real` and `validate:client:mtls-real` need an `ssh` client and a
-  remote host. The harness gate (`validate:client:harness`) needs more than 25 minutes on this
-  host (it ran 33 minutes) and passed: PASS=72, FAIL=0, CLASS-DIFF=12, UNKNOWN=62,
-  INFRASTRUCTURE=0. A CLASS-DIFF case is one where the reference client gives no verdict and the
-  client reports a connection error; an UNKNOWN case has no verdict from the reference either.
-  17 of the 19 gates passed.
+  remote host. The interop and Autobahn gates need a container with host networking. The harness
+  gate (`validate:client:harness`) ran 32 minutes and passed: PASS=69, FAIL=0, CLASS-DIFF=15,
+  UNKNOWN=62, INFRASTRUCTURE=0. A CLASS-DIFF case is one where the reference client gives no
+  verdict and the client reports a connection error; an UNKNOWN case has no verdict from the
+  reference either. Between two full runs a few cases moved between BETTER and CLASS-DIFF. Run alone,
+  those cases give the same result on the code from before the follow-up work and on the final code,
+  so the movement comes from the interaction of the cases in a full run. 17 of the 19 gates passed.
 
 ### Fixes found by the Linux load runs
 
-These two faults exist in the code from before this work.
+These three faults exist in the code from before this work.
 
 - Client: a read that timed out after it had consumed some bytes lost those bytes, and the reader
   then continued in the middle of a frame. A frame that arrived with a gap of more than the 20 ms
@@ -111,11 +151,22 @@ These two faults exist in the code from before this work.
   socket interface now see a short count where they saw a timeout.
 - Client WebSocket: a peer close frame that arrived between the local close frame and the local
   state change made the close look remote. The reader now reads the state under the send lock.
+- Server (async): a connection that received a flood right after its preface could lose its
+  SETTINGS and GOAWAY frames and get a reset. A thread of the handler pool took the output from the
+  connection core to send it, and the read thread decided at the same moment that the drained
+  connection was finished and closed it. The bytes were in neither queue. The close is now
+  deferred while a send holds output. About 3 in 100 loaded runs of the abuse tests failed
+  before the fix, and 200 of 200 passed after it.
 
 ### Known open items
 
-- A new connection of the async server gets no answer for more than 6 s about 1 time in 20 on a
-  heavily loaded host. The code from before this work shows the same stall.
+- A handler that is detached on HTTP/1 in the same moment as the handler time limit can still get
+  a 503 in the window between two lock sections. A detached handler past the limit still counts in
+  the stuck count until it returns.
+- A deferred close of the async server goes through `ConnectionRemove`, so it emits no close trace
+  line and no `ConnectionLost` event.
+- `TResponseReader<Int64>.Read` with a plain `Int64` variable may be ambiguous between the value
+  overload and the byte cap overload. No test covers an `Int64` specialization.
 
 The follow-up recommendations are listed in the project notes.
 
