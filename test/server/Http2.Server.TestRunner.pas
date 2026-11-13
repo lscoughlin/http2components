@@ -60,6 +60,7 @@ uses
   Http2.Server.Http1.Live.Test,
   Http2.Server.Http1.Config.Test,
   Http2.Server.BufferGrow.Test,
+  Http2.Server.BodyBudget.Test,
   Http2.Server.Http1.Detach.Test,
   Http2.Server.Http1.Fuzz.Test,
   Http2.Server.WebSocket.Origin.Test,

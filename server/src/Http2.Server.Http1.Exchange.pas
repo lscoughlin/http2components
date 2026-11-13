@@ -35,7 +35,7 @@ uses
   Http2.Server.HandlerJob, Http2.Server.Http1.Guard, Http2.Server.Http1.Host,
   Http2.Server.Http1.ResponseHead, Http2.Server.Http1.Channel,
   Http2.Server.Http1.SocketChannel, Http2.Server.AccessLog,
-  Http2.Server.ClientCert, Http2.Server.Http1.Grow;
+  Http2.Server.ClientCert, Http2.Server.Http1.Grow, Http2.Server.Http1.BodyBudget;
 
 type
   TH1ExchangeOptions = record
@@ -47,7 +47,7 @@ type
     /// the greatest time from the head to the end of the body; 0 is no limit
     BodyTotalMs: Integer;
     /// a write that sees no progress for this time aborts the connection
-    WriteStallMs: Integer;
+    WriteStallMs: Integer; BodyBudget: IBodyBudget; // the server-wide body budget; nil is none
   end;
 
   TH1Exchange = class(TInterfacedObject, IServerRequest, IServerResponse,
@@ -69,7 +69,7 @@ type
     FRoomEv: PRTLEvent;
     FBody: TBytes;
     FBodyHead, FBodyTail: Integer;
-    FBodyEnded: Boolean;
+    FBodyEnded: Boolean; FCharged: Int64; FBudgetRefused: Boolean; // budget charge
     FCancelled: Boolean;
     FExpectAsked: Boolean;
     FLastProgressMs: QWord;
@@ -125,6 +125,7 @@ type
     // the core feeds the body
     procedure AppendBody(const AData; const ACount: Integer);
     procedure EndBody;
+    function BodyBudgetRefused: Boolean; // the core answers 503 after its lock
     /// the request broke after the head: answer AStatus if no answer started,
     /// wake the handler and end the exchange so the connection closes
     procedure Fail(const AStatus: Integer);
@@ -207,6 +208,7 @@ end;
 
 destructor TH1Exchange.Destroy;
 begin
+  DropCharge(FOptions.BodyBudget, FCharged); // a charge no end path gave back
   RTLEventDestroy(FBodyEv);
   RTLEventDestroy(FRoomEv);
   FLock.Free;
@@ -224,6 +226,14 @@ begin
     // a response that finished without the body drops the rest of it
     if FCancelled or FFinished then
       Exit;
+    if not TakeCharge(FOptions.BodyBudget, FCharged, ACount) then
+    begin
+      FBudgetRefused := True; // the core answers 503 after its lock; body dropped
+      FCancelled := True;
+      DropCharge(FOptions.BodyBudget, FCharged);
+      RTLEventSetEvent(FBodyEv);
+      Exit;
+    end;
     if FBodyHead = FBodyTail then
     begin
       FBodyHead := 0;
@@ -239,6 +249,11 @@ begin
     FLock.Release;
   end;
   RTLEventSetEvent(FBodyEv);
+end;
+
+function TH1Exchange.BodyBudgetRefused: Boolean;
+begin
+  Result := FBudgetRefused;
 end;
 
 procedure TH1Exchange.EndBody;
@@ -388,6 +403,7 @@ begin
           Avail := ACount;
         Move(FBody[FBodyHead], ABuffer, Avail);
         Inc(FBodyHead, Avail);
+        GiveCharge(FOptions.BodyBudget, FCharged, Avail);
         Exit(Avail);
       end;
       if FBodyEnded then
@@ -460,6 +476,7 @@ begin
   FLock.Acquire;
   try
     FCancelled := True;
+    DropCharge(FOptions.BodyBudget, FCharged);
     Channel := FChannel;
   finally
     FLock.Release;
@@ -669,6 +686,7 @@ begin
     if FFinished then
       Exit;
     FFinished := True;
+    DropCharge(FOptions.BodyBudget, FCharged);
   finally
     FLock.Release;
   end;

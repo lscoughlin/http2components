@@ -31,7 +31,8 @@ uses
   Http2.Common.Hpack, Http2.Server.Output, Http2.Server.HandlerJob, Http2.Server.Duplex,
   Http2.Server.Http1.Limits, Http2.Server.Http1.Guard, Http2.Server.Http1.Parser,
   Http2.Server.Http1.Host, Http2.Server.Http1.ResponseHead, Http2.Server.Http1.Exchange,
-  Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Observer;
+  Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Observer,
+  Http2.Server.Http1.BodyBudget;
 
 const
   /// the most octets that the core keeps while an upgrade is undecided
@@ -64,6 +65,8 @@ type
     /// a handler write that sees no progress for this time aborts the connection;
     /// 0 turns the check off
     WriteStallMs: Integer;
+    /// the server-wide budget of buffered body octets; nil means no budget
+    BodyBudget: IBodyBudget;
   end;
 
   /// the HTTP/1.1 core of one connection
@@ -356,6 +359,8 @@ begin
 end;
 
 procedure TH1Core.UpgradeCancel;
+var
+  Ref: IInterface;
 begin
   FLock.Acquire;
   try
@@ -365,11 +370,15 @@ begin
       FCloseAfter := True
     else if Length(FHeld) > 0 then
       FParser.Feed(FHeld[0], Length(FHeld));
+    Ref := FCurrentRef;
     FHeld := nil;
     FHeldLost := False;
   finally
     FLock.Release;
   end;
+  // outside the lock: a refused body budget answers 503
+  if (Ref <> nil) and (Ref as TH1Exchange).BodyBudgetRefused then
+    (Ref as TH1Exchange).Fail(503);
 end;
 
 procedure TH1Core.CloseAfterOutput;
@@ -489,6 +498,7 @@ end;
 procedure TH1Core.Feed(const AData: TBytes);
 var
   Target: IH1Inbound;
+  Ref: IInterface;
 begin
   if Length(AData) = 0 then
     Exit;
@@ -519,9 +529,13 @@ begin
         FHeadStartMs := GetTickCount64;
       FParser.Feed(AData[0], Length(AData));
     end;
+    Ref := FCurrentRef;
   finally
     FLock.Release;
   end;
+  // outside the lock: a refused body budget answers 503
+  if (Ref <> nil) and (Ref as TH1Exchange).BodyBudgetRefused then
+    (Ref as TH1Exchange).Fail(503);
   // outside the lock: the channel calls into the session
   if Target <> nil then
     Target.Inbound(AData[0], Length(AData));
@@ -543,6 +557,7 @@ begin
   Options.BodyDeadlineMs := FOptions.Limits.BodyDeadlineMs;
   Options.BodyTotalMs := FOptions.Limits.BodyTotalMs;
   Options.WriteStallMs := FOptions.WriteStallMs;
+  Options.BodyBudget := FOptions.BodyBudget;
   Exchange := TH1Exchange.Create(FLink, AHead, Options, FOrdinal - 1);
   Ref := Exchange;
   FCurrentRef := Ref;

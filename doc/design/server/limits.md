@@ -241,6 +241,30 @@ An event stream whose outbound queue stays full is a slow reader. The setting
 for that time, with an abort (as described in [sse](sse.md)). The check is a timer of the
 streaming pool and uses no token bucket.
 
+## The body budget of HTTP/1.1
+
+The option `MaxBodyBytesInFlight` of `TServerLimits` bounds the body octets that
+all HTTP/1.1 exchanges of one server hold together. A body is held until the
+handler reads it. The default is 256 MiB. The value 0 turns the budget off, and
+a non-zero value is at least 1 MiB.
+
+The budget is the interface `IBodyBudget` (`server/src/Http2.Server.Http1.BodyBudget.pas`).
+The handler pool creates it from the factory. An exchange charges each body octet
+that it buffers. The exchange releases the octets when the handler reads them, when the
+exchange is cancelled or finished, and when the exchange is freed. The count is
+exact. The lock of the budget makes the check and the add one step, and the
+exchange lock is taken before the budget lock.
+
+When a body does not fit under the budget, the exchange drops the body, and the
+server answers 503 and closes the connection. The core sends the answer after it
+leaves its own lock, so the budget and the exchange never call the core while
+they hold a lock.
+
+HTTP/2 has no budget of this kind. The server returns the flow-control credit of
+a stream only when the handler reads. So the unread body of one stream is bounded
+by the stream window, and the unread bodies of all open streams are bounded by
+the window times the number of open streams.
+
 ## The default limits
 
 `THttp2ServerFactory.Create` sets the default of every bucket

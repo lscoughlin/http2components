@@ -49,6 +49,7 @@ uses
   Http2.Server.Waiter,
   Http2.Server.Config,
   Http2.Server.Observer,
+  Http2.Server.Http1.BodyBudget,
   Http2.Server.HandlerJob;
 
 type
@@ -178,6 +179,8 @@ type
     /// the observer of the server; nil when the server set none
     // - every event runs on the worker thread that raised it
     FObserver: IHttp2ServerObserver;
+    /// the server-wide budget of buffered HTTP/1 body octets; 0 turns it off
+    FBodyBudget: IBodyBudget;
     procedure Notify(const AKind: TServerEventKind;
       const AStream: TServerStream; const ADetail: string);
     procedure DetachNotify(const AStream: TServerStream; const ARefused: Boolean);
@@ -237,6 +240,8 @@ type
       write FChannelRegistry;
     property OnHandlerError: THandlerErrorEvent read FOnHandlerError
       write FOnHandlerError;
+    /// the server-wide budget of buffered HTTP/1 body octets
+    property BodyBudget: IBodyBudget read FBodyBudget;
     /// the observer of the server (test and wire-up seam)
     property Observer: IHttp2ServerObserver read FObserver write FObserver;
   end;
@@ -480,6 +485,7 @@ begin
   if (FHandler <> nil) and (AFactory.AccessLogWriter <> nil) then
     FHandler :=TAccessLoggingHandler.Create(FHandler, AFactory.AccessLogWriter);
   FGracefulTimeoutMs := AFactory.GracefulStopTimeoutMs;
+  FBodyBudget := TBodyBudget.Create(AFactory.ServerLimits.MaxBodyBytesInFlight);
   FPoolStopped := False;
   FLock := TCriticalSection.Create;
   FActive := TList<TServerStream>.Create;

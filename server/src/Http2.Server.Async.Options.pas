@@ -27,7 +27,8 @@ uses
   Http2.Server.Config, Http2.Server.Connection,
   Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Observer,
   Http2.Server.Async.Counters,
-  Http2.Server.Http1.Core, Http2.Server.Http1.Driver;
+  Http2.Server.Http1.Core, Http2.Server.Http1.Driver,
+  Http2.Server.Http1.BodyBudget;
 
 /// the address text that mORMot2 binds: the host, a colon and the port
 // - an empty host binds every IPv4 address
@@ -60,7 +61,7 @@ function BuildConnectionCoreOptions(
 /// the options of one HTTP/1.1 core, from the factory
 // - ATls is true on a TLS connection, which serves the https scheme
 function BuildH1CoreOptions(const AFactory: THttp2ServerFactory;
-  const ATls: Boolean): TH1CoreOptions;
+  const ATls: Boolean; const ABodyBudget: IBodyBudget = nil): TH1CoreOptions;
 
 /// the control buckets of one HTTP/2 core, from the factory
 function BuildConnectionLimits(
@@ -270,7 +271,7 @@ begin
 end;
 
 function BuildH1CoreOptions(const AFactory: THttp2ServerFactory;
-  const ATls: Boolean): TH1CoreOptions;
+  const ATls: Boolean; const ABodyBudget: IBodyBudget): TH1CoreOptions;
 begin
   Result.Limits := AFactory.Http11;
   if ATls then
@@ -281,6 +282,7 @@ begin
   Result.MaxRequests := AFactory.MaxStreamsPerConnection;
   // the write timeout alone bounds a stalled write
   Result.WriteStallMs := AFactory.ServerLimits.WriteTimeoutMs;
+  Result.BodyBudget := ABodyBudget;
 end;
 
 function BuildConnectionLimits(
