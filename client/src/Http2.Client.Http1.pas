@@ -186,12 +186,6 @@ function FieldsToHttpHeaders(
 /// is ignored.  A bad size raises EHttpProtocolError.
 function ParseChunkSize(const ALine: string): Int64;
 
-/// decode a whole chunked body from AReader, returning the decoded bytes and
-/// any trailer fields.  Used for tests and eager callers; the streaming path
-/// uses THttp1BodyStream.
-function DecodeChunked(const AReader: TBufferedReader;
-  out ATrailers: IHttpHeaders): TBytes;
-
 implementation
 
 uses
@@ -484,60 +478,6 @@ begin
         ecProtocolError);
   end;
   Result := Size;
-end;
-
-function DecodeChunked(const AReader: TBufferedReader;
-  out ATrailers: IHttpHeaders): TBytes;
-var
-  Line, Term: string;
-  Size: Int64;
-  Chunk: TBytes;
-  Got: Integer;
-  Lines: TArray<string>;
-  N: Integer;
-begin
-  Result := nil;
-  while True do
-  begin
-    if not AReader.ReadLine(Line, True) then
-      raise EHttpProtocolError.Create('truncated chunk-size line',
-        ecStreamClosed);
-    Size := ParseChunkSize(Line);
-    if Size = 0 then
-      Break;
-    SetLength(Chunk, Integer(Size));
-    if Size > 0 then
-    begin
-      Got := AReader.ReadExact(Chunk[0], Integer(Size));
-      if Got <> Integer(Size) then
-        raise EHttpProtocolError.Create('truncated chunked body',
-          ecStreamClosed);
-    end;
-    Result := ConcatBytes(Result, Chunk);
-    if not AReader.ReadLine(Term, True) then
-      raise EHttpProtocolError.Create('truncated chunked body',
-        ecStreamClosed);
-    if Term <> '' then
-      raise EHttpProtocolError.Create('malformed chunk terminator: ' + Term,
-        ecProtocolError);
-  end;
-  SetLength(Lines, 0);
-  N := 0;
-  while True do
-  begin
-    if not AReader.ReadLine(Line, True) then
-      raise EHttpProtocolError.Create('truncated chunked trailer block',
-        ecStreamClosed);
-    if Line = '' then
-      Break;
-    SetLength(Lines, N + 1);
-    Lines[N] := Line;
-    Inc(N);
-  end;
-  if N > 0 then
-    ATrailers := FieldsToHttpHeaders(ParseHeaders(Lines))
-  else
-    ATrailers := NewHttpHeaders;
 end;
 
 { THttp1Connection }
