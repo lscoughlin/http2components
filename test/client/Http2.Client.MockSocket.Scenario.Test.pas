@@ -24,6 +24,9 @@ uses
 
 type
   TMockSocketScenarioTest = class(TTestCase)
+  private
+    procedure WaitForWindowUpdates(const ASock: TMockSocket;
+      out AConns, AStreams: Boolean);
   published
     procedure TestScenarioNormalGet;
     procedure TestScenarioMultiplex;
@@ -41,6 +44,37 @@ implementation
 const
   /// bytes of the large body queued and read before END_STREAM is queued
   cFirstPart = 96000;
+
+procedure TMockSocketScenarioTest.WaitForWindowUpdates(const ASock: TMockSocket;
+  out AConns, AStreams: Boolean);
+var
+  Frames: TArray<TFrame>;
+  I: Integer;
+  Deadline: QWord;
+begin
+  // the connection worker thread writes a WINDOW_UPDATE after the read that
+  // posted it, so the frame can reach the mock socket after the read returns.
+  // poll until both kinds are written, or the bound expires; the caller then
+  // asserts the flags as before
+  Deadline := GetTickCount64 + 5000;
+  while True do
+  begin
+    AConns := False;
+    AStreams := False;
+    Frames := ASock.OutboundFrames(True);
+    for I := 0 to Length(Frames) - 1 do
+      if Frames[I].Header.FrameType = ftWindowUpdate then
+      begin
+        if Frames[I].Header.StreamId = 0 then
+          AConns := True;
+        if Frames[I].Header.StreamId = 1 then
+          AStreams := True;
+      end;
+    if (AConns and AStreams) or (GetTickCount64 >= Deadline) then
+      Exit;
+    Sleep(5);
+  end;
+end;
 
 procedure TMockSocketScenarioTest.TestScenarioNormalGet;
 var
@@ -245,8 +279,7 @@ var
   Lease: TStreamLease;
   IL: IConnectionStream;
   Req: TStreamRequest;
-  Frames: TArray<TFrame>;
-  I, N, Ofs, Got: Integer;
+  N, Ofs, Got: Integer;
   Body, Rest: TBytes;
   Buf: array[0..16383] of Byte;
   Conns, Streams: Boolean;
@@ -299,17 +332,8 @@ begin
       Rest := ReadAllBodyBytes(Lease.Body);
       AssertEquals('full body read', Length(Body), Got + Length(Rest));
       AssertTrue('body complete', Lease.Body.Eof);
-      Frames := Sock.OutboundFrames(True);
-      Conns := False;
-      Streams := False;
-      for I := 0 to Length(Frames) - 1 do
-        if Frames[I].Header.FrameType = ftWindowUpdate then
-        begin
-          if Frames[I].Header.StreamId = 0 then
-            Conns := True;
-          if Frames[I].Header.StreamId = 1 then
-            Streams := True;
-        end;
+      // the worker thread writes the WINDOW_UPDATE frames asynchronously
+      WaitForWindowUpdates(Sock, Conns, Streams);
       AssertTrue('a connection-level WINDOW_UPDATE was emitted', Conns);
       AssertTrue('a stream-level WINDOW_UPDATE was emitted', Streams);
     finally
