@@ -22,7 +22,7 @@ uses
   SysUtils, Classes, fpcunit, testregistry, sockets, baseunix,
   mormot.lib.openssl11, Http2.Client.Errors, Http2.Client.Tls,
   Http2.Common.Tls.Context, Http2.Common.Tls.Policy, Http2.OpenSSL,
-  Http2.Client.Test.OpenSSL.SigPipe;
+  Http2.Client.Test.OpenSSL.SigPipe, Http2.Client.SigPipe;
 
 type
   /// a trivial mock byte stream; proves at compile time that a small class can
@@ -185,7 +185,7 @@ begin
   if FDelayMs > 0 then
     Sleep(FDelayMs);
   if Length(FData) > 0 then
-    fpSend(FFd, @FData[0], Length(FData), 0);
+    fpSend(FFd, @FData[0], Length(FData), cMsgNoSignal);
 end;
 
 { TLoopbackTlsServer }
@@ -256,7 +256,7 @@ var
 begin
   B := BytesOf(S);
   if Length(B) > 0 then
-    fpSend(AFd, @B[0], Length(B), 0);
+    fpSend(AFd, @B[0], Length(B), cMsgNoSignal);
 end;
 
 function RawPtrOf(const B: TBytes): PByte;
@@ -400,7 +400,7 @@ begin
   until (Length(FRequest) >= 4) and
     (Copy(FRequest, Length(FRequest) - 3, 4) = #13#10#13#10);
   if Length(FReply) > 0 then
-    fpSend(FAcceptedFd, @FReply[1], Length(FReply), 0);
+    fpSend(FAcceptedFd, @FReply[1], Length(FReply), cMsgNoSignal);
   // hold the tunnel open until the client closes it, so the test's teardown is
   // deterministic rather than racing a fixed sleep
   while fpRecv(FAcceptedFd, @C, 1, 0) = 1 do

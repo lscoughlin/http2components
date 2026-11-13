@@ -28,7 +28,7 @@ uses
   mormot.core.base, mormot.lib.openssl11,
   Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Socks, Http2.Client.Tls,
   Http2.Client, Http2.Client.Test.TlsContext,
-  Http2.Client.Test.OpenSSL.SigPipe;
+  Http2.Client.Test.OpenSSL.SigPipe, Http2.Client.SigPipe;
 
 type
   TProxyMode = (pmHttp, pmHttps, pmSocks5);
@@ -188,7 +188,7 @@ begin
   Sent := 0;
   while Sent < N do
   begin
-    R := fpSend(FFd, PByte(@ABuf) + Sent, N - Sent, 0);
+    R := fpSend(FFd, PByte(@ABuf) + Sent, N - Sent, cMsgNoSignal);
     if R <= 0 then
       Exit;
     Inc(Sent, R);
