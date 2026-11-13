@@ -47,6 +47,9 @@ const
   MaxStreamId = $7FFFFFFF;
 
 type
+  /// the endpoint that receives a frame
+  TEndpointRole = (erClient, erServer);
+
   TFrameType = (
     ftData           = $0,
     ftHeaders        = $1,
@@ -169,6 +172,13 @@ function BuildWindowUpdateFrame(const AStreamId, AIncrement: LongWord): TFrame;
 procedure ParseRstStream(const AFrame: TFrame; out AErrorCode: THttp2ErrorCode);
 procedure ParseGoAway(const AFrame: TFrame; out ALastStreamId: LongWord;
   out AErrorCode: THttp2ErrorCode; out ADebug: TBytes);
+/// RST_STREAM with the raw 32-bit code, for a log
+// - AErrorCode is the mapped code; ARawCode is the value on the wire
+procedure ParseRstStreamRaw(const AFrame: TFrame;
+  out AErrorCode: THttp2ErrorCode; out ARawCode: LongWord);
+/// GOAWAY with the raw 32-bit code, for a log
+procedure ParseGoAwayRaw(const AFrame: TFrame; out ALastStreamId: LongWord;
+  out AErrorCode: THttp2ErrorCode; out ADebug: TBytes; out ARawCode: LongWord);
 function ParseWindowUpdate(const AFrame: TFrame): LongWord;
 function ParsePing(const AFrame: TFrame): TBytes;
 procedure ParsePriority(const AFrame: TFrame; out ADependsOn, AWeight: LongWord;
@@ -191,6 +201,11 @@ procedure WriteFrame(const AStream: TStream; const AFrame: TFrame);
 /// structural validation (stream-id rules, frame size, payload sizes)
 procedure ValidateFrame(const AFrame: TFrame;
   const AMaxFrameSize: LongWord = DefaultMaxFrameSize);
+/// structural validation plus the rules for the role that receives the frame
+// - ARole is the endpoint that receives AFrame
+// - a server refuses PUSH_PROMISE from a client (RFC 9113 section 8.4)
+procedure ValidateFrameForRole(const AFrame: TFrame;
+  const AMaxFrameSize: LongWord; const ARole: TEndpointRole);
 
 implementation
 
@@ -635,7 +650,14 @@ begin
   if Length(AFrame.Payload) <> 4 then
     raise EHttpProtocolError.Create('RST_STREAM payload must be 4 bytes',
       ecFrameSizeError);
-  AErrorCode := THttp2ErrorCode(ReadUInt32BE(AFrame.Payload, 0));
+  AErrorCode := ErrorCodeFromWire(ReadUInt32BE(AFrame.Payload, 0));
+end;
+
+procedure ParseRstStreamRaw(const AFrame: TFrame;
+  out AErrorCode: THttp2ErrorCode; out ARawCode: LongWord);
+begin
+  ParseRstStream(AFrame, AErrorCode);
+  ARawCode := ReadUInt32BE(AFrame.Payload, 0);
 end;
 
 procedure ParseGoAway(const AFrame: TFrame; out ALastStreamId: LongWord;
@@ -645,10 +667,17 @@ begin
     raise EHttpProtocolError.Create('GOAWAY payload must be at least 8 bytes',
       ecFrameSizeError);
   ALastStreamId := ReadUInt32BE(AFrame.Payload, 0) and MaxStreamId;
-  AErrorCode := THttp2ErrorCode(ReadUInt32BE(AFrame.Payload, 4));
+  AErrorCode := ErrorCodeFromWire(ReadUInt32BE(AFrame.Payload, 4));
   SetLength(ADebug, Length(AFrame.Payload) - 8);
   if Length(ADebug) > 0 then
     Move(AFrame.Payload[8], ADebug[0], Length(ADebug));
+end;
+
+procedure ParseGoAwayRaw(const AFrame: TFrame; out ALastStreamId: LongWord;
+  out AErrorCode: THttp2ErrorCode; out ADebug: TBytes; out ARawCode: LongWord);
+begin
+  ParseGoAway(AFrame, ALastStreamId, AErrorCode, ADebug);
+  ARawCode := ReadUInt32BE(AFrame.Payload, 4);
 end;
 
 function ParseWindowUpdate(const AFrame: TFrame): LongWord;
@@ -914,6 +943,15 @@ begin
   else
     ; // unknown frame types must be ignored, not rejected
   end;
+end;
+
+procedure ValidateFrameForRole(const AFrame: TFrame;
+  const AMaxFrameSize: LongWord; const ARole: TEndpointRole);
+begin
+  ValidateFrame(AFrame, AMaxFrameSize);
+  if (ARole = erServer) and (AFrame.Header.FrameType = ftPushPromise) then
+    raise EHttpProtocolError.Create(
+      'a server must not receive PUSH_PROMISE', ecProtocolError);
 end;
 
 end.

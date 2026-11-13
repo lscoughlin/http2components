@@ -209,8 +209,12 @@ end;
 
 function TWindow.UpdateIncrement: LongWord;
 begin
-  Result := LongWord(FConsumed);
-  FConsumed := 0;
+  // a WINDOW_UPDATE carries at most 2^31-1; the rest waits for the next one
+  if FConsumed > MaxWindowSize then
+    Result := MaxWindowSize
+  else
+    Result := LongWord(FConsumed);
+  FConsumed := FConsumed - Result;
 end;
 
 function ShouldEmitWindowUpdate(const AConsumed: LongWord;

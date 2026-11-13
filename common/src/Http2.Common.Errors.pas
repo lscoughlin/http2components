@@ -59,6 +59,10 @@ type
   EHttpTimeout = class(EHttpError);
   EHttpConnectionClosed = class(EHttpError);
 
+/// the error code of a 32-bit wire value
+// - a value from 0 to 13 gives the matching code
+// - any other value gives ecInternalError (RFC 9113 section 7 allows this)
+function ErrorCodeFromWire(AValue: LongWord): THttp2ErrorCode;
 function Http2ErrorCodeName(const ACode: THttp2ErrorCode): string;
 
 implementation
@@ -81,6 +85,14 @@ constructor EHttpStreamError.Create(const AMessage: string;
 begin
   inherited Create(AMessage, AErrorCode);
   FStreamId := AStreamId;
+end;
+
+function ErrorCodeFromWire(AValue: LongWord): THttp2ErrorCode;
+begin
+  if AValue <= Ord(ecHttp11Required) then
+    Result := THttp2ErrorCode(AValue)
+  else
+    Result := ecInternalError;
 end;
 
 function Http2ErrorCodeName(const ACode: THttp2ErrorCode): string;
