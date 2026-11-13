@@ -29,7 +29,6 @@ type
     FThread: TConnectionThread;
     FConn: TConnection;                // weak class pointer; Close joins worker
     FOutbound: IBlockingQueue<TFrame>;
-    FInbound: IBlockingQueue<TFrame>;
     FSocket: IHttp2Socket;
     FSockStream: TStream;              // IHttp2Socket -> TStream adapter
     FLocalSettings: TConnectionSettings;
@@ -45,6 +44,7 @@ type
     procedure DoPreface;
     procedure ApplyPeerSettings(const ASettings: TConnectionSettings);
     procedure RouteInbound(const AFrame: TFrame);
+    procedure RejectUnknownStream(const AFrame: TFrame);
     procedure DrainOutbound;
     /// write one frame and emit the observer's frame-out event for it
     procedure WriteTracked(const AFrame: TFrame);
@@ -142,7 +142,6 @@ begin
   FConn := AConn;                   // weak class pointer; Close joins the worker
   FSocket := AConn.Socket;
   FOutbound := AConn.Outbound;
-  FInbound := AConn.Inbound;
   FLocalSettings := AConn.LocalSettings;
   FReadPollMs := AConn.ReadPollMs;
   FPeerMaxFrameSize := DefaultMaxFrameSize;
@@ -312,10 +311,36 @@ begin
        (AFrame.Header.FrameType <> ftWindowUpdate) then
     begin
       if not FConn.DispatchStreamFrame(AFrame) then
-        FInbound.Push(AFrame);
+        RejectUnknownStream(AFrame);
     end;
   end;
   end;
+end;
+
+procedure TConnectionWorker.RejectUnknownStream(const AFrame: TFrame);
+var
+  Id: LongWord;
+begin
+  Id := AFrame.Header.StreamId;
+  // RFC 9113 section 5.1: a frame for a stream that the client opened and then
+  // closed or reset is discarded. DATA still returns its connection credit,
+  // which TrackReceivedData already posted
+  if ((Id and 1) = 1) and (Id <= FConn.HighestOpenedStreamId) then
+  begin
+    FConn.Notifications.EmitDiscarded(AFrame, 'frame for a closed stream');
+    Exit;
+  end;
+  // PRIORITY is legal on an idle stream (RFC 9113 section 5.1), and a frame
+  // of an unknown type is ignored (section 4.1)
+  if (AFrame.Header.FrameType = ftPriority) or
+     (not IsKnownFrameType(AFrame.Header.FrameType)) then
+  begin
+    FConn.Notifications.EmitDiscarded(AFrame, 'frame for an idle stream');
+    Exit;
+  end;
+  // any other frame on an idle stream is a connection error
+  raise EHttpProtocolError.Create('frame on idle stream ' + IntToStr(Id),
+    ecProtocolError);
 end;
 
 procedure TConnectionWorker.DrainOutbound;

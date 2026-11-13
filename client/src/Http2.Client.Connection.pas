@@ -130,6 +130,7 @@ type
     FPeerSettingsReceived: Boolean;
     FGoAwayLastStreamId: LongWord;
     FHighestStreamId: LongWord;
+    FHighestOpenedStreamId: LongWord; // highest id that a lease registered
     FError: string;
     FErrorCode: THttp2ErrorCode;
     FClientAuthAlert: string;
@@ -258,6 +259,8 @@ type
     property GoAwayLastStreamId: LongWord read FGoAwayLastStreamId;
     property HighestStreamId: LongWord read FHighestStreamId
       write FHighestStreamId;
+    /// the highest stream id that the client has opened (0 when none)
+    property HighestOpenedStreamId: LongWord read FHighestOpenedStreamId;
     property ErrorMessage: string read FError;
     property ErrorCode: THttp2ErrorCode read FErrorCode;
     property ReadPollMs: Integer read FReadPollMs write FReadPollMs;
@@ -651,6 +654,8 @@ begin
   try
     FStreams.AddOrSetValue(AStreamId, AStream);
     FFlowControl.OpenStream(AStreamId);
+    if AStreamId > FHighestOpenedStreamId then
+      FHighestOpenedStreamId := AStreamId;
     Failed := FState = csClosed;
     Msg := FError;
     Code := FErrorCode;
@@ -687,6 +692,8 @@ begin
     FFlowControl.OpenStream(1);
     if FHighestStreamId < 1 then
       FHighestStreamId := 1;
+    if FHighestOpenedStreamId < 1 then
+      FHighestOpenedStreamId := 1;
   finally
     FLock.Release;
   end;

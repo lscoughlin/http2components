@@ -57,6 +57,7 @@ uses
   Http2.Client.Stream.Exchange,
   Http2.Client.Stream.Send,
   Http2.Client.Stream.Types,
+  Http2.Client.Stream.Receive,
   Http2.Client.Stream,
   Http2.Client.Tls.Plain,
   Http2.Client.Tls.Socket,

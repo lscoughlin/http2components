@@ -33,7 +33,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack, Http2.Client.Tls,
-  Http2.Client.Connection, Http2.Client.Stream.Types;
+  Http2.Client.Connection, Http2.Client.Stream.Types, Http2.Client.Stream.Receive;
 
 const
   /// polls as often as this many milliseconds while waiting for a cancel
@@ -100,7 +100,7 @@ type
     FRequest: TStreamRequest;
     FStreamId: LongWord;
     FOutbound: IBlockingQueue<TFrame>;
-    FInbound: TBlockingQueue<TFrame>;
+    FInbound: TByteBoundedFrameQueue;
     FEncoder: THpackCodec;
     FDecoder: THpackCodec;
     FOwnsEncoder: Boolean;
@@ -336,8 +336,8 @@ begin
   FAllocator := AAllocator;
   FRequest := ARequest;
   FOutbound := FConnection.Outbound;
-  // unbounded: a full queue would stop the reader from applying WINDOW_UPDATE
-  FInbound := TBlockingQueue<TFrame>.Create(0);
+  // bounded by the byte cap; Push never blocks the reader thread
+  FInbound := TByteBoundedFrameQueue.Create(FConnection.Security.MaxReceiveQueueBytes);
   FOwnsEncoder := AEncoder = nil;
   FOwnsDecoder := ADecoder = nil;
   if AEncoder <> nil then FEncoder := AEncoder else FEncoder := THpackCodec.Create;
