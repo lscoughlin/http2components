@@ -286,7 +286,7 @@ begin
       DataBytes := 0;
       Resets := 0;
       ResetCode := ecNoError;
-      while Conn.Outbound.TryPop(F) do
+      while Conn.Outbound.TryPop(F) or Conn.ControlQueue.TryPop(F) do
         if F.Header.FrameType = ftData then
           Inc(DataBytes, Length(ExtractDataPayload(F)))
         else if F.Header.FrameType = ftRstStream then
@@ -344,7 +344,7 @@ begin
         Late.Free;
       end;
       Resets := 0;
-      while Conn.Outbound.TryPop(F) do
+      while Conn.Outbound.TryPop(F) or Conn.ControlQueue.TryPop(F) do
         if F.Header.FrameType = ftRstStream then
           Inc(Resets);
       AssertEquals('the peer already reset the stream: no reset from us', 0,

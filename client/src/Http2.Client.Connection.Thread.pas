@@ -18,7 +18,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls,
-  Http2.Client.Connection;
+  Http2.Client.Connection, Http2.Client.Connection.Control;
 
 type
   /// one background thread per connection; it is the sole writer to the
@@ -29,6 +29,8 @@ type
     FThread: TConnectionThread;
     FConn: TConnection;                // weak class pointer; Close joins worker
     FOutbound: IBlockingQueue<TFrame>;
+    FControl: TControlFrameQueue;      // control frames, drained first
+    FRates: TPeerRateLimits;           // limits on the peer's PING, SETTINGS, RST_STREAM
     FSocket: IHttp2Socket;
     FSockStream: TStream;              // IHttp2Socket -> TStream adapter
     FLocalSettings: TConnectionSettings;
@@ -142,6 +144,8 @@ begin
   FConn := AConn;                   // weak class pointer; Close joins the worker
   FSocket := AConn.Socket;
   FOutbound := AConn.Outbound;
+  FControl := AConn.ControlQueue;
+  FRates.Init(GetTickCount64);
   FLocalSettings := AConn.LocalSettings;
   FReadPollMs := AConn.ReadPollMs;
   FPeerMaxFrameSize := DefaultMaxFrameSize;
@@ -171,6 +175,11 @@ begin
     while not FThread.WorkerTerminated do
     begin
       DrainOutbound;
+      if FControl.Overflowed then
+      begin
+        Fail('control frame queue is full', ecEnhanceYourCalm);
+        Break;
+      end;
       if FThread.WorkerTerminated then
         Break;
       CheckPingKeepAlive;
@@ -239,6 +248,9 @@ var
   Increment: LongWord;
 begin
   FConn.Notifications.EmitFrameIn(AFrame);
+  if not FRates.Allow(AFrame, GetTickCount64) then
+    raise EHttpConnectionError.Create('peer sent too many ' +
+      FrameTypeName(AFrame.Header.FrameType) + ' frames', ecEnhanceYourCalm);
   if (FConn.WorkerHeaderStream <> 0) and
      ((AFrame.Header.FrameType <> ftContinuation) or
       (AFrame.Header.StreamId <> FConn.WorkerHeaderStream)) then
@@ -252,13 +264,13 @@ begin
       begin
         ApplyPeerSettings(TConnectionSettings.Decode(AFrame.Payload,
           FConn.PeerSettings));
-        WriteTracked(BuildSettingsAck);
+        FConn.PostFrame(BuildSettingsAck);
       end;
     ftPing:
       if AFrame.IsAck then
         HandlePingAck(AFrame.Payload)
       else
-        WriteTracked(BuildPingFrame(AFrame.Payload, True));
+        FConn.PostFrame(BuildPingFrame(AFrame.Payload, True));
     ftGoAway:
       begin
         ParseGoAway(AFrame, LastStreamId, Code, Debug);
@@ -347,11 +359,12 @@ procedure TConnectionWorker.DrainOutbound;
 var
   Frame: TFrame;
 begin
+  // control frames first: a window update or an acknowledgement is not held
+  // behind a backlog of data frames
+  while FControl.TryPop(Frame) do
+    WriteTracked(Frame);
   while FOutbound.TryPop(Frame) do
-  begin
-    WriteFrame(FSockStream, Frame);
-    FConn.Notifications.EmitFrameOut(Frame);
-  end;
+    WriteTracked(Frame);
 end;
 
 procedure TConnectionWorker.CheckPingKeepAlive;
