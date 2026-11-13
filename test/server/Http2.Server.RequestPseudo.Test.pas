@@ -43,6 +43,7 @@ type
     procedure TestHostThatDiffersOnlyByCaseOrDefaultPortIsAccepted;
     procedure TestRequestWithoutHostIsAccepted;
     procedure TestOptionsAsteriskWithAuthorityIsAccepted;
+    procedure TestIpv6LiteralAndExplicitPortAreAccepted;
   end;
 
 implementation
@@ -157,6 +158,15 @@ procedure TRequestPseudoTest.TestOptionsAsteriskWithAuthorityIsAccepted;
 begin
   AssertTrue('OPTIONS * with host',
     Valid('OPTIONS', '*', 'example.com', 'example.com'));
+end;
+
+procedure TRequestPseudoTest.TestIpv6LiteralAndExplicitPortAreAccepted;
+begin
+  AssertTrue('IPv6 literal', Valid('GET', '/', '[::1]', '[::1]'));
+  AssertTrue('IPv6 literal with port', Valid('GET', '/', '[::1]:8443', '[::1]:8443'));
+  AssertTrue('explicit port', Valid('GET', '/', 'example.com:8443', 'example.com:8443'));
+  AssertFalse('another host with the same port',
+    Valid('GET', '/', 'example.com:8443', 'other.test:8443'));
 end;
 
 initialization

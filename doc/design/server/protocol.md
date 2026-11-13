@@ -161,9 +161,16 @@ section 8.3.1. A request that fails a check is a stream error: the server sends
 - The port is not compared. A `host` field with a port that differs from the port
   of `:authority` is not a fault.
 - A request without a `host` field is not checked against `:authority`.
+- The `host` check is a SHOULD of RFC 9113 section 8.3.1. The server applies it by
+  default, so a mismatch is a stream error.
 
 ## RFC references
 
+- [RFC 3986](https://www.rfc-editor.org/rfc/rfc3986.html), plain-text copy
+  retrieved 2026-11-13 in `doc/references/rfc3986.txt`.
 - [RFC 7541](https://www.rfc-editor.org/rfc/rfc7541.html), checked 2026-11-11.
 - [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441.html), checked 2026-11-11.
-- [RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html), checked 2026-11-11.
+- [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html), plain-text copy
+  retrieved 2026-10-22 in `doc/references/rfc9110.txt`.
+- [RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html), checked 2026-11-11. Section
+  8.3.1 was read again on 2026-11-13 in `doc/references/rfc9113.txt`.
