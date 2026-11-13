@@ -379,7 +379,6 @@ procedure TUrlIpv6Test.TestBracketedHostIsReturnedWithoutBrackets;
 begin
   AssertParsed('https://[::1]/x', '::1', 443, '/x');
   AssertParsed('http://[2001:db8::7]/', '2001:db8::7', 80, '/');
-  AssertParsed('https://[fe80::1%25eth0]/', 'fe80::1%25eth0', 443, '/');
 end;
 
 procedure TUrlIpv6Test.TestPortAndPathAfterBrackets;
@@ -422,6 +421,14 @@ begin
     on EHttpProtocolError do Raised := True;
   end;
   AssertTrue('bad port', Raised);
+  // RFC 6874 zone identifiers are an error (doc/design/common/uri.md)
+  Raised := False;
+  try
+    ParseHttpUrl('https://[fe80::1%25eth0]/', H, N, P);
+  except
+    on EHttpProtocolError do Raised := True;
+  end;
+  AssertTrue('zone identifier', Raised);
 end;
 
 procedure TUrlIpv6Test.TestAuthorityAndOriginKeepTheBrackets;

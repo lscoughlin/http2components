@@ -81,7 +81,7 @@ function BuildProxySelector(const ACustom: IProxySelector;
 implementation
 
 uses
-  Http2.Client.Proxy.Unix;
+  Http2.Client.Proxy.Unix, Http2.Client.Url, Http2.Common.Uri;
 
 { ---- small helpers ---- }
 
@@ -442,46 +442,24 @@ end;
 function SplitProxyTarget(const AUri: string; out AScheme, AHost: string;
   out APort: Word): Boolean;
 var
-  Rest, Auth, UserInfo, PortText: string;
-  P, Port, Q: Integer;
+  Uri: TURI;
 begin
-  Result := False;
+  // one parser for the proxy match and the dial: ParseURI (through the
+  // client URL wrapper, which takes the scheme-less input as https)
   AScheme := 'https';
   AHost := '';
   APort := 0;
-  Rest := AUri;
-  P := Pos('://', Rest);
-  if P > 0 then
-  begin
-    AScheme := LowerCase(Copy(Rest, 1, P - 1));
-    Rest := Copy(Rest, P + 3, MaxInt);
-  end;
-  // the authority ends at the first '/', '?' or '#'
-  Q := 0;
-  for P := 1 to Length(Rest) do
-    if Rest[P] in ['/', '?', '#'] then
-    begin
-      Q := P;
-      Break;
-    end;
-  if Q > 0 then
-    Auth := Copy(Rest, 1, Q - 1)
-  else
-    Auth := Rest;
-  if not SplitAuthority(Auth, UserInfo, AHost, PortText) then
+  Result := TryParseRequestUrl(AUri, Uri);
+  if not Result then
     Exit;
-  AHost := LowerCase(AHost);
-  if PortText <> '' then
-  begin
-    if not ParsePort(PortText, Port) then
-      Exit;
-    APort := Word(Port);
-  end
+  AScheme := Uri.Scheme;
+  AHost := Uri.Host;
+  if Uri.HasPort then
+    APort := Word(Uri.Port)
   else if AScheme = 'http' then
     APort := cProxyDefaultHttpPort
   else
     APort := cProxyDefaultHttpsPort;
-  Result := True;
 end;
 
 { ---- proxy URL ---- }
