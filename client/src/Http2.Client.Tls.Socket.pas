@@ -791,7 +791,13 @@ var P: PByte; N: Integer;
 begin
   Result := 0; P := PByte(@ABuffer);
   while Result < ACount do begin
-    N := ReadSome(P[Result], ACount - Result);
+    try
+      N := ReadSome(P[Result], ACount - Result);
+    except
+      on EHttpTimeout do
+        if Result > 0 then Break   // keep the consumed bytes; the caller reads on
+        else raise;
+    end;
     if N <= 0 then Break;
     Inc(Result, N);
   end;

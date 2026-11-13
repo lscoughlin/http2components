@@ -63,16 +63,29 @@ uses
   Http2.Common.FlowControl;
 
 { TSocketStream: adapts an IHttp2Socket to the TStream ReadFrame/WriteFrame
-  API. A read timeout with no bytes yet is re-raised so the thread can poll
-  outbound work; once a frame has started arriving the read blocks through to
-  completion so no partial frame is ever abandoned. }
+  API. A read timeout before the first byte of a frame is re-raised so the
+  thread can poll outbound work. Once a byte of the frame has arrived, a
+  timeout is retried until the frame is complete or the frame deadline passes;
+  the deadline is then an I/O error, never an idle poll, so no partial frame
+  is abandoned and the framing never loses step. }
+
+const
+  cDefaultFrameTimeoutMs = 30000;
 
 type
   TSocketStream = class(TStream)
   private
     FSocket: IHttp2Socket;
+    FFrameStarted: Boolean;
+    FFrameDeadline: QWord;
+    FFrameTimeoutMs: Integer;
   public
     constructor Create(const ASocket: IHttp2Socket);
+    /// the next Read starts a new frame; a timeout before a byte is idle
+    procedure BeginFrame;
+    /// the longest time that one frame may take from its first byte
+    property FrameTimeoutMs: Integer read FFrameTimeoutMs
+      write FFrameTimeoutMs;
     function Read(var ABuffer; ACount: LongInt): LongInt; override;
     function Write(const ABuffer; ACount: LongInt): LongInt; override;
     function Seek(const AOffset: Int64; AOrigin: TSeekOrigin): Int64;
@@ -89,6 +102,12 @@ constructor TSocketStream.Create(const ASocket: IHttp2Socket);
 begin
   inherited Create;
   FSocket := ASocket;
+  FFrameTimeoutMs := cDefaultFrameTimeoutMs;
+end;
+
+procedure TSocketStream.BeginFrame;
+begin
+  FFrameStarted := False;
 end;
 
 function TSocketStream.Read(var ABuffer; ACount: LongInt): LongInt;
@@ -107,10 +126,13 @@ begin
       N := FSocket.Read(P[Got], ACount - Got);
     except
       on E: EHttpTimeout do
-        if Got = 0 then
-          raise                 // idle poll: no bytes yet, surface the timeout
+        if (Got = 0) and not FFrameStarted then
+          raise                 // idle poll: no frame byte yet
+        else if GetTickCount64 >= FFrameDeadline then
+          raise EHttpConnectionClosed.CreateFmt(
+            'frame incomplete after %d ms', [FFrameTimeoutMs])
         else
-          Break;                // partial frame; caller re-invokes Read
+          Continue;             // mid-frame gap: keep the bytes, read on
     end;
     if N <= 0 then
     begin
@@ -119,6 +141,11 @@ begin
       Break;                  // partial read; caller re-invokes Read
     end;
     Inc(Got, N);
+    if not FFrameStarted then
+    begin
+      FFrameStarted := True;
+      FFrameDeadline := GetTickCount64 + QWord(FFrameTimeoutMs);
+    end;
   end;
   Result := Got;
 end;
@@ -184,6 +211,7 @@ begin
       if FThread.WorkerTerminated then
         Break;
       try
+        TSocketStream(FSockStream).BeginFrame;
         Frame := ReadFrame(FSockStream, FLocalSettings.MaxFrameSize);
       except
         on E: EHttpTimeout do
@@ -234,6 +262,8 @@ procedure TConnectionWorker.DoPreface;
 var
   Preface: TBytes;
 begin
+  if FSocket.ReadTimeoutMs > 0 then
+    TSocketStream(FSockStream).FrameTimeoutMs := FSocket.ReadTimeoutMs;
   FSocket.ReadTimeoutMs := FReadPollMs;
   Preface := ClientPrefaceBytes;
   FSocket.Write(Preface[0], Length(Preface));
