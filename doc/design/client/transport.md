@@ -255,6 +255,83 @@ the socket read timeout that was set before the poll interval was applied
 with an idle poll. `SocketReadFully` keeps its full-read-or-raise behavior for
 the proxy CONNECT reply.
 
+## Lock pattern
+
+The lock pattern lets a thread work on one item of a collection without it
+holding the coarse lock of the collection during the work. The pattern has
+four steps:
+
+1. The thread takes the coarse lock of the collection, such as the pool lock.
+2. The thread takes the fine lock of the item that the work needs, such as
+   the encoder lock of one connection.
+3. The thread releases the coarse lock.
+4. The thread does the work with the item under its fine lock.
+
+### Lock levels
+
+The locks have three levels. A thread takes locks in the order of the levels,
+level 1 first and level 3 last. A thread never takes a lock of a lower level
+while it holds a lock of a higher level.
+
+- Level 1 is a coarse lock. It guards a collection. The pool lock
+  (`TPoolState.FLock`) is the level 1 lock.
+- Level 2 is a fine lock. It guards one item of a collection, such as one
+  connection. Within one connection, the header encoder lock is taken before
+  the connection lock, as the [lock order](#lock-order) section states.
+- Level 3 is a leaf lock. A thread holds a leaf lock for one operation. The
+  operation takes no other lock, except where the lock order section states
+  otherwise.
+
+### Rules of the lock pattern
+
+Step 2 uses TryEnter and never waits. While a thread holds a coarse lock, it
+takes the fine lock with TryEnter. A fine lock can be held for a long time. A
+stream thread holds the header encoder lock while it waits for room in the
+outbound queue. If TryEnter fails, the thread releases the coarse lock. The
+thread then either takes another item, or waits for the fine lock outside the
+coarse lock. That wait has a deadline and the cancel token of the caller. After
+the wait, the thread takes the coarse lock again and checks that the item is
+still in the collection.
+
+No blocking call is made under a coarse lock. Under a coarse lock, the code does
+not read or write a socket, does not call a queue push that can wait, does not
+join a thread, does not call an observer or an exchange callback, and does not
+wait for an event. An item that leaves the collection is closed after the
+coarse lock is released. The thread removes the item from the collection under
+the coarse lock, and closes the item after the release.
+
+A callback never takes a coarse lock. A callback that runs on the reader thread
+does not take the pool lock, and does not wait for a header encoder lock.
+
+Fine locks are never taken in pairs by one thread, except in a fixed documented
+order. The order of the header encoder lock and the connection lock, in the
+lock order section, is such an order.
+
+The fine lock is released before a wait. A thread that waits for an event, such
+as the end of a dial that another thread runs, or room in a queue, releases the
+fine lock first. The thread that signals the event needs that lock to update
+its state. The header encoder lock is the exception that the lock order section
+describes: the stream thread holds it across the wait for room in the outbound
+queue, and the reader thread never waits for it.
+
+### Locks of the client
+
+| Lock | Level | Scope |
+|------|-------|-------|
+| Pool lock (`TPoolState.FLock`, unit `Http2.Client.Pool.State`) | 1, coarse | The pooled connections. |
+| Header encoder lock (`TConnection.HeaderEncoderLock`, unit `Http2.Client.Connection`) | 2, fine | One connection. Held across the start of a stream and the send of a request body. |
+| Connection lock (`TConnection.FLock`, unit `Http2.Client.Connection`) | 2, fine | One connection. Guards the state, the settings, the stream table and the flow control windows. |
+| Outbound queue lock (`TBlockingQueueState<T>`, unit `Http2.Client.Connection.Queue`) | 3, leaf | One outbound queue. |
+| Control frame queue lock (`TControlFrameQueue`, unit `Http2.Client.Connection.Control`) | 3, leaf | One control frame queue. Its operations never wait. |
+| Header table hand-off lock (`THeaderTableHandoff`, unit `Http2.Client.Connection.Control`) | 3, leaf | The pending header table size. |
+| Send-credit waiter registry lock (unit `Http2.Client.Connection.SendCredit`) | 3, leaf | The registry of the send-credit waiters. |
+| Stream receive queue lock (`TByteBoundedFrameQueue`, unit `Http2.Client.Stream.Receive`) | 3, leaf | One stream receive queue. Taken before the lock of the inner queue. |
+| Socket locks of `TTlsSocket` (unit `Http2.Client.Tls.Socket`): session, read and write | 3, leaf | One TLS socket. The read lock is taken before the session lock. |
+
+### Where the pattern is used
+
+Stories R10, R12 and R13 apply it.
+
 ## Receive flow control
 
 RFC 9113 section 5.2 and section 6.9 give each side a window for the DATA
