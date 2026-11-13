@@ -41,11 +41,62 @@ When `WithFollowRedirects` is on and a `3xx` carries a `Location`:
   through the proxy. A refused `CONNECT` raises `EHttpConnectionError`; an
   unusable proxy value raises `EHttpProxyConfigError`. Details are in [proxy](proxy.md).
 
+### Redirect policy
+
+`WithRedirectPolicy` selects the hosts that a redirect may reach. The policy
+applies to every hop of a redirect chain. `WithFollowRedirects(False)` turns
+redirect handling off, and the policy does not change that setting.
+
+The client reads a `Location` value as a reference against the current URL
+(RFC 3986 section 5.2, https://www.rfc-editor.org/rfc/rfc3986, checked 2026-11-13)
+and parses the result with `ParseURI`. The policies
+decide on the result:
+
+| Policy | The client follows a redirect when |
+|---|---|
+| `rpAnyHost` (default) | the scheme is the same. The host and the port can differ. |
+| `rpSameHostOnly` | the scheme and the host are the same. The port can differ. |
+| `rpSameOriginOnly` | the scheme, the host and the port are the same. |
+| `rpSameOriginUpgrade` | the origin is the same, or the only change is `http` to `https` on the same host. The port can change from the `http` port to the `https` port. |
+
+These rules apply to every policy:
+
+- A redirect to a scheme other than `http` or `https` is refused.
+- A redirect that changes the scheme is refused. The exception is the `http`
+  to `https` upgrade under `rpSameOriginUpgrade`. A redirect from `https` to
+  `http` is refused under every policy.
+- A refused redirect returns the 3xx response to the caller, with its headers
+  and its body. The client does not raise an error for a refused redirect.
+- A `307` or `308` redirect that carries a body is refused when it moves to
+  another origin. A body writer that cannot be replayed raises
+  `EHttpNotReplayable`, as before.
+- The redirect count limit is the `MaxRedirects` setting. A refused redirect
+  does not count toward that limit.
+
+Credential headers: on a change of origin (scheme, host or port), the next
+request drops `authorization`, `cookie` and `proxy-authorization`. A redirect
+to the same origin keeps them. The `http` to `https` upgrade under
+`rpSameOriginUpgrade` keeps them, because the host is the same and the new
+transport is safer. The origin is the key of this rule, not the host. Under
+`rpAnyHost` and `rpSameHostOnly`, a redirect to another port of the same host
+is followed, and the credential headers are dropped for that hop.
+
+Body headers: a `303` redirect, and a `301` or `302` redirect for a method other
+than GET or HEAD, drop the body. Those hops also drop `content-length`,
+`content-type` and `content-encoding`.
+
+The default policy is `rpAnyHost`. It follows a redirect to any host. The only
+protection in that default is the removal of the credential headers on a change
+of origin. A caller that sends secrets in another header selects
+`rpSameOriginOnly`, which follows a redirect only to the same origin.
+
 ```mermaid
 flowchart TB
   R["response received"] --> S{"3xx and FollowRedirects?"}
   S -->|"no"| DONE["return response"]
-  S -->|"yes"| COUNT{"redirects so far &lt; MaxRedirects?"}
+  S -->|"yes"| POL{"RedirectPolicy allows the hop?"}
+  POL -->|"no"| DONE
+  POL -->|"yes"| COUNT{"redirects so far &lt; MaxRedirects?"}
   COUNT -->|"no"| E1["raise EHttpTooManyRedirects"]
   COUNT -->|"yes"| M{"status code?"}
   M -->|"303"| G["method = GET · body dropped"]

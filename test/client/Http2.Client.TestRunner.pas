@@ -43,6 +43,7 @@ uses
   Http2.Client.UnixProxyDial.Test, Http2.Client.UnixProxyClient.Test,
   Http2.Client.Url.Test,
   Http2.Client.ControlBytes.Test,
-  Http2.Client.SseLimits.Test;
+  Http2.Client.SseLimits.Test,
+  Http2.Client.Redirect.Test;
 
 end.

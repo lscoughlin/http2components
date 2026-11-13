@@ -97,11 +97,17 @@ Defaults:
 | `MaxStreamsPerConnection` | `100` | concurrent streams per connection offered to the peer |
 | `FollowRedirects` | `True` | automatic redirect handling (as described in [errors-redirects](errors-redirects.md)) |
 | `MaxRedirects` | `10` | redirect chain limit before `EHttpTooManyRedirects` |
+| `RedirectPolicy` | `rpAnyHost` | the hosts that a redirect may reach (`WithRedirectPolicy`); the table and the credential rule are in [errors-redirects](errors-redirects.md) |
 | `ConnectTimeoutMs` | `10000` | TCP + TLS handshake deadline |
 | `HeaderTimeoutMs` | `30000` | response-header deadline once headers are expected |
 | `IdleTimeoutMs` | `60000` | idle connection reap time |
 | `Http1Fallback` | `False` | allow HTTP/1.1 when the peer does not offer `h2`; as described in [fallback](fallback.md) |
 | `ClearTextPolicy` | `ctReject` | reject `http` origins; `ctPriorKnowledge`, `ctUpgrade` and `ctHttp1` accept them (`ctHttp1` speaks HTTP/1.1 with no upgrade probe); as described in [fallback](fallback.md) |
+
+`rpAnyHost` follows a redirect to any host. The only protection in that default
+is the removal of the `authorization`, `cookie` and `proxy-authorization` headers
+on a change of origin. A caller that sends secrets in other headers selects
+`rpSameOriginOnly`.
 
 Two connection caps apply, because a pool has two different budgets: a
 **per-authority** one (how many TCP connections may serve one `host:port`, a
