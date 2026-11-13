@@ -82,6 +82,7 @@ uses
   Http2.Server.H2Flow.Test,
   Http2.Server.H2Hpack.Test,
   Http2.Server.H2Lifecycle.Test,
+  Http2.Server.ContentLength.Test,
   Http2.Server.H2Locks.Test,
   Http2.Server.WsHardening.Test,
   Http2.Server.Lifecycle.Test,
