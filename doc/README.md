@@ -26,6 +26,7 @@ source revisions. They do not report results for the combined TLS implementation
 | --- | --- |
 | [Architecture](design/common/architecture.md) | Common, role, and provider boundaries. |
 | [Protocol](design/common/protocol.md) | The shared HTTP/2 protocol areas and their RFC references. |
+| [URI](design/common/uri.md) | The shared URI parser, host rules, reference resolution and origin helpers. |
 
 ## Client design
 

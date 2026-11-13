@@ -279,6 +279,15 @@ checks for cancel keeps its thread until it returns. The server counts these
 handlers and gives the count to the observer with each timeout. The full
 description is in [admission](admission.md).
 
+When the limit is set, it also applies to a WebSocket handler that runs in the
+handler thread. On HTTP/2, the checks and the detach of the handshake run in
+that call, while the session runs on the streaming pool. A handler that
+detaches its stream and returns before the limit is not affected. A handler
+that is still in its call after the detach gets no 503, and the server resets
+its stream with `CANCEL`. On HTTP/1.1, an upgrade handler that is still in its
+call at the limit gets a 503 when no head went out, and the connection closes,
+because the detach does not stop the answer.
+
 ## The default limits
 
 `THttp2ServerFactory.Create` sets the default of every bucket
