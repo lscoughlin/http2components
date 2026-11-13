@@ -35,7 +35,8 @@ uses
   Http2.Common.Frames.Union.Test,
   Http2.Common.UnixPath.Test,
   Http2.Common.FrameDetails.Test,
-  Http2.Common.Uri.Test;
+  Http2.Common.Uri.Test,
+  Http2.Common.SpscRing.Test;
 
 procedure RegisterTests;
 begin
