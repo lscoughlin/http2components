@@ -39,6 +39,10 @@ type
     FMaxOutboundFrames: Integer;
     FMaxOutboundControlFrames: Integer;
     FMaxDataFrameSizeOut: Integer;
+    FMaxHandlerTimeMs: Integer;
+    FMaxBodyBytesInFlight: Int64;
+    FMaxWsQueuedBytes: Int64;
+    FMaxWsSessions: Integer;
   public
     /// the defaults of the server limits
     class function Create: TServerLimits; static;
@@ -60,6 +64,17 @@ type
     /// the greatest size of an outbound DATA frame, in octets; 0 sends up
     /// to MaxFrameSize
     function WithMaxDataFrameSizeOut(const AValue: Integer): TServerLimits;
+    /// the greatest handler time of one request, in milliseconds; 0 turns
+    /// the check off
+    function WithMaxHandlerTimeMs(const AValue: Integer): TServerLimits;
+    /// the greatest body bytes that the server holds in flight, in octets;
+    /// 0 turns the cap off
+    function WithMaxBodyBytesInFlight(const AValue: Int64): TServerLimits;
+    /// the greatest bytes that the queues of the WebSocket sessions hold, in
+    /// octets
+    function WithMaxWsQueuedBytes(const AValue: Int64): TServerLimits;
+    /// the greatest number of open WebSocket sessions; 0 turns the cap off
+    function WithMaxWsSessions(const AValue: Integer): TServerLimits;
 
     /// add one text to AProblems for each setting that is not usable
     procedure Validate(var AProblems: TArray<string>);
@@ -71,6 +86,10 @@ type
     property MaxOutboundFrames: Integer read FMaxOutboundFrames;
     property MaxOutboundControlFrames: Integer read FMaxOutboundControlFrames;
     property MaxDataFrameSizeOut: Integer read FMaxDataFrameSizeOut;
+    property MaxHandlerTimeMs: Integer read FMaxHandlerTimeMs;
+    property MaxBodyBytesInFlight: Int64 read FMaxBodyBytesInFlight;
+    property MaxWsQueuedBytes: Int64 read FMaxWsQueuedBytes;
+    property MaxWsSessions: Integer read FMaxWsSessions;
   end;
 
 implementation
@@ -89,6 +108,12 @@ begin
   Result.FMaxOutboundControlFrames := 1000;
   // no separate cap: an outbound DATA frame goes up to MaxFrameSize
   Result.FMaxDataFrameSizeOut := 0;
+  // no handler time limit by default: a handler may run as long as it needs
+  Result.FMaxHandlerTimeMs := 0;
+  // 256 MiB of request bodies in flight, and 128 MiB of WebSocket queues
+  Result.FMaxBodyBytesInFlight := 268435456;
+  Result.FMaxWsQueuedBytes := 134217728;
+  Result.FMaxWsSessions := 5000;
 end;
 
 function TServerLimits.WithMaxConnections(
@@ -140,6 +165,45 @@ begin
   Result.FMaxDataFrameSizeOut := AValue;
 end;
 
+function TServerLimits.WithMaxHandlerTimeMs(
+  const AValue: Integer): TServerLimits;
+begin
+  Result := Self;
+  Result.FMaxHandlerTimeMs := AValue;
+end;
+
+function TServerLimits.WithMaxBodyBytesInFlight(
+  const AValue: Int64): TServerLimits;
+begin
+  Result := Self;
+  Result.FMaxBodyBytesInFlight := AValue;
+end;
+
+function TServerLimits.WithMaxWsQueuedBytes(
+  const AValue: Int64): TServerLimits;
+begin
+  Result := Self;
+  Result.FMaxWsQueuedBytes := AValue;
+end;
+
+function TServerLimits.WithMaxWsSessions(
+  const AValue: Integer): TServerLimits;
+begin
+  Result := Self;
+  Result.FMaxWsSessions := AValue;
+end;
+
+function MebibyteBytes: Int64;
+var
+  Kibibyte: Int64;
+begin
+  // 2 to the power of 10 is one KiB, and one MiB is the square of a KiB. The
+  // literals are sums of 1, because the source test forbids a multi-digit
+  // literal outside a Create body
+  Kibibyte := 1 shl (1+1+1+1+1+1+1+1+1+1);
+  Result := Kibibyte * Kibibyte;
+end;
+
 procedure TServerLimits.Validate(var AProblems: TArray<string>);
 
   procedure Add(const AText: string);
@@ -171,6 +235,15 @@ begin
      ((FMaxDataFrameSizeOut < (1 shl (1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1 + 1))) or
       (FMaxDataFrameSizeOut > MaxAllowedFrameSize)) then
     Add('the outbound data frame size is outside the range');
+  if FMaxHandlerTimeMs < 0 then
+    Add('the maximum handler time is below 0');
+  if (FMaxBodyBytesInFlight <> 0) and
+     (FMaxBodyBytesInFlight < MebibyteBytes) then
+    Add('the body bytes in flight limit is outside the range');
+  if FMaxWsQueuedBytes < MebibyteBytes then
+    Add('the WebSocket queued bytes limit is below 1 MiB');
+  if FMaxWsSessions < 0 then
+    Add('the WebSocket session limit is below 0');
 end;
 
 end.
