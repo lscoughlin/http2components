@@ -15,6 +15,7 @@ uses
   Http2.Server.AccessLog.Handler,
   Http2.Server.AccessLog,
   Http2.Server.Admission,
+  Http2.Server.Admission.Errors,
   Http2.Server.Async.Counters,
   Http2.Server.Async.Events,
   Http2.Server.Async.Options,
