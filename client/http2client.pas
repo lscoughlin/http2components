@@ -32,6 +32,7 @@ uses
   Http2.Client.Factory,
   Http2.Client.Http1.Body,
   Http2.Client.Http1,
+  Http2.Client.Http1.Parse,
   Http2.Client.Identity,
   Http2.Client.IdentityHandle,
   Http2.Client.Messages,
