@@ -301,7 +301,10 @@ begin
     // The GOAWAY frame of a trip or a graceful stop must reach the peer, so
     // the close waits for the whole output drain.  A close before the drain
     // drops the queued GOAWAY and the peer never learns why the socket ended.
-    if Http2Drained(FCore, PendingWrite) then
+    // The same holds for output that a handler thread took from the core and
+    // did not yet hand to the socket: the core and mORMot2 show no bytes, and
+    // the loop of that thread closes the connection after its write.
+    if Http2Drained(FCore, PendingWrite) and not DeferCloseForSend then
     begin
       if DrainTlsClose then Exit(soClose);
       Exit;
@@ -382,7 +385,7 @@ begin
     // stream ends, because the trip already drained it, so the decision runs
     // here too: the close waits for the frames, and the peer learns why the
     // socket ended.
-    if Http2Drained(FCore, PendingWrite) then
+    if Http2Drained(FCore, PendingWrite) and not DeferCloseForSend then
       if DrainTlsClose then result := soClose;
     except
       on E: Exception do
@@ -395,4 +398,60 @@ begin
   finally
     Http2IoThreadLeave;
   end;
+end;
+
+function THttp2AsyncConnection.DeferCloseForSend: Boolean;
+begin
+  // A send loop owns FInSend from before it takes output from the core until
+  // after its write returned. In that span the output is in neither the core
+  // nor mORMot2, so a drained check would pass and the close would drop it.
+  // The close is not awaited here, because the loop may wait for the
+  // connection lock that this thread holds; the loop decides it at its end.
+  Result := False;
+  if FSendLock = nil then
+    Exit;
+  FSendLock.Acquire;
+  try
+    // the loop of this very thread runs inside fOwner.Write, where AfterWrite
+    // reports its own chunk as sent and no later chunk is taken yet
+    Result := FInSend and (FSendThread <> GetCurrentThreadId);
+    if Result then
+      FCloseWanted := True;
+  finally
+    FSendLock.Release;
+  end;
+  if Result then
+    FlightCloseDeferred;
+end;
+
+function THttp2AsyncConnection.TakeDeferredClose: Boolean;
+begin
+  Result := FCloseWanted and (FCore <> nil) and
+    Http2Drained(FCore, PendingWrite);
+  FCloseWanted := False;
+end;
+
+procedure THttp2AsyncConnection.CheckHandshakeDeadline(const ANowMs: QWord);
+var
+  H: TConnectionAsyncHandle;
+  Current: TAsyncConnection;
+  Expired: Boolean;
+begin
+  if FClearTextTransport or (FServer = nil) or
+     (FServer.FTlsBinding = nil) then Exit;
+  H := Handle;
+  Current := fOwner.ConnectionFind(H);
+  if Current <> Self then Exit;
+  if (FTlsAdapter <> nil) and (FPeerTlsClosed or FLocalTlsShutdown) then
+  begin
+    if DrainTlsClose then
+      fOwner.ConnectionRemove(H);
+    Exit;
+  end;
+  if FHandshakeDeadlineMs <= 0 then Exit;
+  Expired := ((FTlsAdapter = nil) or
+    (FTlsAdapter.State in [tssNew, tssHandshaking])) and
+    (Int64(ANowMs) >= FHandshakeDeadlineMs);
+  if Expired then
+    fOwner.ConnectionRemove(H);
 end;
