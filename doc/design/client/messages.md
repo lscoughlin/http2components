@@ -246,8 +246,9 @@ three helper functions for this check. `IsValidHeaderName` accepts a
 non-empty RFC 9110 token and refuses a leading `:`. `IsValidHeaderValue`
 refuses a value that holds CR, LF or NUL. `IsValidTargetPart` refuses a
 target that holds a byte at or below 0x20 or the byte 0x7F. The map keeps
-its current behavior. Each builder of a message calls these functions for
-the names and values that it sends.
+its current behavior. The helpers are available to every builder of a message;
+the builders that call them are listed in the work of the client request,
+response and server validation stories.
 
 Header names are a set of constants of common HTTP header names:
 
