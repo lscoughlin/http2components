@@ -60,10 +60,14 @@ type
     FLock: TCriticalSection;
     FOrigin: string;
     FClosing: Boolean;
+    FCloseClaimed: Boolean;
     /// the in-flight response body, if any: the connection is only eligible
     /// for reuse once it is drained
     FLastBody: IHttpBodyStream;
     FMaxResponseBytes: Int64;
+    /// under FLock: True for the first caller only; that caller closes the
+    /// socket after it releases FLock
+    function ClaimClose: Boolean;
   public
     constructor Create(const AH1: THttp1Connection; const AOrigin: string);
     destructor Destroy; override;
@@ -221,6 +225,7 @@ begin
   FOrigin := AOrigin;
   FLock := TCriticalSection.Create;
   FClosing := False;
+  FCloseClaimed := False;
   FLastBody := nil;
   FMaxResponseBytes := 0;
 end;
@@ -252,6 +257,12 @@ begin
   Result := (not FClosing) and (ActiveStreams = 0);
 end;
 
+function THttp1PooledConnection.ClaimClose: Boolean;
+begin
+  Result := not FCloseClaimed;
+  FCloseClaimed := True;
+end;
+
 function THttp1PooledConnection.Closed: Boolean;
 begin
   Result := FClosing or (not FH1.Reusable);
@@ -259,9 +270,12 @@ end;
 
 function THttp1PooledConnection.Acquire(const ARequest: TStreamRequest;
   const ATimeoutMs: Integer; out AAcquired: Boolean): IHttpResponse;
+var
+  DoClose: Boolean;
 begin
   AAcquired := False;
   Result := nil;
+  DoClose := False;
   FLock.Acquire;
   try
     if FClosing then
@@ -279,17 +293,22 @@ begin
       // response would desynchronize the next one): close and let the pool
       // drop the connection instead of reusing it
       FClosing := True;
-      FH1.Close;
+      DoClose := ClaimClose;
       raise;
     end;
   finally
     FLock.Release;
+    if DoClose then
+      FH1.Close;                  // outside FLock
   end;
 end;
 
 function THttp1PooledConnection.Resume(const ARequest: TStreamRequest;
   const AStatusLine: string): IHttpResponse;
+var
+  DoClose: Boolean;
 begin
+  DoClose := False;
   FLock.Acquire;
   try
     try
@@ -299,11 +318,13 @@ begin
     except
       // a half-read response leaves the stream unusable
       FClosing := True;
-      FH1.Close;
+      DoClose := ClaimClose;
       raise;
     end;
   finally
     FLock.Release;
+    if DoClose then
+      FH1.Close;                  // outside FLock
   end;
 end;
 
@@ -318,26 +339,32 @@ begin
 end;
 
 procedure THttp1PooledConnection.Drain;
+var
+  DoClose: Boolean;
 begin
   FLock.Acquire;
   try
     FClosing := True;
-    if ActiveStreams = 0 then
-      FH1.Close;
+    DoClose := (ActiveStreams = 0) and ClaimClose;
   finally
     FLock.Release;
   end;
+  if DoClose then
+    FH1.Close;                      // outside FLock: a TLS close can wait
 end;
 
 procedure THttp1PooledConnection.ReleaseIfIdle;
+var
+  DoClose: Boolean;
 begin
   FLock.Acquire;
   try
-    if FClosing and (ActiveStreams = 0) then
-      FH1.Close;
+    DoClose := FClosing and (ActiveStreams = 0) and ClaimClose;
   finally
     FLock.Release;
   end;
+  if DoClose then
+    FH1.Close;                      // outside FLock
 end;
 
 function THttp1PooledConnection.GetConn: TConnection;

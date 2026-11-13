@@ -72,6 +72,7 @@ uses
   Http2.Client.Upgrade,
   Http2.Client.Url,
   Http2.Client.WebSocket.Connection.Observer,
+  Http2.Client.WebSocket.Connection.Io,
   Http2.Client.WebSocket.Connection.Open,
   Http2.Client.WebSocket.Connection.Types,
   Http2.Client.WebSocket.Connection,

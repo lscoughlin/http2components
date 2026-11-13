@@ -357,6 +357,30 @@ queue, and the reader thread never waits for it.
 | Stream receive queue lock (`TByteBoundedFrameQueue`, unit `Http2.Client.Stream.Receive`) | 3, leaf | One stream receive queue. Taken before the lock of the inner queue. |
 | Socket locks of `TTlsSocket` (unit `Http2.Client.Tls.Socket`): session, read and write | 3, leaf | One TLS socket. The read lock is taken before the session lock. |
 
+### Locks of the WebSocket, the HTTP/1 pool and the attempt tracker
+
+Each lock in this table guards one object. None of them guards a collection, so
+none is a level 1 lock. The pool lock is never held while a thread takes one of
+these locks. The pool does not take the lock of an HTTP/1 pooled connection.
+
+| Lock | Level | Taken in | Runs while the lock is held |
+|------|-------|----------|-----------------------------|
+| HTTP/1 connection lock (`THttp1PooledConnection.FLock`, unit `Http2.Client.Pool.Http1`) | 2, fine | `Acquire` and `Resume` hold it for the exchange: the write of the request and the read of the response head. `Drain` and `ReleaseIfIdle` hold it to decide. | The exchange of one connection, which is the work of the lock. A flag (`FCloseClaimed`) lets only one thread close the socket. The socket close runs after the lock is released, also when an exchange fails. |
+| WebSocket send lock (`TWebSocketConnection.FSendLock`, unit `Http2.Client.WebSocket.Connection`) | 2, fine | Every send, the close frame, the echo of a close frame, and the claim of the transport close. | The write of one frame, so that frames of two threads never mix. The socket close of the transport runs after the lock is released. Observer reports and listener callbacks run after the lock is released. |
+| WebSocket state lock (`TWebSocketConnection.FStateLock`) | 3, leaf | Inside the send lock in `Close`, `HandleClose` and `SendCloseQuiet`, and alone in the readers of the flags and in the demand counter. | A change or a read of a flag or of the demand counter. No socket call, no callback and no other lock. |
+| WebSocket socket lock (`TWebSocketConnection.FIo`) | 3, leaf | Only when reads and writes share one TLS state. The reader takes it for one read. A sender takes it inside the send lock for one write. | One socket read, which is bounded by the poll time of the reader, or one socket write. The counter `FWriters` lets a waiting sender go before the next read. |
+| Attempt progress lock (`TAttemptTracker.FProgressLock`, unit `Http2.Client.Attempt`) | 3, leaf | `ReportMessage` and the build of the outcome. | The update of the message counters and a copy of them. The observer calls run after the lock is released. |
+
+The order of the WebSocket locks is the send lock, then the state lock or the
+socket lock. A thread that holds the state lock or the socket lock never takes
+the send lock. The reader thread never holds the send lock while it reads from
+the socket or while it calls the listener.
+
+The socket close of a WebSocket connection and of an HTTP/1 pooled connection can
+wait for the peer, because a TLS close sends a `close_notify` alert. Both close
+the socket after they release their lock. A sender that arrives during the close
+sees the flag `FSockClosed` and ends at once with a closed error.
+
 ### Where the pattern is used
 
 The pool applies the pattern in the wait for a dial in flight, in the close of idle connections, and in the locks of the HTTP/1 pooled connection. The close of a connection (idle reap, eviction, `Close` of the pool, `Drain` and `ReleaseIfIdle`) runs after the pool lock and the encoder lock are released. The sections of the units that apply it name the lock levels that they use.
