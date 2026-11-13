@@ -49,7 +49,7 @@ uses
   Http2.Server.Waiter,
   Http2.Server.Config,
   Http2.Server.Observer,
-  Http2.Server.Http1.BodyBudget,
+  Http2.Server.Http1.BodyBudget, Http2.Server.HandlerDeadline,
   Http2.Server.HandlerJob;
 
 type
@@ -181,6 +181,7 @@ type
     FObserver: IHttp2ServerObserver;
     /// the server-wide budget of buffered HTTP/1 body octets; 0 turns it off
     FBodyBudget: IBodyBudget;
+    FDeadlines: THandlerDeadlineWatch; // nil when MaxHandlerTimeMs is 0
     procedure Notify(const AKind: TServerEventKind;
       const AStream: TServerStream; const ADetail: string);
     procedure DetachNotify(const AStream: TServerStream; const ARefused: Boolean);
@@ -486,6 +487,7 @@ begin
     FHandler :=TAccessLoggingHandler.Create(FHandler, AFactory.AccessLogWriter);
   FGracefulTimeoutMs := AFactory.GracefulStopTimeoutMs;
   FBodyBudget := TBodyBudget.Create(AFactory.ServerLimits.MaxBodyBytesInFlight);
+  FDeadlines := StartHandlerDeadlines(AFactory.ServerLimits.MaxHandlerTimeMs, @FObserver);
   FPoolStopped := False;
   FLock := TCriticalSection.Create;
   FActive := TList<TServerStream>.Create;
@@ -513,6 +515,7 @@ begin
   end;
   FActive.Free;
   FActiveJobs.Free;
+  FDeadlines.Free;
   FQueue.Free;
   FLock.Free;
   inherited Destroy;
@@ -735,6 +738,7 @@ begin
   finally
     FLock.Release;
   end;
+  if FDeadlines <> nil then FDeadlines.RegisterJob(Job, GetTickCount64);
   try
     try
       Http2AssertHandlerThread('THandlerPool.RunJob');
@@ -747,6 +751,7 @@ begin
         Notify(seHandlerException, nil, 'the handler raised');
     end;
   finally
+    if FDeadlines <> nil then FDeadlines.UnregisterJob(Job);
     FLock.Acquire;
     try
       Dec(FBusy);
@@ -832,6 +837,7 @@ begin
     Exit;
   end;
   MarkBusy(Stream);
+  if FDeadlines <> nil then FDeadlines.Register(Stream, GetTickCount64);
   Req := TServerStreamRequest.Create(Stream);
   Res := TServerStreamResponse.Create(Stream, FChannelRegistry);
   Res.OnDetach := DetachNotify;
@@ -845,7 +851,7 @@ begin
       // a handler must never run on an IO thread: it would hold the connection
       // lock and would stall the whole IO pool
       Http2AssertHandlerThread('THandlerPool.TakeOne');
-      FHandler.Handle(Req, Res);
+      FHandler.Handle(Req, WrapDeadlineResponse(FDeadlines, Stream, Res));
     except
       on E: EStreamCancelled do
         ; // the cancellation ends the handler quietly
@@ -861,6 +867,7 @@ begin
     // the last reference destroys the pair
     ResRef := nil;
     ReqRef := nil;
+    if FDeadlines <> nil then FDeadlines.Unregister(Stream);
     MarkIdle(Stream);
     Notify(seStreamCompleted, Stream, 'the handler returned');
   end;
@@ -917,6 +924,7 @@ begin
 
   // stop acceptance; a parked worker leaves the loop at the next park
   FQueue.Stop;
+  if FDeadlines <> nil then FDeadlines.Halt;
   // every entry that still waits is refused, per the refusal mode
   Entries := FQueue.DrainEntries;
   for I := 0 to High(Entries) do

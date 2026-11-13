@@ -32,7 +32,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs,
   Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
-  Http2.Server.HandlerJob, Http2.Server.Http1.Guard, Http2.Server.Http1.Host,
+  Http2.Server.HandlerJob, Http2.Server.HandlerDeadline, Http2.Server.Http1.Guard, Http2.Server.Http1.Host,
   Http2.Server.Http1.ResponseHead, Http2.Server.Http1.Channel,
   Http2.Server.Http1.SocketChannel, Http2.Server.AccessLog,
   Http2.Server.ClientCert, Http2.Server.Http1.Grow, Http2.Server.Http1.BodyBudget;
@@ -51,7 +51,7 @@ type
   end;
 
   TH1Exchange = class(TInterfacedObject, IServerRequest, IServerResponse,
-    IHandlerJob, IH1ChannelOwner, IH1UpgradeOwner, IH1Upgradable, IAccessLogProbe,
+    IHandlerJob, IHandlerExpirable, IH1ChannelOwner, IH1UpgradeOwner, IH1Upgradable, IAccessLogProbe,
     IAccessLogRemoteSink, IClientCertificateSink)
   private
     FPrincipal: string;
@@ -170,6 +170,7 @@ type
     procedure Run(const AHandler: IHttp2Handler; const ARegistry: IChannelRegistry);
     procedure Refuse(const AReason: THandlerJobRefusal);
     procedure Cancel;
+    procedure ExpireHandler; // the time limit: 503 first, then the cancel
     /// the connection closes after this exchange: the response says
     // `connection: close` when its head has not been built yet
     procedure RequestClose;
@@ -804,6 +805,13 @@ begin
   end;
   Emit(H1ErrorResponse(503, FHead.Line.Minor, Extra));
   CompleteExchange(True);
+end;
+
+procedure TH1Exchange.ExpireHandler;
+begin
+  SendError(503); // no head out: the 503 goes first and ends the exchange
+  CompleteExchange(True); // a head is out: the connection closes
+  Cancel; // the handler sees EStreamCancelled on its next read or write
 end;
 
 { IH1ChannelOwner }

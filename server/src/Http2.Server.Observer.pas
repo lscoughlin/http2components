@@ -109,10 +109,25 @@ type
     procedure OnEvent(const AEvent: TServerEvent);
   end;
 
+  /// the optional receiver of the handler time limit event
+  ///
+  /// An observer that also implements this interface hears each handler that
+  /// passes MaxHandlerTimeMs.  AStuckCount is the number of handlers past the
+  /// limit that have not returned yet, this one included.  The event runs on
+  /// the deadline thread of the handler pool.
+  IHttp2HandlerTimeoutObserver = interface(IHttp2ServerObserver)
+    ['{7E1F0C11-0007-4A11-9C72-000000000510}']
+    procedure OnHandlerTimeout(const AStreamId: LongWord;
+      const AStuckCount: Integer);
+  end;
+
   /// the observer that does nothing
-  TNullServerObserver = class(TInterfacedObject, IHttp2ServerObserver)
+  TNullServerObserver = class(TInterfacedObject, IHttp2ServerObserver,
+    IHttp2HandlerTimeoutObserver)
   public
     procedure OnEvent(const AEvent: TServerEvent);
+    procedure OnHandlerTimeout(const AStreamId: LongWord;
+      const AStuckCount: Integer);
   end;
 
   /// the live counters of the server
@@ -161,6 +176,12 @@ implementation
 procedure TNullServerObserver.OnEvent(const AEvent: TServerEvent);
 begin
   // the default observer discards every event
+end;
+
+procedure TNullServerObserver.OnHandlerTimeout(const AStreamId: LongWord;
+  const AStuckCount: Integer);
+begin
+  // the default observer discards the timeout event too
 end;
 
 end.
