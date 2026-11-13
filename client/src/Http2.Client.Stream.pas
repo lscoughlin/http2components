@@ -282,7 +282,7 @@ type
 implementation
 
 uses
-  Http2.Client.Stream.Send, Http2.Client.Stream.Exchange;
+  Http2.Client.Stream.Send, Http2.Client.Stream.Exchange, Http2.Client.Stream.Inbound;
 
 { TIStreamBody }
 
@@ -980,20 +980,20 @@ end;
 
 procedure TStreamLease.OnStreamFrame(const AFrame: TFrame);
 begin
-  if FUnregistered then
+  if FUnregistered then Exit;
+  if LeasePushInbound(FConnection, FInbound, FStreamId, AFrame, @FPeerDone,
+    @FPeerReset) then
     Exit;
-  FInbound.Push(AFrame);
-  // on the reader thread, before the consumer sees the frame: an upload parked
-  // on flow-control credit would otherwise wait out its timeout and lose the
-  // response that is already sitting in the queue
-  if AFrame.Header.FrameType = ftRstStream then
-    InterlockedExchange(FPeerReset, 1);
-  if (AFrame.Header.FrameType = ftRstStream) or
-     ((AFrame.Header.FrameType in [ftHeaders, ftData]) and AFrame.IsEndStream) then
-  begin
-    InterlockedExchange(FPeerDone, 1);
-    FConnection.WakeSendCredit;
-  end;
+  // the queue overflowed: a stream error, the connection goes on
+  FFailed := True;
+  FErrorMessage := 'receive queue of stream ' + IntToStr(FStreamId) + ' is full';
+  FErrorCode := ecFlowControlError;
+  FBodyEof := True;
+  FResponseState := rsFailed;
+  FLocalState := lsClosed;
+  FInbound.Shutdown;
+  ReleaseLease;
+  FireExchange(edFailed, False);
 end;
 
 end.
