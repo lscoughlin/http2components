@@ -32,6 +32,7 @@ uses
   Http2.Common.FlowControl.ClientOrigin.Test,
   Http2.Common.FlowControl.ServerOrigin.Test,
   Http2.Common.Frames.Union.Test,
+  Http2.Common.FrameDetails.Test,
   Http2.Common.UnixPath.Test;
 
 procedure RegisterTests;
