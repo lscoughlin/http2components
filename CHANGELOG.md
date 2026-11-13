@@ -95,7 +95,10 @@ Counts on the integration branch. All runs had 0 errors and 0 failures.
   server WebSocket over HTTP/1 and over HTTP/2, server SSE and server abuse passed. Two gates were
   not run: `validate:client:proxy:real` and `validate:client:mtls-real` need an `ssh` client and a
   remote host. The harness gate (`validate:client:harness`) needs more than 25 minutes on this
-  host. A run with a 70-minute limit is in progress, and its result is not part of these counts.
+  host (it ran 33 minutes) and passed: PASS=72, FAIL=0, CLASS-DIFF=12, UNKNOWN=62,
+  INFRASTRUCTURE=0. A CLASS-DIFF case is one where the reference client gives no verdict and the
+  client reports a connection error; an UNKNOWN case has no verdict from the reference either.
+  17 of the 19 gates passed.
 
 ### Fixes found by the Linux load runs
 
