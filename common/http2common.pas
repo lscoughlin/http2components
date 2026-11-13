@@ -17,6 +17,7 @@ uses
   Http2.Common.Frames,
   Http2.Common.Headers,
   Http2.Common.Hpack,
+  Http2.Common.SpscRing,
   Http2.Common.Tls.Context,
   Http2.Common.Tls.Identity,
   Http2.Common.Tls.Policy,
