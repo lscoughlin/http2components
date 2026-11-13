@@ -42,6 +42,7 @@ uses
   Http2.Server.Limits,
   Http2.Server.Seam,
   Http2.Server.ResponseWriter,
+  Http2.Server.Admission.Errors,
   Http2.Server.Stream,
   Http2.Server.Duplex,
   Http2.Server.StreamAdapters,
@@ -656,6 +657,7 @@ procedure THandlerPool.ReportError(const AStream: TServerStream;
   const ABeforeHeaders: Boolean);
 begin
   Notify(seHandlerException, AStream, 'the handler raised');
+  AnswerHandlerError(AStream, ABeforeHeaders);
   if Assigned(FOnHandlerError) then
     FOnHandlerError(AStream, ABeforeHeaders);
 end;
