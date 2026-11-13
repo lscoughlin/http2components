@@ -336,7 +336,6 @@ begin
   FAllocator := AAllocator;
   FRequest := ARequest;
   FOutbound := FConnection.Outbound;
-  // bounded by the byte cap; Push never blocks the reader thread
   FInbound := TByteBoundedFrameQueue.Create(FConnection.Security.MaxReceiveQueueBytes);
   FOwnsEncoder := AEncoder = nil;
   FOwnsDecoder := ADecoder = nil;
@@ -756,6 +755,7 @@ begin
   // after the reader thread saw the frame, so the clock is never read here
   FBodyArrivedUs := AFrame.ArrivedUs;
   Inc(FBodyReceived, Length(FBodyPending));
+  FConnection.DataConsumed(FStreamId, AFrame.DataLength); // credit follows the read
   FResponseState := rsBodyOpen;
   if AFrame.IsEndStream then
   begin

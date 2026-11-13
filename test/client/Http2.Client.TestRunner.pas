@@ -42,6 +42,7 @@ uses
   Http2.Client.UnixClientProtocols.Test, Http2.Client.UnixProxyType.Test,
   Http2.Client.UnixProxyDial.Test, Http2.Client.UnixProxyClient.Test,
   Http2.Client.Url.Test,
-  Http2.Client.Receive.Test;
+  Http2.Client.Receive.Test,
+  Http2.Client.ReceiveCredit.Test;
 
 end.
