@@ -17,8 +17,19 @@ interface
 uses
   SysUtils,
   Http2.Client.Errors,
-  Http2.Client.Defaults;
+  Http2.Client.Defaults,
+  Http2.Common.Uri;
 
+
+/// the URL with the scheme that a scheme-less input takes (decided: Q7).
+// - when no ':' comes before the first '/', '?' or '#', and the text does
+//   not start with '//', the result starts with 'https://'
+// - ParseURI itself never adds a scheme; only the client inputs do
+function WithDefaultScheme(const AUrl: string): string;
+
+/// parse a request URL with ParseURI; False when it is not a valid URL with
+/// a host and a port that is not 0. Never raises and never returns the text.
+function TryParseRequestUrl(const AUrl: string; out AUri: TURI): Boolean;
 
 procedure ParseHttpUrl(const AUrl: string; out AHost: string; out APort: Word;
   out APath: string);
@@ -35,102 +46,73 @@ function ResolveLocation(const ABaseUrl, ALocation: string): string;
 
 implementation
 
+function WithDefaultScheme(const AUrl: string): string;
+var
+  I: Integer;
+begin
+  I := 1;
+  while (I <= Length(AUrl)) and not (AUrl[I] in ['/', '?', '#', ':']) do
+    Inc(I);
+  if (I <= Length(AUrl)) and (AUrl[I] = ':') then
+    Exit(AUrl);
+  if Copy(AUrl, 1, 2) = '//' then
+    Exit(AUrl);
+  Result := 'https://' + AUrl;
+end;
+
+function IsUsableRequestUri(const AUri: TURI): Boolean;
+begin
+  Result := AUri.IsAbsolute and AUri.HasAuthority and (AUri.Host <> '') and
+    (not AUri.HasPort or (AUri.Port > 0));
+end;
+
+function TryParseRequestUrl(const AUrl: string; out AUri: TURI): Boolean;
+begin
+  Result := TryParseURI(WithDefaultScheme(AUrl), AUri) and IsUsableRequestUri(AUri);
+end;
+
+// parse or raise; the message never holds the URL or the port text
+function ParseRequestUrl(const AUrl: string): TURI;
+begin
+  if not TryParseRequestUrl(AUrl, Result) then
+    raise EHttpProtocolError.Create('invalid URL: no host, or a bad port',
+      ecProtocolError);
+end;
+
+// the port of a parsed URI: the explicit port, else the scheme default
+function EffectivePort(const AUri: TURI): Word;
+begin
+  if AUri.HasPort then
+    Result := Word(AUri.Port)
+  else
+    Result := DefaultPortForScheme(AUri.Scheme);
+end;
+
+// the request target: the path, then the query; '/' when both are empty
+// (a URL without a path keeps the form of the earlier parser: '?q' stays '?q')
+function RequestTarget(const AUri: TURI): string;
+begin
+  Result := AUri.Path;
+  if AUri.HasQuery then
+    Result := Result + '?' + AUri.Query;
+  if Result = '' then
+    Result := '/';
+end;
+
 procedure ParseHttpUrl(const AUrl: string; out AHost: string; out APort: Word;
   out APath: string);
 var
-  Rest, AuthorityPart, PathPart, PortStr: string;
-  P, Colon: Integer;
-  Port: LongInt;
+  Uri: TURI;
 begin
-  AHost := '';
-  APath := '/';
-  Rest := AUrl;
-  // the default port follows the scheme: 80 for http, 443 for https
-  // (doc/design/fallback.md "Terms")
-  P := Pos('://', Rest);
-  if (P > 0) and (LowerCase(Copy(Rest, 1, P - 1)) = 'http') then
-    APort := cDefaultHttpPort
-  else
-    APort := cDefaultHttpsPort;
-  if P > 0 then
-    Rest := Copy(Rest, P + 3, Length(Rest));    // drop "scheme://"
-  PathPart := '';
-  P := Pos('/', Rest);
-  Colon := Pos('?', Rest);
-  if (P > 0) and ((Colon = 0) or (P < Colon)) then
-  begin
-    AuthorityPart := Copy(Rest, 1, P - 1);
-    PathPart := Copy(Rest, P, Length(Rest));
-  end
-  else if Colon > 0 then
-  begin
-    AuthorityPart := Copy(Rest, 1, Colon - 1);
-    PathPart := Copy(Rest, Colon, Length(Rest));
-  end
-  else
-    AuthorityPart := Rest;
-
-  // userinfo never reaches :authority or the dial: drop everything up to the
-  // last '@' (RFC 3986 section 3.2)
-  for P := Length(AuthorityPart) downto 1 do
-    if AuthorityPart[P] = '@' then
-    begin
-      AuthorityPart := Copy(AuthorityPart, P + 1, MaxInt);
-      Break;
-    end;
-
-  PortStr := '';
-  if Copy(AuthorityPart, 1, 1) = '[' then
-  begin
-    // bracketed IPv6 literal (RFC 3986): the host is returned WITHOUT the
-    // brackets, which are re-added wherever a host:port string is written
-    P := Pos(']', AuthorityPart);
-    if P = 0 then
-      raise EHttpProtocolError.Create('invalid URL host: unterminated "["',
-        ecProtocolError);
-    AHost := Copy(AuthorityPart, 2, P - 2);
-    Rest := Copy(AuthorityPart, P + 1, MaxInt);
-    if Rest <> '' then
-    begin
-      if Rest[1] <> ':' then
-        raise EHttpProtocolError.Create('invalid URL host: junk after "]"',
-          ecProtocolError);
-      PortStr := Copy(Rest, 2, MaxInt);
-    end;
-  end
-  else
-  begin
-    Colon := Pos(':', AuthorityPart);
-    if Colon > 0 then
-    begin
-      AHost := Copy(AuthorityPart, 1, Colon - 1);
-      PortStr := Copy(AuthorityPart, Colon + 1, Length(AuthorityPart));
-    end
-    else
-      AHost := AuthorityPart;
-  end;
-  if PortStr <> '' then
-  begin
-    Port := StrToIntDef(PortStr, APort);
-    if (Port <= 0) or (Port > 65535) then
-      raise EHttpProtocolError.Create('invalid URL port: ' + PortStr,
-        ecProtocolError);
-    APort := Word(Port);
-  end;
-
-  if PathPart <> '' then
-    APath := PathPart;
+  Uri := ParseRequestUrl(AUrl);
+  AHost := Uri.Host;
+  APort := EffectivePort(Uri);
+  APath := RequestTarget(Uri);
 end;
 
 function SchemeOfUrl(const AUrl: string): string;
-var
-  P: Integer;
 begin
-  P := Pos('://', AUrl);
-  if P > 0 then
-    Result := LowerCase(Copy(AUrl, 1, P - 1))
-  else
-    Result := 'https';
+  Result := ParseRequestUrl(AUrl).Scheme;
 end;
 
 function DefaultPortForScheme(const AScheme: string): Word;
@@ -153,75 +135,31 @@ end;
 
 function OriginOfUrl(const AUrl: string): string;
 var
-  Host, Path, Scheme: string;
+  Uri: TURI;
   Port: Word;
 begin
-  ParseHttpUrl(AUrl, Host, Port, Path);
-  Host := BracketedHost(Host);
-  Scheme := SchemeOfUrl(AUrl);
-  if Port = DefaultPortForScheme(Scheme) then
-    Result := Host
-  else
-    Result := Host + ':' + IntToStr(Port);
+  Uri := ParseRequestUrl(AUrl);
+  Port := EffectivePort(Uri);
+  Result := BracketedHost(Uri.Host);
+  if Port <> DefaultPortForScheme(Uri.Scheme) then
+    Result := Result + ':' + IntToStr(Port);
   // a different scheme is a different origin even on the same host:port, so
   // an http redirect target never reuses a pooled https connection
-  if Scheme <> 'https' then
-    Result := Scheme + '://' + Result;
+  if Uri.Scheme <> 'https' then
+    Result := Uri.Scheme + '://' + Result;
 end;
 
 function ResolveLocation(const ABaseUrl, ALocation: string): string;
 var
-  Base, Prefix, Rest, Path, Dir: string;
-  P, Cut: Integer;
+  Base, Ref: TURI;
 begin
   if ALocation = '' then
     Exit('');
-  if Pos('://', ALocation) > 0 then
-    Exit(ALocation);
-  if Copy(ALocation, 1, 2) = '//' then
-    Exit(SchemeOfUrl(ABaseUrl) + ':' + ALocation);
-
-  Base := ABaseUrl;
-  P := Pos('://', Base);
-  if P > 0 then
-    Prefix := Copy(Base, 1, P + 2)     // 'scheme://'
-  else
-    Prefix := 'https://';
-  Rest := Copy(Base, Length(Prefix) + 1, Length(Base));  // authority + path
-
-  // authority ends at the first '/' or '?'
-  P := Pos('/', Rest);
-  Cut := Pos('?', Rest);
-  if (Cut > 0) and ((P = 0) or (Cut < P)) then
-    P := Cut;
-  if P = 0 then
-  begin
-    // no path at all: the base directory is the root
-    if Copy(ALocation, 1, 1) <> '/' then
-      Exit(Prefix + Rest + '/' + ALocation);
-    Exit(Prefix + Rest + ALocation);
-  end;
-
-  Path := Copy(Rest, P, Length(Rest));   // '/...' incl. any query
-  Cut := Pos('?', Path);
-  if Cut > 0 then
-    Path := Copy(Path, 1, Cut - 1);      // drop the base query
-
-  if Copy(ALocation, 1, 1) = '/' then
-    Exit(Prefix + Copy(Rest, 1, P - 1) + ALocation);
-
-  // path-relative: drop the final path segment (RFC 3986 merge). A base with
-  // a query but no path merges at the root.
-  if Path = '' then
-    Dir := '/'
-  else
-  begin
-    Cut := Length(Path);
-    while (Cut > 1) and (Path[Cut] <> '/') do
-      Dec(Cut);
-    Dir := Copy(Path, 1, Cut);
-  end;
-  Result := Prefix + Copy(Rest, 1, P - 1) + Dir + ALocation;
+  // only the base takes the scheme-less rule: a Location is a relative
+  // reference, so '/login' must not become 'https:///login'
+  Base := ParseRequestUrl(ABaseUrl);
+  Ref := ParseURI(ALocation);
+  Result := UriToString(ResolveReference(Base, Ref));
 end;
 
 end.
