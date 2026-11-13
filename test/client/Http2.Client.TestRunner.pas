@@ -45,6 +45,7 @@ uses
   Http2.Client.ControlBytes.Test,
   Http2.Client.SseLimits.Test,
   Http2.Client.Redirect.Test,
-  Http2.Client.Http1Strict.Test;
+  Http2.Client.Http1Strict.Test,
+  Http2.Client.PoolDial.Test;
 
 end.
