@@ -45,6 +45,21 @@ type
     function Eof: Boolean;
   end;
 
+  /// a body that reports a scripted count on each Read: the first Read reports
+  /// AFirst and the later Reads report ASecond. The buffer is filled only up
+  /// to the smaller of the count and ACount, so a huge count costs no memory.
+  TReportedCountBody = class(TInterfacedObject, IHttpBodyStream)
+  private
+    FFirst: LongInt;
+    FSecond: LongInt;
+    FCalls: Integer;
+  public
+    constructor Create(const AFirst, ASecond: LongInt);
+    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Eof: Boolean;
+    function CallCount: Integer;
+  end;
+
   /// a response with a body and headers
   TBodyResponse = class(TInterfacedObject, IHttpResponse)
   private
@@ -83,6 +98,8 @@ type
     procedure TestUnsolicitedCodingIsLeftAlone;
     procedure TestSolicitedCodingIsDecoded;
     procedure TestReadAllBodyBytesGrowsPastTheInitialBuffer;
+    procedure TestReadAllBodyBytesRaisesPastTwoGiB;
+    procedure TestTypedReaderPassesTheTwoGiBRaise;
     procedure TestHttp1ResponseOverTheOptionRaises;
     procedure TestHttp1RequestOverrideRaises;
     procedure TestHttp1RequestOverrideZeroIsUnlimited;
@@ -155,6 +172,42 @@ end;
 function TBytesBody.Eof: Boolean;
 begin
   Result := FPos >= Length(FData);
+end;
+
+{ TReportedCountBody }
+
+constructor TReportedCountBody.Create(const AFirst, ASecond: LongInt);
+begin
+  inherited Create;
+  FFirst := AFirst;
+  FSecond := ASecond;
+  FCalls := 0;
+end;
+
+function TReportedCountBody.Read(var ABuffer; const ACount: LongInt): LongInt;
+var
+  Take: LongInt;
+begin
+  Inc(FCalls);
+  if FCalls = 1 then
+    Result := FFirst
+  else
+    Result := FSecond;
+  Take := Result;
+  if Take > ACount then
+    Take := ACount;
+  if Take > 0 then
+    FillChar(ABuffer, Take, $41);
+end;
+
+function TReportedCountBody.Eof: Boolean;
+begin
+  Result := FCalls >= 2;
+end;
+
+function TReportedCountBody.CallCount: Integer;
+begin
+  Result := FCalls;
 end;
 
 { TBodyResponse }
@@ -428,6 +481,48 @@ begin
   AssertEquals('every byte is kept', 300 * 1024, Length(Got));
   AssertEquals('the first byte', $41, Integer(Got[0]));
   AssertEquals('the last byte', $41, Integer(Got[High(Got)]));
+end;
+
+procedure TBodyLimitsTest.TestReadAllBodyBytesRaisesPastTwoGiB;
+var
+  Body: IHttpBodyStream;
+  Counted: TReportedCountBody;
+  Raised: Boolean;
+begin
+  // the first read reports 4 KiB; the second reports the largest LongInt, so
+  // the total passes High(Integer) before the result buffer grows, and no
+  // 2 GiB buffer is allocated
+  Counted := TReportedCountBody.Create(4096, High(LongInt));
+  Body := Counted;
+  Raised := False;
+  try
+    ReadAllBodyBytes(Body);
+  except
+    on E: EHttpResponseTooLarge do
+      Raised := True;
+  end;
+  AssertTrue('a total past 2 GiB raises', Raised);
+  AssertEquals('the read stops at the overflowing read', 2,
+    Counted.CallCount);
+end;
+
+procedure TBodyLimitsTest.TestTypedReaderPassesTheTwoGiBRaise;
+var
+  Resp: IHttpResponse;
+  Text: string;
+  Raised: Boolean;
+begin
+  // TResponseReader<T> does not catch the error: it reaches the caller
+  Resp := TBodyResponse.Create(
+    TReportedCountBody.Create(4096, High(LongInt)));
+  Raised := False;
+  try
+    TResponseReader<string>.Read(Resp, Text);
+  except
+    on E: EHttpResponseTooLarge do
+      Raised := True;
+  end;
+  AssertTrue('the typed reader raises past 2 GiB', Raised);
 end;
 
 procedure TBodyLimitsTest.TestHttp1ResponseOverTheOptionRaises;
