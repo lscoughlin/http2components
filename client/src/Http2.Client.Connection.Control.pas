@@ -17,7 +17,8 @@ unit Http2.Client.Connection.Control;
 interface
 
 uses
-  SysUtils, SyncObjs, Generics.Collections, Http2.Common.Frames;
+  SysUtils, SyncObjs, Generics.Collections, Http2.Common.Frames,
+  Http2.Common.Hpack;
 
 const
   /// the most control frames that wait for the writer (as the server OutboundBudget)
@@ -80,6 +81,23 @@ type
     procedure Init(const ANowMs: Int64);
     /// False when AFrame is over the rate limit of its type at time ANowMs
     function Allow(const AFrame: TFrame; const ANowMs: Int64): Boolean;
+  end;
+
+  /// the SETTINGS_HEADER_TABLE_SIZE of the peer, on its way to the header encoder
+  // - the reader never waits for the encoder lock: it leaves the value here
+  //   when the lock is busy, and the thread that holds the lock applies it
+  //   before the next header block
+  THeaderTableHandoff = class
+  private
+    FLock: TCriticalSection;
+    FPending: Int64;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    /// record AValue as the size that the encoder has not applied yet
+    procedure Defer(const AValue: LongWord);
+    /// apply the recorded size, if any, to AEncoder (nil: drop it); the caller holds the encoder lock
+    procedure Apply(const AEncoder: THpackCodec);
   end;
 
 implementation
@@ -145,6 +163,46 @@ begin
   finally
     FLock.Release;
   end;
+end;
+
+{ THeaderTableHandoff }
+
+constructor THeaderTableHandoff.Create;
+begin
+  inherited Create;
+  FLock := TCriticalSection.Create;
+  FPending := -1;
+end;
+
+destructor THeaderTableHandoff.Destroy;
+begin
+  FLock.Free;
+  inherited Destroy;
+end;
+
+procedure THeaderTableHandoff.Defer(const AValue: LongWord);
+begin
+  FLock.Acquire;
+  try
+    FPending := AValue;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure THeaderTableHandoff.Apply(const AEncoder: THpackCodec);
+var
+  Value: Int64;
+begin
+  FLock.Acquire;
+  try
+    Value := FPending;
+    FPending := -1;
+  finally
+    FLock.Release;
+  end;
+  if (Value >= 0) and (AEncoder <> nil) then
+    AEncoder.SetPeerTableSize(LongWord(Value));
 end;
 
 { TTokenBucket }

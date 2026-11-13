@@ -166,6 +166,36 @@ flowchart TB
   WRITE -.->|"HPACK encode"| HP
 ```
 
+## Lock order
+
+A thread that holds several locks of one HTTP/2 connection takes them in this
+order. A lock that is later in the list is never held while a thread takes a
+lock that is earlier in the list.
+
+1. The header encoder lock. It is the lock of the pooled connection
+   (`THttpConnection`, shared with `TConnection.HeaderEncoderLock`). A stream
+   thread holds it while it starts a stream, and this includes the wait for
+   room in the outbound queue.
+2. The connection lock (`TConnection.FLock`). It guards the state, the peer
+   settings, the stream table and the flow control windows.
+3. The leaf locks: the lock of the outbound queue, the lock of the control
+   frame queue, the lock of the header table hand-off and the lock of the
+   socket. A thread holds a leaf lock only for one short operation and takes no
+   other lock while it holds one.
+
+The reader thread is the only thread that drains the outbound queue, so it
+never waits for a lock that a stream thread holds across a wait for queue room.
+The header encoder lock is such a lock. When the reader applies the
+`SETTINGS_HEADER_TABLE_SIZE` of the peer, it takes the header encoder lock
+with `TryEnter`. When the lock is busy, the reader leaves the size in the
+header table hand-off, and the stream thread that holds the lock applies the
+size to the encoder before it encodes the next header block.
+
+A write timeout is not an idle poll. Only a read that returns no byte before
+the poll interval ends is an idle poll, and the reader then continues its loop.
+A timeout from a frame write can leave a frame partly written, so the
+connection fails with `INTERNAL_ERROR` and the stream is not used again.
+
 ## Receive flow control
 
 RFC 9113 section 5.2 and section 6.9 give each side a window for the DATA

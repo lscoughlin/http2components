@@ -55,6 +55,8 @@ end;
 
 function LeaseMaxFrameSize(const AConnection: TConnection): LongWord;
 begin
+  // the caller holds the encoder lock and encodes the header block next
+  AConnection.TableHandoff.Apply(AConnection.HeaderEncoder);
   Result := FrameSize(AConnection);
 end;
 
