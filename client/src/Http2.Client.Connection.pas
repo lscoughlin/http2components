@@ -21,7 +21,8 @@ uses
   SysUtils, Classes, SyncObjs, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls, Http2.Client.Observer, Http2.Common.FlowControl,
   Http2.Client.Clock, Http2.Common.Hpack, Http2.Client.Connection.Observer,
-  Http2.Client.Connection.Queue, Http2.Client.Connection.SendCredit;
+  Http2.Client.Connection.Queue, Http2.Client.Connection.SendCredit,
+  Http2.Client.Connection.Credit, Http2.Client.Connection.HeaderBlock;
 
 const
   /// connection-level receive window we advertise (RFC 7540 section 6.9.2)
@@ -120,8 +121,7 @@ type
     FHeaderDecoder: THpackCodec; // weak; owner outlives the connection thread
     FHeaderEncoder: THpackCodec; // weak; owner outlives the connection thread
     FHeaderEncoderLock: TCriticalSection; // weak; shared with stream encoding
-    FHeaderBytes: TBytes;       // only the connection reader accesses this
-    FHeaderStream: LongWord;
+    FHeaderBlock: THeaderBlockAssembler; // only the connection reader accesses this
     FState: TConnectionState;
     FLocalSettings: TConnectionSettings;
     FPeerSettings: TConnectionSettings;
@@ -139,10 +139,10 @@ type
     FLastActivity: QWord;
     FNotifications: TConnectionObserver;
     FFlowControl: TFlowControl;
-    FPendingStreamCredit: TDictionary<LongWord, LongWord>;
-    FPendingConnCredit: LongWord;
+    FCredit: TReceiveCreditTracker;
     FSendCreditWaiters: ISendCreditWaiterRegistry;
     function GetState: TConnectionState;
+    function GetWorkerHeaderStream: LongWord;
     function GetPeerSettings: TConnectionSettings;
     function GetObserver: IHttp2Observer;
     procedure SetObserver(const AValue: IHttp2Observer);
@@ -245,7 +245,7 @@ type
     property PeerSettings: TConnectionSettings read GetPeerSettings;
     property Notifications: TConnectionObserver read FNotifications;
     property LocalSettings: TConnectionSettings read FLocalSettings;
-    property WorkerHeaderStream: LongWord read FHeaderStream;
+    property WorkerHeaderStream: LongWord read GetWorkerHeaderStream;
     property LastActivity: QWord read FLastActivity;
     property Thread: TConnectionThread read FThread;
     property Outbound: IBlockingQueue<TFrame> read FOutbound;
@@ -358,8 +358,8 @@ begin
   FNotifications := TConnectionObserver.Create;
   FFlowControl := TFlowControl.Create(cDefaultConnectionWindowSize,
     cDefaultStreamWindowSize);
-  FPendingStreamCredit := TDictionary<LongWord, LongWord>.Create;
-  FPendingConnCredit := 0;
+  FHeaderBlock := THeaderBlockAssembler.Create;
+  FCredit := TReceiveCreditTracker.Create;
   FStreams := TDictionary<LongWord, IConnectionStream>.Create;
   FStreamOneReserved := False;
 end;
@@ -367,7 +367,8 @@ end;
 destructor TConnection.Destroy;
 begin
   Close;
-  FreeAndNil(FPendingStreamCredit);
+  FreeAndNil(FCredit);
+  FreeAndNil(FHeaderBlock);
   FreeAndNil(FFlowControl);
   FreeAndNil(FNotifications);
   FreeAndNil(FStreams);
@@ -663,7 +664,7 @@ begin
   try
     FStreams.Remove(AStreamId);
     FFlowControl.CloseStream(AStreamId);
-    FPendingStreamCredit.Remove(AStreamId);
+    FCredit.Forget(AStreamId);
   finally
     FLock.Release;
   end;
@@ -703,40 +704,28 @@ begin
   Result := FSendCreditWaiters.Count;
 end;
 
+function TConnection.GetWorkerHeaderStream: LongWord;
+begin
+  Result := FHeaderBlock.OpenStreamId;
+end;
+
 function TConnection.DispatchStreamFrame(const AFrame: TFrame): Boolean;
 var
   S: IConnectionStream;
   Routed: TFrame;
-  Fragment: TBytes;
-  N: Integer;
 begin
   Routed := AFrame;
   if (FHeaderDecoder <> nil) and
      (AFrame.Header.FrameType in [ftHeaders, ftContinuation]) then
   begin
-    Fragment := ExtractHeaderBlock(AFrame);
     if AFrame.Header.FrameType = ftHeaders then
-    begin
-      FHeaderStream := AFrame.Header.StreamId;
-      FHeaderBytes := Fragment;
-    end
+      FHeaderBlock.Start(AFrame.Header.StreamId, ExtractHeaderBlock(AFrame))
     else
-    begin
-      if (FHeaderStream = 0) or
-         (FHeaderStream <> AFrame.Header.StreamId) then
-        raise EHttpProtocolError.Create('unexpected CONTINUATION stream',
-          ecProtocolError);
-      N := Length(FHeaderBytes);
-      SetLength(FHeaderBytes, N + Length(Fragment));
-      if Length(Fragment) > 0 then
-        Move(Fragment[0], FHeaderBytes[N], Length(Fragment));
-    end;
+      FHeaderBlock.Append(AFrame.Header.StreamId, ExtractHeaderBlock(AFrame));
     if AFrame.IsEndHeaders then
     begin
-      Routed.DecodedHeaders := FHeaderDecoder.Decode(FHeaderBytes);
+      Routed.DecodedHeaders := FHeaderDecoder.Decode(FHeaderBlock.Take);
       Routed.HeadersDecoded := True;
-      FHeaderBytes := nil;
-      FHeaderStream := 0;
     end;
   end;
   FLock.Acquire;
@@ -800,42 +789,19 @@ end;
 procedure TConnection.TrackReceivedData(const AStreamId: LongWord;
   const ALength: LongWord);
 var
-  Pending: LongWord;
-  StreamId: LongWord;
   Win: TWindow;
-  EmitConn, EmitStream: Boolean;
   EmitConnInc, EmitStreamInc: LongWord;
 begin
   if ALength = 0 then
     Exit;
-  EmitConn := False;
-  EmitStream := False;
-  StreamId := AStreamId;
   EmitConnInc := 0;
   EmitStreamInc := 0;
   FLock.Acquire;
   try
-    // connection window: DATA counts against it regardless of the stream
-    FPendingConnCredit := FPendingConnCredit + ALength;
-    if FPendingConnCredit >= cWindowUpdateBatchSize then
-    begin
-      FPendingConnCredit := 0;
-      EmitConnInc := cWindowUpdateBatchSize;
-    end;
     // stream window: only for a stream we still track (an open lease)
-    if (StreamId <> 0) and FFlowControl.TryGetStream(StreamId, Win) then
-    begin
-      if not FPendingStreamCredit.TryGetValue(StreamId, Pending) then
-        Pending := 0;
-      Pending := Pending + ALength;
-      if Pending >= cWindowUpdateBatchSize then
-      begin
-        FPendingStreamCredit.AddOrSetValue(StreamId, 0);
-        EmitStreamInc := Pending;
-      end
-      else
-        FPendingStreamCredit.AddOrSetValue(StreamId, Pending);
-    end;
+    FCredit.OnData(AStreamId, Integer(ALength),
+      (AStreamId <> 0) and FFlowControl.TryGetStream(AStreamId, Win),
+      cWindowUpdateBatchSize, EmitConnInc, EmitStreamInc);
   finally
     FLock.Release;
   end;
@@ -846,8 +812,8 @@ begin
   end;
   if EmitStreamInc > 0 then
   begin
-    PostFrame(BuildWindowUpdateFrame(StreamId, EmitStreamInc));
-    FNotifications.EmitWindowUpdate(StreamId, EmitStreamInc);
+    PostFrame(BuildWindowUpdateFrame(AStreamId, EmitStreamInc));
+    FNotifications.EmitWindowUpdate(AStreamId, EmitStreamInc);
   end;
 end;
 
@@ -857,14 +823,12 @@ var
 begin
   FLock.Acquire;
   try
-    if not FPendingStreamCredit.TryGetValue(AStreamId, Pending) then
-      Exit;
-    if Pending = 0 then
-      Exit;
-    FPendingStreamCredit.AddOrSetValue(AStreamId, 0);
+    Pending := FCredit.TakeStream(AStreamId);
   finally
     FLock.Release;
   end;
+  if Pending = 0 then
+    Exit;
   PostFrame(BuildWindowUpdateFrame(AStreamId, Pending));
   FNotifications.EmitWindowUpdate(AStreamId, Pending);
 end;

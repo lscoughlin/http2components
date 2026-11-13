@@ -20,6 +20,8 @@ uses
   Http2.Client.Connection.Observer,
   Http2.Client.Connection.Queue,
   Http2.Client.Connection.SendCredit,
+  Http2.Client.Connection.Credit,
+  Http2.Client.Connection.HeaderBlock,
   Http2.Client.Connection.Thread,
   Http2.Client.Connection,
   Http2.Client.Core,
