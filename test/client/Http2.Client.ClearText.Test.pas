@@ -475,11 +475,12 @@ begin
   // two responses queued on one socket: the declined exchange leaves a pooled
   // keep-alive HTTP/1.1 connection that answers the next request
   Factory := TScriptProtocolFactory.Create(npHttp1Cleartext,
-    'HTTP/1.1 200 OK'#13#10'Content-Length: 1'#13#10#13#10'a' +
-    'HTTP/1.1 200 OK'#13#10'Content-Length: 1'#13#10#13#10'b');
+    'HTTP/1.1 200 OK'#13#10'Content-Length: 1'#13#10#13#10'a');
   Client := NewUpgradeClient(Factory, ctUpgrade);
   R := Client.Send(THttpRequest.Create(hmGet, 'http://127.0.0.1:28082/x'));
   AssertEquals('first body', 1, DrainBody(R));
+  // the peer answers the second request only after the first body is drained
+  Factory.SocketAt(0).Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 1'#13#10#13#10'b');
   R := Client.Send(THttpRequest.Create(hmGet, 'http://127.0.0.1:28082/y'));
   AssertEquals('second status', 200, R.StatusCode);
   AssertEquals('second body', 1, DrainBody(R));

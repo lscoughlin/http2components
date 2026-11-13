@@ -237,6 +237,11 @@ end;
 
 function THttp1PooledConnection.Eligible: Boolean;
 begin
+  // an idle connection with unread input (extra bytes after a body, or data
+  // the peer sent unasked) is retired instead of reused. The write to FClosing
+  // runs without FLock: the flag only moves from False to True, so a race is benign.
+  if (not FClosing) and (ActiveStreams = 0) and FH1.HasUnreadInput then
+    FClosing := True;
   Result := (not FClosing) and (ActiveStreams = 0);
 end;
 

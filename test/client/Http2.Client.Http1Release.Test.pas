@@ -68,8 +68,7 @@ var
   N: Integer;
 begin
   Sock := TScriptSocket.Create;
-  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 2'#13#10#13#10'hi' +
-    'HTTP/1.1 200 OK'#13#10'Content-Length: 2'#13#10#13#10'ok');
+  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 2'#13#10#13#10'hi');
   H1 := THttp1Connection.Create(Sock, 500);
   Wire := THttp1PooledConnection.Create(H1, 'http://a.example');
   Req := TStreamRequest.Create('GET', 'a.example');
@@ -82,6 +81,8 @@ begin
   AssertTrue('the body reached its end', R.Body.Eof);
   R := nil;
   AssertFalse('a drained release keeps the connection', Wire.Closed);
+  // the peer answers the next request only after the first body is drained
+  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 2'#13#10#13#10'ok');
   R := Wire.Acquire(Req, 500, Acquired);
   AssertTrue('the second request reuses the connection', Acquired);
   R := nil;

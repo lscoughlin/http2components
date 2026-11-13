@@ -141,6 +141,15 @@ type
     function ReadSome(var ABuffer; ACount: Integer): Integer;
   end;
 
+  /// implemented by a socket that can tell, without blocking, whether input
+  /// is already waiting on the wire (an idle HTTP/1.1 connection must not
+  /// hold unread bytes before it is reused)
+  IPendingInput = interface
+    ['{C3A1E5B2-6D47-4F9A-8E21-5B7D0A9C1E02}']
+    /// True when a read would not block; a closed peer also reports True
+    function HasPendingInput: Boolean;
+  end;
+
   /// implemented by a socket factory that dials through a per-request proxy
   /// (doc/design/proxy.md).  A factory that lacks it is dialled without a
   /// proxy, as before.
