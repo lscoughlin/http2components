@@ -223,6 +223,51 @@ Independent liveness signals still work and are preferred:
 `TStreamRequest.BodyReadTimeoutSet` distinguishes "no opinion, keep the
 header-timeout deadline" from "explicitly wait indefinitely".
 
+## Size limits and idle time
+
+The client options hold four SSE limits. They are read from the
+`TClientSecurityOptions` record that the client was built with. An `IHttpClientOptions`
+client reports the record, and the reconnect loop reads it when it opens a stream.
+A client that does not implement `IHttpClientOptions` uses the defaults and keeps
+the `WithSseReadTimeout(0)` deadline of `SseRequest`.
+
+| Option | Limits | Default | Source of the default | `0` means | Error |
+| --- | --- | --- | --- | --- | --- |
+| `SseMaxLineBytes` | one line, without its line break | 32 MiB | the line limit of `openai-go` (`packages/ssestream/ssestream.go`) | no limit | `EHttpSseTooLarge` |
+| `SseMaxEventBytes` | one event: the `data` values and one line break for each `data:` line | 64 MiB | no reference client sets an event limit; the value is larger than the line limit, so it still stops an endless event | no limit | `EHttpSseTooLarge` |
+| `SseMaxIdleTimeMs` | the time with no byte from the server, comment lines included | 600000 ms (10 minutes) | the timeout of `openai-python` (`src/openai/_constants.py`) | wait indefinitely | `EHttpSseIdleTimeout` |
+| `SseMaxRetryMs` | the cap on a `retry:` value from the server | 600000 ms | no reference client is cited for this value | not allowed (the value must be 1 or more) | not an error: the value is cut |
+
+The official OpenAI clients are the reference for the defaults. The Python and
+Node clients set no line or event limit (`_streaming.py` and `streaming.ts`). A default of 0 turns off a size
+limit, which matches those clients.
+
+**Line and event limits.** The parser counts the bytes of the line that it
+assembles. A line that passes `SseMaxLineBytes` stops the stream at once. The
+parser counts the bytes of the event that it assembles in the same way. An event
+that passes `SseMaxEventBytes` stops the stream at once. Both errors reach the
+caller from the `ReadEvent` call that found the excess. The reconnect loop does
+not catch them, so they reach the caller.
+
+**Retry cap.** The parser cuts a `retry:` value to `SseMaxRetryMs` before the
+reconnect loop stores it. A value that is too large for an `Integer` is also cut.
+
+**Idle time.** On HTTP/2, the reconnect loop opens each stream with the body-read
+deadline set to `SseMaxIdleTimeMs`. Each read waits for the next byte. A comment
+line is a byte, so a keep-alive comment resets the deadline. When the deadline
+passes, the body read raises `EHttpTimeout`, and the source raises
+`EHttpSseIdleTimeout`. The reconnect loop does not retry this error. The caller
+decides whether to open a new stream. The idle time is the bound of the body
+read. It does not bound the wait for the response headers, which keep the header
+timeout.
+
+**HTTP/1.1 fallback.** The fallback does not honor the per-request body-read
+deadline. `THttp1Connection.Create` sets the socket read timeout from the header
+timeout, and each body read waits under that timeout. A silent fallback stream
+therefore ends with an `EHttpTimeout` from the socket. The source maps that error
+to `EHttpSseIdleTimeout` in the same way. The value of `SseMaxIdleTimeMs` does not
+change the fallback deadline.
+
 ## Cancellation
 
 A blocked body read observes the request's `ICancellationToken`. The
@@ -446,7 +491,8 @@ SSE-specific type for the retry bound:
 | --- | --- |
 | Non-`200`, or wrong/missing content-type, or non-utf-8 charset | `EHttpProtocolError` (`ecProtocolError`) |
 | `content-encoding` not `identity` | `EHttpProtocolError` (`ecProtocolError`) |
-| Idle body read past `BodyReadTimeoutMs` | `EHttpTimeout` |
+| Idle body read past `SseMaxIdleTimeMs` (the body-read deadline) | `EHttpSseIdleTimeout` (a subclass of `EHttpTimeout`) |
+| Line or event past `SseMaxLineBytes` or `SseMaxEventBytes` | `EHttpSseTooLarge` (a subclass of `EHttpError`) |
 | Peer `RST_STREAM` / connection loss | `EHttpStreamError` / `EHttpConnectionError` |
 | Caller `Cancel` during a blocked read | `EHttpStreamError` (`ecCancel`) |
 | `MaxRetries` exceeded | `EHttpTooManySseRetries` |

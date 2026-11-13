@@ -45,6 +45,10 @@ type
 
   EHttpTooManyRedirects = class(EHttpError);
   EHttpTooManySseRetries = class(EHttpError);
+  /// a server-sent event line or event passed its byte limit
+  EHttpSseTooLarge = class(EHttpError);
+  /// a server-sent event stream was silent past its idle limit
+  EHttpSseIdleTimeout = class(EHttpTimeout);
   EHttpNotReplayable = class(EHttpError);
   EHttpProxyConfigError = class(EHttpError);
   /// a Unix socket option that is not valid

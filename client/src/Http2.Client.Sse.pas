@@ -34,6 +34,7 @@ interface
 uses
   SysUtils, Classes, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Stream, Http2.Client.Messages, Http2.Client.Clock,
+  Http2.Client.Config.Security,
   Http2.Client.RequestObserver, Http2.Client.Api, Http2.Client.Request, Http2.Client.BodyReader;
 
 const
@@ -64,19 +65,29 @@ type
   TSseEventParser = class
   private
     FData: string;          // the data buffer (one '\n' appended per data: line)
+    FDataLen: Integer;      // the bytes in use in FData (it grows by doubling)
     FEventType: string;     // the event-type buffer
     FLastEventId: string;   // survives dispatch (WHATWG "last event ID string")
     FRetryMs: Integer;
     FLine: string;          // the line being assembled (terminator not seen)
+    FLineLen: Integer;      // the bytes in use in FLine (it grows by doubling)
+    FMaxLineBytes: Integer;   // 0 = no limit
+    FMaxEventBytes: Integer;  // 0 = no limit
+    FMaxRetryMs: Integer;     // 0 = no cap on the retry: value
     FAtStart: Boolean;      // the BOM has not been inspected yet
     FSkipLf: Boolean;       // the last chunk ended on a CR that may pair with LF
     FPending: TBytes;       // held-back bytes (incomplete UTF-8 / partial BOM)
     procedure FeedText(const AText: string; const AEvents: TList<TSseEvent>);
+    procedure AppendLineByte(const AByte: Char);
+    procedure AppendData(const AValue: string);
     procedure HandleLine(const ALine: string;
       const AEvents: TList<TSseEvent>);
     procedure DispatchEvent(const AEvents: TList<TSseEvent>);
   public
-    constructor Create;
+    /// a parser with the default limits (TClientSecurityOptions.Default)
+    constructor Create; overload;
+    /// a parser with the limits of AOptions (a limit of 0 is off)
+    constructor Create(const AOptions: TClientSecurityOptions); overload;
     /// feed one chunk of raw bytes; AEvents receives completed events
     procedure Feed(const AChunk: TBytes;
       const AEvents: TList<TSseEvent>); overload;
@@ -137,7 +148,10 @@ type
     function Dequeue(out AEvent: TSseEvent): Boolean;
   public
     /// a response that passed ValidateResponse (raises otherwise)
-    constructor Create(const AResponse: IHttpResponse);
+    constructor Create(const AResponse: IHttpResponse); overload;
+    /// as Create, with the line, event and retry limits of AOptions
+    constructor Create(const AResponse: IHttpResponse;
+      const AOptions: TClientSecurityOptions); overload;
     destructor Destroy; override;
     function ReadEvent(out AEvent: TSseEvent): Boolean;
     function LastEventId: string;
@@ -177,6 +191,7 @@ type
     FLastEventId: string;
     FLastDispatchedId: string;   // replay guard
     FStreamId: Int64;
+    FWakeEvent: PRTLEvent;       // set by Close, so a reconnect wait ends at once
     procedure OpenSource;
   public
     constructor Create(const AClient: IHttpClient;
@@ -308,10 +323,18 @@ var
 
 constructor TSseEventParser.Create;
 begin
+  Create(TClientSecurityOptions.Default);
+end;
+
+constructor TSseEventParser.Create(const AOptions: TClientSecurityOptions);
+begin
   inherited Create;
   FRetryMs := 0;
   FAtStart := True;
   FSkipLf := False;
+  FMaxLineBytes := AOptions.SseMaxLineBytes;
+  FMaxEventBytes := AOptions.SseMaxEventBytes;
+  FMaxRetryMs := AOptions.SseMaxRetryMs;
 end;
 
 procedure TSseEventParser.Feed(const AChunk: TBytes;
@@ -342,8 +365,9 @@ begin
     end
     else if (Data[0] = $EF) and (Data[1] = $BB) and (Data[2] = $BF) then
     begin
+      // move the payload down first, then shorten the array
+      Move(Data[3], Data[0], Length(Data) - 3);
       SetLength(Data, Length(Data) - 3);
-      Move(Data[3], Data[0], Length(Data));
       FAtStart := False;
     end
     else
@@ -400,8 +424,8 @@ begin
     C := AText[I];
     if C = #13 then
     begin
-      HandleLine(FLine, AEvents);
-      FLine := '';
+      HandleLine(Copy(FLine, 1, FLineLen), AEvents);
+      FLineLen := 0;
       if I = N then
         FSkipLf := True               // a lone CR may be the CR of a CRLF
       else if AText[I + 1] = #10 then
@@ -411,14 +435,47 @@ begin
     end;
     if C = #10 then
     begin
-      HandleLine(FLine, AEvents);
-      FLine := '';
+      HandleLine(Copy(FLine, 1, FLineLen), AEvents);
+      FLineLen := 0;
       Inc(I);
       Continue;
     end;
-    FLine := FLine + C;
+    AppendLineByte(C);
     Inc(I);
   end;
+end;
+
+procedure TSseEventParser.AppendLineByte(const AByte: Char);
+begin
+  if (FMaxLineBytes > 0) and (FLineLen >= FMaxLineBytes) then
+    raise EHttpSseTooLarge.Create(Format(
+      'event stream line is longer than %d bytes', [FMaxLineBytes]));
+  if FLineLen >= Length(FLine) then
+    SetLength(FLine, Length(FLine) * 2 + 64);
+  Inc(FLineLen);
+  FLine[FLineLen] := AByte;
+end;
+
+procedure TSseEventParser.AppendData(const AValue: string);
+var
+  Need, NewLen: Integer;
+begin
+  // the data buffer keeps one '\n' after each data: line
+  Need := FDataLen + Length(AValue) + 1;
+  if (FMaxEventBytes > 0) and (Need > FMaxEventBytes) then
+    raise EHttpSseTooLarge.Create(Format(
+      'event is longer than %d bytes', [FMaxEventBytes]));
+  if Need > Length(FData) then
+  begin
+    NewLen := Length(FData) * 2 + 64;
+    if NewLen < Need then
+      NewLen := Need;
+    SetLength(FData, NewLen);
+  end;
+  if Length(AValue) > 0 then
+    Move(AValue[1], FData[FDataLen + 1], Length(AValue));
+  FData[Need] := #10;
+  FDataLen := Need;
 end;
 
 procedure TSseEventParser.HandleLine(const ALine: string;
@@ -427,6 +484,7 @@ var
   Colon, I: Integer;
   Field, Value: string;
   IsDigits: Boolean;
+  Big: Int64;
 begin
   if ALine = '' then
   begin
@@ -450,7 +508,7 @@ begin
       Value := Copy(Value, 2, Length(Value));
   end;
   if Field = 'data' then
-    FData := FData + Value + #10
+    AppendData(Value)
   else if Field = 'event' then
     FEventType := Value
   else if Field = 'id' then
@@ -470,11 +528,13 @@ begin
       end;
     if IsDigits then
     begin
-      try
-        FRetryMs := StrToInt(Value);
-      except
-        FRetryMs := 0;
-      end;
+      // a huge value is cut to the option (0 = no cap), then to Integer
+      Big := StrToInt64Def(Value, High(Int64));
+      if (FMaxRetryMs > 0) and (Big > FMaxRetryMs) then
+        Big := FMaxRetryMs;
+      if Big > High(Integer) then
+        Big := High(Integer);
+      FRetryMs := Integer(Big);
     end;
   end;
   // any other field name is ignored
@@ -484,26 +544,25 @@ procedure TSseEventParser.DispatchEvent(const AEvents: TList<TSseEvent>);
 var
   E: TSseEvent;
 begin
-  if FData = '' then
+  if FDataLen = 0 then
   begin
     // id/retry/event lines update state but must not fire on their own; an
     // event-type buffer set without data is discarded with the blank line
     FEventType := '';
     Exit;
   end;
-  // strip exactly one trailing '\n'
-  SetLength(FData, Length(FData) - 1);
+  // the data is the buffer without exactly one trailing '\n'
   if AEvents <> nil then
   begin
     E.EventType := FEventType;
     if E.EventType = '' then
       E.EventType := cSseDefaultEventType;
-    E.Data := FData;
+    E.Data := Copy(FData, 1, FDataLen - 1);
     E.Id := FLastEventId;
     E.RetryMs := FRetryMs;
     AEvents.Add(E);
   end;
-  FData := '';
+  FDataLen := 0;
   FEventType := '';
 end;
 
@@ -519,9 +578,9 @@ end;
 
 procedure TSseEventParser.Reset;
 begin
-  FData := '';
+  FDataLen := 0;
   FEventType := '';
-  FLine := '';
+  FLineLen := 0;
   FLastEventId := '';
   FRetryMs := 0;
   FAtStart := True;
@@ -593,6 +652,12 @@ end;
 
 constructor TSseSource.Create(const AResponse: IHttpResponse);
 begin
+  Create(AResponse, TClientSecurityOptions.Default);
+end;
+
+constructor TSseSource.Create(const AResponse: IHttpResponse;
+  const AOptions: TClientSecurityOptions);
+begin
   inherited Create;
   if AResponse = nil then
     raise EHttpError.Create('TSseSource requires a response', ecInternalError);
@@ -603,7 +668,7 @@ begin
     FStamped := nil;
   if not Supports(AResponse, IAttemptProgress, FProgress) then
     FProgress := NullAttemptProgress;
-  FParser := TSseEventParser.Create;
+  FParser := TSseEventParser.Create(AOptions);
   FQueue := TQueue<TSseEvent>.Create;
   SetLength(FBuf, cSseReadChunkSize);
 end;
@@ -630,7 +695,14 @@ begin
   // bracket makes it wait until the events of this chunk are reported
   FProgress.ReadBegin;
   try
-    N := FBody.Read(FBuf[0], Length(FBuf));
+    try
+      N := FBody.Read(FBuf[0], Length(FBuf));
+    except
+      // a body read past the idle limit (the request's body-read deadline)
+      on EHttpTimeout do
+        raise EHttpSseIdleTimeout.Create(
+          'event stream idle past its SseMaxIdleTimeMs limit');
+    end;
     if N > 0 then
     begin
       Inc(FBytesRead, N);
@@ -734,6 +806,7 @@ begin
   FLastEventId := '';
   FLastDispatchedId := '';
   FStreamId := InterlockedIncrement64(GNextStreamId);
+  FWakeEvent := RTLEventCreate;
 end;
 
 destructor TSseReconnectLoop.Destroy;
@@ -743,6 +816,7 @@ begin
     FSource.Close;
     FSource := nil;
   end;
+  RTLEventDestroy(FWakeEvent);
   inherited Destroy;
 end;
 
@@ -750,16 +824,26 @@ procedure TSseReconnectLoop.OpenSource;
 var
   Req: THttpRequest;
   Resp: IHttpResponse;
+  Opts: TClientSecurityOptions;
+  Options: IHttpClientOptions;
 begin
   // clone: THttpRequest.Headers is a shared interface, so adding the resume
   // header to a plain copy would mutate the caller's request too
   // the context travels with the clone; the identity is stamped per connection
   Req := FRequest.Clone.WithAttemptKind(akSse).WithStream(FStreamId,
     FReconnects);
+  Opts := TClientSecurityOptions.Default;
+  // a client that reports its options sets the idle limit as the body-read
+  // deadline of this request (0 = wait indefinitely)
+  if Supports(FClient, IHttpClientOptions, Options) then
+  begin
+    Opts := Options.Options;
+    Req := Req.WithSseReadTimeout(Opts.SseMaxIdleTimeMs);
+  end;
   if FLastEventId <> '' then
     Req := Req.WithHeader(HeaderLastEventId, FLastEventId);
   Resp := FClient.Send(Req);
-  FSource := TSseSource.Create(Resp);
+  FSource := TSseSource.Create(Resp, Opts);
 end;
 
 function TSseReconnectLoop.Next(out AEvent: TSseEvent): Boolean;
@@ -779,8 +863,9 @@ begin
             'SSE reconnect limit of %d reached', [FMaxRetries]));
         Inc(FReconnects);
         Delay := FRetryMs;
+        // an interruptible wait: Close sets FWakeEvent and ends it
         if (Delay > 0) and not FClosed then
-          Sleep(Delay);
+          RTLEventWaitFor(FWakeEvent, Delay);
         if FClosed then
           Exit(False);
       end;
@@ -824,6 +909,7 @@ end;
 procedure TSseReconnectLoop.Close;
 begin
   FClosed := True;
+  RTLEventSetEvent(FWakeEvent);
   if FSource <> nil then
   begin
     FSource.Close;
