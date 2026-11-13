@@ -26,6 +26,7 @@ copy hashes were checked on 2026-11-11.
 | `iana-websocket-registry.xml` | WebSocket Protocol Registries | https://www.iana.org/assignments/websocket/websocket.xml | 2026-10-22 | `5e076a957d070197edbcd12b7c0e739fb1985e2e98d0d1e92d5880d2ff1ac9b0` |
 | `rfc1928.txt` | SOCKS Protocol Version 5 | https://www.rfc-editor.org/rfc/rfc1928.txt | 2026-11-11 | `ddc2916419a52bedae0fc7d0c051ea513e88c2b930dda27128982fb0c1d6fe2a` |
 | `rfc1929.txt` | Username/Password Authentication for SOCKS V5 | https://www.rfc-editor.org/rfc/rfc1929.txt | 2026-11-11 | `b023357f33b42ba1f3ae10b45ebfcc6dd7b6b13eba0743052b08ae3f7ae3581b` |
+| `rfc3986.txt` | Uniform Resource Identifier (URI): Generic Syntax | https://www.rfc-editor.org/rfc/rfc3986.txt | 2026-11-13 | `3102dae4b68cebe40337730312fcb612297b8928547267e8b3d1ee6002b2d683` |
 | `rfc4514.txt` | Lightweight Directory Access Protocol (LDAP): String Representation of Distinguished Names | https://www.rfc-editor.org/rfc/rfc4514.txt | 2026-10-25 | `b272176d48a231b28e478c30c59c4bee6073883a0ca25bafd93ea3526702b7de` |
 | `rfc5246.txt` | The Transport Layer Security (TLS) Protocol Version 1.2 | https://www.rfc-editor.org/rfc/rfc5246.txt | 2026-11-11 | `2ebe1b8e651696aeacc8ab3848bedb465505737901ea3b691acf40c392958feb` |
 | `rfc5280.txt` | Internet X.509 Public Key Infrastructure Certificate and CRL Profile | https://www.rfc-editor.org/rfc/rfc5280.txt | 2026-10-25 | `a2f2628c0a83b873fc4786abd921f9b2c02395954b655d190bf16b831633345d` |
