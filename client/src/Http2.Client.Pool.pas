@@ -154,12 +154,14 @@ function TConnectionPool.WrapHttp1(const Sock: IHttp2Socket;
   const AOrigin: string): IPooledConnection;
 var
   H1: THttp1Connection;
+  Pooled: THttp1PooledConnection;
 begin
   // the HTTP/1.1 codec reads in 16 KiB fills; an exact-count transport would
   // block on a keep-alive peer, so single-read the underlying socket here
   H1 := THttp1Connection.Create(TSingleReadSocket.Create(Sock),
     FHeaderTimeoutMs);
-  Result := THttp1PooledConnection.Create(H1, AOrigin);
+  Result := THttp1PooledConnection.Create(H1, AOrigin),
+  Pooled, the, client, option, for, body, limit, a, request, may, override, it, Pooled.MaxResponseBytes, FSecurity.MaxResponseBytes, ListFor, Add, Inc, FTotalConnections, MarkUsed;
 end;
 
 function TConnectionPool.TryH2cUpgrade(const Sock: IHttp2Socket;

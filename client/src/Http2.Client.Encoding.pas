@@ -86,10 +86,17 @@ type
     FDecoder: TStream;
     FCoding: TContentEncoding;
     FDone: Boolean;
+    FMaxRatio: Integer;
+    FRatioFloor: Int64;
+    FDecoded: Int64;
   public
     /// wrap AInner, inflating it as ACoding
+    // - AMaxRatio is the decode ratio cap (decoded bytes per wire byte); 0
+    //   turns the cap off. The cap applies once more than ARatioFloor
+    //   decoded bytes have been returned.
     constructor Create(const AInner: IHttpBodyStream;
-      const ACoding: TContentEncoding);
+      const ACoding: TContentEncoding; const AMaxRatio: Integer = 0;
+      const ARatioFloor: Int64 = 1048576);
     destructor Destroy; override;
     function Read(var ABuffer; const ACount: LongInt): LongInt;
     function Eof: Boolean;
@@ -100,10 +107,18 @@ type
 ///  coding header is removed from the response when a decode wrapper is
 ///  installed, so a caller never sees a header that describes bytes it can
 ///  no longer reach.
-function WrapDecodingResponse(const AResponse: IHttpResponse)
-  : IHttpResponse;
+/// the callers pass ARequestSentAcceptEncoding (True keeps the decoding of
+// earlier callers); AMaxDecodedBytes (0 = no limit) bounds the decoded body
+// and AMaxDecodeRatio (0 = no cap) bounds decoded bytes per wire byte
+function WrapDecodingResponse(const AResponse: IHttpResponse;
+  const ARequestSentAcceptEncoding: Boolean = True;
+  const AMaxDecodedBytes: Int64 = 0;
+  const AMaxDecodeRatio: Integer = 0): IHttpResponse;
 
 implementation
+
+uses
+  Http2.Client.Body.Limits, Http2.Client.Errors;
 
 type
   /// a non-seekable TStream view of an IHttpBodyStream, with a pushback
@@ -113,8 +128,11 @@ type
     FInner: IHttpBodyStream;
     FPush: TBytes;
     FPushPos: Integer;
+    FWireBytes: Int64;
   public
     constructor Create(const AInner: IHttpBodyStream);
+    /// the bytes read from the inner stream so far (pushback is not counted)
+    property WireBytes: Int64 read FWireBytes;
     /// prepend AData to the bytes still to be served
     // - called once, at construction, with the bytes an inspection consumed
     procedure PushBack(const AData: TBytes);
@@ -137,7 +155,8 @@ type
     function GetBody: IHttpBodyStream;
   public
     constructor Create(const AResponse: IHttpResponse;
-      const ACoding: TContentEncoding);
+      const ACoding: TContentEncoding; const AMaxDecodedBytes: Int64;
+      const AMaxRatio: Integer);
     property Progress: IAttemptProgress read FProgress
       implements IAttemptProgress;
   end;
@@ -442,6 +461,7 @@ begin
   inherited Create;
   FInner := AInner;
   FPushPos := 0;
+  FWireBytes := 0;
 end;
 
 procedure TBodyStreamAdapter.PushBack(const AData: TBytes);
@@ -471,7 +491,10 @@ begin
   Take := ACount - Result;
   Got := FInner.Read(P[Result], Take);
   if Got > 0 then
+  begin
     Inc(Result, Got);
+    Inc(FWireBytes, Got);
+  end;
 end;
 
 function TBodyStreamAdapter.Seek(const Offset: Int64;
@@ -486,7 +509,8 @@ end;
 { TDecodingBodyStream }
 
 constructor TDecodingBodyStream.Create(const AInner: IHttpBodyStream;
-  const ACoding: TContentEncoding);
+  const ACoding: TContentEncoding; const AMaxRatio: Integer;
+  const ARatioFloor: Int64);
 var
   Probe: array[0..1] of Byte;
   ProbeBytes: TBytes;
@@ -496,6 +520,9 @@ begin
   FInner := AInner;
   FCoding := ACoding;
   FDone := False;
+  FMaxRatio := AMaxRatio;
+  FRatioFloor := ARatioFloor;
+  FDecoded := 0;
   FSource := TBodyStreamAdapter.Create(AInner);
   if FCoding = ceGzip then
     FDecoder := TGZipDecompressionStream.Create(FSource)
@@ -534,7 +561,20 @@ begin
     raise;
   end;
   if Result <= 0 then
+  begin
     FDone := True;
+    Exit;
+  end;
+  Inc(FDecoded, Result);
+  // the ratio cap: decoded bytes against the wire bytes read so far, checked
+  // once the floor is passed, so a small body that compresses well still passes
+  if (FMaxRatio > 0) and (FDecoded > FRatioFloor) and
+     (FDecoded > Int64(FMaxRatio) * (FSource as TBodyStreamAdapter).WireBytes) then
+  begin
+    FDone := True;
+    raise EHttpResponseTooLarge.CreateFmt(
+      'decoded body passes the ratio cap of %d:1', [FMaxRatio]);
+  end;
 end;
 
 function TDecodingBodyStream.Eof: Boolean;
@@ -545,14 +585,18 @@ end;
 { TDecodingResponse }
 
 constructor TDecodingResponse.Create(const AResponse: IHttpResponse;
-  const ACoding: TContentEncoding);
+  const ACoding: TContentEncoding; const AMaxDecodedBytes: Int64;
+  const AMaxRatio: Integer);
 begin
   inherited Create;
   FAccessories := AResponse;
   if not Supports(AResponse, IAttemptProgress, FProgress) then
     FProgress := NullAttemptProgress;
   FHeaders := AResponse.Headers;
-  FBody := TDecodingBodyStream.Create(AResponse.Body, ACoding);
+  FBody := TDecodingBodyStream.Create(AResponse.Body, ACoding, AMaxRatio);
+  // the decoded limit counts the bytes after the decoder, not the wire bytes
+  if AMaxDecodedBytes > 0 then
+    FBody := TLimitedBodyStream.Create(FBody, AMaxDecodedBytes);
 end;
 
 function TDecodingResponse.GetStatusCode: LongInt;
@@ -570,7 +614,9 @@ begin
   Result := FBody;
 end;
 
-function WrapDecodingResponse(const AResponse: IHttpResponse): IHttpResponse;
+function WrapDecodingResponse(const AResponse: IHttpResponse;
+  const ARequestSentAcceptEncoding: Boolean; const AMaxDecodedBytes: Int64;
+  const AMaxDecodeRatio: Integer): IHttpResponse;
 var
   Coding: TContentEncoding;
   MediaType: string;
@@ -578,6 +624,10 @@ var
 begin
   Result := AResponse;
   if AResponse = nil then
+    Exit;
+  // a body is decoded only when the request offered a coding: an unsolicited
+  // coding passes through with its header (the header describes the wire)
+  if not ARequestSentAcceptEncoding then
     Exit;
   // The SSE reader validates the wire coding before body access. Creating
   // a decoding stream here could read a coding header and hide the coding
@@ -597,7 +647,8 @@ begin
   // The coding is captured first, because the wrapper must still know it.
   AResponse.Headers.Remove(HeaderContentEncoding);
   AResponse.Headers.Remove(HeaderContentLength);
-  Result := TDecodingResponse.Create(AResponse, Coding);
+  Result := TDecodingResponse.Create(AResponse, Coding, AMaxDecodedBytes,
+    AMaxDecodeRatio);
 end;
 
 end.

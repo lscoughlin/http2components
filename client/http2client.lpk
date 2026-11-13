@@ -25,7 +25,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="63">
+    <Files Count="64">
       <Item1>
         <Filename Value="src/Http2.Client.Api.pas" />
         <UnitName Value="Http2.Client.Api" />
@@ -278,6 +278,10 @@
         <Filename Value="src/Http2.Client.Http1.Parse.pas" />
         <UnitName Value="Http2.Client.Http1.Parse" />
       </Item63>
+      <Item64>
+        <Filename Value="src/Http2.Client.Body.Limits.pas" />
+        <UnitName Value="Http2.Client.Body.Limits" />
+      </Item64>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
