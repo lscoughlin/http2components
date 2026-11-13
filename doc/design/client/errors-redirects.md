@@ -128,6 +128,7 @@ type
   EHttpTooManyRedirects = class(EHttpError);
   EHttpTooManySseRetries = class(EHttpError);   // SSE reconnect bound
   EHttpNotReplayable    = class(EHttpError);
+  EHttpClientConfigError = class(EHttpError);   // a security option is out of range; raised at Build
 ```
 
 - **Connection errors** (transport failure, protocol error, `GOAWAY`,

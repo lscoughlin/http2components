@@ -35,6 +35,7 @@ type
     procedure TestSseLimitsRangeChecked;
     procedure TestProblemsReportsEachFault;
     procedure TestFactoryBuildRejectsBadValue;
+    procedure TestFactoryBuildRaisesConfigError;
     procedure TestFactoryWrappersReachClient;
   end;
 
@@ -210,6 +211,22 @@ begin
       Raised := True;
   end;
   AssertTrue('Build raises for an invalid security option', Raised);
+end;
+
+procedure TClientSecurityOptionsTest.TestFactoryBuildRaisesConfigError;
+var
+  Factory: THttpClientFactory;
+  Raised: Boolean;
+begin
+  Factory := THttpClientFactory.Create.WithMaxDecodeRatio(-1);
+  Raised := False;
+  try
+    Factory.Build;
+  except
+    on E: EHttpClientConfigError do
+      Raised := True;
+  end;
+  AssertTrue('Build raises EHttpClientConfigError for a bad ratio', Raised);
 end;
 
 procedure TClientSecurityOptionsTest.TestFactoryWrappersReachClient;

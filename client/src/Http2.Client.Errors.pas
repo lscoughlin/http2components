@@ -56,6 +56,8 @@ type
   /// a Unix socket option that is not valid
   EHttpUnixSocketConfigError = class(EHttpError);
   EHttpTlsConfigError = class(EHttpError);
+  /// a client security option that is out of range, raised at Build
+  EHttpClientConfigError = class(EHttpError);
   EHttpTlsClientAuthError = class(EHttpConnectionError)
   private
     FAlert: string;

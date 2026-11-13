@@ -597,7 +597,7 @@ begin
     raise EHttpUnixSocketConfigError.Create(FUnixPathError);
   // an out-of-range security limit is refused before any client exists
   if FSecurity.Problems <> '' then
-    raise EHttpError.Create(FSecurity.Problems);
+    raise EHttpClientConfigError.Create(FSecurity.Problems);
   Factory := FSocketFactory;
   // an injected factory that cannot present identities would drop them
   // silently: refuse the combination
