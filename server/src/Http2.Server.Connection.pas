@@ -477,6 +477,15 @@ begin
     Stream.MarkRemoteEnded;
   if not ValidateRequestBlock(Stream, Headers, False) then
     Exit;
+  // a head with END_STREAM declares a body that never arrives: no octet of
+  // the body has been received yet, so a declared length above 0 does not match
+  if FHpack.BlockEndStream and (not Stream.DeclaredLengthMatches) then
+  begin
+    SendRstStream(Stream.StreamId, ecProtocolError);
+    Stream.Cancel(ecProtocolError);
+    CloseStream(Stream);
+    Exit;
+  end;
   if FEvents <> nil then
     FEvents.RequestReady(Stream);
 end;
