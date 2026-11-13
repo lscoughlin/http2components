@@ -415,11 +415,17 @@ procedure TTlsSocketPendingTest.TestCloseNotifyIsPending;
 var
   Pending: IPendingInput;
   Buffer: Byte;
+  Limit: QWord;
 begin
   if not Start(psCloseNotify, False) then
     Exit;
   Supports(FSocket, IPendingInput, Pending);
   WaitReadable;
+  // the tickets and the alert can arrive in separate segments: the query that
+  // consumes only the tickets reports no pending input, so the test polls
+  Limit := GetTickCount64 + cWaitMs;
+  while not Pending.HasPendingInput and (GetTickCount64 < Limit) do
+    Sleep(1);
   AssertTrue('an alert is pending input', Pending.HasPendingInput);
   AssertEquals('the end of stream follows', 0, FSocket.Read(Buffer, 1));
 end;
