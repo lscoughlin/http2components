@@ -110,6 +110,47 @@ states the results and one open client defect.
 - [0.30.0 migration](doc/migration-0.30.0.md)
 - [Documentation map](doc/README.md)
 
+## Security
+
+The client options are in the record `TClientSecurityOptions`
+(`client/src/Http2.Client.Config.Security.pas`). The factory sets each option
+with the method in the last column.
+
+| Option | Default | Factory method |
+| --- | --- | --- |
+| `RedirectPolicy` | `rpAnyHost` (no host limit) | `WithRedirectPolicy` |
+| `MaxReceiveQueueBytes` | 1048576 (1 MiB per stream) | `WithMaxReceiveQueueBytes` |
+| `MaxResponseBytes` | 0 (no limit) | `WithMaxResponseBytes` |
+| `MaxDecodedResponseBytes` | 0 (no limit) | `WithMaxDecodedResponseBytes` |
+| `MaxDecodeRatio` | 1000 | `WithMaxDecodeRatio` |
+| `MaxHeaderListSize` | 131072 (128 KiB) | `WithMaxHeaderListSize` |
+| `SseMaxLineBytes` | 33554432 (32 MiB) | `WithSseMaxLineBytes` |
+| `SseMaxEventBytes` | 67108864 (64 MiB) | `WithSseMaxEventBytes` |
+| `SseMaxIdleTimeMs` | 600000 (10 minutes) | `WithSseMaxIdleTimeMs` |
+| `SseMaxRetryMs` | 600000 (10 minutes) | `WithSseMaxRetryMs` |
+
+The server options are in the record `TServerLimits`
+(`server/src/Http2.Server.Config.Limits.pas`) and the record `TWsOptions`
+(`server/src/Http2.Server.WebSocket.Options.pas`).
+
+| Option | Record | Default |
+| --- | --- | --- |
+| `MaxHandlerTimeMs` | `TServerLimits` | 0 (no limit) |
+| `MaxBodyBytesInFlight` | `TServerLimits` | 268435456 (256 MiB); 0 turns the budget off |
+| `MaxWsQueuedBytes` | `TServerLimits` | 134217728 (128 MiB) |
+| `MaxWsSessions` | `TServerLimits` | 5000 |
+| `WsEarlyBytes` | `TWsOptions` | 262144 (256 KiB) |
+| `WsAllowedHosts` | `TWsOptions` | empty (no host check) |
+
+These behaviors have no option:
+
+- The client removes the `authorization`, `cookie` and `proxy-authorization`
+  headers from a redirected request when the origin changes. This applies to
+  every redirect policy.
+- A redirect keeps the scheme of the request. The only exception is the
+  `http` to `https` upgrade on the same host, which `rpSameOriginUpgrade` allows.
+- The client decodes a response body only when the request sent `accept-encoding`.
+
 ## Verification
 
 The TLS implementation has bounded provider, transport, integration, and
