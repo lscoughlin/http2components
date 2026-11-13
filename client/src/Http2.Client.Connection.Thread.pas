@@ -177,14 +177,14 @@ begin
       if FThread.WorkerTerminated then
         Break;
       try
-        Frame := ReadFrame(FSockStream, FPeerMaxFrameSize);
+        Frame := ReadFrame(FSockStream, FLocalSettings.MaxFrameSize);
         // the wire stamp: taken before validation and routing, and carried
         // with the frame through the stream's queue to the consumer
         Frame.ArrivedUs := NowUs;
         // RFC 7540 structural rules the decoder cannot enforce on its own:
         // frame-type/stream-id pairing, mandatory payload sizes, zero
         // WINDOW_UPDATE increments. A violation is a connection error.
-        ValidateFrame(Frame, FPeerMaxFrameSize);
+        ValidateFrameForRole(Frame, FLocalSettings.MaxFrameSize, erClient);
         // routing can also raise EHttpError (malformed SETTINGS/GOAWAY,
         // PUSH_PROMISE while push is disabled); keep it inside this handler
         // so the frame's own error code is reported rather than being
