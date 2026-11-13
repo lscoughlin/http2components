@@ -43,8 +43,8 @@ uses
   Http2.Server.Async.Options,
   Http2.Server.Async.Counters,
   Http2.Server.Async.Waker,
-  Http2.Server.Async.Sweep,
-  Http2.Server.Async.Socket, Http2.Server.Unix.Path,
+  Http2.Server.Async.Sweep, Http2.Server.Async.Backlog,
+  Http2.Server.Async.Socket, Http2.Server.Unix.Path, Http2.Server.Async.Trace,
   Http2.Server.Tls.Binding, Http2.Server.Tls.Adapter,
   Http2.Common.Tls.Context, Http2.Common.Tls.Session,
   Http2.Common.Tls.Types;
@@ -114,6 +114,7 @@ type
     FLastWriteProgressMs: QWord; FLastSweepBacklog: Int64; // the stall state of the sweep
     FLastSocketBytesSent, FLastKernelQueueBytes: Int64;
     FHasKernelQueueSample: Boolean;
+    FTrace: TConnTrace; // the start trace; used only under HTTP2_TEST_TRACE
     function PumpTlsInput(out AProgress: Boolean): Boolean;
     function PumpTlsOutput: Boolean;
     function AcceptPendingTlsPlaintext: Boolean;
@@ -304,7 +305,7 @@ begin
     FServer.Factory.HeaderTimeoutMs);
   FIdleSeconds := cardinal(FServer.Factory.IdleTimeoutMs div 1000);
   FSendLock := TCriticalSection.Create;
-  FMode := cmUndecided;
+  FMode := cmUndecided; TraceAccept(FTrace, Handle);
 end;
 procedure THttp2AsyncConnection.StartHttp2;
 begin
@@ -478,6 +479,7 @@ begin
           end;
           Continue;
         end;
+        TraceWrite(FTrace, pointer(Data), Length(Data));
         Before := PendingWriteBytes;
         // the mORMot2 write path takes the connection write lock, sends at
         // once when it can, and otherwise subscribes for the write event.  A
@@ -651,10 +653,7 @@ begin
   begin
     // Preserve HTTP/1 idle and output-progress behavior.
     Backlog := FH1.Core.OutputBacklog;
-    if (Backlog > 0) and
-       ((FLastSweepBacklog <= 0) or (Backlog < FLastSweepBacklog)) then
-      FLastWriteProgressMs := ANowMs;
-    FLastSweepBacklog := Backlog;
+    ObserveBacklogProgress(Backlog, ANowMs, FLastSweepBacklog, FLastWriteProgressMs);
   end
   else begin
     Backlog := PendingWriteBytes;

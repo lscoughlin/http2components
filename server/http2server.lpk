@@ -25,7 +25,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="78">
+    <Files Count="80">
       <Item1>
         <Filename Value="src/Http2.Server.AccessLog.Handler.pas" />
         <UnitName Value="Http2.Server.AccessLog.Handler" />
@@ -338,6 +338,14 @@
         <Filename Value="src/Http2.Server.HandlerDeadline.pas" />
         <UnitName Value="Http2.Server.HandlerDeadline" />
       </Item78>
+      <Item79>
+        <Filename Value="src/Http2.Server.Async.Backlog.pas" />
+        <UnitName Value="Http2.Server.Async.Backlog" />
+      </Item79>
+      <Item80>
+        <Filename Value="src/Http2.Server.Async.Trace.pas" />
+        <UnitName Value="Http2.Server.Async.Trace" />
+      </Item80>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
