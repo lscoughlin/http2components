@@ -23,7 +23,7 @@ uses
   Http2.Client.Concurrency.Test, Http2.Client.FlowControl.Test,Http2.Client.ConnectionLifecycle.Test,
   Http2.Client.ConnectionSettings.Test,
   Http2.Client.ConnectionThread.Test, Http2.Client.Encoding.Test,
-  Http2.Client.HpackOrder.Test, Http2.Client.Http1.Test,
+  Http2.Client.HpackOrder.Test, Http2.Client.Http1.Test, Http2.Client.Http1Release.Test,
   Http2.Client.MockSocket.Observer.Test, Http2.Client.MockSocket.Capture.Test, Http2.Client.MockSocket.Scenario.Test, Http2.Client.MutualTls.Accept.Test, Http2.Client.MutualTls.Reject.Test, Http2.Client.MutualTls.Routing.Test, Http2.Client.MutualTls.Request.Test, Http2.Client.MutualTls.Other.Test,
   Http2.Client.ObserverAdapters.Core.Test, Http2.Client.ObserverAdapters.Sink.Test, Http2.Client.PoolStats.Test,
   Http2.Client.ProbeOutcome.Test, Http2.Client.Proxy.Test,

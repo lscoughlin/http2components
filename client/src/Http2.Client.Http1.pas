@@ -96,6 +96,7 @@ type
     FReader: TBufferedReader;
     FTimeoutMs: Integer;
     FReusable: Boolean;
+    FReuse: IReuseFlag;   // shared with the body streams of this connection
     FLastBody: IHttpBodyStream;
     FLastTrailers: IHttpHeaders;
     FRequestCount: Integer;
@@ -581,6 +582,7 @@ begin
   FReader := TBufferedReader.Create(ASocket);
   FTimeoutMs := ATimeoutMs;
   FReusable := True;
+  FReuse := TReuseFlag.Create;
   FLastTrailers := NewHttpHeaders;
 end;
 
@@ -615,7 +617,7 @@ begin
   if (FLastBody <> nil) and (not FLastBody.Eof) then
     raise EHttpProtocolError.Create(
       'previous HTTP/1.1 response body was not drained', ecProtocolError);
-  if not FReusable then
+  if not Reusable then
     raise EHttpProtocolError.Create(
       'HTTP/1.1 connection cannot be reused (Connection: close or EOF body)',
       ecProtocolError);
@@ -729,6 +731,7 @@ begin
     ((FVersion = 'HTTP/1.1') or
      (Pos('keep-alive', LowerCase(Connection)) > 0));
 
+  Body.BindReuseFlag(FReuse);
   Body.AttachExchange(FSendRequest.Exchange, FSentBodyBytes);
   Resp := THttp1Response.Create(FVersion, FStatusCode, FReason, Headers,
     Body);
@@ -773,7 +776,7 @@ end;
 
 function THttp1Connection.Reusable: Boolean;
 begin
-  Result := FReusable;
+  Result := FReusable and FReuse.Reusable;
 end;
 
 procedure THttp1Connection.Close;
