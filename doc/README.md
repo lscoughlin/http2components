@@ -39,6 +39,7 @@ The client topic documents describe the merged `Http2.Client.*` and
 | [Client API](design/client/client-api.md) | Factory, client, request, and response contracts. |
 | [Messages](design/client/messages.md) | Request, response, headers, and body data. |
 | [Transport](design/client/transport.md) | Connections, TLS, ALPN, and transport. |
+| [Queues](design/client/queues.md) | Every queue, its threads, and its producer and consumer roles. |
 | [Protocol](design/client/protocol.md) | Frames, HPACK, and flow control. |
 | [Fallback](design/client/fallback.md) | Clear-text HTTP/2 and HTTP/1.1 fallback. |
 | [Proxy](design/client/proxy.md) | HTTP, HTTPS, and SOCKS proxy routes. |
