@@ -274,7 +274,9 @@ function TPlainSocket.Read(var ABuffer; ACount: Integer): Integer;
 begin
   if not FConnected then
     raise EHttpConnectionClosed.Create('socket is closed');
-  Result := SocketReadFully(FHandle, ACount, FReadTimeoutMs, ABuffer);
+  // a timeout after some bytes returns them: the caller reads on, so no
+  // consumed byte of a frame is lost
+  Result := SocketReadPartial(FHandle, ACount, FReadTimeoutMs, ABuffer);
 end;
 
 function TPlainSocket.ReadSome(var ABuffer; ACount: Integer): Integer;

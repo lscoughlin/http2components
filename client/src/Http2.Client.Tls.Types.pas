@@ -124,6 +124,11 @@ function SocketTimedOut: Boolean;
 function SocketReadFully(AFd, ACount, ATimeoutMs: Integer;
   var ABuffer): Integer;
 
+/// like SocketReadFully, but a timeout after some bytes returns those bytes
+// - a timeout before any byte raises EHttpTimeout; no consumed byte is lost
+function SocketReadPartial(AFd, ACount, ATimeoutMs: Integer;
+  var ABuffer): Integer;
+
 /// write all ACount bytes, raising EHttpTimeout when the deadline expires
 function SocketWriteFully(AFd, ACount, ATimeoutMs: Integer;
   const ABuffer): Integer;
@@ -326,6 +331,38 @@ begin
       Exit // EOF: return whatever was read so far
     else if SocketTimedOut then
       raise EHttpTimeout.CreateFmt('read timed out after %d ms', [ATimeoutMs])
+    else if fpGetErrno = ESysEINTR then
+      Continue
+    else
+      raise EHttpConnectionClosed.CreateFmt('socket read failed (errno %d)',
+        [fpGetErrno]);
+  end;
+end;
+
+function SocketReadPartial(AFd, ACount, ATimeoutMs: Integer;
+  var ABuffer): Integer;
+var
+  n: ssize_t;
+  base: PByte;
+begin
+  if ACount <= 0 then
+    Exit(0);
+  SetSocketTimeout(AFd, SOL_SOCKET, SO_RCVTIMEO, ATimeoutMs);
+  base := PByte(@ABuffer);
+  Result := 0;
+  while Result < ACount do
+  begin
+    n := fpRecv(AFd, base + Result, ACount - Result, 0);
+    if n > 0 then
+      Inc(Result, n)
+    else if n = 0 then
+      Exit
+    else if SocketTimedOut then
+    begin
+      if Result > 0 then
+        Exit;                 // keep the consumed bytes; the caller reads on
+      raise EHttpTimeout.CreateFmt('read timed out after %d ms', [ATimeoutMs]);
+    end
     else if fpGetErrno = ESysEINTR then
       Continue
     else
