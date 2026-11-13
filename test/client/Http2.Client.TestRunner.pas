@@ -51,6 +51,7 @@ uses
   Http2.Client.PhaseDeadline.Test,
   Http2.Client.BodyLimits.Test,
   Http2.Client.HeaderLimits.Test,
-  Http2.Client.ControlQueue.Test;
+  Http2.Client.ControlQueue.Test,
+  Http2.Client.WriteTimeout.Test;
 
 end.

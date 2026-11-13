@@ -119,6 +119,7 @@ type
     FSocket: IHttp2Socket;
     FOutbound: IBlockingQueue<TFrame>;
     FControl: TControlFrameQueue; // control frames: never blocks the reader
+    FTableHandoff: THeaderTableHandoff; // peer table size, for the encoder
     FInbound: IBlockingQueue<TFrame>;
     FThread: TConnectionThread;
     FHeaderDecoder: THpackCodec; // weak; owner outlives the connection thread
@@ -256,6 +257,7 @@ type
     property Thread: TConnectionThread read FThread;
     property Outbound: IBlockingQueue<TFrame> read FOutbound;
     property ControlQueue: TControlFrameQueue read FControl;
+    property TableHandoff: THeaderTableHandoff read FTableHandoff;
     property Inbound: IBlockingQueue<TFrame> read FInbound;
     property Socket: IHttp2Socket read FSocket;
     property SettingsAcked: Boolean read FSettingsAcked;
@@ -352,6 +354,7 @@ begin
   FSocket := ASocket;
   FOutbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
   FControl := TControlFrameQueue.Create;
+  FTableHandoff := THeaderTableHandoff.Create;
   FInbound := TBlockingQueue<TFrame>.Create(0); // unbounded: only the reader fills it
   FLocalSettings := ALocalSettings;
   FPeerSettings := TConnectionSettings.Defaults;
@@ -382,6 +385,7 @@ begin
   Close;
   FreeAndNil(FCredit);
   FreeAndNil(FControl);
+  FreeAndNil(FTableHandoff);
   FreeAndNil(FHeaderBlock);
   FreeAndNil(FFlowControl);
   FreeAndNil(FNotifications);
@@ -589,11 +593,14 @@ procedure TConnection.ApplyPeerSettingsValue(
   const ASettings: TConnectionSettings);
 var
   Delta: Int64;
+  Locked: Boolean;
 begin
-  // Use the stream encoder lock first. Stream startup takes this lock before
-  // it enters the connection lock, so keep the same order here.
-  if FHeaderEncoderLock <> nil then
-    FHeaderEncoderLock.Acquire;
+  // The reader never waits for the encoder lock: a stream thread holds that
+  // lock while it waits for queue room, and only the reader makes room. When
+  // the lock is busy, the stream thread applies the table size before its
+  // next header block. Lock order: encoder lock, then FLock.
+  FTableHandoff.Defer(ASettings.HeaderTableSize);
+  Locked := (FHeaderEncoderLock = nil) or FHeaderEncoderLock.TryEnter;
   try
     FLock.Acquire;
     try
@@ -607,10 +614,10 @@ begin
     finally
       FLock.Release;
     end;
-    if FHeaderEncoder <> nil then
-      FHeaderEncoder.SetPeerTableSize(ASettings.HeaderTableSize);
+    if Locked then
+      FTableHandoff.Apply(FHeaderEncoder);
   finally
-    if FHeaderEncoderLock <> nil then
+    if Locked and (FHeaderEncoderLock <> nil) then
       FHeaderEncoderLock.Release;
   end;
   // wake every sender: a raised window grants credit, and a sender parked only

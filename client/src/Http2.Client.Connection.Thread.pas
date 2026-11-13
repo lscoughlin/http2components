@@ -35,7 +35,6 @@ type
     FSockStream: TStream;              // IHttp2Socket -> TStream adapter
     FLocalSettings: TConnectionSettings;
     FReadPollMs: Integer;
-    FPeerMaxFrameSize: LongWord;
     FPendingPing: Boolean;
     FPendingPingPayload: TBytes;
     FPingSentAt: QWord;
@@ -148,7 +147,6 @@ begin
   FRates.Init(GetTickCount64);
   FLocalSettings := AConn.LocalSettings;
   FReadPollMs := AConn.ReadPollMs;
-  FPeerMaxFrameSize := DefaultMaxFrameSize;
   FPendingPing := False;
   FSockStream := TSocketStream.Create(FSocket);
 end;
@@ -187,6 +185,16 @@ begin
         Break;
       try
         Frame := ReadFrame(FSockStream, FLocalSettings.MaxFrameSize);
+      except
+        on E: EHttpTimeout do
+          Continue;                 // idle poll: loop back to outbound work
+        on E: EHttpError do
+        begin
+          Fail(E.Message, E.ErrorCode, ClientAuthAlertOf(E));
+          Break;
+        end;
+      end;
+      try
         // the wire stamp: taken before validation and routing, and carried
         // with the frame through the stream's queue to the consumer
         Frame.ArrivedUs := NowUs;
@@ -200,8 +208,13 @@ begin
         // downgraded to ecInternalError by the outer catch-all.
         RouteInbound(Frame);
       except
+        // only the read above is an idle poll; a timeout after the read is a
+        // failed write and leaves the stream out of step, so it is fatal
         on E: EHttpTimeout do
-          Continue;                 // idle poll: loop back to outbound work
+        begin
+          Fail(E.Message, ecInternalError);
+          Break;
+        end;
         on E: EHttpError do
         begin
           Fail(E.Message, E.ErrorCode, ClientAuthAlertOf(E));
@@ -237,7 +250,6 @@ procedure TConnectionWorker.ApplyPeerSettings(
   const ASettings: TConnectionSettings);
 begin
   FConn.ApplyPeerSettingsValue(ASettings);
-  FPeerMaxFrameSize := ASettings.MaxFrameSize;
 end;
 
 procedure TConnectionWorker.RouteInbound(const AFrame: TFrame);
