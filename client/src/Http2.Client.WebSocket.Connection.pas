@@ -148,7 +148,7 @@ function OpenWebSocket(const AFactory: IHttp1SocketFactory;
 
 implementation
 
-uses Http2.Client.WebSocket.Connection.Open,
+uses Http2.Client.WebSocket.Connection.Open, Http2.Client.WebSocket.Connection.Io,
   Http2.Client.WebSocket.Connection.Observer;
 
 function NowMs: QWord;
@@ -274,7 +274,6 @@ procedure TWebSocketConnection.WriteFrame(const AOpcode: Byte;
   const AFin: Boolean; const APayload: TBytes);
 var
   Wire: TBytes;
-  Sent, N: Integer;
 begin
   if FSockClosed or FAborted then
     raise EHttpWebSocketClosedError.Create('the WebSocket is closed');
@@ -288,14 +287,7 @@ begin
       InterlockedDecrement(FWriters);
     end;
     try
-      Sent := 0;
-      while Sent < Length(Wire) do
-      begin
-        N := FSock.Write(Wire[Sent], Length(Wire) - Sent);
-        if N <= 0 then
-          raise EHttpConnectionError.Create('WebSocket write failed');
-        Inc(Sent, N);
-      end;
+      WsWriteAll(FSock, Wire);
     finally
       if FLocked then
         FIo.Leave;
@@ -869,21 +861,21 @@ begin
 end;
 
 procedure TWebSocketConnection.CloseTransport;
+var
+  DoClose: Boolean;
 begin
-  // waits out a send in flight, then closes; later sends see FSockClosed
+  // waits out a send in flight and sets FSockClosed, so that later sends end
+  // at once; the close itself runs after the send lock is released, because
+  // a TLS close can wait for the peer
   FSendLock.Enter;
   try
-    if not FSockClosed then
-    begin
-      FSockClosed := True;
-      try
-        FSock.Close;
-      except
-      end;
-    end;
+    DoClose := not FSockClosed;
+    FSockClosed := True;
   finally
     FSendLock.Leave;
   end;
+  if DoClose then
+    WsCloseQuiet(FSock);
 end;
 
 procedure TWebSocketConnection.Teardown;

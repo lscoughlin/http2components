@@ -60,6 +60,7 @@ uses
   Http2.Client.TlsSocketPending.Test,
   Http2.Client.Http1BodyTimeout.Test,
   Http2.Client.PoolWait.Test,
-  Http2.Client.CloseLock.Test;
+  Http2.Client.CloseLock.Test,
+  Http2.Client.SocketLock.Test;
 
 end.
