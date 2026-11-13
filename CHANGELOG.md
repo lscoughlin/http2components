@@ -107,7 +107,8 @@ These two faults exist in the code from before this work.
 - Client: a read that timed out after it had consumed some bytes lost those bytes, and the reader
   then continued in the middle of a frame. A frame that arrived with a gap of more than the 20 ms
   poll could break the connection. A read now returns the bytes it has, and a frame that does not
-  complete within the socket read timeout fails the connection.
+  complete within the socket read timeout fails the connection. Readers of the client
+  socket interface now see a short count where they saw a timeout.
 - Client WebSocket: a peer close frame that arrived between the local close frame and the local
   state change made the close look remote. The reader now reads the state under the send lock.
 

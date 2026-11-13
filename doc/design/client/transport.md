@@ -244,9 +244,11 @@ connection fails with `INTERNAL_ERROR` and the stream is not used again.
 
 A read timeout inside a frame is not an idle poll either. The reader socket
 times out every poll interval, and a TCP segment gap inside one frame can be
-longer than that interval. The plain socket `Read` and `TTlsSocket.Read`
-return the bytes that they already consumed when a timeout follows some bytes.
-They raise `EHttpTimeout` only when no byte was read. The reader adapter
+longer than that interval. The partial socket read `SocketReadPartial` and the TLS read of
+`TTlsSocket.Read` return the bytes that they already consumed when a timeout
+follows some bytes. They raise `EHttpTimeout` only when no byte was read. The
+HTTP/1 body reader, the decoder and the response wrappers see that short count
+and never see the timeout that ended the read. The reader adapter
 `TSocketStream` marks the start of each frame. A timeout before the first byte
 of a frame is an idle poll. After the first byte, the adapter keeps the bytes
 and reads on until the frame is complete. If the frame is not complete within
