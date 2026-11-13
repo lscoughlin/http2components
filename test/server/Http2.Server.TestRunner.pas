@@ -106,7 +106,8 @@ uses
   Http2.Server.UnixFacade.Test,
   Http2.Server.UnixProtocol.Test,
   Http2.Server.WebSocketHost.Test,
-  Http2.Server.HandlerDeadline.Test;
+  Http2.Server.HandlerDeadline.Test,
+  Http2.Server.Http1.Fields.Test;
 
 const
   /// name of the top-level suite in the runner report

@@ -234,6 +234,11 @@ requests pays one connection for each rejection, and the server holds no state
 for the next one. The limits of the parser are in the record `THttp11Limits` (see
 [http1](http1.md)).
 
+The field rules of a request are strict. White space before the colon, an obsolete line
+fold and a `Transfer-Encoding` whose last coding is not `chunked` each give 400 and close
+the connection. A front proxy that unfolds a line in another way would open a smuggling
+path, so the server does not unfold.
+
 ## The stall timeout of an event stream
 
 An event stream whose outbound queue stays full is a slow reader. The setting

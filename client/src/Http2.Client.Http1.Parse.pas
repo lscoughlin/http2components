@@ -96,9 +96,11 @@ var
   Items: TArray<string>;
   I: Integer;
   Item, Last: string;
+  Count: Integer;
 begin
   AKnown := True;
   Last := '';
+  Count := 0;
   Items := SplitComma(AValue);
   for I := 0 to High(Items) do
   begin
@@ -106,7 +108,9 @@ begin
     if Item = '' then
       Continue;
     Last := LowerCase(Item);
-    if Last <> 'chunked' then
+    Inc(Count);
+    // the client accepts a single chunked and no other coding (as Go does)
+    if (Last <> 'chunked') or (Count > 1) then
       AKnown := False;
   end;
   Result := Last = 'chunked';

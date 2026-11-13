@@ -95,10 +95,10 @@ stricter one, because the parser is a security boundary.
 | --- | --- | --- |
 | Line ends | CRLF only. A CR without LF is rejected with 400. A lone LF is not a line end, so a head that uses only LF never completes, and the header deadline closes the connection. A lone LF inside a value is rejected. | RFC 9112 section 2.2 |
 | `Content-Length` | exactly one field with one value of `1*DIGIT`. A list, a repeated field, a sign, a space, an empty value or a non-digit gives 400. A value above the body limit or above 18 digits gives 413. | RFC 9112 section 6.3, RFC 9110 section 8.6 |
-| `Transfer-Encoding` | only the single value `chunked`, in any case. A field with a list, a parameter or a coding before `chunked` gives 400. An unknown coding gives 501. Several fields give 400. The field in an HTTP/1.0 request gives 400. | RFC 9112 sections 6.1 and 6.3 |
+| `Transfer-Encoding` | only the single value `chunked`, in any case. A field with a list, a parameter or a coding before `chunked` gives 400. A request whose last coding is not `chunked` (for example `gzip`) gives 400, as RFC 9112 section 6.3 requires. Several fields give 400. The field in an HTTP/1.0 request gives 400. | RFC 9112 sections 6.1 and 6.3 |
 | both fields | 400 | RFC 9112 section 6.3 |
 | framing agreement | the parser and the guard must read the same framing, or the answer is 400 | |
-| field names and values | a name is a token; a space before the colon, a leading space or tab (obsolete folding), a control octet or DEL in a value, and an empty name give 400 | RFC 9112 section 5 |
+| field names and values | a name is a token; a space before the colon, a leading space or tab (obsolete folding), a control octet or DEL in a value, and an empty name give 400. The rules cover the WebSocket handshake fields (`Upgrade`, `Connection`, `Sec-WebSocket-Key` and the others) in the same way. The server relaxes nothing for a request | RFC 9112 section 5 |
 | request line | one space between method, target and version; a method over 32 octets gives 501; a target over the line limit gives 414; a space, a control octet, a fragment or a non-ASCII octet in the target gives 400 | RFC 9112 section 3 |
 | version | `HTTP/1.0` and `HTTP/1.1` are served; `HTTP/1.2` is served as 1.1; another major version gives 505; a malformed version gives 400 | RFC 9110 section 15.6.6 |
 | target forms | the origin form and the absolute form (the authority of the target replaces `Host`); `OPTIONS *`; `CONNECT` gives 501 | RFC 9112 section 3.2 |

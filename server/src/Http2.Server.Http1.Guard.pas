@@ -495,7 +495,9 @@ begin
       // malformed message. A coding that the server does not know is 501
       if Pos('chunked', TEValue) > 0 then
         Exit(H1Refuse(400, 'chunked is not the only transfer coding'));
-      Exit(H1Refuse(501, 'an unknown transfer coding'));
+      // RFC 9112 section 6.3: a request whose last coding is not chunked has
+      // a body length that cannot be known: 400, not 501
+      Exit(H1Refuse(400, 'the last transfer coding is not chunked'));
     end;
     AHead.Framing := bfChunked;
     if ALimits.MaxBodySize = 0 then

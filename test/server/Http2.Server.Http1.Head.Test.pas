@@ -138,9 +138,9 @@ end;
 procedure THttp1HeadTest.TestTransferEncodingForms;
 begin
   Reject('case 14', Base + 'Transfer-Encoding: chunked, gzip' + CRLF + CRLF + '0' + CRLF + CRLF, [400]);
-  Reject('case 15', Base + 'Transfer-Encoding: gzip' + CRLF + CRLF, [400, 501]);
+  Reject('case 15', Base + 'Transfer-Encoding: gzip' + CRLF + CRLF, [400]);
   Reject('case 16', Base + 'Transfer-Encoding: foo, chunked' + CRLF + CRLF + '0' + CRLF + CRLF,
-    [400, 501]);
+    [400]);
   Reject('case 17 two chunked codings', Base + 'Transfer-Encoding: chunked, chunked' + CRLF +
     CRLF + '0' + CRLF + CRLF, [400]);
   Reject('case 17 two lines', Base + 'Transfer-Encoding: chunked' + CRLF +
@@ -148,9 +148,9 @@ begin
   Reject('case 18 parameter', Base + 'Transfer-Encoding: chunked;x=1' + CRLF + CRLF + '0' +
     CRLF + CRLF, [400]);
   Reject('case 19 empty', Base + 'Transfer-Encoding:' + CRLF + CRLF, [400]);
-  Reject('case 21 xchunked', Base + 'Transfer-Encoding: xchunked' + CRLF + CRLF, [400, 501]);
-  Reject('case 21 vertical tab', Base + 'Transfer-Encoding: chunked'#11 + CRLF + CRLF, [400, 501]);
-  Reject('case 21 quoted', Base + 'Transfer-Encoding: "chunked"' + CRLF + CRLF, [400, 501]);
+  Reject('case 21 xchunked', Base + 'Transfer-Encoding: xchunked' + CRLF + CRLF, [400]);
+  Reject('case 21 vertical tab', Base + 'Transfer-Encoding: chunked'#11 + CRLF + CRLF, [400]);
+  Reject('case 21 quoted', Base + 'Transfer-Encoding: "chunked"' + CRLF + CRLF, [400]);
   Reject('case 23 HTTP/1.0', 'POST / HTTP/1.0' + CRLF + 'Transfer-Encoding: chunked' + CRLF +
     CRLF + '0' + CRLF + CRLF, [400]);
   // case 22: names and codings are case-insensitive

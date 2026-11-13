@@ -177,7 +177,14 @@ type
 /// parse the field lines of one head or trailer block (RFC 9112 section 5).
 /// A line that starts with SP or HTAB continues the previous field value
 /// (obs-fold, section 5.2); a space before the colon raises (section 5.1).
-function ParseFieldLines(const ALines: TArray<string>): TArray<THttp1HeaderField>;
+function ParseFieldLines(const ALines: TArray<string>): TArray<THttp1HeaderField>; overload;
+
+/// the same, and AFolded tells whether at least one field line was unfolded.
+/// A fold of a framing or hop-by-hop field (Content-Length, Transfer-Encoding,
+/// Connection, Upgrade, Keep-Alive, Proxy-Connection, Sec-WebSocket-*) raises.
+/// A caller that gets AFolded = True does not reuse the connection.
+function ParseFieldLines(const ALines: TArray<string>;
+  out AFolded: Boolean): TArray<THttp1HeaderField>; overload;
 
 implementation
 
@@ -207,7 +214,22 @@ begin
   else Result := Ord(ACh) - Ord('A') + 10;
 end;
 
+function IsFoldRefusedField(const AName: string): Boolean;
+var Lower: string;
+begin
+  Lower := LowerCase(AName);
+  Result := (Lower = 'content-length') or IsForbiddenField(Lower) or
+    (Copy(Lower, 1, 14) = 'sec-websocket-');
+end;
+
 function ParseFieldLines(const ALines: TArray<string>): TArray<THttp1HeaderField>;
+var Folded: Boolean;
+begin
+  Result := ParseFieldLines(ALines, Folded);
+end;
+
+function ParseFieldLines(const ALines: TArray<string>;
+  out AFolded: Boolean): TArray<THttp1HeaderField>;
 var
   I, J, P: Integer;
   Line, Name, Value: string;
@@ -218,6 +240,7 @@ begin
   Result := nil;
   Count := 0;
   Last := -1;
+  AFolded := False;
   for I := 0 to High(ALines) do
   begin
     Line := ALines[I];
@@ -227,6 +250,11 @@ begin
       if Last < 0 then
         raise EHttpProtocolError.Create('field line folded before any field',
           ecProtocolError);
+      // a fold of a framing field is a desynchronization path: refuse it
+      if IsFoldRefusedField(Result[Last].Name) then
+        raise EHttpProtocolError.Create(
+          'folded line in the field ' + Result[Last].Name, ecProtocolError);
+      AFolded := True;
       Value := Trim(Line);
       if Value <> '' then
         if Result[Last].Value = '' then
@@ -619,6 +647,7 @@ var
   Lines: TArray<string>;
   N, I, Bytes: Integer;
   Fields: TArray<THttp1HeaderField>;
+  Folded: Boolean;
 begin
   SetLength(Lines, 0);
   N := 0;
@@ -645,7 +674,10 @@ begin
   SetLength(Lines, N);
   if (N > 0) and (FTrailers <> nil) then
   begin
-    Fields := ParseFieldLines(Lines);
+    Fields := ParseFieldLines(Lines, Folded);
+    // a trailer block that needed an unfold: the connection is not reused
+    if Folded and (FReuse <> nil) then
+      FReuse.MarkNotReusable;
     for I := 0 to High(Fields) do
       if not IsForbiddenField(LowerCase(Fields[I].Name)) then
         FTrailers.Add(Fields[I].Name, Fields[I].Value);

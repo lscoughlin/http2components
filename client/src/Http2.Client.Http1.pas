@@ -171,7 +171,12 @@ procedure ParseStatusLine(const ALine: string; out AVersion: string;
 /// parse "Name: value" field lines.  Repeated names are joined with ", " into
 /// a single field, except set-cookie which stays as separate fields (RFC 9110
 /// section 5.2).  A malformed field raises EHttpProtocolError.
-function ParseHeaders(const ALines: TArray<string>): TArray<THttp1HeaderField>;
+function ParseHeaders(const ALines: TArray<string>): TArray<THttp1HeaderField>; overload;
+
+/// the same, and AFolded tells whether a field line was unfolded (obs-fold).
+/// A fold in a framing or hop-by-hop field raises.
+function ParseHeaders(const ALines: TArray<string>;
+  out AFolded: Boolean): TArray<THttp1HeaderField>; overload;
 
 /// the first value for AName (case-insensitive), or '' when absent
 function HeaderFieldValue(const AFields: TArray<THttp1HeaderField>;
@@ -431,6 +436,23 @@ begin
   Result := Http2.Client.Http1.Body.ParseFieldLines(ALines);
 end;
 
+function ParseHeaders(const ALines: TArray<string>;
+  out AFolded: Boolean): TArray<THttp1HeaderField>;
+begin
+  Result := Http2.Client.Http1.Body.ParseFieldLines(ALines, AFolded);
+end;
+
+function HasField(const AFields: TArray<THttp1HeaderField>;
+  const AName: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := False;
+  for I := 0 to High(AFields) do
+    if SameText(AFields[I].Name, AName) then
+      Exit(True);
+end;
+
 function HeaderFieldValue(const AFields: TArray<THttp1HeaderField>;
   const AName: string): string;
 var
@@ -576,7 +598,7 @@ var
   Framing: TBodyFraming;
   ContentLength: Int64;
   CL, TE, Connection: string;
-  Bodyless, ChunkedWithLength, Known: Boolean;
+  Bodyless, ChunkedWithLength, Known, HeadFolded, Folded: Boolean;
   Interim: Integer;
   Body: THttp1BodyStream;
   Trailers: IHttpHeaders;
@@ -586,6 +608,7 @@ begin
     raise EHttpProtocolError.Create(
       'FinishResponse called before BeginResponse', ecInternalError);
   FBeginDone := False;   // consume: one status line per response
+  HeadFolded := False;
 
   // a head started by BeginResponse keeps its deadline; a resumed head starts one
   if (FTimeoutMs > 0) and not FReader.HasDeadline then
@@ -618,7 +641,10 @@ begin
 
     SetLength(Fields, 0);
     if Length(Head) > 0 then
-      Fields := ParseHeaders(Head);
+    begin
+      Fields := ParseHeaders(Head, Folded);
+      HeadFolded := HeadFolded or Folded;
+    end;
     FFields := Fields;
     Headers := FieldsToHttpHeaders(Fields);
     FHeaders := Headers;
@@ -653,7 +679,7 @@ begin
   ChunkedWithLength := False;
   if Bodyless then
     Framing := bfNone
-  else if TE <> '' then
+  else if HasField(Fields, 'transfer-encoding') then
   begin
     // RFC 9112 section 6.1: chunked must be the last coding, and the client
     // knows no other transfer coding
@@ -688,6 +714,10 @@ begin
   // RFC 9112 section 6.3, item 3: the peer sent a conflicting length, so the
   // connection is not reused after this response
   if ChunkedWithLength then
+    FReusable := False;
+  // a response that needed an unfold is delivered, and the connection closes
+  // after it: folding is a way to desynchronize a pooled connection
+  if HeadFolded then
     FReusable := False;
 
   Body.BindReuseFlag(FReuse);

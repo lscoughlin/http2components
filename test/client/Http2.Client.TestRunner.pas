@@ -53,6 +53,7 @@ uses
   Http2.Client.HeaderLimits.Test,
   Http2.Client.ControlQueue.Test,
   Http2.Client.WriteTimeout.Test,
-  Http2.Client.PartialReadTimeout.Test;
+  Http2.Client.PartialReadTimeout.Test,
+  Http2.Client.Http1Fields.Test;
 
 end.

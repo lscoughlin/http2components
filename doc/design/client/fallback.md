@@ -187,6 +187,20 @@ this scope:
   the bytes that have arrived rather than waiting for a full read buffer, so
   a response on a connection the server keeps open is delivered at once. A
   transport signals this through `IPartialReader`.
+- Response transfer coding: the codec accepts a response whose `Transfer-Encoding` is
+  a single `chunked`. Any other value raises `EHttpProtocolError`: a list such as
+  `gzip, chunked`, `gzip`, `identity`, an empty value and a repeated `chunked`. Go
+  refuses the same values. A response with both `Transfer-Encoding` and
+  `Content-Length` closes the connection after the response.
+- Response field syntax: white space before the colon, a space or a control byte inside
+  a field name, and an empty field name raise `EHttpProtocolError`. A line that starts
+  with a space or a tab continues the previous field (obsolete line fold, RFC 9112
+  section 5.2), and the codec replaces the fold with one space. A fold in the first field
+  line raises. A fold in a framing or hop-by-hop field (`Content-Length`,
+  `Transfer-Encoding`, `Connection`, `Upgrade`, `Keep-Alive`, `Proxy-Connection` and the
+  `Sec-WebSocket-` fields) raises. A response that needed a fold, in its head or in its
+  trailers, is delivered and its connection is not reused.
+- The client WebSocket handshake reads the response head with the same field rules.
 - The codec does not do request pipelining.
 
 HTTP/1.1 has no multiplexing. One connection carries one request at a time.
