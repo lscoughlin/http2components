@@ -215,6 +215,13 @@ and only then waits for demand to deliver `OnClose`. A listener that never
 requests leaves the reader thread parked with the connection already closed;
 `Abort` releases it.
 
+The close initiator that the observers see is `local` when the connection sent
+its own close frame before the server's close frame was handled, and `remote`
+otherwise. The reader reads that fact under the send lock, which `Close` holds
+from the write of its close frame until it records the fact. A server close
+frame that arrives while `Close` is still recording therefore never turns a
+local close into a remote one.
+
 A listener that raises from a callback has the exception passed to `OnError`,
 and the socket is aborted.
 

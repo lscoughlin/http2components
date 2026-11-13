@@ -34,6 +34,31 @@ uses
   Http2.Client.MockSocket.Frames,
   Http2.Client.RequestObserver.Support, Http2.Client.WebSocketClient.Support, Http2.Client.WebSocketObservability.Support;
 type
+  /// a socket whose write of the first close frame returns only after the
+  /// peer's close frame is readable and the reader had time to act on it,
+  /// the order a loaded host produces when the writing thread is preempted
+  /// between the send and its own bookkeeping
+  TCrossingSocket = class(TInterfacedObject, IHttp2Socket)
+  private
+    FMock: TMockSocket;
+    FInner: IHttp2Socket;
+    FHold: PRTLEvent;
+    FFed: LongInt;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    function Read(var ABuffer; ACount: Integer): Integer;
+    function Write(const ABuffer; ACount: Integer): Integer;
+    procedure Close;
+    function GetConnected: Boolean;
+    function GetConnectTimeoutMs: Integer;
+    procedure SetConnectTimeoutMs(const AValue: Integer);
+    function GetReadTimeoutMs: Integer;
+    procedure SetReadTimeoutMs(const AValue: Integer);
+    function GetWriteTimeoutMs: Integer;
+    procedure SetWriteTimeoutMs(const AValue: Integer);
+  end;
+
   TWsObservabilityLifecycleTest = class(TWsObservabilityTestBase)
   published
     procedure TestReleasedUnstartedConnectionEndsAbandoned;
@@ -48,9 +73,83 @@ type
     procedure TestStampsIncludeTheConsumersWaitWithoutDemand;
     procedure TestAutoRequestKeepsTheConsumersWaitOutOfTheStamps;
     procedure TestRaisingObserverNeverBreaksTheSession;
+    procedure TestPeerCloseCrossingTheLocalCloseIsStillLocal;
   end;
 
 implementation
+
+{ TCrossingSocket }
+
+constructor TCrossingSocket.Create;
+begin
+  inherited Create;
+  FMock := TMockSocket.Create;
+  FInner := FMock;
+  FHold := RTLEventCreate;
+end;
+
+destructor TCrossingSocket.Destroy;
+begin
+  RTLEventDestroy(FHold);
+  inherited Destroy;
+end;
+
+function TCrossingSocket.Read(var ABuffer; ACount: Integer): Integer;
+begin
+  Result := FInner.Read(ABuffer, ACount);
+end;
+
+function TCrossingSocket.Write(const ABuffer; ACount: Integer): Integer;
+begin
+  Result := FInner.Write(ABuffer, ACount);
+  if (PByte(@ABuffer)^ = $88) and (InterlockedIncrement(FFed) = 1) then
+  begin
+    FMock.Feed(WsEncodeFrame(cWsOpClose, True, WsBuildClosePayload(1000, 'ok'),
+      False, WsMaskKeyFromCardinal(0)));
+    // a hold, not a wait for another thread: nothing sets the event
+    RTLEventWaitFor(FHold, 300);
+  end;
+end;
+
+procedure TCrossingSocket.Close;
+begin
+  FInner.Close;
+end;
+
+function TCrossingSocket.GetConnected: Boolean;
+begin
+  Result := FInner.Connected;
+end;
+
+function TCrossingSocket.GetConnectTimeoutMs: Integer;
+begin
+  Result := FInner.ConnectTimeoutMs;
+end;
+
+procedure TCrossingSocket.SetConnectTimeoutMs(const AValue: Integer);
+begin
+  FInner.ConnectTimeoutMs := AValue;
+end;
+
+function TCrossingSocket.GetReadTimeoutMs: Integer;
+begin
+  Result := FInner.ReadTimeoutMs;
+end;
+
+procedure TCrossingSocket.SetReadTimeoutMs(const AValue: Integer);
+begin
+  FInner.ReadTimeoutMs := AValue;
+end;
+
+function TCrossingSocket.GetWriteTimeoutMs: Integer;
+begin
+  Result := FInner.WriteTimeoutMs;
+end;
+
+procedure TCrossingSocket.SetWriteTimeoutMs(const AValue: Integer);
+begin
+  FInner.WriteTimeoutMs := AValue;
+end;
 
 procedure TWsObservabilityLifecycleTest.TestReleasedUnstartedConnectionEndsAbandoned;
 var
@@ -450,6 +549,34 @@ begin
   AssertTrue('and the attempt ends', Ended);
   AssertEquals('once', 1, FObs.EndCount);
   AssertTrue('local', FObs.Outcome(0).O.ClosedBy = ciLocal);
+end;
+
+procedure TWsObservabilityLifecycleTest.TestPeerCloseCrossingTheLocalCloseIsStillLocal;
+var
+  Fake: TFakeWsAttempt;
+  FakeRef: IWebSocketAttempt;
+  Rec: TRecorder;
+  RecRef: IWebSocketListener;
+  Sock: TWebSocketConnection;
+  SockRef: IWebSocket;
+  Peer: IHttp2Socket;
+begin
+  Fake := TFakeWsAttempt.Create;
+  FakeRef := Fake;
+  Rec := TRecorder.Create(0);
+  RecRef := Rec;
+  Peer := TCrossingSocket.Create;
+  Sock := TWebSocketConnection.Create(Peer, TBufferedReader.Create(Peer),
+    TWebSocketRequest.Create('ws://127.0.0.1:1/', RecRef).WithAutoRequest, '',
+    ZeroMask, False, FakeRef);
+  SockRef := Sock;
+  Sock.Start;
+  AssertTrue('open', Rec.WaitCount(1));
+  SockRef.Close(1000, 'ok');
+  AssertTrue('the close reaches the listener', Rec.WaitCount(2));
+  AssertEquals('close:1000:ok', Rec.Item(1));
+  AssertEquals('one end', 1, Fake.Ends);
+  AssertTrue('this side closed first', Fake.Last.ClosedBy = ciLocal);
 end;
 
 initialization
