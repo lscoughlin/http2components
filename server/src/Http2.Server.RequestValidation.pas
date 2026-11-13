@@ -19,7 +19,7 @@ unit Http2.Server.RequestValidation;
 interface
 
 uses
-  SysUtils, Http2.Common.Hpack;
+  SysUtils, Http2.Common.Hpack, Http2.Common.Headers, Http2.Common.Uri;
 
 type
   /// the outcome of one request header block check
@@ -65,7 +65,8 @@ const
 /// true when C is a token character of RFC 9110 section 5.6.2
 function IsTokenChar(const C: Char): Boolean;
 begin
-  Result := ((C >= 'a') and (C <= 'z')) or ((C >= '0') and (C <= '9')) or
+  Result := ((C >= 'a') and (C <= 'z')) or ((C >= 'A') and (C <= 'Z')) or
+    ((C >= '0') and (C <= '9')) or
     (C in ['!', '#', '$', '%', '&', '''', '*', '+', '-', '.',
            '^', '_', '`', '|', '~']);
 end;
@@ -121,6 +122,42 @@ begin
   end;
 end;
 
+/// RFC 9110 section 9.1: a method is a non-empty token
+function ValidMethod(const AMethod: string): Boolean;
+var
+  I: Integer;
+begin
+  Result := AMethod <> '';
+  for I := 1 to Length(AMethod) do
+    if not IsTokenChar(AMethod[I]) then
+      Exit(False);
+end;
+
+/// RFC 9113 section 8.3.1: :path starts with "/", or it is "*" for OPTIONS;
+/// it holds no byte of 0x00 to 0x20, no 0x7F and no byte above 0x7E
+function ValidPath(const APath, AMethod: string): Boolean;
+var
+  I: Integer;
+begin
+  if APath = '*' then
+    Exit(AMethod = 'OPTIONS');
+  Result := (APath <> '') and (APath[1] = '/') and IsValidTargetPart(APath);
+  if not Result then
+    Exit;
+  for I := 1 to Length(APath) do
+    if Ord(APath[I]) > $7E then
+      Exit(False);
+end;
+
+/// RFC 3986 section 3.2: an authority is parsed with the scheme of the request
+/// and holds no userinfo ("@") and no path, query or fragment delimiter
+function ValidAuthority(const AScheme, AAuthority: string; out AUri: TURI): Boolean;
+begin
+  Result := IsValidTargetPart(AAuthority) and (Pos('@', AAuthority) = 0) and
+    (Pos('/', AAuthority) = 0) and (Pos('?', AAuthority) = 0) and
+    (Pos('#', AAuthority) = 0) and TryParseURI(AScheme + '://' + AAuthority + '/', AUri);
+end;
+
 /// true when ALowerName is a connection-specific header field
 function IsForbidden(const ALowerName: string): Boolean;
 var
@@ -140,8 +177,14 @@ var
   SeenRegular: Boolean;
   HasMethod, HasScheme, HasPath, HasAuthority, HasLength, HasProtocol: Boolean;
   Declared: Int64;
-  Method: string;
+  Method, PathValue, AuthorityValue, SchemeValue: string;
+  Hosts: array of string;
+  AuthorityUri, HostUri: TURI;
 begin
+  PathValue := '';
+  AuthorityValue := '';
+  SchemeValue := '';
+  Hosts := nil;
   Result.Valid := False;
   Result.IsExtendedConnect := False;
   HasProtocol := False;
@@ -176,11 +219,20 @@ begin
         (Value <> '') then
         HasProtocol := True
       else if (Name = PseudoScheme) and (not HasScheme) and (Value <> '') then
-        HasScheme := True
+      begin
+        HasScheme := True;
+        SchemeValue := Value;
+      end
       else if (Name = PseudoPath) and (not HasPath) and (Value <> '') then
-        HasPath := True
+      begin
+        HasPath := True;
+        PathValue := Value;
+      end
       else if (Name = PseudoAuthority) and (not HasAuthority) then
-        HasAuthority := True
+      begin
+        HasAuthority := True;
+        AuthorityValue := Value;
+      end
       else
         // an unknown pseudo-header, a response pseudo-header, a duplicate or
         // an empty value is a fault
@@ -194,6 +246,12 @@ begin
       Lower := LowerCase(Name);
       if IsForbidden(Lower) then
         Exit;
+      if Lower = 'host' then
+      begin
+        // RFC 9113 section 8.3.1: a host field is compared with :authority
+        SetLength(Hosts, Length(Hosts) + 1);
+        Hosts[High(Hosts)] := Value;
+      end;
       if Lower = 'te' then
       begin
         // RFC 9113 section 8.1.2.2: "te" is the sole exception, and its
@@ -215,6 +273,24 @@ begin
   if (not AIsTrailer) and ((not HasMethod) or (not HasScheme) or
      (not HasPath)) then
     Exit;
+  if not AIsTrailer then
+  begin
+    // RFC 9113 section 8.3.1: the method, the path and the authority obey their
+    // grammar; a host field that names another entity is malformed
+    if not ValidMethod(Method) then
+      Exit;
+    if not ValidPath(PathValue, Method) then
+      Exit;
+    if HasAuthority and (AuthorityValue <> '') then
+    begin
+      if not ValidAuthority(SchemeValue, AuthorityValue, AuthorityUri) then
+        Exit;
+      for I := 0 to High(Hosts) do
+        if (not ValidAuthority(SchemeValue, Hosts[I], HostUri)) or
+          (not SameHost(AuthorityUri, HostUri)) then
+          Exit;
+    end;
+  end;
   if HasProtocol then
   begin
     // RFC 8441 section 4: :protocol belongs to CONNECT, and the request then names

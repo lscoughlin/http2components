@@ -141,6 +141,27 @@ value (`common/src/Http2.Common.FlowControl.pas`), and both `ApplyUpdate` and
 `ApplyInitialWindowDelta` checks the new size against this limit and reports
 a flow-control error when the size is too large.
 
+## Request pseudo-headers
+
+`Http2.Server.RequestValidation` checks the request pseudo-headers of RFC 9113
+section 8.3.1. A request that fails a check is a stream error: the server sends
+`RST_STREAM` with `PROTOCOL_ERROR`, and the connection stays open.
+
+- `:method` is a token of RFC 9110 section 5.6.2. A space or an empty method is
+  a fault.
+- `:path` starts with `/`, or it is exactly `*` for the method `OPTIONS`. It holds
+  no byte of 0x00 to 0x20, no 0x7F and no byte above 0x7E. An empty `:path` is a
+  fault.
+- `:authority` holds no space, no control byte, no `@` (so no userinfo), and no
+  `/`, `?` or `#`. The server parses it with `TryParseURI` (`Http2.Common.Uri`).
+- The `host` field is compared with `:authority` when both are present and the
+  `:authority` value is not empty. The comparison uses the host names after
+  normalization (RFC 3986 section 6.2), with `SameHost`. A case difference is not
+  a fault. A `host` field that names another host is a fault.
+- The port is not compared. A `host` field with a port that differs from the port
+  of `:authority` is not a fault.
+- A request without a `host` field is not checked against `:authority`.
+
 ## RFC references
 
 - [RFC 7541](https://www.rfc-editor.org/rfc/rfc7541.html), checked 2026-11-11.
