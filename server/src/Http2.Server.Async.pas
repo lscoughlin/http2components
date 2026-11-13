@@ -329,7 +329,7 @@ begin
     PeerAddressText(RemoteIP, fRemoteIP4, UnixPeerText(
       FServer.Factory.Unix.Enabled, LongInt(fSocket.Socket))), FClientCert);
   Core := TH1Core.Create(
-    BuildH1CoreOptions(FServer.Factory, FTlsAdapter <> nil), FH1Events);
+    BuildH1CoreOptions(FServer.Factory, FTlsAdapter <> nil, FServer.Handlers.BodyBudget), FH1Events);
   Core.OnRetired := H1RetireNotified;
   FMethodWaker := TMethodWaker.Create(WakeOutput);
   FWaker := FMethodWaker;

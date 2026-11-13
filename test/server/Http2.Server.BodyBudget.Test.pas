@@ -38,17 +38,17 @@ type
   /// one thread that adds and releases the same count of octets many times
   TBudgetWorker = class(TThread)
   private
-    FBudget: TBodyBudget;
+    FBudget: IBodyBudget;
     FRounds: Integer;
     FRefused: Integer;
   protected
     procedure Execute; override;
   public
-    constructor Create(const ABudget: TBodyBudget; const ARounds: Integer);
+    constructor Create(const ABudget: IBodyBudget; const ARounds: Integer);
     property Refused: Integer read FRefused;
   end;
 
-constructor TBudgetWorker.Create(const ABudget: TBodyBudget; const ARounds: Integer);
+constructor TBudgetWorker.Create(const ABudget: IBodyBudget; const ARounds: Integer);
 begin
   inherited Create(False);
   FreeOnTerminate := False;
@@ -71,7 +71,7 @@ end;
 
 procedure TBodyBudgetTest.TestAddUpToTheLimitIsAccepted;
 var
-  Budget: TBodyBudget;
+  Budget: IBodyBudget;
 begin
   Budget := TBodyBudget.Create(1024);
   try
@@ -79,26 +79,24 @@ begin
     AssertTrue('the second add reaches the limit', Budget.TryAdd(512));
     AssertTrue('the in flight count is the limit', Budget.InFlight = 1024);
   finally
-    Budget.Free;
   end;
 end;
 
 procedure TBodyBudgetTest.TestAddCrossingTheLimitIsRefused;
 var
-  Budget: TBodyBudget;
+  Budget: IBodyBudget;
 begin
   Budget := TBodyBudget.Create(1024);
   try
     AssertTrue('an add of 1000 octets', Budget.TryAdd(1000));
     AssertFalse('an add that passes the limit is refused', Budget.TryAdd(100));
   finally
-    Budget.Free;
   end;
 end;
 
 procedure TBodyBudgetTest.TestRefusedAddLeavesInFlightAsItWas;
 var
-  Budget: TBodyBudget;
+  Budget: IBodyBudget;
 begin
   Budget := TBodyBudget.Create(1024);
   try
@@ -106,13 +104,12 @@ begin
     AssertFalse('an add that passes the limit is refused', Budget.TryAdd(100));
     AssertTrue('a refused add does not count', Budget.InFlight = 1000);
   finally
-    Budget.Free;
   end;
 end;
 
 procedure TBodyBudgetTest.TestReleaseLowersInFlight;
 var
-  Budget: TBodyBudget;
+  Budget: IBodyBudget;
 begin
   Budget := TBodyBudget.Create(1024);
   try
@@ -123,13 +120,12 @@ begin
     AssertTrue('the count returns to 0', Budget.InFlight = 0);
     AssertTrue('the released room accepts an add', Budget.TryAdd(1024));
   finally
-    Budget.Free;
   end;
 end;
 
 procedure TBodyBudgetTest.TestZeroLimitAcceptsEveryAdd;
 var
-  Budget: TBodyBudget;
+  Budget: IBodyBudget;
 begin
   Budget := TBodyBudget.Create(0);
   try
@@ -139,13 +135,12 @@ begin
     Budget.Release(1024);
     AssertTrue('the count still returns to 0', Budget.InFlight = 0);
   finally
-    Budget.Free;
   end;
 end;
 
 procedure TBodyBudgetTest.TestConcurrentAddAndReleaseEndsAtZero;
 var
-  Budget: TBodyBudget;
+  Budget: IBodyBudget;
   First, Second: TBudgetWorker;
 begin
   // 1 MiB budget and 16-octet adds: two threads never reach the limit
@@ -160,7 +155,6 @@ begin
   finally
     First.Free;
     Second.Free;
-    Budget.Free;
   end;
 end;
 

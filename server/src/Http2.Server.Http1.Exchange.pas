@@ -35,7 +35,7 @@ uses
   Http2.Server.HandlerJob, Http2.Server.Http1.Guard, Http2.Server.Http1.Host,
   Http2.Server.Http1.ResponseHead, Http2.Server.Http1.Channel,
   Http2.Server.Http1.SocketChannel, Http2.Server.AccessLog,
-  Http2.Server.ClientCert, Http2.Server.Http1.Grow;
+  Http2.Server.ClientCert, Http2.Server.Http1.Grow, Http2.Server.Http1.BodyBudget;
 
 type
   TH1ExchangeOptions = record
@@ -47,7 +47,7 @@ type
     /// the greatest time from the head to the end of the body; 0 is no limit
     BodyTotalMs: Integer;
     /// a write that sees no progress for this time aborts the connection
-    WriteStallMs: Integer;
+    WriteStallMs: Integer; BodyBudget: IBodyBudget; // the server-wide body budget; nil is none
   end;
 
   TH1Exchange = class(TInterfacedObject, IServerRequest, IServerResponse,
@@ -69,7 +69,7 @@ type
     FRoomEv: PRTLEvent;
     FBody: TBytes;
     FBodyHead, FBodyTail: Integer;
-    FBodyEnded: Boolean;
+    FBodyEnded: Boolean; FCharged: Int64; // the body octets that the budget holds
     FCancelled: Boolean;
     FExpectAsked: Boolean;
     FLastProgressMs: QWord;
@@ -215,7 +215,7 @@ end;
 
 procedure TH1Exchange.AppendBody(const AData; const ACount: Integer);
 var
-  Need: Integer;
+  Need: Integer; Refused: Boolean;
 begin
   if ACount <= 0 then
     Exit;
@@ -224,20 +224,25 @@ begin
     // a response that finished without the body drops the rest of it
     if FCancelled or FFinished then
       Exit;
-    if FBodyHead = FBodyTail then
+    Refused := not TakeCharge(FOptions.BodyBudget, FCharged, ACount);
+    if not Refused then
     begin
-      FBodyHead := 0;
-      FBodyTail := 0;
+      if FBodyHead = FBodyTail then
+      begin
+        FBodyHead := 0;
+        FBodyTail := 0;
+      end;
+      Need := FBodyTail + ACount;
+      if Need > Length(FBody) then
+        SetLength(FBody, GrownLength(Need, Length(FBody)));
+      Move(AData, FBody[FBodyTail], ACount);
+      FBodyTail := Need;
+      FLastProgressMs := GetTickCount64;
     end;
-    Need := FBodyTail + ACount;
-    if Need > Length(FBody) then
-      SetLength(FBody, GrownLength(Need, Length(FBody)));
-    Move(AData, FBody[FBodyTail], ACount);
-    FBodyTail := Need;
-    FLastProgressMs := GetTickCount64;
   finally
     FLock.Release;
   end;
+  if Refused then Fail(503); // a full budget: 503 and end, outside the lock
   RTLEventSetEvent(FBodyEv);
 end;
 
@@ -388,6 +393,7 @@ begin
           Avail := ACount;
         Move(FBody[FBodyHead], ABuffer, Avail);
         Inc(FBodyHead, Avail);
+        GiveCharge(FOptions.BodyBudget, FCharged, Avail);
         Exit(Avail);
       end;
       if FBodyEnded then
@@ -460,6 +466,7 @@ begin
   FLock.Acquire;
   try
     FCancelled := True;
+    DropCharge(FOptions.BodyBudget, FCharged);
     Channel := FChannel;
   finally
     FLock.Release;
@@ -669,6 +676,7 @@ begin
     if FFinished then
       Exit;
     FFinished := True;
+    DropCharge(FOptions.BodyBudget, FCharged);
   finally
     FLock.Release;
   end;

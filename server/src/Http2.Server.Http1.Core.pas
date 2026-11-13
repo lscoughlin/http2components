@@ -31,7 +31,8 @@ uses
   Http2.Common.Hpack, Http2.Server.Output, Http2.Server.HandlerJob, Http2.Server.Duplex,
   Http2.Server.Http1.Limits, Http2.Server.Http1.Guard, Http2.Server.Http1.Parser,
   Http2.Server.Http1.Host, Http2.Server.Http1.ResponseHead, Http2.Server.Http1.Exchange,
-  Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Observer;
+  Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Observer,
+  Http2.Server.Http1.BodyBudget;
 
 const
   /// the most octets that the core keeps while an upgrade is undecided
@@ -64,6 +65,8 @@ type
     /// a handler write that sees no progress for this time aborts the connection;
     /// 0 turns the check off
     WriteStallMs: Integer;
+    /// the server-wide budget of buffered body octets; nil means no budget
+    BodyBudget: IBodyBudget;
   end;
 
   /// the HTTP/1.1 core of one connection
@@ -543,6 +546,7 @@ begin
   Options.BodyDeadlineMs := FOptions.Limits.BodyDeadlineMs;
   Options.BodyTotalMs := FOptions.Limits.BodyTotalMs;
   Options.WriteStallMs := FOptions.WriteStallMs;
+  Options.BodyBudget := FOptions.BodyBudget;
   Exchange := TH1Exchange.Create(FLink, AHead, Options, FOrdinal - 1);
   Ref := Exchange;
   FCurrentRef := Ref;
