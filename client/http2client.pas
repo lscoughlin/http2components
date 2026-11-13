@@ -60,6 +60,7 @@ uses
   Http2.Client.Sse,
   Http2.Client.Stream.Exchange,
   Http2.Client.Stream.Send,
+  Http2.Client.Stream.Inbound,
   Http2.Client.Stream.Types,
   Http2.Client.Stream.Receive,
   Http2.Client.Stream,
