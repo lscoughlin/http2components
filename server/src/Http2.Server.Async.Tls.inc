@@ -19,6 +19,8 @@ begin
   // listener stays bound.  Every failure below is therefore reported as a
   // refusal, and a refused connection is closed by the caller.
   result := false;
+  // the first read event of the connection: the trace cannot raise
+  TraceFirstRead(FTrace);
   try
     // a server that stops accepts no new connection
     if FServer.Draining then
