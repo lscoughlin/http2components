@@ -286,12 +286,22 @@ description is in [admission](admission.md).
 
 When the limit is set, it also applies to a WebSocket handler that runs in the
 handler thread. On HTTP/2, the checks and the detach of the handshake run in
-that call, while the session runs on the streaming pool. A handler that
-detaches its stream and returns before the limit is not affected. A handler
-that is still in its call after the detach gets no 503, and the server resets
-its stream with `CANCEL`. On HTTP/1.1, an upgrade handler that is still in its
-call at the limit gets a 503 when no head went out, and the connection closes,
-because the detach does not stop the answer.
+that call, while the session runs on the streaming pool. A detached exchange
+is not subject to the handler limit. When the limit passes while the handler
+is still in its call after the detach, the server sends no 503, resets no
+stream and closes no connection. The handler call and the session continue.
+A handler that returns before the limit is not affected.
+
+The same rule applies on HTTP/1.1 to an upgrade handler that detached its
+exchange. The server skips the expiry of the detached exchange, so the
+handshake still answers 101 after the limit, and the connection stays open.
+An exchange that is not detached keeps the rule of the first paragraphs. The
+handler that is still in its call at the limit gets a 503 when no head went
+out, and the connection closes when a head went out.
+
+The count of stuck handlers includes a detached handler that is still in its
+call past the limit, until the call returns. The server sends no timeout
+event for that handler.
 
 ## The default limits
 

@@ -49,21 +49,30 @@ type
   end;
 
   /// the atomic claim of the response head, shared by a handler and the watch
+  // - a detach takes the claim too, so a detached response is not expired
   IDeadlineCell = interface
     ['{7E1F0C11-0091-4A11-9C72-000000000C03}']
     /// the handler takes the head; False when the watch took it first
     function HandlerClaim: Boolean;
-    /// the watch takes the head; False when the handler sent it first
-    function DeadlineClaim: Boolean;
+    /// the handler detaches; False when the watch took the response first.
+    // - APrior receives the state before the claim, for DetachRestore
+    function DetachClaim(out APrior: LongInt): Boolean;
+    /// a refused detach gives the claim back
+    procedure DetachRestore(const APrior: LongInt);
+    /// the watch takes the response: 0 when no head went out, 1 when a head
+    // went out, and -1 when the response is detached or the watch owns it
+    function ExpiryClaim: Integer;
   end;
 
   TDeadlineCell = class(TInterfacedObject, IDeadlineCell)
   private
-    /// 0 open, 1 the handler sent the head, 2 the watch owns the response
+    /// the states: see the constants of the implementation
     FState: LongInt;
   public
     function HandlerClaim: Boolean;
-    function DeadlineClaim: Boolean;
+    function DetachClaim(out APrior: LongInt): Boolean;
+    procedure DetachRestore(const APrior: LongInt);
+    function ExpiryClaim: Integer;
   end;
 
   /// the running handlers and their start times
@@ -162,6 +171,18 @@ uses
   Http2.Server.Observer, Http2.Server.ResponseWriter;
 
 const
+  /// no head went out and the response is not detached
+  cCellOpen = 0;
+  /// the handler sent the head
+  cCellHeadSent = 1;
+  /// the watch owns the response
+  cCellWatch = 2;
+  /// the handler detached before a head went out
+  cCellDetachedOpen = 3;
+  /// the handler detached after the head went out
+  cCellDetachedHead = 4;
+
+const
   /// the longest wait for the IO side to take a queued 503, in milliseconds
   cHeadTakenWaitMs = 250;
 
@@ -206,9 +227,45 @@ begin
   Result := InterlockedCompareExchange(FState, 1, 0) <> 2;
 end;
 
-function TDeadlineCell.DeadlineClaim: Boolean;
+function TDeadlineCell.DetachClaim(out APrior: LongInt): Boolean;
+var
+  Old, Next: LongInt;
 begin
-  Result := InterlockedCompareExchange(FState, 2, 0) = 0;
+  // an open response becomes detached; a head that went out keeps its mark
+  repeat
+    Old := FState;
+    APrior := Old;
+    if Old = cCellWatch then
+      Exit(False);
+    if Old = cCellOpen then
+      Next := cCellDetachedOpen
+    else if Old = cCellHeadSent then
+      Next := cCellDetachedHead
+    else
+      Next := Old;
+  until InterlockedCompareExchange(FState, Next, Old) = Old;
+  Result := True;
+end;
+
+procedure TDeadlineCell.DetachRestore(const APrior: LongInt);
+begin
+  InterlockedExchange(FState, APrior);
+end;
+
+function TDeadlineCell.ExpiryClaim: Integer;
+var
+  Old: LongInt;
+begin
+  // a detached response and a response that the watch owns are not expired
+  repeat
+    Old := FState;
+    if (Old = cCellWatch) or (Old = cCellDetachedOpen) or (Old = cCellDetachedHead) then
+      Exit(-1);
+  until InterlockedCompareExchange(FState, cCellWatch, Old) = Old;
+  if Old = cCellOpen then
+    Result := 0
+  else
+    Result := 1;
 end;
 
 { TDeadlineResponse }
@@ -275,11 +332,20 @@ begin
 end;
 
 function TDeadlineResponse.Detach: IDuplexChannel;
+var
+  Prior: LongInt;
 begin
   // a detached stream may send its head through the channel, so the detach
-  // takes the claim, and the watch then resets the stream and sends no 503
-  Claim;
-  Result := FInner.Detach;
+  // takes the claim: the watch then leaves the stream to its owner
+  if not FCell.DetachClaim(Prior) then
+    raise EStreamCancelled.Create('the handler time limit passed');
+  try
+    Result := FInner.Detach;
+  except
+    // a refused or failed detach leaves the stream as it was
+    FCell.DetachRestore(Prior);
+    raise;
+  end;
 end;
 
 function TDeadlineResponse.LoggedStatus: Integer;
@@ -575,15 +641,20 @@ end;
 procedure THandlerDeadlineWatch.ExpireStream(const AStream: TServerStream);
 var
   Cell: IDeadlineCell;
+  Taken: Integer;
 begin
   Cell := CellOf(AStream);
   // no cell: the handler returned after the sweep chose it
   if Cell = nil then
     Exit;
+  // a detached stream is not subject to the limit: its owner keeps it
+  Taken := Cell.ExpiryClaim;
+  if Taken < 0 then
+    Exit;
   if not AStream.IsCancelled then
   begin
-    // 1: claim the response, and answer 503 when no head went out
-    if Cell.DeadlineClaim then
+    // 1: answer 503 when no head went out
+    if Taken = 0 then
     begin
       AStream.QueueResponseHeaders(503, WithDate(nil, 503), True);
       WaitHeadTaken(AStream);

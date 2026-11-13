@@ -815,6 +815,14 @@ end;
 
 procedure TH1Exchange.ExpireHandler;
 begin
+  // a detached exchange is not subject to the limit: its owner keeps it
+  FLock.Acquire;
+  try
+    if FDetached then
+      Exit;
+  finally
+    FLock.Release;
+  end;
   SendError(503); // no head out: the 503 goes first and ends the exchange
   CompleteExchange(True); // a head is out: the connection closes
   Cancel; // the handler sees EStreamCancelled on its next read or write

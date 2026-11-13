@@ -24,7 +24,11 @@ uses
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
   Http2.Server, Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam,
   Http2.Server.WebSocket.Handshake, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Types,
-  Http2.Server.Http1.RawClient, Http2.Server.WebSocket.TestKit;
+  Http2.Server.Http1.RawClient, Http2.Server.WebSocket.TestKit, Http2.Server.Config.Limits;
+
+const
+  /// the handler limit of the detach tests, in milliseconds
+  WsLimitMs = 300;
 
 type
   /// routes: /ws upgrades, anything else answers a plain body
@@ -35,6 +39,43 @@ type
     Handler: IWsHandler;
     procedure Handle(const ARequest: IServerRequest; const AResponse: IServerResponse);
     function Calls: Integer;
+  end;
+
+  /// accepts a WebSocket, then stays in its call past the handler limit
+  // - Passed turns True once the call has run three limits. The call then waits
+  //   for LetReturn, or for five seconds
+  TWsOutliveRouter = class(TInterfacedObject, IHttp2Handler)
+  private
+    FPassed: Integer;
+    FGate: TEvent;
+  public
+    Handler: IWsHandler;
+    constructor Create;
+    destructor Destroy; override;
+    procedure Handle(const ARequest: IServerRequest; const AResponse: IServerResponse);
+    function Passed: Boolean;
+    procedure LetReturn;
+  end;
+
+  /// a session handler that holds the Init decision until LetInit, then delegates
+  // - the 101 or the 200 of the handshake goes out after the decision, so a test
+  //   holds the handshake open while the handler call runs past the limit
+  TWsGatedHandler = class(TInterfacedObject, IWsHandler)
+  private
+    FInner: IWsHandler;
+    FGate: TEvent;
+  public
+    constructor Create(const AInner: IWsHandler);
+    destructor Destroy; override;
+    function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
+      const ASession: IWsSession): TWsInitResult;
+    procedure Message(const ASession: IWsSession; const AData: TBytes;
+      const AText: Boolean);
+    procedure Pong(const ASession: IWsSession; const AData: TBytes);
+    procedure Closed(const ASession: IWsSession; const ACode: Word;
+      const AReason: string; const AClean: Boolean);
+    procedure Failed(const ASession: IWsSession; const E: Exception);
+    procedure LetInit;
   end;
 
   TWsHandshakeUnitTest = class(TTestCase)
@@ -77,10 +118,14 @@ type
     procedure TestAbnormalCloseIs1006;
     procedure TestStopSendsGoingAway;
     procedure TestTheDetachLimitAnswers503;
+    procedure TestDetachedHandlerOutlivesTheLimit;
   end;
 
 /// wait until the recording of the handler holds AText; false after five seconds
 function WaitUntilText(const AHandler: TRecordingHandler; const AText: string): Boolean;
+
+/// wait until the call of the router has run past the limit; false after five seconds
+function WaitOutlivePassed(const ARouter: TWsOutliveRouter): Boolean;
 
 implementation
 
@@ -132,6 +177,19 @@ begin
   FFinished.SetEvent;
 end;
 
+function WaitOutlivePassed(const ARouter: TWsOutliveRouter): Boolean;
+var
+  Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + 5000;
+  repeat
+    if ARouter.Passed then
+      Exit(True);
+    Sleep(5);
+  until GetTickCount64 > Deadline;
+  Result := ARouter.Passed;
+end;
+
 function WaitUntilText(const AHandler: TRecordingHandler; const AText: string): Boolean;
 var
   Deadline: QWord;
@@ -168,6 +226,93 @@ end;
 function TWsRouter.Calls: Integer;
 begin
   Result := FCalls;
+end;
+
+{ TWsOutliveRouter }
+
+constructor TWsOutliveRouter.Create;
+begin
+  inherited Create;
+  FGate := TEvent.Create(nil, True, False, '');
+end;
+
+destructor TWsOutliveRouter.Destroy;
+begin
+  FGate.Free;
+  inherited Destroy;
+end;
+
+procedure TWsOutliveRouter.Handle(const ARequest: IServerRequest; const AResponse: IServerResponse);
+var
+  Start: QWord;
+begin
+  Start := GetTickCount64;
+  AcceptWebSocket(ARequest, AResponse, Handler);
+  // the call stays open while the limit passes; the bound ends a failing run
+  while (GetTickCount64 - Start < 3 * WsLimitMs) and (GetTickCount64 - Start < 5000) do
+    Sleep(5);
+  InterlockedExchange(FPassed, 1);
+  FGate.WaitFor(5000);
+end;
+
+function TWsOutliveRouter.Passed: Boolean;
+begin
+  Result := InterlockedCompareExchange(FPassed, 0, 0) = 1;
+end;
+
+procedure TWsOutliveRouter.LetReturn;
+begin
+  FGate.SetEvent;
+end;
+
+{ TWsGatedHandler }
+
+constructor TWsGatedHandler.Create(const AInner: IWsHandler);
+begin
+  inherited Create;
+  FInner := AInner;
+  FGate := TEvent.Create(nil, True, False, '');
+end;
+
+destructor TWsGatedHandler.Destroy;
+begin
+  FGate.Free;
+  inherited Destroy;
+end;
+
+function TWsGatedHandler.Init(const ARequest: IServerRequest;
+  const AOffered: TArray<string>; const ASession: IWsSession): TWsInitResult;
+begin
+  // the bound ends a failing run
+  FGate.WaitFor(5000);
+  Result := FInner.Init(ARequest, AOffered, ASession);
+end;
+
+procedure TWsGatedHandler.Message(const ASession: IWsSession; const AData: TBytes;
+  const AText: Boolean);
+begin
+  FInner.Message(ASession, AData, AText);
+end;
+
+procedure TWsGatedHandler.Pong(const ASession: IWsSession; const AData: TBytes);
+begin
+  FInner.Pong(ASession, AData);
+end;
+
+procedure TWsGatedHandler.Closed(const ASession: IWsSession; const ACode: Word;
+  const AReason: string; const AClean: Boolean);
+begin
+  FInner.Closed(ASession, ACode, AReason, AClean);
+end;
+
+procedure TWsGatedHandler.Failed(const ASession: IWsSession; const E: Exception);
+begin
+  FInner.Failed(ASession, E);
+end;
+
+procedure TWsGatedHandler.LetInit;
+begin
+  FGate.SetEvent;
 end;
 
 { TWsHandshakeUnitTest }
@@ -650,6 +795,57 @@ begin
   finally
     A.Free;
     B.Free;
+  end;
+end;
+
+procedure TWsHttp1Test.TestDetachedHandlerOutlivesTheLimit;
+var
+  Router: TWsOutliveRouter;
+  RouterRef: IHttp2Handler;
+  Gated: TWsGatedHandler;
+  GatedRef: IWsHandler;
+  C: TRawHttp;
+  H: TRawResponse;
+  S: string;
+  L: TStringList;
+  Deadline: QWord;
+  Found: Boolean;
+begin
+  FRecording.Echo := True;
+  Router := TWsOutliveRouter.Create;
+  RouterRef := Router;
+  Gated := TWsGatedHandler.Create(FRecordingRef);
+  GatedRef := Gated;
+  Router.Handler := GatedRef;
+  StartServer(LiveFactory(RouterRef).WithWebSockets(TWsOptions.Create.WithQueuedMessages(256))
+    .WithServerLimits(TServerLimits.Create.WithMaxHandlerTimeMs(WsLimitMs)));
+  C := TRawHttp.Create(FServer.Port);
+  try
+    // the handler detaches, and its call and the handshake stay open past the limit
+    C.Send(Upgrade(''));
+    AssertTrue('the call runs past the limit', WaitOutlivePassed(Router));
+    Gated.LetInit;
+    AssertTrue('the handshake answers 101 after the limit', C.ReadHead(ResponseMs, H));
+    AssertEquals(101, H.Status);
+    // the session echoes while the call is still open
+    C.Send(TextOf(ClientText('after the limit', True, WsOpText)));
+    S := '';
+    Found := False;
+    Deadline := GetTickCount64 + ResponseMs;
+    repeat
+      S := S + C.ReadSome(100);
+      L := Frames(S);
+      try
+        Found := Pos('T:after the limit', L.Text) > 0;
+      finally
+        L.Free;
+      end;
+    until Found or (GetTickCount64 > Deadline);
+    AssertTrue('the session echoes after the limit', Found);
+  finally
+    Gated.LetInit;
+    Router.LetReturn;
+    C.Free;
   end;
 end;
 

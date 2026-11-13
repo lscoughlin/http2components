@@ -103,6 +103,7 @@ type
     procedure TestTrailerOnAWebSocketStreamIsAStreamError;
     procedure TestLargeMessageUsesFlowControl;
     procedure TestTheDetachLimitAnswers503;
+    procedure TestDetachedHandlerOutlivesTheLimit;
   end;
 
 implementation
@@ -867,6 +868,41 @@ begin
     AssertTrue(C.WaitHeaders(3, ResponseMs, F));
     AssertEquals('503', Status(F));
   finally
+    C.Free;
+  end;
+end;
+
+procedure TWsHttp2Test.TestDetachedHandlerOutlivesTheLimit;
+var
+  Router: TWsOutliveRouter;
+  RouterRef: IHttp2Handler;
+  Gated: TWsGatedHandler;
+  GatedRef: IWsHandler;
+  C: TH2WsClient;
+  F: THeaderBlock;
+begin
+  FRecording.Echo := True;
+  Router := TWsOutliveRouter.Create;
+  RouterRef := Router;
+  Gated := TWsGatedHandler.Create(FRecordingRef);
+  GatedRef := Gated;
+  Router.Handler := GatedRef;
+  StartServer(LiveFactory(RouterRef).WithWebSockets(TWsOptions.Create.WithQueuedMessages(256))
+    .WithServerLimits(TServerLimits.Create.WithMaxHandlerTimeMs(WsLimitMs)));
+  C := TH2WsClient.Create(FServer.Port);
+  try
+    // the handler detaches, and its call and the handshake stay open past the limit
+    C.OpenWebSocket(1);
+    AssertTrue('the call runs past the limit', WaitOutlivePassed(Router));
+    Gated.LetInit;
+    AssertTrue('the handshake answers after the limit', C.WaitHeaders(1, ResponseMs, F));
+    AssertEquals('200', Status(F));
+    // the stream and the session stay up while the call is still open
+    C.SendData(1, ClientText('after the limit'));
+    AssertTrue('the session echoes after the limit', C.WaitFrames(1, 'T:after the limit'));
+  finally
+    Gated.LetInit;
+    Router.LetReturn;
     C.Free;
   end;
 end;
