@@ -196,6 +196,8 @@ begin
     Add('the HTTP/1.1 trailer limit is below 1');
   if FMaxBodySize < 0 then
     Add('the HTTP/1.1 body limit is below 0');
+  if FMaxBodySize > High(Integer) then
+    Add('the HTTP/1.1 body limit is above High(Integer), the body is one array');
   if FMaxPipelinedOctets < 0 then
     Add('the HTTP/1.1 pipelined octet limit is below 0');
   if FBodyDeadlineMs < 0 then

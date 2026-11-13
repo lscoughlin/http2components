@@ -30,7 +30,8 @@ interface
 uses
   SysUtils, Classes,
   mormot.core.base, mormot.net.http,
-  Http2.Server.Http1.Limits, Http2.Server.Http1.Guard;
+  Http2.Server.Http1.Limits, Http2.Server.Http1.Guard,
+  Http2.Server.Http1.Grow;
 
 type
   /// The receiver of the parser.
@@ -248,7 +249,7 @@ begin
   Compact;
   Need := FEnd + ACount;
   if Need > Length(FBuf) then
-    SetLength(FBuf, Need + Need div 2 + 256);
+    SetLength(FBuf, GrownLength(Need, Length(FBuf)));
   Move(AData, FBuf[FEnd], ACount);
   FEnd := Need;
   if FState = pwReading then
