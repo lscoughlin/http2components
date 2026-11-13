@@ -19,7 +19,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs, BaseUnix, Sockets, fpcunit, testregistry,
   Http2.Common.Errors, Http2.Client.Tls, Http2.Client.Tls.Plain,
-  Http2.Client.Connection, Http2.Client.Unix.TestKit;
+  Http2.Client.Connection, Http2.Client.Unix.TestKit, Http2.Client.SigPipe;
 
 type
   /// a peer that sends one PING frame in two parts with a gap between them
@@ -74,10 +74,10 @@ end;
 procedure TSplitPingPeer.Serve(AFd: Integer);
 begin
   try
-    fpSend(AFd, @cPingFrame[1], FFirstPart, 0);
+    fpSend(AFd, @cPingFrame[1], FFirstPart, cMsgNoSignal);
     // the gap is many times the 20 ms read poll of the client
     Sleep(FGapMs);
-    fpSend(AFd, @cPingFrame[FFirstPart + 1], Length(cPingFrame) - FFirstPart, 0);
+    fpSend(AFd, @cPingFrame[FFirstPart + 1], Length(cPingFrame) - FFirstPart, cMsgNoSignal);
     // the acknowledgement arrives at once; the peer closes after the read
     FReceived := ReadAll(AFd, 1000);
   finally

@@ -20,7 +20,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs, Sockets, BaseUnix, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Client.Proxy, Http2.Client.Tls, Http2.Client, Http2.Client.WebSocket,
-  Http2.Client.WebSocket.Connection;
+  Http2.Client.WebSocket.Connection, Http2.Client.SigPipe;
 
 type
   TWsTestServer = class;
@@ -261,7 +261,7 @@ begin
   Sent := 0;
   while Sent < Length(AData) do
   begin
-    N := fpsend(FFd, @AData[1 + Sent], Length(AData) - Sent, 0);
+    N := fpsend(FFd, @AData[1 + Sent], Length(AData) - Sent, cMsgNoSignal);
     if N <= 0 then
       raise Exception.Create('send failed');
     Inc(Sent, N);

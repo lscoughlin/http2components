@@ -49,6 +49,15 @@ uses
 var
   GUnixPathCounter: Integer = 0;
 
+const
+  // the send flag that suppresses SIGPIPE, as cMsgNoSignal in
+  // client/src/Http2.Client.SigPipe.pas (the server test build does not use that unit)
+{$IFDEF LINUX}
+  cUnixSendNoSignal = $4000;
+{$ELSE}
+  cUnixSendNoSignal = 0;
+{$ENDIF}
+
 {$IFDEF UNIX}
 /// the address record of a Unix socket path
 function UnixAddrOf(const APath: string): TUnixSockAddr;
@@ -164,7 +173,7 @@ begin
   Done := 0;
   while Done < Length(AText) do
   begin
-    Sent := fpSend(AFd, @AText[Done + 1], Length(AText) - Done, 0);
+    Sent := fpSend(AFd, @AText[Done + 1], Length(AText) - Done, cUnixSendNoSignal);
     if Sent <= 0 then
       Break;
     Inc(Done, Sent);

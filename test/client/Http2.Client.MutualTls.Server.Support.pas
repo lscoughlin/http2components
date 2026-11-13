@@ -23,7 +23,8 @@ uses
   Http2.Client.Stream,
   Http2.Client,
   Http2.Client.Sse, Http2.Client.WebSocket, Http2.Client.RequestObserver,
-  Http2.Client.RequestObserver.Support, Http2.Client.Test.OpenSSL.SigPipe;
+  Http2.Client.RequestObserver.Support, Http2.Client.Test.OpenSSL.SigPipe,
+  Http2.Client.SigPipe;
 
 const
   cPass = 'mtls-test-pass';
@@ -166,7 +167,7 @@ begin
     if C.Ssl <> nil then
       R := TestSslWrite(C.Ssl, PByte(@ABuf) + Sent, N - Sent)
     else
-      R := fpSend(C.Fd, PByte(@ABuf) + Sent, N - Sent, 0);
+      R := fpSend(C.Fd, PByte(@ABuf) + Sent, N - Sent, cMsgNoSignal);
     if R <= 0 then
       Exit;
     Inc(Sent, R);
@@ -670,7 +671,7 @@ var
   Head: AnsiString;
   B: array[0..255] of Byte;
   Buf: array[0..16383] of Byte;
-  N, I: Integer;
+  N, I, R: Integer;
   Peer: PX509;
   Fds: array[0..1] of TPollFd;
   Ready: Boolean;
@@ -773,9 +774,10 @@ begin
           I := 0;
           while I < N do
           begin
-            I := I + fpSend(Origin, @Buf[I], N - I, 0);
-            if I < 0 then
+            R := fpSend(Origin, @Buf[I], N - I, cMsgNoSignal);
+            if R <= 0 then
               Break;
+            I := I + R;
           end;
         end;
         if Fds[1].revents <> 0 then
