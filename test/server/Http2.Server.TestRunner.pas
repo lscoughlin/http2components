@@ -55,6 +55,7 @@ uses
   Http2.Server.Http1.TestKit,
   Http2.Server.Http1.Head.Test,
   Http2.Server.Http1.Chunked.Test,
+  Http2.Server.ChunkLine.Test,
   Http2.Server.Http1.RawClient,
   Http2.Server.Http1.Live.Test,
   Http2.Server.Http1.Config.Test,

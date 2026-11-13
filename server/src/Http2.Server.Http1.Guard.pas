@@ -610,7 +610,25 @@ var
     Result := True;
   end;
 
+  // qdtext of RFC 9110 section 5.6.4: HTAB, SP, %x21, %x23-5B, %x5D-7E, obs-text
+  function IsQdtext(const C: AnsiChar): Boolean;
+  begin
+    Result := (C in [#9, ' ', '!']) or ((C >= '#') and (C <= '['))
+      or ((C >= ']') and (C <= '~')) or (C >= #$80);
+  end;
+
+  // quoted-pair of RFC 9110 section 5.6.4: HTAB, SP, VCHAR, obs-text
+  function IsQuotedPairChar(const C: AnsiChar): Boolean;
+  begin
+    Result := (C in [#9, ' ']) or ((C >= '!') and (C <= '~')) or (C >= #$80);
+  end;
+
 begin
+  // Go refuses these bytes in a chunk line: a CR, a LF or a NUL in the whole line
+  // is an error, so a bare LF cannot hide inside a quoted string.
+  for I := 1 to Length(ALine) do
+    if ALine[I] in [#0, #10, #13] then
+      Exit(H1Refuse(400, 'a control byte in the chunk size line'));
   ASize := 0;
   N := 0;
   I := 1;
@@ -663,7 +681,13 @@ begin
         while (A <= Length(ALine)) and (ALine[A] <> '"') do
         begin
           if ALine[A] = '\' then
+          begin
             Inc(A);
+            if (A <= Length(ALine)) and not IsQuotedPairChar(ALine[A]) then
+              Exit(H1Refuse(400, 'a control byte after a backslash in a chunk extension'));
+          end
+          else if not IsQdtext(ALine[A]) then
+            Exit(H1Refuse(400, 'a control byte in a quoted chunk extension'));
           Inc(A);
         end;
         if A > Length(ALine) then
