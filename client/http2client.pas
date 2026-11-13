@@ -46,6 +46,7 @@ uses
   Http2.Client.Proxy.Types,
   Http2.Client.Proxy.Unix,
   Http2.Client.Proxy,
+  Http2.Client.Redirect,
   Http2.Client.Request,
   Http2.Client.RequestObserver,
   Http2.Client.Response,

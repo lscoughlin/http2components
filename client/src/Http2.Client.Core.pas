@@ -95,7 +95,8 @@ type
 implementation
 
 uses
-  Http2.Client.Attempt, Http2.Client.Url, Http2.Client.Defaults, Http2.Client.Identity, Http2.Client.SocketFactory, Http2.Client.WebSocket.Connection;
+  Http2.Client.Attempt, Http2.Client.Url, Http2.Client.Defaults, Http2.Client.Identity, Http2.Client.SocketFactory, Http2.Client.WebSocket.Connection,
+  Http2.Common.Uri, Http2.Client.Redirect;
 
 function HttpMethodIsIdempotent(const AToken: string): Boolean;
 begin
@@ -198,6 +199,8 @@ var
   Idempotent, RetryIt: Boolean;
   Tracker: TAttemptTracker;
   TrackerRef: IExchangeObserver;
+  BaseUri, TargetUri: TURI;
+  Refuse, Strip, DroppedBody: Boolean;
 begin
   if ARequest.Url = '' then
     raise EHttpProtocolError.Create('request URL is empty', ecProtocolError);
@@ -278,18 +281,36 @@ begin
         Break;
       end;
 
+      Target := ResolveLocation(Current.Url, Location);
+      Status := Result.StatusCode;
+      BaseUri := ParseURI(WithDefaultScheme(Current.Url));
+      TargetUri := ParseURI(Target);
+      // the redirect policy is checked before the hop counts: a refused
+      // redirect returns the 3xx response to the caller
+      Refuse := DecideRedirect(FSecurity.RedirectPolicy, BaseUri, TargetUri) = rdRefuse;
+      // a body is never sent to another origin by a 307 or 308 redirect
+      if ((Status = 307) or (Status = 308)) and Current.Body.IsSet and
+         not SameOrigin(BaseUri, TargetUri) then
+        Refuse := True;
+      if Refuse then
+      begin
+        if Tracker <> nil then
+          Tracker.Arm(Result);
+        Break;
+      end;
+
       Inc(Redirects);
       if Redirects > FMaxRedirects then
         raise EHttpTooManyRedirects.CreateFmt(
           'redirect chain exceeded MaxRedirects (%d)', [FMaxRedirects]);
 
-      Target := ResolveLocation(Current.Url, Location);
-      Status := Result.StatusCode;
+      DroppedBody := False;
       case Status of
         303:
           begin
             Method := 'GET';
             Current := Current.DropBody;
+            DroppedBody := True;
           end;
         301, 302:
           begin
@@ -301,6 +322,7 @@ begin
             begin
               Method := 'GET';
               Current := Current.DropBody;
+              DroppedBody := True;
             end;
           end;
         307, 308:
@@ -308,6 +330,25 @@ begin
             raise EHttpNotReplayable.Create(
               'a body writer cannot be replayed on a ' +
               IntToStr(Status) + ' redirect');
+      end;
+      // the next request is a new request: a change of origin drops the
+      // credential headers, and a dropped body drops its headers
+      Strip := StripOnOriginChange(BaseUri, TargetUri, FSecurity.RedirectPolicy);
+      if Strip or DroppedBody then
+      begin
+        Current := Current.Clone;
+        if Strip then
+        begin
+          Current.Headers.Remove('authorization');
+          Current.Headers.Remove('cookie');
+          Current.Headers.Remove('proxy-authorization');
+        end;
+        if DroppedBody then
+        begin
+          Current.Headers.Remove('content-length');
+          Current.Headers.Remove('content-type');
+          Current.Headers.Remove('content-encoding');
+        end;
       end;
       // like a credential header, the request identity follows a redirect
       // to the same origin only (doc/design/mtls.md "Per-request identity")
