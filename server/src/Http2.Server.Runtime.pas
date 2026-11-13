@@ -113,7 +113,8 @@ begin
   FAsync := THttp2AsyncServer.Create(AFactory);
   FAsync.Observer := FObserver;
   FAsync.Handlers.Observer := FObserver;
-  FWsEnv := TWsEnvironment.Create(AFactory.WebSockets, AFactory.Clock, FAsync.Notify);
+  FWsEnv := TWsEnvironment.Create(AFactory.WebSockets, AFactory.Clock, FAsync.Notify,
+    AFactory.ServerLimits.MaxWsQueuedBytes, AFactory.ServerLimits.MaxWsSessions);
   FWsEnvRef := FWsEnv;
   FAsync.Channels.SetWsEnvironment(FWsEnvRef);
 end;

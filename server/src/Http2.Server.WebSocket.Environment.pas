@@ -26,11 +26,18 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, Generics.Collections,
   Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Observer,
-  Http2.Server.WebSocket.Options, Http2.Server.WebSocket.Types;
+  Http2.Server.WebSocket.Options, Http2.Server.WebSocket.Types,
+  Http2.Server.WebSocket.Budget;
 
 type
   /// a report to the observer of the server
   TWsReportProc = procedure(const AEvent: TServerEvent) of object;
+
+  /// the server-wide budget of the WebSocket queues and sessions
+  IWsBudgetSource = interface(IInterface)
+    ['{7E1F0C11-00C6-4A11-9C72-000000000F06}']
+    function Budget: TWsByteBudget;
+  end;
 
   TWsEnvironment = class;
 
@@ -44,7 +51,7 @@ type
     constructor Create(const AOwner: TWsEnvironment);
   end;
 
-  TWsEnvironment = class(TInterfacedObject, IWsEnvironment)
+  TWsEnvironment = class(TInterfacedObject, IWsEnvironment, IWsBudgetSource)
   private
     type
       TWatch = record
@@ -63,10 +70,16 @@ type
     FWatches: TList<TWatch>;
     FDog: TWsWatchdog;
     FStopping: Boolean;
+    FBudget: TWsByteBudget;
     procedure Sweep;
   public
     constructor Create(const AOptions: TWsOptions; const AClock: IMonotonicClock;
-      const AReport: TWsReportProc);
+      const AReport: TWsReportProc); overload;
+    /// AMaxBytes is the server-wide cap of the queued octets; AMaxSessions is
+    /// the cap of the open sessions, and 0 turns it off
+    constructor Create(const AOptions: TWsOptions; const AClock: IMonotonicClock;
+      const AReport: TWsReportProc; const AMaxBytes: Int64;
+      const AMaxSessions: Integer); overload;
     destructor Destroy; override;
     /// stop the watchdog; the sessions keep running
     procedure Stop;
@@ -84,6 +97,8 @@ type
     procedure Count(const AWhat: TWsCounter; const AValue: Int64);
     procedure WatchInit(const ASession: IWsInitWatch; const ADeadlineMs: QWord);
     procedure UnwatchInit(const ASession: IWsInitWatch);
+    // IWsBudgetSource
+    function Budget: TWsByteBudget;
   end;
 
 implementation
@@ -110,6 +125,14 @@ end;
 constructor TWsEnvironment.Create(const AOptions: TWsOptions;
   const AClock: IMonotonicClock; const AReport: TWsReportProc);
 begin
+  // no cap: the budget counts, and never refuses
+  Create(AOptions, AClock, AReport, High(Int64), 0);
+end;
+
+constructor TWsEnvironment.Create(const AOptions: TWsOptions;
+  const AClock: IMonotonicClock; const AReport: TWsReportProc;
+  const AMaxBytes: Int64; const AMaxSessions: Integer);
+begin
   inherited Create;
   FOptions := AOptions;
   FClock := AClock;
@@ -117,12 +140,14 @@ begin
   FLock := TCriticalSection.Create;
   FWake := RTLEventCreate;
   FWatches := TList<TWatch>.Create;
+  FBudget := TWsByteBudget.Create(AMaxBytes, AMaxSessions);
 end;
 
 destructor TWsEnvironment.Destroy;
 begin
   Stop;
   FWatches.Free;
+  FBudget.Free;
   RTLEventDestroy(FWake);
   FLock.Free;
   inherited Destroy;
@@ -183,6 +208,11 @@ end;
 function TWsEnvironment.Options: TWsOptions;
 begin
   Result := FOptions;
+end;
+
+function TWsEnvironment.Budget: TWsByteBudget;
+begin
+  Result := FBudget;
 end;
 
 function TWsEnvironment.Clock: IMonotonicClock;
