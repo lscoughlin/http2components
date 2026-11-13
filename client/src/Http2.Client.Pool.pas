@@ -290,6 +290,20 @@ begin
   Result := AConn <> nil;
 end;
 
+/// the wait slice of a caller: at most 50 ms, and not past the deadline
+function SliceMs(const ADeadline: QWord): Integer;
+var
+  Now: QWord;
+begin
+  Now := GetTickCount64;
+  if Now >= ADeadline then
+    Exit(1);
+  if ADeadline - Now > 50 then
+    Result := 50
+  else
+    Result := Integer(ADeadline - Now);
+end;
+
 function TConnectionPool.Acquire(const AOrigin, AHost: string;
   const APort: Word; const ARequest: TStreamRequest;
   const AHeaderTimeoutMs: Integer;
@@ -307,10 +321,16 @@ var
   Selecting, Resolved, NeedSelect, Fixed, Marked, Deferred: Boolean;
   Dialing, DialOk, WasMarked: Boolean;
   Late: IPooledConnection;
+  WaitDial: TOriginDial;
+  WaitGen: Cardinal;
+  Retry, DeferredSignal: Boolean;
   Identity: IClientIdentity;
   ContextKeyFactory: ITlsContextPoolKey;
 begin
   Marked := False;
+  WaitDial := nil;
+  WaitGen := 0;
+  DeferredSignal := False;
   Deadline := GetTickCount64 + QWord(AHeaderTimeoutMs);
   Waiting := False;
   ContextKey := '';
@@ -348,8 +368,15 @@ begin
       NeedSelect := False;
       Deferred := False;
       Dialing := False;
+      Retry := False;
       FLock.Acquire;
       try
+        // the wait of the last round ends: the checks below decide again
+        if WaitDial <> nil then
+        begin
+          LeaveWait(WaitDial);
+          WaitDial := nil;
+        end;
         // back from asking the selector: this request now dials (or parks).
         // A concurrent request keeps waiting for it until the dial has
         // registered its connection (or failed), so one cold origin is dialled
@@ -430,12 +457,25 @@ begin
         if WasMarked and not Dialing then
         begin
           FSelecting.Remove(BaseKey);
+          SignalOrigin(Key);
           Marked := False;
         end;
         if Dialing then
-          ReserveDial(Key);
+          ReserveDial(Key)
+        else if (Conn = nil) and not NeedSelect then
+        begin
+          // the caller waits below: it counts as a waiter and reads the
+          // generation under FLock, so a dial that ends later is never missed
+          WaitDial := EnterWait(Key, WaitGen);
+          Retry := WaitDial = nil;
+        end;
       finally
         FLock.Release;
+      end;
+      if Retry then
+      begin
+        ThreadSwitch;
+        Continue;
       end;
 
       if Dialing then
@@ -457,7 +497,11 @@ begin
           // slot back and registers the connection in ONE locked section
           FLock.Acquire;
           try
-            ReleaseDial(Key);
+            // a new HTTP/1.1 connection goes to its dialer first (see
+            // ReleaseDial); every other end of a dial wakes the waiters now
+            DeferredSignal := (Conn <> nil) and (Conn.Conn = nil) and
+              not FClosed;
+            ReleaseDial(Key, not DeferredSignal);
             if Marked then
             begin
               FSelecting.Remove(BaseKey);
@@ -552,16 +596,29 @@ begin
         end;
         // an HTTP/1.1 pooled connection has no cancellable path (one request in
         // flight, no RST_STREAM); Acquire either returns at once or raises
-        if (AToken <> nil) and (Conn.Conn <> nil) then
-        begin
-          Sliced := AHeaderTimeoutMs;
-          if Sliced <= 0 then
-            Sliced := cDefaultHeaderTimeoutMs;
-          Result := (Conn as THttpConnection).AcquireCancellable(ARequest,
-            Sliced, AToken, Acquired);
-        end
-        else
-          Result := Conn.Acquire(ARequest, AHeaderTimeoutMs, Acquired);
+        try
+          if (AToken <> nil) and (Conn.Conn <> nil) then
+          begin
+            Sliced := AHeaderTimeoutMs;
+            if Sliced <= 0 then
+              Sliced := cDefaultHeaderTimeoutMs;
+            Result := (Conn as THttpConnection).AcquireCancellable(ARequest,
+              Sliced, AToken, Acquired);
+          end
+          else
+            Result := Conn.Acquire(ARequest, AHeaderTimeoutMs, Acquired);
+        finally
+          if DeferredSignal then
+          begin
+            DeferredSignal := False;
+            FLock.Acquire;
+            try
+              SignalOrigin(Key);
+            finally
+              FLock.Release;
+            end;
+          end;
+        end;
         if Acquired then
         begin
           FLock.Acquire;
@@ -573,7 +630,17 @@ begin
           Exit;
         end;
         // the connection filled up between selection and registration; retry
-        Sleep(1);
+        // after a wake or a slice
+        FLock.Acquire;
+        try
+          WaitDial := EnterWait(Key, WaitGen);
+        finally
+          FLock.Release;
+        end;
+        if WaitDial <> nil then
+          WaitDial.WaitSlice(WaitGen, SliceMs(Deadline))
+        else
+          ThreadSwitch;
       end
       else
       begin
@@ -583,16 +650,24 @@ begin
           raise EHttpTimeout.Create(
             'timed out waiting for a connection slot ' +
             '(MaxConnectionsPerHost or MaxTotalConnections reached)');
-        Sleep(2);
+        if WaitDial <> nil then
+          WaitDial.WaitSlice(WaitGen, SliceMs(Deadline));
       end;
     end;
   finally
-    if Waiting or Marked then
+    if Waiting or Marked or DeferredSignal or (WaitDial <> nil) then
     begin
       FLock.Acquire;
       try
+        if DeferredSignal then
+          SignalOrigin(BaseKey);
+        if WaitDial <> nil then
+          LeaveWait(WaitDial);
         if Marked then
+        begin
           FSelecting.Remove(BaseKey);
+          SignalOrigin(BaseKey);
+        end;
         if Waiting then
           AddPendingLocked(PendingKey, -1);
       finally
