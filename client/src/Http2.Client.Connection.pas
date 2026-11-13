@@ -738,6 +738,7 @@ begin
     if AFrame.IsEndHeaders then
     begin
       Routed.DecodedHeaders := FHeaderDecoder.Decode(FHeaderBlock.Take);
+      ValidateDecodedFields(Routed.DecodedHeaders);
       Routed.HeadersDecoded := True;
     end;
   end;
@@ -967,6 +968,11 @@ begin
 end;
 
 procedure TConnection.SetSecurity(const AValue: TClientSecurityOptions);
-begin FSecurity := AValue; FLocalSettings.InitialWindowSize := LongWord(AValue.MaxReceiveQueueBytes); end;
+begin
+  FSecurity := AValue;
+  FLocalSettings.InitialWindowSize := LongWord(AValue.MaxReceiveQueueBytes);
+  FLocalSettings.MaxHeaderListSize := LongWord(AValue.MaxHeaderListSize);
+  FHeaderBlock.MaxBytes := AValue.MaxHeaderListSize;
+end;
 
 end.

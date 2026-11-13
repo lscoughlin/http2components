@@ -15,7 +15,7 @@ unit Http2.Client.Connection.HeaderBlock;
 interface
 
 uses
-  SysUtils, Http2.Common.Errors;
+  SysUtils, Http2.Common.Errors, Http2.Common.Hpack, Http2.Common.Headers;
 
 type
   /// joins the fragments of one header block (RFC 9113 section 4.3)
@@ -27,6 +27,7 @@ type
     FStreamId: LongWord;
     FBytes: TBytes;
     FMaxBytes: Int64;
+    procedure CheckLimit(const ASize: Int64);
   public
     /// open a block for AStreamId; replaces any block that is still open
     procedure Start(AStreamId: LongWord; const AFragment: TBytes);
@@ -43,11 +44,33 @@ type
     property MaxBytes: Int64 read FMaxBytes write FMaxBytes;
   end;
 
+/// refuse a decoded header block whose field values hold CR, LF or NUL
+// - the HPACK decoder accepts these octets, so the connection checks them
+procedure ValidateDecodedFields(const ABlock: THeaderBlock);
+
 implementation
+
+procedure THeaderBlockAssembler.CheckLimit(const ASize: Int64);
+begin
+  if (FMaxBytes > 0) and (ASize > FMaxBytes) then
+    raise EHttpProtocolError.Create(Format(
+      'header block exceeds %d bytes', [FMaxBytes]), ecEnhanceYourCalm);
+end;
+
+procedure ValidateDecodedFields(const ABlock: THeaderBlock);
+var
+  I: Integer;
+begin
+  for I := 0 to High(ABlock) do
+    if not IsValidHeaderValue(ABlock[I].Value) then
+      raise EHttpProtocolError.Create(
+        'header value holds CR, LF or NUL', ecProtocolError);
+end;
 
 procedure THeaderBlockAssembler.Start(AStreamId: LongWord;
   const AFragment: TBytes);
 begin
+  CheckLimit(Length(AFragment));
   FOpen := True;
   FStreamId := AStreamId;
   FBytes := Copy(AFragment, 0, Length(AFragment));
@@ -61,6 +84,7 @@ begin
   if (not FOpen) or (FStreamId <> AStreamId) then
     raise EHttpProtocolError.Create('unexpected CONTINUATION stream',
       ecProtocolError);
+  CheckLimit(Size + Length(AFragment));
   N := Length(FBytes);
   SetLength(FBytes, N + Length(AFragment));
   if Length(AFragment) > 0 then

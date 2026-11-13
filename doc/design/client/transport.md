@@ -132,6 +132,14 @@ One thread per connection, responsible for *both* directions:
   its response state on the caller thread. A caller can consume streams in
   any order without changing the HPACK dynamic-table order. Interleaved or
   wrong-stream CONTINUATION frames fail the connection.
+- **Header block limit:** The reader caps the sum of the HEADERS and
+  CONTINUATION fragments of one block at `MaxHeaderListSize` (default 128
+  KiB). A larger block fails the connection with `ENHANCE_YOUR_CALM`. The
+  same value is the `SETTINGS_MAX_HEADER_LIST_SIZE` that the client
+  advertises. The HPACK decoder refuses a decoded field list that is larger
+  than this value, also with `ENHANCE_YOUR_CALM`. A decoded field value that
+  holds CR, LF or NUL fails the connection with `PROTOCOL_ERROR`. The reader
+  reads each frame with the local `SETTINGS_MAX_FRAME_SIZE` as the limit.
 - **ARC hazard:** `TConnectionThread` stores a raw (weak) pointer to avoid
   an interface reference cycle (`TConnection` ↔ thread). `TConnection`
   `Terminate`+`WaitFor`s the thread before releasing `FSocket`/queues.

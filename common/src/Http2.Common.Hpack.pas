@@ -679,6 +679,7 @@ constructor THpackCodec.Create;
 begin
   inherited Create;
   FHuffman := True;
+  FMaxHeaderListSize := 131072;   // 128 KiB, the client default
   FMaxTableSize := HpackDefaultTableSize;
   FEncoderCap := HpackMaxInteger;
   FPeerTableSize := HpackDefaultTableSize;
