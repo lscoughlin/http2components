@@ -46,6 +46,12 @@ type
     procedure TestAllProblemsComeInOneMessage;
     procedure TestBindAddressTextUsesTheHost;
     procedure TestListenerBindsTheHost;
+    procedure TestMaxHandlerTimeRange;
+    procedure TestMaxBodyBytesInFlightRange;
+    procedure TestMaxWsQueuedBytesRange;
+    procedure TestMaxWsSessionsRange;
+    procedure TestWsEarlyBytesRange;
+    procedure TestWsAllowedHostsDefaultsEmpty;
   end;
 
 implementation
@@ -188,6 +194,95 @@ begin
     Server.Stop;
     Server.Free;
   end;
+end;
+
+procedure TConfigRangesTest.TestMaxHandlerTimeRange;
+var
+  Problems: TArray<string>;
+begin
+  AssertEquals('the default is off', 0, TServerLimits.Create.MaxHandlerTimeMs);
+  AssertTrue('the default is valid', Base.Validate(Problems));
+  AssertTrue('zero is valid', Base.WithServerLimits(
+    TServerLimits.Create.WithMaxHandlerTimeMs(0)).Validate(Problems));
+  AssertTrue('a positive value is valid', Base.WithServerLimits(
+    TServerLimits.Create.WithMaxHandlerTimeMs(5000)).Validate(Problems));
+  AssertTrue('a negative value is rejected', Rejects(Base.WithServerLimits(
+    TServerLimits.Create.WithMaxHandlerTimeMs(-1)),
+    'the maximum handler time is below 0'));
+end;
+
+procedure TConfigRangesTest.TestMaxBodyBytesInFlightRange;
+var
+  Problems: TArray<string>;
+begin
+  AssertEquals('the default is 256 MiB', Int64(268435456),
+    TServerLimits.Create.MaxBodyBytesInFlight);
+  AssertTrue('the default is valid', Base.Validate(Problems));
+  AssertTrue('zero is valid', Base.WithServerLimits(
+    TServerLimits.Create.WithMaxBodyBytesInFlight(0)).Validate(Problems));
+  AssertTrue('1 MiB is valid', Base.WithServerLimits(
+    TServerLimits.Create.WithMaxBodyBytesInFlight(1048576)).Validate(Problems));
+  AssertTrue('below 1 MiB is rejected', Rejects(Base.WithServerLimits(
+    TServerLimits.Create.WithMaxBodyBytesInFlight(1048575)),
+    'the body bytes in flight limit is outside the range'));
+end;
+
+procedure TConfigRangesTest.TestMaxWsQueuedBytesRange;
+var
+  Problems: TArray<string>;
+begin
+  AssertEquals('the default is 128 MiB', Int64(134217728),
+    TServerLimits.Create.MaxWsQueuedBytes);
+  AssertTrue('the default is valid', Base.Validate(Problems));
+  AssertTrue('1 MiB is valid', Base.WithServerLimits(
+    TServerLimits.Create.WithMaxWsQueuedBytes(1048576)).Validate(Problems));
+  AssertTrue('below 1 MiB is rejected', Rejects(Base.WithServerLimits(
+    TServerLimits.Create.WithMaxWsQueuedBytes(1048575)),
+    'the WebSocket queued bytes limit is below 1 MiB'));
+end;
+
+procedure TConfigRangesTest.TestMaxWsSessionsRange;
+var
+  Problems: TArray<string>;
+begin
+  AssertEquals('the default is 5000', 5000,
+    TServerLimits.Create.MaxWsSessions);
+  AssertTrue('the default is valid', Base.Validate(Problems));
+  AssertTrue('zero is valid', Base.WithServerLimits(
+    TServerLimits.Create.WithMaxWsSessions(0)).Validate(Problems));
+  AssertTrue('a negative value is rejected', Rejects(Base.WithServerLimits(
+    TServerLimits.Create.WithMaxWsSessions(-1)),
+    'the WebSocket session limit is below 0'));
+end;
+
+procedure TConfigRangesTest.TestWsEarlyBytesRange;
+var
+  Problems: TArray<string>;
+begin
+  AssertEquals('the default is 256 KiB', 262144,
+    TWsOptions.Create.WsEarlyBytes);
+  AssertTrue('the default is valid', Base.Validate(Problems));
+  AssertTrue('the minimum is valid', Base.WithWebSockets(
+    TWsOptions.Create.WithWsEarlyBytes(4096)).Validate(Problems));
+  AssertTrue('the maximum is valid', Base.WithWebSockets(
+    TWsOptions.Create.WithWsEarlyBytes(16777216)).Validate(Problems));
+  AssertTrue('below the minimum is rejected', Rejects(Base.WithWebSockets(
+    TWsOptions.Create.WithWsEarlyBytes(4095)),
+    'the WebSocket early bytes is outside the range'));
+  AssertTrue('above the maximum is rejected', Rejects(Base.WithWebSockets(
+    TWsOptions.Create.WithWsEarlyBytes(16777217)),
+    'the WebSocket early bytes is outside the range'));
+end;
+
+procedure TConfigRangesTest.TestWsAllowedHostsDefaultsEmpty;
+var
+  Problems: TArray<string>;
+begin
+  AssertEquals('no host by default', 0,
+    Length(TWsOptions.Create.WsAllowedHosts));
+  AssertTrue('the default is valid', Base.Validate(Problems));
+  AssertTrue('a host list is valid', Base.WithWebSockets(
+    TWsOptions.Create.WithWsAllowedHosts(['example.com'])).Validate(Problems));
 end;
 
 initialization

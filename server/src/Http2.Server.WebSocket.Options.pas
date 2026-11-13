@@ -41,6 +41,8 @@ type
     FOriginPolicy: TWsOriginPolicy;
     FAllowedOrigins: TArray<string>;
     FSubprotocols: TArray<string>;
+    FWsEarlyBytes: Integer;
+    FWsAllowedHosts: TArray<string>;
   public
     /// the defaults
     class function Create: TWsOptions; static;
@@ -71,6 +73,12 @@ type
     function WithAllowedOrigins(const AValue: TArray<string>): TWsOptions;
     /// the subprotocols that the server picks from, in order of preference
     function WithSubprotocols(const AValue: TArray<string>): TWsOptions;
+    /// the octets of a message that the server holds before the handler runs;
+    /// valid from 4096 to 16777216
+    function WithWsEarlyBytes(const AValue: Integer): TWsOptions;
+    /// the host names that the allow-list accepts; an empty list turns the
+    /// host check off
+    function WithWsAllowedHosts(const AValue: TArray<string>): TWsOptions;
 
     /// add one text to AProblems for each setting that is not usable
     procedure Problems(var AProblems: TArray<string>);
@@ -89,6 +97,8 @@ type
     property OriginPolicy: TWsOriginPolicy read FOriginPolicy;
     property AllowedOrigins: TArray<string> read FAllowedOrigins;
     property Subprotocols: TArray<string> read FSubprotocols;
+    property WsEarlyBytes: Integer read FWsEarlyBytes;
+    property WsAllowedHosts: TArray<string> read FWsAllowedHosts;
   end;
 
 implementation
@@ -115,6 +125,8 @@ begin
   Result.FOriginPolicy := opSameOrAbsent;
   Result.FAllowedOrigins := nil;
   Result.FSubprotocols := nil;
+  Result.FWsEarlyBytes := 262144;
+  Result.FWsAllowedHosts := nil;
 end;
 
 function TWsOptions.WithMaxMessageSize(const AValue: Int64): TWsOptions;
@@ -201,6 +213,18 @@ begin
   Result.FSubprotocols := Copy(AValue);
 end;
 
+function TWsOptions.WithWsEarlyBytes(const AValue: Integer): TWsOptions;
+begin
+  Result := Self;
+  Result.FWsEarlyBytes := AValue;
+end;
+
+function TWsOptions.WithWsAllowedHosts(const AValue: TArray<string>): TWsOptions;
+begin
+  Result := Self;
+  Result.FWsAllowedHosts := Copy(AValue);
+end;
+
 procedure TWsOptions.Problems(var AProblems: TArray<string>);
 var
   I, J: Integer;
@@ -243,6 +267,8 @@ begin
   for I := 0 to High(FAllowedOrigins) do
     if not WsParseOrigin(FAllowedOrigins[I], Origin) then
       Add('the WebSocket allowed origin "' + FAllowedOrigins[I] + '" is not scheme://host[:port]');
+  if (FWsEarlyBytes < 4096) or (FWsEarlyBytes > 16777216) then
+    Add('the WebSocket early bytes is outside the range 4096 to 16777216');
   if (FOriginPolicy = opAllowListOnly) and (Length(FAllowedOrigins) = 0) then
     Add('the origin policy allow-list only needs at least one allowed origin');
   for I := 0 to High(FSubprotocols) do
