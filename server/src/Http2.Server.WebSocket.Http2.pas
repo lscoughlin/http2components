@@ -138,6 +138,12 @@ begin
     Refuse(AResponse, Verdict.Status);
     Exit;
   end;
+  // the host allow-list (an empty list turns the check off)
+  if not WsHostAllowed(Env.Options.WsAllowedHosts, ARequest.Scheme, ARequest.Authority) then
+  begin
+    Refuse(AResponse, 403);
+    Exit;
+  end;
 
   Offered := WsOfferedSubprotocols(Headers, Env.Options.Subprotocols);
   try

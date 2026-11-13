@@ -104,7 +104,8 @@ uses
   Http2.Server.UnixServer.Test,
   Http2.Server.UnixOptions.Test,
   Http2.Server.UnixFacade.Test,
-  Http2.Server.UnixProtocol.Test;
+  Http2.Server.UnixProtocol.Test,
+  Http2.Server.WebSocketHost.Test;
 
 const
   /// name of the top-level suite in the runner report
