@@ -773,12 +773,18 @@ begin
   end;
   if FDetached or FFinished then
     Exit;
-  if FHeadersSent then
-    Finish
-  else if not IsCancelled then
-    SendError(500)
+  if IsCancelled then
+    CompleteExchange(True)
   else
-    CompleteExchange(True);
+  begin
+    // the handler returned without Finish: a 500 when no head went out, else
+    // a cut response. The pool reports the exception once
+    if FHeadersSent then
+      CompleteExchange(True)
+    else
+      SendError(500);
+    raise EHttpError.Create('the handler returned without Finish');
+  end;
 end;
 
 procedure TH1Exchange.Refuse(const AReason: THandlerJobRefusal);
