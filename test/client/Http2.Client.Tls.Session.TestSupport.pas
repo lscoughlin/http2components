@@ -89,7 +89,7 @@ type
     FTrickleDelayMs: Integer;
     FReadStarted, FReadRelease: PRTLEvent;
     FWriteStarted, FWriteRelease: PRTLEvent;
-    FBlockRead, FReadHasStarted: Boolean;
+    FBlockRead, FReadHasStarted, FHoldRead: Boolean;
     FBlockWrite, FWriteHasStarted: Boolean;
     FFailNextWrite: Boolean;
     FFailAllWrites: Boolean;
@@ -98,6 +98,7 @@ type
     destructor Destroy; override;
     procedure EnableReadBlocking;
     procedure ReleaseBlockedRead;
+    procedure HoldBlockedReadUntilReleased;
     procedure EnableTrickleReads(const ADelayMs: Integer);
     function WaitForReadStart(const ATimeoutMs: Integer): Boolean;
     procedure EnableWriteBlocking;
@@ -154,6 +155,7 @@ begin
   FWriteStarted := nil;
   FWriteRelease := nil;
   FBlockRead := False;
+  FHoldRead := False;
   FReadHasStarted := False;
   FBlockWrite := False;
   FWriteHasStarted := False;
@@ -176,6 +178,10 @@ begin
   FReadStarted := RTLEventCreate;
   FReadRelease := RTLEventCreate;
   FBlockRead := True;
+end;
+procedure TPartialStream.HoldBlockedReadUntilReleased;
+begin
+  FHoldRead := True; // a blocked read ignores the read timeout
 end;
 procedure TPartialStream.ReleaseBlockedRead;
 begin
@@ -307,7 +313,9 @@ begin
   begin
     FReadHasStarted := True;
     RTLEventSetEvent(FReadStarted);
-    if FReadTimeoutMs > 0 then
+    if FHoldRead then
+      RTLEventWaitFor(FReadRelease, 5000)
+    else if FReadTimeoutMs > 0 then
       RTLEventWaitFor(FReadRelease, FReadTimeoutMs)
     else
       RTLEventWaitFor(FReadRelease, 5000);
