@@ -38,6 +38,10 @@ type
 
 implementation
 
+const
+  /// bytes of the large body queued and read before END_STREAM is queued
+  cFirstPart = 96000;
+
 procedure TMockSocketScenarioTest.TestScenarioNormalGet;
 var
   Sock: TMockSocket;
@@ -242,8 +246,9 @@ var
   IL: IConnectionStream;
   Req: TStreamRequest;
   Frames: TArray<TFrame>;
-  I, N, Ofs: Integer;
-  Body: TBytes;
+  I, N, Ofs, Got: Integer;
+  Body, Rest: TBytes;
+  Buf: array[0..16383] of Byte;
   Conns, Streams: Boolean;
 begin
   Sock := TMockSocket.Create;
@@ -261,24 +266,38 @@ begin
       // replenish the consumed window; without the wiring the peer would
       // stall and the read would time out (interop A.7). The body is split
       // into frames no larger than the default SETTINGS_MAX_FRAME_SIZE.
+      // the first part is queued without END_STREAM and read before the last
+      // frame is queued. A stream-level WINDOW_UPDATE is due only while the
+      // stream is open (TConnection.DataConsumed), so the stream must not see
+      // END_STREAM before the consumer has read the first part. Queuing every
+      // frame at once let a busy reader thread reach END_STREAM first.
       SetLength(Body, 100000);
       FillChar(Body[0], Length(Body), Ord('x'));
       Server.SendHeaders(1, '200', False);
       Ofs := 0;
-      while Ofs < Length(Body) do
+      while Ofs < cFirstPart do
       begin
-        N := Length(Body) - Ofs;
-        if N > 16000 then
-          N := 16000;
-        Sock.EnqueueData(1, Copy(Body, Ofs, N),
-          Ofs + N >= Length(Body));
-        Inc(Ofs, N);
+        Sock.EnqueueData(1, Copy(Body, Ofs, 16000), False);
+        Inc(Ofs, 16000);
       end;
       AssertTrue('response headers received',
         Lease.WaitForResponseHeader(2000));
       AssertEquals('status 200', 200, Lease.StatusCode);
-      AssertEquals('full body read', 100000,
-        Length(ReadAllBodyBytes(Lease.Body)));
+      // every queued frame is already inbound, so each Read returns data;
+      // a missing frame ends the read with the body read timeout
+      Got := 0;
+      while Got < cFirstPart do
+      begin
+        N := Lease.Body.Read(Buf, SizeOf(Buf));
+        AssertTrue('first part bytes arrive', N > 0);
+        Inc(Got, N);
+      end;
+      AssertEquals('first part read', cFirstPart, Got);
+      AssertFalse('body not complete before END_STREAM', Lease.Body.Eof);
+      Sock.EnqueueData(1, Copy(Body, cFirstPart, Length(Body) - cFirstPart),
+        True);
+      Rest := ReadAllBodyBytes(Lease.Body);
+      AssertEquals('full body read', Length(Body), Got + Length(Rest));
       AssertTrue('body complete', Lease.Body.Eof);
       Frames := Sock.OutboundFrames(True);
       Conns := False;
