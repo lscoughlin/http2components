@@ -79,6 +79,13 @@ type
     procedure TestPostRedirectDropsBodyHeaders;
   end;
 
+  /// relative Location values against the redirect policy (plan S-11 work card)
+  TRelativeLocationTest = class(TTestCase)
+  published
+    procedure TestRelativeLocationWithQueryKeepsSameHostAndPath;
+    procedure TestProtocolRelativeLocationRefusedUnderSameHostOnly;
+  end;
+
 implementation
 
 procedure TRedirectPolicyTest.TestMaxRedirectsLimit;
@@ -378,6 +385,50 @@ begin
   Client.Close;
 end;
 
+procedure TRelativeLocationTest.TestRelativeLocationWithQueryKeepsSameHostAndPath;
+var
+  Factory: TFakeFrameFactory;
+  Client: IHttpClient;
+  R: IHttpResponse;
+  Sock: TFakeFrameSocket;
+  Rec: TReqRecord;
+begin
+  Factory := TFakeFrameFactory.Create;
+  Factory.SetDialScript(0, SpecArray([
+    HdrSpec('302', '/login?next=https://evil.com/x'),
+    HdrSpec('200')]));
+  Client := THttpClientFactory.Create.WithSocketFactory(Factory)
+    .WithRedirectPolicy(rpSameOriginOnly).Build;
+  R := Client.Send(THttpRequest.Create(hmGet, 'https://a.example/x'));
+  AssertEquals('final status', 200, R.StatusCode);
+  Sock := Factory.SocketAt(0);
+  AssertTrue('two requests were issued', Sock.WaitForRequests(2, 2000));
+  AssertEquals('one dial: the redirect stays on the host', 1, Factory.Dials);
+  AssertEquals('the second dial target is the same host', 'a.example', Factory.HostAt(0));
+  Rec := Sock.RequestAt(1);
+  AssertEquals('the second request goes to the same authority', 'a.example', Rec.Authority);
+  AssertEquals('the second request path is /login with the query',
+    '/login?next=https://evil.com/x', Rec.Path);
+  Client.Close;
+end;
+
+procedure TRelativeLocationTest.TestProtocolRelativeLocationRefusedUnderSameHostOnly;
+var
+  Factory: TFakeFrameFactory;
+  Client: IHttpClient;
+  R: IHttpResponse;
+begin
+  Factory := TFakeFrameFactory.Create;
+  Factory.SetDialScript(0, SpecArray([HdrSpec('302', '//evil.com/x')]));
+  Client := THttpClientFactory.Create.WithSocketFactory(Factory)
+    .WithRedirectPolicy(rpSameHostOnly).Build;
+  R := Client.Send(THttpRequest.Create(hmGet, 'https://a.example/x'));
+  AssertEquals('the other host from a protocol-relative Location is refused', 302, R.StatusCode);
+  AssertEquals('no second request', 1, Factory.SocketAt(0).RequestCount);
+  AssertEquals('no second dial', 1, Factory.Dials);
+  Client.Close;
+end;
+
 procedure TRedirectPolicyLiveTest.Test307WithBodyToOtherOriginIsRefused;
 var
   Factory: TFakeFrameFactory;
@@ -510,4 +561,5 @@ end;
 initialization
   RegisterTest(TRedirectPolicyTest);
   RegisterTest(TRedirectPolicyLiveTest);
+  RegisterTest(TRelativeLocationTest);
 end.
