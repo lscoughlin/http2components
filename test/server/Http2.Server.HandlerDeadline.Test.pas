@@ -838,6 +838,7 @@ procedure THandlerDeadlineTest.TestH2StuckHandlerFreesTheSlotAndIsCounted;
 var
   Client: TDeadlineH2Client;
   Status: Integer;
+  Deadline: QWord;
 begin
   StartServer(LimitMs);
   Client := TDeadlineH2Client.Create(FServer.Port);
@@ -851,6 +852,12 @@ begin
     AssertTrue('the second request gets a head on the same connection',
       Client.WaitStatus(3, WaitMs, Status));
     AssertEquals('the second request is served', 200, Status);
+    // the /fast handler counts its return after its head reached the client
+    Deadline := GetTickCount64 + WaitMs;
+    while (FHandler.Returned < 1) and (GetTickCount64 < Deadline) do
+      Sleep(5);
+    // settle: the stuck handler must not return in this short window either
+    Sleep(50);
     // only the /fast handler has returned; the stuck one still waits
     AssertEquals('the stuck handler still runs', 1, FHandler.Returned);
   finally
