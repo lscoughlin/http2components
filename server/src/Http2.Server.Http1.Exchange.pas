@@ -218,7 +218,7 @@ end;
 
 procedure TH1Exchange.AppendBody(const AData; const ACount: Integer);
 var
-  Need: Integer;
+  Need: Int64;
 begin
   if ACount <= 0 then
     Exit;
@@ -240,11 +240,11 @@ begin
       FBodyHead := 0;
       FBodyTail := 0;
     end;
-    Need := FBodyTail + ACount;
+    Need := Int64(FBodyTail) + ACount;
     if Need > Length(FBody) then
       SetLength(FBody, GrownLength(Need, Length(FBody)));
     Move(AData, FBody[FBodyTail], ACount);
-    FBodyTail := Need;
+    FBodyTail := Integer(Need);
     FLastProgressMs := GetTickCount64;
   finally
     FLock.Release;
