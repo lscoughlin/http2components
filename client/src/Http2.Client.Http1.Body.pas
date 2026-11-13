@@ -59,6 +59,10 @@ type
     /// the GetTickCount64 instant at which the response head must be complete;
     /// 0 when no head is being read
     FDeadlineMs: QWord;
+    /// the per-request body-read timeout of the response being read (see
+    /// SetBodyReadTimeout); FBodyTimeoutSet False keeps the socket timeout
+    FBodyTimeoutSet: Boolean;
+    FBodyTimeoutMs: Integer;
     /// drop the entries for bytes already consumed
     procedure TrimStamps;
     /// pull another transport buffer into FBuf; False at end of stream
@@ -75,6 +79,10 @@ type
     procedure SetDeadline(const ADeadlineMs: QWord);
     /// end the deadline of the head; the body reads have no deadline
     procedure ClearDeadline;
+    /// the body-read timeout of the response: each body read that waits for
+    /// the peer waits at most AMs ms (0 = indefinitely) when ASet is True.
+    /// When ASet is False, the body reads use the socket timeout.
+    procedure SetBodyReadTimeout(const AMs: Integer; const ASet: Boolean);
     /// true while a head deadline is set
     function HasDeadline: Boolean;
     /// read up to ACount bytes; 0 only at end of stream.  A call returns bytes
@@ -349,6 +357,8 @@ begin
   FLastReadSeq := 0;
   FFillCount := 0;
   FDeadlineMs := 0;
+  FBodyTimeoutSet := False;
+  FBodyTimeoutMs := 0;
 end;
 
 procedure TBufferedReader.SetDeadline(const ADeadlineMs: QWord);
@@ -359,6 +369,13 @@ end;
 procedure TBufferedReader.ClearDeadline;
 begin
   FDeadlineMs := 0;
+end;
+
+procedure TBufferedReader.SetBodyReadTimeout(const AMs: Integer;
+  const ASet: Boolean);
+begin
+  FBodyTimeoutSet := ASet;
+  FBodyTimeoutMs := AMs;
 end;
 
 function TBufferedReader.HasDeadline: Boolean;
@@ -375,9 +392,25 @@ var
 begin
   if FDeadlineMs = 0 then
   begin
-    if APartial and Supports(FSocket, IPartialReader, PR) then
-      Exit(PR.ReadSome(ABuffer, ACount));
-    Exit(FSocket.Read(ABuffer, ACount));
+    if not FBodyTimeoutSet then
+    begin
+      if APartial and Supports(FSocket, IPartialReader, PR) then
+        Exit(PR.ReadSome(ABuffer, ACount));
+      Exit(FSocket.Read(ABuffer, ACount));
+    end;
+    // the request set a body-read timeout: this read waits at most that long
+    // (0 = indefinitely), and the socket timeout comes back after the read
+    Saved := FSocket.ReadTimeoutMs;
+    FSocket.ReadTimeoutMs := FBodyTimeoutMs;
+    try
+      if APartial and Supports(FSocket, IPartialReader, PR) then
+        Result := PR.ReadSome(ABuffer, ACount)
+      else
+        Result := FSocket.Read(ABuffer, ACount);
+    finally
+      FSocket.ReadTimeoutMs := Saved;
+    end;
+    Exit;
   end;
   // a read may wait only for the time that is left of the head deadline.  A
   // timeout of that read is final: no byte was consumed, and the deadline has

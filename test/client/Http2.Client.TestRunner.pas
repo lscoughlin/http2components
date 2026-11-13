@@ -57,6 +57,7 @@ uses
   Http2.Client.PlainSocketPending.Test,
   Http2.Client.ReceiveOverflow.Test,
   Http2.Client.Http1Fields.Test,
-  Http2.Client.TlsSocketPending.Test;
+  Http2.Client.TlsSocketPending.Test,
+  Http2.Client.Http1BodyTimeout.Test;
 
 end.
