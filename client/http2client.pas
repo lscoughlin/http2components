@@ -15,6 +15,7 @@ uses
   Http2.Client.Api,
   Http2.Client.Attempt,
   Http2.Client.BodyReader,
+  Http2.Client.Body.Limits,
   Http2.Client.ClientCert,
   Http2.Client.Clock,
   Http2.Client.Config.Security,

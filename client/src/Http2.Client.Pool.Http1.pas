@@ -27,7 +27,8 @@ uses
   Http2.Client.Http1,
   Http2.Client.RequestObserver,
   Http2.Client.Pool.Types,
-  Http2.Client.Defaults;
+  Http2.Client.Defaults,
+  Http2.Client.Body.Limits;
 
 
 type
@@ -62,6 +63,7 @@ type
     /// the in-flight response body, if any: the connection is only eligible
     /// for reuse once it is drained
     FLastBody: IHttpBodyStream;
+    FMaxResponseBytes: Int64;
   public
     constructor Create(const AH1: THttp1Connection; const AOrigin: string);
     destructor Destroy; override;
@@ -85,6 +87,10 @@ type
     function GetOrigin: string;
     function GetLock: TCriticalSection;
     function GetKey: Pointer;
+    /// the client option for the response body limit (0 = no limit); a
+    /// request that sets its own limit overrides it
+    property MaxResponseBytes: Int64 read FMaxResponseBytes
+      write FMaxResponseBytes;
   end;
 
 implementation
@@ -216,6 +222,7 @@ begin
   FLock := TCriticalSection.Create;
   FClosing := False;
   FLastBody := nil;
+  FMaxResponseBytes := 0;
 end;
 
 destructor THttp1PooledConnection.Destroy;
@@ -263,7 +270,8 @@ begin
       Exit;                // one request in flight: the pool tries another
     try
       FLastBody := nil;
-      Result := FH1.Send(ARequest);
+      Result := WrapLimitedResponse(FH1.Send(ARequest),
+        EffectiveResponseLimit(ARequest, FMaxResponseBytes));
       FLastBody := Result.Body;
       AAcquired := True;
     except
@@ -285,7 +293,8 @@ begin
   FLock.Acquire;
   try
     try
-      Result := FH1.ResumeResponse(ARequest, AStatusLine);
+      Result := WrapLimitedResponse(FH1.ResumeResponse(ARequest, AStatusLine),
+        EffectiveResponseLimit(ARequest, FMaxResponseBytes));
       FLastBody := Result.Body;
     except
       // a half-read response leaves the stream unusable

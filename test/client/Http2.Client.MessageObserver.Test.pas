@@ -186,7 +186,9 @@ begin
   SetNowUsHook(ScriptedClock);
   Client := THttpClientFactory.Create.WithSocketFactory(Factory)
     .WithRequestObserver(ObsRef).Build;
-  R := Client.Send(THttpRequest.Create(hmGet, 'https://a.example/x'));
+  // the request offers gzip: a body is decoded only when the request asked
+  R := Client.Send(THttpRequest.Create(hmGet, 'https://a.example/x')
+    .WithAcceptEncoding('gzip'));
   AssertTrue('the decoding wrapper answers for the response it wraps',
     Supports(R, IAttemptProgress, P));
   P.ReportMessage(mkSseEvent, mdIn, 1000100, 1, nil);

@@ -140,6 +140,10 @@ type
     /// a Server-Sent Events source relies on.
     BodyReadTimeoutMs: Integer;
     BodyReadTimeoutSet: Boolean;
+    /// response-body limit in bytes (0 = no limit). MaxResponseBytesSet says
+    /// whether the request set it; when False the client option applies.
+    MaxResponseBytes: Int64;
+    MaxResponseBytesSet: Boolean;
     /// the observed attempt this request belongs to (nil when unobserved)
     Exchange: IExchangeObserver;
     /// build a request with default scheme 'https', path '/', empty headers
@@ -260,6 +264,8 @@ begin
   Result.CancelToken := nil;
   Result.BodyReadTimeoutMs := 0;
   Result.BodyReadTimeoutSet := False;
+  Result.MaxResponseBytes := 0;
+  Result.MaxResponseBytesSet := False;
   Result.Exchange := nil;
 end;
 

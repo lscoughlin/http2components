@@ -37,6 +37,8 @@ type
     FHeaderTimeoutMs: Integer; // per-request override; 0 = factory default
     FBodyReadTimeoutMs: Integer; // per-request body-read deadline
     FBodyReadTimeoutSet: Boolean;
+    FMaxResponseBytes: Int64;  // per-request response limit; 0 = no limit
+    FMaxResponseBytesSet: Boolean;
     FContext: IInterface;      // opaque, handed back in THttpAttempt.Context
     FIdentity: IClientIdentity; // per-request origin identity, nil = none
     FAttemptKind: TAttemptKind;
@@ -65,6 +67,9 @@ type
     function WithCancelToken(const AToken: ICancellationToken): THttpRequest;
     /// override the factory HeaderTimeoutMs for this request (0 = default)
     function WithTimeout(const AMs: Integer): THttpRequest;
+    /// limit the response body to AValue bytes for this request, overriding
+    /// the client option. 0 means no limit, even when the option sets one.
+    function WithMaxResponseBytes(const AValue: Int64): THttpRequest;
     /// set the RESPONSE BODY read deadline for this request.
     /// - distinct from WithTimeout, which bounds the wait for response
     ///   headers. 0 here means "wait indefinitely", which a Server-Sent
@@ -198,6 +203,8 @@ begin
   Result.FCancelToken := nil;
   Result.FBodyReadTimeoutMs := 0;
   Result.FBodyReadTimeoutSet := False;
+  Result.FMaxResponseBytes := 0;
+  Result.FMaxResponseBytesSet := False;
   Result.FHeaderTimeoutMs := 0;
   Result.FContext := nil;
   Result.FIdentity := nil;
@@ -304,6 +311,13 @@ begin
   Result.FHeaderTimeoutMs := AMs;
 end;
 
+function THttpRequest.WithMaxResponseBytes(const AValue: Int64): THttpRequest;
+begin
+  Result := Self;
+  Result.FMaxResponseBytes := AValue;
+  Result.FMaxResponseBytesSet := True;
+end;
+
 function THttpRequest.WithSseReadTimeout(const AMs: Integer): THttpRequest;
 begin
   Result := Self;
@@ -398,6 +412,11 @@ begin
     Result := Result.WithCancelToken(FCancelToken);
   if FBodyReadTimeoutSet then
     Result := Result.WithBodyReadTimeout(FBodyReadTimeoutMs);
+  if FMaxResponseBytesSet then
+  begin
+    Result.MaxResponseBytes := FMaxResponseBytes;
+    Result.MaxResponseBytesSet := True;
+  end;
 end;
 
 function THttpRequest.Url: string;

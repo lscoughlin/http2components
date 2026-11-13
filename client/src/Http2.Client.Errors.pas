@@ -47,6 +47,8 @@ type
   EHttpTooManySseRetries = class(EHttpError);
   /// a server-sent event line or event passed its byte limit
   EHttpSseTooLarge = class(EHttpError);
+  /// a response body passed its byte limit (the wire, decoded or ratio limit)
+  EHttpResponseTooLarge = class(EHttpError);
   /// a server-sent event stream was silent past its idle limit
   EHttpSseIdleTimeout = class(EHttpTimeout);
   EHttpNotReplayable = class(EHttpError);

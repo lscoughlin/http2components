@@ -72,6 +72,7 @@ implementation
 
 uses
   Http2.Client.Response,
+  Http2.Client.Body.Limits,
   Http2.Client.Encoding;
 
 constructor THttpConnection.Create(const AConn: TConnection;
@@ -224,7 +225,14 @@ begin
   finally
     FLock.Release;
   end;
-  Result := WrapDecodingResponse(Result);
+  // the wire limit counts the bytes the connection delivers, so it wraps
+  // the body before the decoder; the decoded limit and the ratio cap go to
+  // the decoder, which runs only when the request offered a coding
+  Result := WrapLimitedResponse(Result,
+    EffectiveResponseLimit(ARequest, FConn.Security.MaxResponseBytes));
+  Result := WrapDecodingResponse(Result,
+    ARequest.Headers.Contains('accept-encoding'),
+    FConn.Security.MaxDecodedResponseBytes, FConn.Security.MaxDecodeRatio);
 end;
 
 procedure THttpConnection.MaybeClose;
@@ -319,7 +327,14 @@ begin
   finally
     FLock.Release;
   end;
-  Result := WrapDecodingResponse(Result);
+  // the wire limit counts the bytes the connection delivers, so it wraps
+  // the body before the decoder; the decoded limit and the ratio cap go to
+  // the decoder, which runs only when the request offered a coding
+  Result := WrapLimitedResponse(Result,
+    EffectiveResponseLimit(ARequest, FConn.Security.MaxResponseBytes));
+  Result := WrapDecodingResponse(Result,
+    ARequest.Headers.Contains('accept-encoding'),
+    FConn.Security.MaxDecodedResponseBytes, FConn.Security.MaxDecodeRatio);
 end;
 
 { TSingleReadSocket }

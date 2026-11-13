@@ -347,6 +347,35 @@ decoder detects the container from the first two bytes (RFC 1950 section
 footer to check the CRC. FPC's `TGZipDecompressionStream` skips that check
 when the seek fails, which is what the body adapter arranges.
 
+## Response size limits
+
+`TClientSecurityOptions` (`client/src/Http2.Client.Config.Security.pas`) holds
+three limits on a response body:
+
+- `MaxResponseBytes` limits the body bytes that the connection delivers, before
+  any decoding. The default is 0, which means no limit.
+- `MaxDecodedResponseBytes` limits the bytes that the decoder returns. The default
+  is 0, which means no limit. The limit applies to an HTTP/2 body that is coded.
+- `MaxDecodeRatio` caps the decoded bytes per wire byte of a coded HTTP/2 body. The
+  default is 1000 to 1. The cap is checked only after the first 1 MiB of decoded
+  output, so a small body that compresses well is not refused. The value 0 turns
+  the cap off.
+
+A request overrides the wire limit with `THttpRequest.WithMaxResponseBytes`. A value
+of 0 means no limit, even when the client option sets one.
+
+When a limit is passed, the next read raises `EHttpResponseTooLarge`, a descendant
+of `EHttpError`. The HTTP/1.1 pooled connection and the HTTP/2 pooled connection wrap
+the raw body in `TLimitedBodyStream` (`client/src/Http2.Client.Body.Limits.pas`)
+before the decoder runs, so the wire limit counts the bytes the peer sent.
+`ReadAllBodyBytes` keeps its total in an `Int64` and grows its buffer by doubling.
+A body that would not fit in one `TBytes` raises `EHttpResponseTooLarge`.
+
+A coded body is decoded only when the request sent `accept-encoding`. A response
+with an unsolicited `content-encoding` passes unchanged, with its header and its
+wire body. This behavior differs from the earlier client, which decoded any coded
+body.
+
 ## Text, JSON, and XML helpers
 
 Three convenience layers sit on top of the streaming API. They exist so the
