@@ -130,6 +130,7 @@ type
     FPeerSettingsReceived: Boolean;
     FGoAwayLastStreamId: LongWord;
     FHighestStreamId: LongWord;
+    FHighestOpenedStreamId: LongWord; // highest id that a lease registered
     FError: string;
     FErrorCode: THttp2ErrorCode;
     FClientAuthAlert: string;
@@ -152,8 +153,6 @@ type
     /// account for received DATA and return window credit to the peer when
     /// enough has accrued (RFC 7540 section 6.9). Called for every inbound
     /// DATA frame, stream-scoped or not.
-    /// emit any still-pending WINDOW_UPDATEs (e.g. when a stream ends)
-    procedure FlushStreamCredit(const AStreamId: LongWord);
     /// apply an inbound WINDOW_UPDATE to SEND-side credit (RFC 9113 section
     /// 6.9) and wake any sender starved on this window
   public
@@ -161,6 +160,8 @@ type
     procedure SetState(const AValue: TConnectionState);
     procedure SetSecurity(const AValue: TClientSecurityOptions);
     procedure TrackReceivedData(const AStreamId, ALength: LongWord);
+    /// the lease consumed ALength DATA bytes: return the stream credit
+    procedure DataConsumed(const AStreamId, ALength: LongWord);
     procedure ApplyWindowUpdate(const AStreamId, AIncrement: LongWord);
     /// release every sender parked on its per-sender event; each re-checks its own
     /// window and its AAbort flag, so a wake that is not for it is harmless
@@ -258,6 +259,8 @@ type
     property GoAwayLastStreamId: LongWord read FGoAwayLastStreamId;
     property HighestStreamId: LongWord read FHighestStreamId
       write FHighestStreamId;
+    /// the highest stream id that the client has opened (0 when none)
+    property HighestOpenedStreamId: LongWord read FHighestOpenedStreamId;
     property ErrorMessage: string read FError;
     property ErrorCode: THttp2ErrorCode read FErrorCode;
     property ReadPollMs: Integer read FReadPollMs write FReadPollMs;
@@ -365,6 +368,7 @@ begin
     cDefaultStreamWindowSize);
   FHeaderBlock := THeaderBlockAssembler.Create;
   FCredit := TReceiveCreditTracker.Create;
+  FCredit.StreamCreditOnRead := True;
   FStreams := TDictionary<LongWord, IConnectionStream>.Create;
   FStreamOneReserved := False;
 end;
@@ -651,6 +655,8 @@ begin
   try
     FStreams.AddOrSetValue(AStreamId, AStream);
     FFlowControl.OpenStream(AStreamId);
+    if AStreamId > FHighestOpenedStreamId then
+      FHighestOpenedStreamId := AStreamId;
     Failed := FState = csClosed;
     Msg := FError;
     Code := FErrorCode;
@@ -687,6 +693,8 @@ begin
     FFlowControl.OpenStream(1);
     if FHighestStreamId < 1 then
       FHighestStreamId := 1;
+    if FHighestOpenedStreamId < 1 then
+      FHighestOpenedStreamId := 1;
   finally
     FLock.Release;
   end;
@@ -791,22 +799,17 @@ begin
   end;
 end;
 
-procedure TConnection.TrackReceivedData(const AStreamId: LongWord;
-  const ALength: LongWord);
+procedure TConnection.TrackReceivedData(const AStreamId, ALength: LongWord);
 var
-  Win: TWindow;
   EmitConnInc, EmitStreamInc: LongWord;
 begin
   if ALength = 0 then
     Exit;
-  EmitConnInc := 0;
-  EmitStreamInc := 0;
   FLock.Acquire;
   try
-    // stream window: only for a stream we still track (an open lease)
-    FCredit.OnData(AStreamId, Integer(ALength),
-      (AStreamId <> 0) and FFlowControl.TryGetStream(AStreamId, Win),
-      cWindowUpdateBatchSize, EmitConnInc, EmitStreamInc);
+    // the stream credit is not returned here: it follows the read (DataConsumed)
+    FCredit.OnData(AStreamId, Integer(ALength), False, cWindowUpdateBatchSize,
+      EmitConnInc, EmitStreamInc);
   finally
     FLock.Release;
   end;
@@ -815,11 +818,27 @@ begin
     PostFrame(BuildWindowUpdateFrame(0, EmitConnInc));
     FNotifications.EmitWindowUpdate(0, EmitConnInc);
   end;
-  if EmitStreamInc > 0 then
-  begin
-    PostFrame(BuildWindowUpdateFrame(AStreamId, EmitStreamInc));
-    FNotifications.EmitWindowUpdate(AStreamId, EmitStreamInc);
+end;
+
+procedure TConnection.DataConsumed(const AStreamId, ALength: LongWord);
+var
+  Win: TWindow;
+  Credit: LongWord;
+begin
+  Credit := 0;
+  FLock.Acquire;
+  try
+    // a closed stream needs no credit (and must not leave a counter behind)
+    if (ALength > 0) and FFlowControl.TryGetStream(AStreamId, Win) then
+      Credit := FCredit.OnConsumed(AStreamId, Integer(ALength),
+        ReadBatchSize(FSecurity.MaxReceiveQueueBytes, cWindowUpdateBatchSize));
+  finally
+    FLock.Release;
   end;
+  if Credit = 0 then
+    Exit;
+  PostFrame(BuildWindowUpdateFrame(AStreamId, Credit));
+  FNotifications.EmitWindowUpdate(AStreamId, Credit);
 end;
 
 procedure TConnection.SendWindowUpdate(const AStreamId: LongWord);
@@ -836,11 +855,6 @@ begin
     Exit;
   PostFrame(BuildWindowUpdateFrame(AStreamId, Pending));
   FNotifications.EmitWindowUpdate(AStreamId, Pending);
-end;
-
-procedure TConnection.FlushStreamCredit(const AStreamId: LongWord);
-begin
-  SendWindowUpdate(AStreamId);
 end;
 
 procedure TConnection.ApplyWindowUpdate(const AStreamId,
@@ -953,6 +967,6 @@ begin
 end;
 
 procedure TConnection.SetSecurity(const AValue: TClientSecurityOptions);
-begin FSecurity := AValue; end;
+begin FSecurity := AValue; FLocalSettings.InitialWindowSize := LongWord(AValue.MaxReceiveQueueBytes); end;
 
 end.

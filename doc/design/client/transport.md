@@ -17,7 +17,7 @@ related:
   - "[fallback](fallback.md)"
   - "[proxy](proxy.md)"
   - "[open-questions](open-questions.md)"
-updated: 2026-11-11
+updated: 2026-11-13
 notes:
   - Imported from http2client/doc/design/transport.md at the source commit recorded in the source inventory.
 ---
@@ -42,14 +42,15 @@ Free Pascal 3.2.4 primitives (all choices below are probe-verified; see
   refcount rather than by raw pointer.
 - **Arrival stamps.** The connection thread reads `Http2.Client.Clock.NowUs` once
   per received frame, right after the frame is read, and the stamp travels
-  with the frame through the stream's inbound queue. A stream's queue is
-  unbounded, so `Push` on a lease queue never blocks the connection thread.
+  with the frame through the stream's inbound queue. A stream's queue holds
+  a byte count of DATA (`TByteBoundedFrameQueue`), and `Push` on it never
+  blocks the connection thread.
   The thread therefore keeps reading connection frames (WINDOW_UPDATE,
   SETTINGS, PING) while a consumer is idle, for example while the client
-  still sends a request body and has not yet read the response. Window credit
-  is returned on arrival, so the peer decides how many frames wait in the
-  queue. The connection's inbound queue for unclaimed frames is also
-  unbounded. The outbound queue keeps the bound
+  still sends a request body and has not yet read the response. The stream
+  credit is returned when the application reads, and the connection credit is
+  returned on arrival (see "Receive flow control"). The outbound queue keeps
+  the bound
   (`cDefaultQueueCapacity`, 128 frames). See
   [request-observability](request-observability.md), "Arrival stamping".
 - `TCriticalSection` (unit `SyncObjs`) — the pool guard, and per-connection
@@ -115,8 +116,9 @@ One thread per connection, responsible for *both* directions:
   `HEADERS`. The single writer guarantees this by construction.
 - **Backpressure:** `TBlockingQueue` has a bounded depth; a full outbound
   queue blocks (or returns a retryable error) instead of growing unbounded.
-  Inbound queues are unbounded, because a full inbound queue would stop the
-  reader from applying WINDOW_UPDATE frames. On
+  A stream queue never blocks the reader, because a blocked reader could not
+  apply WINDOW_UPDATE frames. The window of the stream bounds the queue
+  instead (see "Receive flow control"). On
   shutdown, `Shutdown` unblocks waiters and pending calls fail with
   `EHttpConnectionClosed` rather than hanging.
 - **Contention:** the HPACK encoder is stateful and shared across streams.
@@ -155,6 +157,41 @@ flowchart TB
   LOOP -.->|"HPACK decode"| HP["THpackCodec"]
   WRITE -.->|"HPACK encode"| HP
 ```
+
+## Receive flow control
+
+RFC 9113 section 5.2 and section 6.9 give each side a window for the DATA
+that it receives. The client keeps two receive windows with different rules.
+
+- **Stream credit follows the read.** When the lease takes a DATA frame out of
+  its queue, it tells the connection how many bytes it took
+  (`TConnection.DataConsumed`). `TReceiveCreditTracker.OnConsumed` adds the
+  bytes to a counter of the stream. The connection sends a stream
+  `WINDOW_UPDATE` when the counter reaches the batch size. The batch size is
+  32768 bytes, or half of the stream window when that is smaller. A stream
+  `WINDOW_UPDATE` is therefore never sent for data that waits in the queue. A
+  stream that is closed gets no more credit.
+- **Connection credit follows the arrival.** `TConnection.TrackReceivedData`
+  returns the connection credit when the frame arrives, in batches of 32768
+  bytes. A frame that is dropped (for example DATA on a stream that the
+  client reset) also returns its connection credit, as section 6.9 requires.
+  The connection window is not tied to the read, so a reader that stalls on
+  one stream does not stop the other streams of the connection.
+- **The advertised window equals the queue size.** The client puts
+  `Security.MaxReceiveQueueBytes` (default 1 MiB) in the
+  `SETTINGS_INITIAL_WINDOW_SIZE` of its first SETTINGS frame, and the peer
+  applies it to each new stream (section 6.9.2). A peer that follows the
+  protocol can send at most that many unread bytes on one stream, so the
+  queue of the stream does not pass its byte cap.
+
+The memory that received DATA uses is bounded by (open streams) x
+(`MaxReceiveQueueBytes`), plus one frame that the lease holds while the
+application reads it. A DATA frame that would pass the cap of a queue is a
+violation of the stream window. The queue raises `EHttpStreamError` with
+`ecFlowControlError`, and the connection fails with that error. A DATA frame
+for a stream that the client never opened, or for an even stream id, is a
+connection error with `PROTOCOL_ERROR`. A DATA frame for a stream that the
+client closed or reset is discarded.
 
 ## Connection lifecycle
 

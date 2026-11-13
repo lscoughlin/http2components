@@ -25,7 +25,11 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
+<<<<<<< HEAD
     <Files Count="62">
+=======
+    <Files Count="61">
+>>>>>>> sec/S-12b
       <Item1>
         <Filename Value="src/Http2.Client.Api.pas" />
         <UnitName Value="Http2.Client.Api" />
@@ -198,6 +202,10 @@
         <Filename Value="src/Http2.Client.Stream.pas" />
         <UnitName Value="Http2.Client.Stream" />
       </Item43>
+      <Item61>
+        <Filename Value="src/Http2.Client.Stream.Receive.pas" />
+        <UnitName Value="Http2.Client.Stream.Receive" />
+      </Item61>
       <Item44>
         <Filename Value="src/Http2.Client.Tls.Plain.pas" />
         <UnitName Value="Http2.Client.Tls.Plain" />
