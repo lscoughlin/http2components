@@ -133,8 +133,14 @@ type
   TResponseReader<T> = class(TInterfacedObject, IResponseReader<T>)
   public
     function Read(const AResponse: IHttpResponse): T; overload;
+    /// read with a cap on the body bytes (see ReadAllBodyBytes); AMaxBytes
+    /// <= 0 means no cap
+    function Read(const AResponse: IHttpResponse;
+      const AMaxBytes: Int64): T; overload;
     class procedure Read(const AResponse: IHttpResponse;
       out AValue: T); overload; static;
+    class procedure Read(const AResponse: IHttpResponse;
+      const AMaxBytes: Int64; out AValue: T); overload; static;
   end;
 
   PBytesValue = ^TBytes;
@@ -144,7 +150,12 @@ function WithTextBody(const ARequest: THttpRequest;
 
 /// read a whole response body as text (the body bytes copied verbatim; UTF-8
 /// when the peer sends UTF-8, which is the HTTP/2 default for text)
-function ReadText(const AResponse: IHttpResponse): string;
+function ReadText(const AResponse: IHttpResponse): string; overload;
+
+/// read a response body as text with a cap on the body bytes: raises
+/// EHttpResponseTooLarge past AMaxBytes (AMaxBytes <= 0 means no cap)
+function ReadText(const AResponse: IHttpResponse;
+  const AMaxBytes: Int64): string; overload;
 
 /// split a URL into host, port and path+query; default port is 443 (TLS)
 procedure ParseHttpUrl(const AUrl: string; out AHost: string; out APort: Word;
@@ -169,8 +180,15 @@ function DefaultPortForScheme(const AScheme: string): Word;
 /// protocol-relative, root-relative or path-relative (plan S10 task 10.1)
 function ResolveLocation(const ABaseUrl, ALocation: string): string;
 
-/// read a response body to EOF into a byte array (used by TResponseReader<T>)
-function ReadAllBodyBytes(const ABody: IHttpBodyStream): TBytes;
+/// read a response body to EOF into a byte array (used by TResponseReader<T>).
+/// It has no cap: a caller that reads a body from a peer it does not trust
+/// passes a cap to the overload below
+function ReadAllBodyBytes(const ABody: IHttpBodyStream): TBytes; overload;
+
+/// read a response body to EOF with a cap: raises EHttpResponseTooLarge as
+/// soon as the total would pass AMaxBytes (AMaxBytes <= 0 means no cap)
+function ReadAllBodyBytes(const ABody: IHttpBodyStream;
+  const AMaxBytes: Int64): TBytes; overload;
 
 /// base64url (RFC 4648 section 5) of AData: standard base64 with '+'->'-',
 /// '/'->'_' and NO '=' padding
@@ -241,9 +259,21 @@ begin
   Result := Http2.Client.BodyReader.ReadAllBodyBytes(ABody);
 end;
 
+function ReadAllBodyBytes(const ABody: IHttpBodyStream;
+  const AMaxBytes: Int64): TBytes;
+begin
+  Result := Http2.Client.BodyReader.ReadAllBodyBytes(ABody, AMaxBytes);
+end;
+
 function ReadText(const AResponse: IHttpResponse): string;
 begin
   Result := Http2.Client.BodyReader.ReadText(AResponse);
+end;
+
+function ReadText(const AResponse: IHttpResponse;
+  const AMaxBytes: Int64): string;
+begin
+  Result := Http2.Client.BodyReader.ReadText(AResponse, AMaxBytes);
 end;
 
 function Base64UrlEncode(const AData: TBytes): string;
@@ -269,11 +299,23 @@ end;
 
 function TResponseReader<T>.Read(const AResponse: IHttpResponse): T;
 begin
-  Read(AResponse, Result);
+  Read(AResponse, 0, Result);
+end;
+
+function TResponseReader<T>.Read(const AResponse: IHttpResponse;
+  const AMaxBytes: Int64): T;
+begin
+  Read(AResponse, AMaxBytes, Result);
 end;
 
 class procedure TResponseReader<T>.Read(const AResponse: IHttpResponse;
   out AValue: T);
+begin
+  Read(AResponse, 0, AValue);
+end;
+
+class procedure TResponseReader<T>.Read(const AResponse: IHttpResponse;
+  const AMaxBytes: Int64; out AValue: T);
 var
   Raw: TBytes;
   PI: PTypeInfo;
@@ -281,7 +323,7 @@ var
 begin
   if AResponse = nil then
     raise EHttpProtocolError.Create('response is nil', ecInternalError);
-  Raw := ReadAllBodyBytes(AResponse.Body);
+  Raw := ReadAllBodyBytes(AResponse.Body, AMaxBytes);
   PI := TypeInfo(T);
   case PI^.Kind of
     tkAString:

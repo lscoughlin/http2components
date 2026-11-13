@@ -20,9 +20,22 @@ uses
   Http2.Client.Stream;
 
 
-function ReadAllBodyBytes(const ABody: IHttpBodyStream): TBytes;
+/// read a body to EOF with no cap (the body is read whole, up to the size of
+/// one TBytes)
+function ReadAllBodyBytes(const ABody: IHttpBodyStream): TBytes; overload;
 
-function ReadText(const AResponse: IHttpResponse): string;
+/// read a body to EOF; raises EHttpResponseTooLarge as soon as the total
+/// would pass AMaxBytes, before the buffer grows past it. AMaxBytes <= 0 means
+/// no cap
+function ReadAllBodyBytes(const ABody: IHttpBodyStream;
+  const AMaxBytes: Int64): TBytes; overload;
+
+function ReadText(const AResponse: IHttpResponse): string; overload;
+
+/// read a response body as text with a cap (see ReadAllBodyBytes); AMaxBytes
+/// <= 0 means no cap
+function ReadText(const AResponse: IHttpResponse;
+  const AMaxBytes: Int64): string; overload;
 
 implementation
 
@@ -30,13 +43,23 @@ uses
   Http2.Client.Errors;
 
 function ReadAllBodyBytes(const ABody: IHttpBodyStream): TBytes;
+begin
+  Result := ReadAllBodyBytes(ABody, 0);
+end;
+
+function ReadAllBodyBytes(const ABody: IHttpBodyStream;
+  const AMaxBytes: Int64): TBytes;
 var
   Buf: array[0..4095] of Byte;
   N: Integer;
-  Total, Cap, NewCap: Int64;
+  Total, Cap, NewCap, Limit: Int64;
 begin
-  // the total is an Int64 and the buffer grows by doubling; a body that
-  // would not fit in one TBytes raises EHttpResponseTooLarge
+  // the total is an Int64 and the buffer grows by doubling. The limit is the
+  // cap when one is set, and High(Integer) otherwise: a body that would not
+  // fit in one TBytes raises EHttpResponseTooLarge
+  Limit := High(Integer);
+  if (AMaxBytes > 0) and (AMaxBytes < Limit) then
+    Limit := AMaxBytes;
   Result := nil;
   Total := 0;
   Cap := 0;
@@ -45,9 +68,11 @@ begin
     N := ABody.Read(Buf, SizeOf(Buf));
     if N <= 0 then
       Break;
-    if Total + N > High(Integer) then
+    // the check comes before the buffer grows, so the buffer never holds
+    // more than Limit bytes
+    if Total + N > Limit then
       raise EHttpResponseTooLarge.CreateFmt(
-        'response body passes %d bytes', [High(Integer)]);
+        'response body passes %d bytes', [Limit]);
     if Total + N > Cap then
     begin
       NewCap := Cap * 2;
@@ -55,8 +80,8 @@ begin
         NewCap := 4096;
       if NewCap < Total + N then
         NewCap := Total + N;
-      if NewCap > High(Integer) then
-        NewCap := High(Integer);
+      if NewCap > Limit then
+        NewCap := Limit;
       SetLength(Result, NewCap);
       Cap := NewCap;
     end;
@@ -67,12 +92,18 @@ begin
 end;
 
 function ReadText(const AResponse: IHttpResponse): string;
+begin
+  Result := ReadText(AResponse, 0);
+end;
+
+function ReadText(const AResponse: IHttpResponse;
+  const AMaxBytes: Int64): string;
 var
   Raw: TBytes;
 begin
   if AResponse = nil then
     raise EHttpProtocolError.Create('response is nil', ecInternalError);
-  Raw := ReadAllBodyBytes(AResponse.Body);
+  Raw := ReadAllBodyBytes(AResponse.Body, AMaxBytes);
   SetLength(Result, Length(Raw));
   if Length(Raw) > 0 then
     Move(Raw[0], Result[1], Length(Raw));

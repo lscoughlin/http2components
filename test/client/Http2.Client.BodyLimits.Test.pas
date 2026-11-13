@@ -60,6 +60,20 @@ type
     function CallCount: Integer;
   end;
 
+  /// a body of ASize bytes, each one $41, that counts its Read calls; each
+  /// Read fills at most ACount bytes
+  TCountingBody = class(TInterfacedObject, IHttpBodyStream)
+  private
+    FSize: Int64;
+    FPos: Int64;
+    FCalls: Integer;
+  public
+    constructor Create(const ASize: Int64);
+    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Eof: Boolean;
+    function CallCount: Integer;
+  end;
+
   /// a response with a body and headers
   TBodyResponse = class(TInterfacedObject, IHttpResponse)
   private
@@ -100,6 +114,11 @@ type
     procedure TestReadAllBodyBytesGrowsPastTheInitialBuffer;
     procedure TestReadAllBodyBytesRaisesPastTwoGiB;
     procedure TestTypedReaderPassesTheTwoGiBRaise;
+    procedure TestCappedReadRaisesAfterTheFirstBlockPastTheCap;
+    procedure TestCappedReadAllowsTheExactCap;
+    procedure TestUncappedReadIsNotCapped;
+    procedure TestCappedReadTextRaisesPastTheCap;
+    procedure TestCappedTypedReadersRaisePastTheCap;
     procedure TestHttp1ResponseOverTheOptionRaises;
     procedure TestHttp1RequestOverrideRaises;
     procedure TestHttp1RequestOverrideZeroIsUnlimited;
@@ -206,6 +225,44 @@ begin
 end;
 
 function TReportedCountBody.CallCount: Integer;
+begin
+  Result := FCalls;
+end;
+
+{ TCountingBody }
+
+constructor TCountingBody.Create(const ASize: Int64);
+begin
+  inherited Create;
+  FSize := ASize;
+  FPos := 0;
+  FCalls := 0;
+end;
+
+function TCountingBody.Read(var ABuffer; const ACount: LongInt): LongInt;
+var
+  Take: Int64;
+begin
+  Inc(FCalls);
+  Result := 0;
+  if ACount <= 0 then
+    Exit;
+  Take := FSize - FPos;
+  if Take <= 0 then
+    Exit;
+  if Take > ACount then
+    Take := ACount;
+  FillChar(ABuffer, Take, $41);
+  Inc(FPos, Take);
+  Result := LongInt(Take);
+end;
+
+function TCountingBody.Eof: Boolean;
+begin
+  Result := FPos >= FSize;
+end;
+
+function TCountingBody.CallCount: Integer;
 begin
   Result := FCalls;
 end;
@@ -523,6 +580,102 @@ begin
       Raised := True;
   end;
   AssertTrue('the typed reader raises past 2 GiB', Raised);
+end;
+
+procedure TBodyLimitsTest.TestCappedReadRaisesAfterTheFirstBlockPastTheCap;
+var
+  Counted: TCountingBody;
+  Body: IHttpBodyStream;
+  Raised: Boolean;
+begin
+  // the cap is 10000 bytes and the body holds 10001; the reads take 4 KiB
+  // blocks, so the third block (a total of 12288) is the one that passes the
+  // cap, and the body is read no further than that block
+  Counted := TCountingBody.Create(10001);
+  Body := Counted;
+  Raised := False;
+  try
+    ReadAllBodyBytes(Body, 10000);
+  except
+    on E: EHttpResponseTooLarge do
+      Raised := True;
+  end;
+  AssertTrue('a body past the cap raises', Raised);
+  AssertEquals('the body is read only up to the block that passes the cap',
+    3, Counted.CallCount);
+end;
+
+procedure TBodyLimitsTest.TestCappedReadAllowsTheExactCap;
+var
+  Got: TBytes;
+begin
+  Got := ReadAllBodyBytes(TFillBody.Create(10000), 10000);
+  AssertEquals('a body of exactly the cap is returned whole', 10000,
+    Length(Got));
+  AssertEquals('the last byte', $41, Integer(Got[High(Got)]));
+end;
+
+procedure TBodyLimitsTest.TestUncappedReadIsNotCapped;
+var
+  Got: TBytes;
+begin
+  // the old overload has no cap, so a 20000-byte body returns whole, which is
+  // more than the 10000-byte cap of the new overload; a cap of 0 means no cap
+  Got := ReadAllBodyBytes(TFillBody.Create(20000));
+  AssertEquals('the old overload keeps the whole body', 20000, Length(Got));
+  Got := ReadAllBodyBytes(TFillBody.Create(20000), 0);
+  AssertEquals('a cap of zero keeps the whole body', 20000, Length(Got));
+end;
+
+procedure TBodyLimitsTest.TestCappedReadTextRaisesPastTheCap;
+var
+  Resp: IHttpResponse;
+  Raised: Boolean;
+begin
+  Resp := TBodyResponse.Create(TFillBody.Create(10001));
+  Raised := False;
+  try
+    ReadText(Resp, 10000);
+  except
+    on E: EHttpResponseTooLarge do
+      Raised := True;
+  end;
+  AssertTrue('ReadText with a cap raises past the cap', Raised);
+  AssertEquals('ReadText of a body of exactly the cap',
+    10000, Length(ReadText(TBodyResponse.Create(TFillBody.Create(10000)), 10000)));
+end;
+
+procedure TBodyLimitsTest.TestCappedTypedReadersRaisePastTheCap;
+var
+  Resp: IHttpResponse;
+  Text: string;
+  Reader: TResponseReader<string>;
+  Raised: Boolean;
+begin
+  Resp := TBodyResponse.Create(TFillBody.Create(10001));
+  Raised := False;
+  try
+    TResponseReader<string>.Read(Resp, 10000, Text);
+  except
+    on E: EHttpResponseTooLarge do
+      Raised := True;
+  end;
+  AssertTrue('the static typed reader raises past the cap', Raised);
+
+  Resp := TBodyResponse.Create(TFillBody.Create(10001));
+  Raised := False;
+  Reader := TResponseReader<string>.Create;
+  try
+    try
+      Text := Reader.Read(Resp, 10000);
+    except
+      on E: EHttpResponseTooLarge do
+        Raised := True;
+    end;
+  finally
+    Reader.Free;
+  end;
+  AssertTrue('the instance typed reader raises past the cap', Raised);
 end;
 
 procedure TBodyLimitsTest.TestHttp1ResponseOverTheOptionRaises;
