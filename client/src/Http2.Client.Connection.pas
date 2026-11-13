@@ -23,6 +23,7 @@ uses
   Http2.Client.Clock, Http2.Common.Hpack, Http2.Client.Connection.Observer,
   Http2.Client.Connection.Queue, Http2.Client.Connection.SendCredit,
   Http2.Client.Connection.Credit, Http2.Client.Connection.HeaderBlock,
+  Http2.Client.Connection.Control,
   Http2.Client.Config.Security;
 
 const
@@ -117,6 +118,7 @@ type
     FStateEvent: PRTLEvent;
     FSocket: IHttp2Socket;
     FOutbound: IBlockingQueue<TFrame>;
+    FControl: TControlFrameQueue; // control frames: never blocks the reader
     FInbound: IBlockingQueue<TFrame>;
     FThread: TConnectionThread;
     FHeaderDecoder: THpackCodec; // weak; owner outlives the connection thread
@@ -253,6 +255,7 @@ type
     property LastActivity: QWord read FLastActivity;
     property Thread: TConnectionThread read FThread;
     property Outbound: IBlockingQueue<TFrame> read FOutbound;
+    property ControlQueue: TControlFrameQueue read FControl;
     property Inbound: IBlockingQueue<TFrame> read FInbound;
     property Socket: IHttp2Socket read FSocket;
     property SettingsAcked: Boolean read FSettingsAcked;
@@ -348,6 +351,7 @@ begin
   FSecurity := TClientSecurityOptions.Default;
   FSocket := ASocket;
   FOutbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
+  FControl := TControlFrameQueue.Create;
   FInbound := TBlockingQueue<TFrame>.Create(0); // unbounded: only the reader fills it
   FLocalSettings := ALocalSettings;
   FPeerSettings := TConnectionSettings.Defaults;
@@ -377,6 +381,7 @@ destructor TConnection.Destroy;
 begin
   Close;
   FreeAndNil(FCredit);
+  FreeAndNil(FControl);
   FreeAndNil(FHeaderBlock);
   FreeAndNil(FFlowControl);
   FreeAndNil(FNotifications);
@@ -496,7 +501,7 @@ function TConnection.PostFrame(const AFrame: TFrame): Boolean;
 begin
   Result := not FClosed;
   if Result then
-    FOutbound.Push(AFrame);
+    Result := FControl.TryPost(AFrame);
 end;
 
 function TConnection.CanOpenStream: Boolean;

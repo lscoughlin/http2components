@@ -50,6 +50,7 @@ uses
   Http2.Client.Receive.Test, Http2.Client.ReceiveCredit.Test,
   Http2.Client.PhaseDeadline.Test,
   Http2.Client.BodyLimits.Test,
-  Http2.Client.HeaderLimits.Test;
+  Http2.Client.HeaderLimits.Test,
+  Http2.Client.ControlQueue.Test;
 
 end.

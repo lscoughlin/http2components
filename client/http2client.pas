@@ -23,6 +23,7 @@ uses
   Http2.Client.Connection.Queue,
   Http2.Client.Connection.SendCredit,
   Http2.Client.Connection.Credit,
+  Http2.Client.Connection.Control,
   Http2.Client.Connection.HeaderBlock,
   Http2.Client.Connection.Thread,
   Http2.Client.Connection,
