@@ -146,10 +146,8 @@ begin
       raise EHttpConnectionError.Create('HTTP/2 connection did not open');
     end;
   end;
+  // the caller registers it (under FLock) once the dial has finished
   Result := Pooled;
-  ListFor(AOrigin).Add(Result);
-  Inc(FTotalConnections);
-  MarkUsed(Result);
 end;
 
 function TConnectionPool.WrapHttp1(const Sock: IHttp2Socket;
@@ -162,9 +160,6 @@ begin
   H1 := THttp1Connection.Create(TSingleReadSocket.Create(Sock),
     FHeaderTimeoutMs);
   Result := THttp1PooledConnection.Create(H1, AOrigin);
-  ListFor(AOrigin).Add(Result);
-  Inc(FTotalConnections);
-  MarkUsed(Result);
 end;
 
 function TConnectionPool.TryH2cUpgrade(const Sock: IHttp2Socket;
@@ -306,6 +301,8 @@ var
   Protocol: TNegotiatedProtocol;
   Key, PendingKey, Remembered, Fingerprint, BaseKey, ContextKey: string;
   Selecting, Resolved, NeedSelect, Fixed, Marked, Deferred: Boolean;
+  Dialing, DialOk, WasMarked: Boolean;
+  Late: IPooledConnection;
   Identity: IClientIdentity;
   ContextKeyFactory: ITlsContextPoolKey;
 begin
@@ -346,15 +343,15 @@ begin
       Opened := False;
       NeedSelect := False;
       Deferred := False;
+      Dialing := False;
       FLock.Acquire;
       try
-        // back from asking the selector: this request now dials (or parks),
-        // so a concurrent request may stop waiting for it
-        if Marked then
-        begin
-          FSelecting.Remove(BaseKey);
-          Marked := False;
-        end;
+        // back from asking the selector: this request now dials (or parks).
+        // A concurrent request keeps waiting for it until the dial has
+        // registered its connection (or failed), so one cold origin is dialled
+        // once; the mark is cleared at the end of this section when no dial
+        // follows, else in the locked section that ends the dial
+        WasMarked := Marked;
         // with a selector the key carries the fingerprint: the one the
         // selector just answered, else the one the last dial here presented,
         // so a reused connection never asks the selector again
@@ -397,15 +394,10 @@ begin
           end
           else
           begin
-            // the one transport-selection point: TLS vs cleartext and the
-            // HTTP/2 vs HTTP/1.1 codec (doc/design/fallback.md "Negotiation")
-            OpenForTxn(Key, AHost, APort, ARequest, AHeaderTimeoutMs,
-              ARequest.Scheme, AProxy, Selecting or Fixed, Identity, Conn,
-              Upgraded,
-              First);
-            Opened := Conn <> nil;
-            if Opened and Selecting then
-              FIdentityKeys.AddOrSetValue(BaseKey, Fingerprint);
+            // the slot is reserved below, at the end of this locked section;
+            // the dial itself runs after FLock is released, so a slow origin
+            // never blocks a call for another origin
+            Dialing := True;
           end;
         end;
         // a caller with no connection and no answer parks below: count it so
@@ -413,7 +405,7 @@ begin
         // (a caller about to ask the selector is not parked: it goes straight
         // round again)
         if not (NeedSelect or Deferred) then
-          if (Conn <> nil) or (First <> nil) then
+          if (Conn <> nil) or (First <> nil) or Dialing then
           begin
             if Waiting then
               AddPendingLocked(Key, -1);
@@ -424,8 +416,77 @@ begin
             AddPendingLocked(Key, 1);
             Waiting := True;
           end;
+        // last statement of the section: nothing after it can fail, so the
+        // reservation always reaches the try..finally below
+        if WasMarked and not Dialing then
+        begin
+          FSelecting.Remove(BaseKey);
+          Marked := False;
+        end;
+        if Dialing then
+          ReserveDial(Key);
       finally
         FLock.Release;
+      end;
+
+      if Dialing then
+      begin
+        Late := nil;
+        DialOk := False;
+        try
+          // an idle connection that Evict took out closes here, outside FLock;
+          // inside the try, so a raise still gives the reserved slot back
+          CloseVictims;
+          // the one transport-selection point: TLS vs cleartext and the
+          // HTTP/2 vs HTTP/1.1 codec (doc/design/fallback.md "Negotiation")
+          OpenForTxn(Key, AHost, APort, ARequest, AHeaderTimeoutMs,
+            ARequest.Scheme, AProxy, Selecting or Fixed, Identity, Conn,
+            Upgraded, First);
+          DialOk := True;
+        finally
+          // every exit of the dial (success, a raise) gives the reserved
+          // slot back and registers the connection in ONE locked section
+          FLock.Acquire;
+          try
+            ReleaseDial(Key);
+            if Marked then
+            begin
+              FSelecting.Remove(BaseKey);
+              Marked := False;
+            end;
+            if Conn <> nil then
+              if FClosed then
+                Late := Conn
+              else
+              begin
+                Register(Key, Conn);
+                if DialOk and Selecting then
+                  FIdentityKeys.AddOrSetValue(BaseKey, Fingerprint);
+              end;
+          finally
+            FLock.Release;
+          end;
+          // the pool closed during the dial: the new connection closes
+          if Late <> nil then
+            Late.Drain;
+        end;
+        if Late <> nil then
+        begin
+          Conn := nil;
+          First := nil;
+          raise EHttpConnectionClosed.Create('client is closed');
+        end;
+        Opened := Conn <> nil;
+        // the token fired during the dial: the connection stays in the pool
+        // (it is healthy and still useful), the call ends with the cancel error
+        if (AToken <> nil) and AToken.IsCancelled then
+        begin
+          if Upgraded and (Conn <> nil) then
+            Conn.Drain;               // unstarted, and no request adopts it
+          First := nil;
+          Conn := nil;
+          raise EHttpStreamError.Create('request cancelled', 0, ecCancel);
+        end;
       end;
 
       if NeedSelect then

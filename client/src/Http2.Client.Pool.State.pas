@@ -67,6 +67,13 @@ type
     /// request, so a concurrent request waits for that dial instead of asking
     /// again; guarded by FLock
     FSelecting: TDictionary<string, Boolean>;
+    /// dials in progress, per base key; each one holds a reserved slot that
+    /// counts against the caps until it registers or fails; guarded by FLock
+    FDialing: TDictionary<string, Integer>;
+    FDialingTotal: Integer;
+    /// connections that Evict took out of the pool; they close after FLock is
+    /// released, because a close can block (TLS close_notify); guarded by FLock
+    FVictims: TList<IPooledConnection>;
     /// the TCP+TLS-or-cleartext dial for ARequest's scheme (fallback on https,
     /// the policy on http); out AProtocol names the negotiated wire protocol.
     /// Uses the extended ICleartextSocketFactory contract when the factory
@@ -120,6 +127,15 @@ type
     function CanOpenNew(const AKey: string; const AEvict: Boolean): Boolean;
     procedure Register(const AOrigin: string;
       const AConn: IPooledConnection);
+    /// reserve a slot for a dial of the key AKey; the caller holds FLock and
+    /// has just seen CanOpenNew answer True.  Every call is paired with one
+    /// ReleaseDial under FLock, in the same locked section that registers the
+    /// new connection, so the slot is never counted twice or not at all.
+    function ReserveDial(const AKey: string): Boolean;
+    /// give the slot of a finished or failed dial back; the caller holds FLock
+    procedure ReleaseDial(const AKey: string);
+    /// close the connections that Evict took out; the caller does NOT hold FLock
+    procedure CloseVictims;
   public
     constructor Create(const AFactory: IHttp2SocketFactory;
       const AMaxConnectionsPerHost, AMaxTotalConnections,
@@ -153,6 +169,8 @@ type
     function Stats: TPoolStats;
     // test seams
     function ConnectionCount: Integer;
+    /// the number of dials in progress (reserved slots)
+    function DialingCount: Integer;
     function ConnectionCountForOrigin(const AOrigin: string): Integer;
     function ActiveStreamsForOrigin(const AOrigin: string): TArray<Integer>;
     /// choose the least-loaded eligible connection for AOrigin (test seam)
@@ -178,6 +196,8 @@ begin
   FPending := TDictionary<string, Integer>.Create;
   FIdentityKeys := TDictionary<string, string>.Create;
   FSelecting := TDictionary<string, Boolean>.Create;
+  FDialing := TDictionary<string, Integer>.Create;
+  FVictims := TList<IPooledConnection>.Create;
   FFactory := AFactory;
   FObserver := AObserver;
   FMaxConnectionsPerHost := AMaxConnectionsPerHost;
@@ -201,13 +221,73 @@ begin
   MarkUsed(AConn);
 end;
 
+function TPoolState.ReserveDial(const AKey: string): Boolean;
+var
+  Base: string;
+  N: Integer;
+begin
+  Base := BaseOfKey(AKey);
+  if not FDialing.TryGetValue(Base, N) then
+    N := 0;
+  FDialing.AddOrSetValue(Base, N + 1);
+  Inc(FDialingTotal);
+  Result := True;
+end;
+
+procedure TPoolState.ReleaseDial(const AKey: string);
+var
+  Base: string;
+  N: Integer;
+begin
+  Base := BaseOfKey(AKey);
+  if FDialing.TryGetValue(Base, N) then
+  begin
+    if N > 1 then
+      FDialing.AddOrSetValue(Base, N - 1)
+    else
+      FDialing.Remove(Base);
+    Dec(FDialingTotal);
+  end;
+end;
+
+procedure TPoolState.CloseVictims;
+var
+  Taken: TArray<IPooledConnection>;
+  C: IPooledConnection;
+begin
+  FLock.Acquire;
+  try
+    if FVictims.Count = 0 then
+      Exit;
+    Taken := FVictims.ToArray;
+    FVictims.Clear;
+  finally
+    FLock.Release;
+  end;
+  for C in Taken do
+    C.Drain;                         // closes now, since it is idle
+end;
+
+function TPoolState.DialingCount: Integer;
+begin
+  FLock.Acquire;
+  try
+    Result := FDialingTotal;
+  finally
+    FLock.Release;
+  end;
+end;
+
 destructor TPoolState.Destroy;
 var
   L: TList<IPooledConnection>;
 begin
   Close;
+  CloseVictims;
   for L in FByOrigin.Values do
     L.Free;
+  FDialing.Free;
+  FVictims.Free;
   FByOrigin.Free;
   FIdleSince.Free;
   FCreatedAt.Free;
@@ -371,7 +451,8 @@ end;
 procedure TPoolState.Evict(const AList: TList<IPooledConnection>;
   const AConn: IPooledConnection);
 begin
-  AConn.Drain;                       // closes now, since it is idle
+  // the close can block (TLS close_notify), so it waits until FLock is free
+  FVictims.Add(AConn);
   FIdleSince.Remove(AConn.Key);
   FCreatedAt.Remove(AConn.Key);
   AList.Remove(AConn);
@@ -384,12 +465,16 @@ var
   Base: string;
   Victim: IPooledConnection;
   VictimList: TList<IPooledConnection>;
+  Dialing: Integer;
 begin
   if FClosed then
     Exit(False);
   Base := BaseOfKey(AKey);
-  Result := (CountForBase(Base) < FMaxConnectionsPerHost) and
-            (FTotalConnections < FMaxTotalConnections);
+  // a dial in progress holds a slot, so it counts like a connection
+  if not FDialing.TryGetValue(Base, Dialing) then
+    Dialing := 0;
+  Result := (CountForBase(Base) + Dialing < FMaxConnectionsPerHost) and
+            (FTotalConnections + FDialingTotal < FMaxTotalConnections);
   if Result then
     Exit;
   // a cap is reached: an idle connection of another identity to this origin
