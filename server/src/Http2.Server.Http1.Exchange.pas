@@ -35,7 +35,7 @@ uses
   Http2.Server.HandlerJob, Http2.Server.Http1.Guard, Http2.Server.Http1.Host,
   Http2.Server.Http1.ResponseHead, Http2.Server.Http1.Channel,
   Http2.Server.Http1.SocketChannel, Http2.Server.AccessLog,
-  Http2.Server.ClientCert;
+  Http2.Server.ClientCert, Http2.Server.Http1.Grow;
 
 type
   TH1ExchangeOptions = record
@@ -231,7 +231,7 @@ begin
     end;
     Need := FBodyTail + ACount;
     if Need > Length(FBody) then
-      SetLength(FBody, Need + Need div 2 + 256);
+      SetLength(FBody, GrownLength(Need, Length(FBody)));
     Move(AData, FBody[FBodyTail], ACount);
     FBodyTail := Need;
     FLastProgressMs := GetTickCount64;

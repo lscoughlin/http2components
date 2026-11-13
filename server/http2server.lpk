@@ -25,7 +25,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="74">
+    <Files Count="75">
       <Item1>
         <Filename Value="src/Http2.Server.AccessLog.Handler.pas" />
         <UnitName Value="Http2.Server.AccessLog.Handler" />
@@ -322,6 +322,10 @@
         <Filename Value="src/Http2.Server.Admission.Errors.pas" />
         <UnitName Value="Http2.Server.Admission.Errors" />
       </Item74>
+      <Item75>
+        <Filename Value="src/Http2.Server.Http1.Grow.pas" />
+        <UnitName Value="Http2.Server.Http1.Grow" />
+      </Item75>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
