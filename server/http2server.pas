@@ -72,6 +72,7 @@ uses
   Http2.Server.Unix.Path,
   Http2.Server.Waiter,
   Http2.Server.WebSocket.Accept,
+  Http2.Server.WebSocket.Budget,
   Http2.Server.WebSocket.Close,
   Http2.Server.WebSocket.Environment,
   Http2.Server.WebSocket.Frames,
