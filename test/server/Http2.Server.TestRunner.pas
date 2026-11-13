@@ -109,7 +109,8 @@ uses
   Http2.Server.HandlerDeadline.Test,
   Http2.Server.Http1.Unfinished.Test,
   Http2.Server.Async.Trace.Test,
-  Http2.Server.Http1.Fields.Test;
+  Http2.Server.Http1.Fields.Test,
+  Http2.Server.Async.Flight.Test;
 
 const
   /// name of the top-level suite in the runner report

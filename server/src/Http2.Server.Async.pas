@@ -43,7 +43,7 @@ uses
   Http2.Server.Async.Options,
   Http2.Server.Async.Counters,
   Http2.Server.Async.Waker,
-  Http2.Server.Async.Sweep, Http2.Server.Async.Backlog,
+  Http2.Server.Async.Sweep, Http2.Server.Async.Backlog, Http2.Server.Async.Flight,
   Http2.Server.Async.Socket, Http2.Server.Unix.Path, Http2.Server.Async.Trace,
   Http2.Server.Tls.Binding, Http2.Server.Tls.Adapter,
   Http2.Common.Tls.Context, Http2.Common.Tls.Session,
@@ -106,7 +106,11 @@ type
     // - the outer loop repeats when this flag is set, so a wake-up that
     //   loses the race to the loop exit is never lost
     FSendRequested: Boolean;
-    /// guards the two send flags
+    /// a close decision that a read or write callback left to the send loop
+    FCloseWanted: Boolean;
+    /// the thread that runs the send loop while FInSend is set
+    FSendThread: TThreadID;
+    /// guards the three send flags
     FSendLock: TCriticalSection;
     FAcceptedMs: QWord; // the accept time in milliseconds, for the age sweep
     FJitterPermille: Integer; // the age reduction in permille, drawn at accept
@@ -138,6 +142,10 @@ type
     /// drop the state of the connection that ended: both cores, the waker and the lock
     procedure ReleaseState;
     procedure ReleaseAdmission;
+    /// true when a send loop holds output that left the core; the close waits
+    function DeferCloseForSend: Boolean;
+    /// the send loop ends: true when a deferred close is due; call under FSendLock
+    function TakeDeferredClose: Boolean;
   protected
     procedure AfterCreate; override;
     procedure BeforeDestroy; override;
@@ -359,8 +367,7 @@ begin
   FWaker := nil;
   FMethodWaker := nil;
   FEvents := nil;
-  FInSend := False;
-  FSendRequested := False;
+  FInSend := False; FSendRequested := False; FCloseWanted := False;
   FClientCert := nil;
   FPendingTlsPlain := nil;
   FPendingTlsOffset := 0;
@@ -394,10 +401,10 @@ end;
 function THttp2AsyncConnection.SendPendingOutput: Boolean;
 var
   Data: TBytes;
-  Again, PendingPlainProgress, OwnsSend: Boolean; Before, After: Int64;
+  Again, PendingPlainProgress, OwnsSend, CloseDrained: Boolean; Before, After: Int64;
 begin
   result := False;
-  OwnsSend := False;
+  OwnsSend := False; CloseDrained := False;
   if ((FCore = nil) and (FH1 = nil)) or IsClosed then
     exit;
   // a wake-up that arrives while the loop runs is recorded and not dropped,
@@ -408,7 +415,7 @@ begin
     FSendRequested := True;
     if FInSend then
       exit;   // the running loop owns the send path and will repeat
-    FInSend := True;
+    FInSend := True; FSendThread := GetCurrentThreadId;
     OwnsSend := True;
   finally
     FSendLock.Release;
@@ -479,7 +486,7 @@ begin
           end;
           Continue;
         end;
-        TraceWrite(FTrace, pointer(Data), Length(Data));
+        FlightBeforeWrite(Self); TraceWrite(FTrace, pointer(Data), Length(Data));
         Before := PendingWriteBytes;
         // the mORMot2 write path takes the write lock, sends at once when it
         // can, and otherwise subscribes for the write event.  A false answer
@@ -527,6 +534,8 @@ begin
           FInSend := False;
           OwnsSend := False;
           Again := False;
+          // a close that a read left to this loop is decided in this hold
+          CloseDrained := TakeDeferredClose;
         end;
       finally
         FSendLock.Release;
@@ -548,6 +557,8 @@ begin
       end;
     end;
   end;
+  if CloseDrained and DrainTlsClose then
+    fOwner.ConnectionRemove(Handle);
   // the close decision of an HTTP/1.1 exchange can come after the last write,
   // so the end of every send loop looks at it too
   if FMode = cmHttp1 then
@@ -672,31 +683,6 @@ begin
       iaFlush: SendPendingOutput;
       iaClose: fOwner.ConnectionRemove(Handle);
     end;
-end;
-
-procedure THttp2AsyncConnection.CheckHandshakeDeadline(const ANowMs: QWord);
-var
-  H: TConnectionAsyncHandle;
-  Current: TAsyncConnection;
-  Expired: Boolean;
-begin
-  if FClearTextTransport or (FServer = nil) or
-     (FServer.FTlsBinding = nil) then Exit;
-  H := Handle;
-  Current := fOwner.ConnectionFind(H);
-  if Current <> Self then Exit;
-  if (FTlsAdapter <> nil) and (FPeerTlsClosed or FLocalTlsShutdown) then
-  begin
-    if DrainTlsClose then
-      fOwner.ConnectionRemove(H);
-    Exit;
-  end;
-  if FHandshakeDeadlineMs <= 0 then Exit;
-  Expired := ((FTlsAdapter = nil) or
-    (FTlsAdapter.State in [tssNew, tssHandshaking])) and
-    (Int64(ANowMs) >= FHandshakeDeadlineMs);
-  if Expired then
-    fOwner.ConnectionRemove(H);
 end;
 
 procedure THttp2AsyncConnection.OnClose;

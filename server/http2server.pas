@@ -19,6 +19,7 @@ uses
   Http2.Server.Async.Backlog,
   Http2.Server.Async.Counters,
   Http2.Server.Async.Events,
+  Http2.Server.Async.Flight,
   Http2.Server.Async.Options,
   Http2.Server.Async.Socket,
   Http2.Server.Async.Sweep,

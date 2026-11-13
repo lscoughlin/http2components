@@ -25,7 +25,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="80">
+    <Files Count="81">
       <Item1>
         <Filename Value="src/Http2.Server.AccessLog.Handler.pas" />
         <UnitName Value="Http2.Server.AccessLog.Handler" />
@@ -346,6 +346,10 @@
         <Filename Value="src/Http2.Server.Async.Trace.pas" />
         <UnitName Value="Http2.Server.Async.Trace" />
       </Item80>
+      <Item81>
+        <Filename Value="src/Http2.Server.Async.Flight.pas" />
+        <UnitName Value="Http2.Server.Async.Flight" />
+      </Item81>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
