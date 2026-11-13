@@ -76,8 +76,12 @@ type
   TResponseReader<T> = class(TInterfacedObject, IResponseReader<T>)
   public
     function Read(const AResponse: IHttpResponse): T; overload;
+    function Read(const AResponse: IHttpResponse;
+      const AMaxBytes: Int64): T; overload;
     class procedure Read(const AResponse: IHttpResponse;
       out AValue: T); overload; static;
+    class procedure Read(const AResponse: IHttpResponse;
+      const AMaxBytes: Int64; out AValue: T); overload; static;
   end;
 ```
 
@@ -379,6 +383,14 @@ before the decoder runs, so the wire limit counts the bytes the peer sent.
 `ReadAllBodyBytes` keeps its total in an `Int64` and grows its buffer by doubling.
 A body that would not fit in one `TBytes` raises `EHttpResponseTooLarge`.
 
+`ReadAllBodyBytes(ABody)` has no cap. It reads the body to EOF, and the only
+limit is the size of one `TBytes`. The overload `ReadAllBodyBytes(ABody, AMaxBytes)`
+takes a cap. It raises `EHttpResponseTooLarge` as soon as the total would pass
+`AMaxBytes`, before the buffer grows past it, so the buffer never holds more
+than `AMaxBytes` bytes. An `AMaxBytes` of 0 or less means no cap. `ReadText` and
+`TResponseReader<T>.Read` have the same overload with a cap. A caller that reads
+a body from a peer that it does not trust passes a cap.
+
 A coded body is decoded only when the request sent `accept-encoding`. A response
 with an unsolicited `content-encoding` passes unchanged, with its header and its
 wire body. This behavior differs from the earlier client, which decoded any coded
@@ -398,7 +410,8 @@ hand-rolled loop.
   content-type.
 - `ReadText(AResponse): string` drains the response body to EOF and copies
   the bytes **verbatim** — no charset sniffing, no transcoding. It is the
-  string counterpart of reading the raw `TBytes`.
+  string counterpart of reading the raw `TBytes`. `ReadText(AResponse, AMaxBytes)`
+  adds a cap on the body bytes, as described in the response size limits.
 - `TResponseReader<T>` keeps its raw-passthrough semantics for byte strings,
   `TBytes`, and unmanaged fixed-size values. It does not support other managed
   types or dynamic arrays. A reader that wants interpretation must do it
