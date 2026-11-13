@@ -175,13 +175,51 @@ lock that is earlier in the list.
 1. The header encoder lock. It is the lock of the pooled connection
    (`THttpConnection`, shared with `TConnection.HeaderEncoderLock`). A stream
    thread holds it while it starts a stream, and this includes the wait for
-   room in the outbound queue.
+   room in the outbound queue. The thread also holds it while it sends a
+   request body. The lease releases it only during the wait for flow-control
+   credit (`AcquireCredit` in `Http2.Client.Stream.Send.pas`). A thread that
+   reads a response body holds it, except during the wait for the next frame.
+   A thread that closes the connection holds it while it queues the GOAWAY
+   frame and while it waits for the reader thread to end (`TConnection.Close`).
+   The pool lock (`TPoolState` in `Http2.Client.Pool.State.pas`) is outside
+   this order. The pool holds its lock while it drains an idle connection, so
+   the pool lock is taken before the encoder lock. Library code does not take
+   the pool lock while it holds the encoder lock.
 2. The connection lock (`TConnection.FLock`). It guards the state, the peer
-   settings, the stream table and the flow control windows.
-3. The leaf locks: the lock of the outbound queue, the lock of the control
-   frame queue, the lock of the header table hand-off and the lock of the
-   socket. A thread holds a leaf lock only for one short operation and takes no
-   other lock while it holds one.
+   settings, the stream table, the flow control windows and the receive
+   credit counters. Each section under this lock is short. No section waits,
+   pushes to a queue, uses the socket or calls an observer. The only lock that
+   a section takes is the lock of the send-credit waiter registry, which
+   `AcquireSendCredit` takes to register a waiter.
+3. The leaf locks. A leaf lock is held for one operation. The operation takes
+   no other lock, except where this list says otherwise.
+   - The outbound queue lock (`TBlockingQueueState<T>`, unit
+     `Http2.Client.Connection.Queue`). `Push` releases the lock while it waits
+     for room, so no thread waits for room while it holds this lock.
+   - The control frame queue lock (`TControlFrameQueue`, unit
+     `Http2.Client.Connection.Control`). Its operations never wait.
+   - The header table hand-off lock (`THeaderTableHandoff`, same unit). It
+     guards the pending size only. The encoder is updated after the lock is
+     released.
+   - The send-credit waiter registry lock (`Http2.Client.Connection.SendCredit`).
+     A signal sets an event and does not wait.
+   - The stream receive queue lock (`TByteBoundedFrameQueue`, unit
+     `Http2.Client.Stream.Receive`). Its push takes the lock of the inner
+     `TBlockingQueueState<T>`. The inner queue has capacity zero, so it never
+     waits. The order is always this lock, then the inner lock.
+   - The socket locks of `TTlsSocket` (unit `Http2.Client.Tls.Socket`): the
+     session lock, the read lock and the write lock. A socket read or write
+     holds its lock while it waits for the peer. The read lock is taken before
+     the session lock. The write lock stays held when the thread takes the
+     session lock again after a transport write. The session lock takes the
+     read lock and the write lock only with `TryEnter`. Only the connection
+     thread reads and writes the socket while the connection is open.
+
+Observer and exchange callbacks run on the stream thread while it holds the
+encoder lock. Examples are the stream open and close events, which
+`RegisterStream` and `UnregisterStream` emit after they release the connection
+lock, and the exchange calls `RouteChosen` and `RequestWritten`. The reader
+thread runs observer and exchange callbacks with no lock held.
 
 The reader thread is the only thread that drains the outbound queue, so it
 never waits for a lock that a stream thread holds across a wait for queue room.
@@ -190,6 +228,14 @@ The header encoder lock is such a lock. When the reader applies the
 with `TryEnter`. When the lock is busy, the reader leaves the size in the
 header table hand-off, and the stream thread that holds the lock applies the
 size to the encoder before it encodes the next header block.
+
+`TConnection.Close` waits for the reader thread to end. When the pool drains a
+connection, the caller holds the pool lock and the encoder lock during that
+wait. The reader never takes the encoder lock with a blocking call, so the
+wait does not form a cycle with the encoder lock. The reader can run exchange
+callbacks on a connection failure and on a GOAWAY frame. A callback that waits
+for the pool lock or for the encoder lock of the same connection blocks the
+wait, and the two threads then deadlock.
 
 A write timeout is not an idle poll. Only a read that returns no byte before
 the poll interval ends is an idle poll, and the reader then continues its loop.
