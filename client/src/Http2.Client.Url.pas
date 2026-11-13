@@ -88,15 +88,15 @@ begin
     Result := DefaultPortForScheme(AUri.Scheme);
 end;
 
-// the request target: the path, then the query; '/' when both are empty
-// (a URL without a path keeps the form of the earlier parser: '?q' stays '?q')
+// the request target: the path, then the query; an empty path is '/'
+// (RFC 9110, RFC 3986 section 6.2.3: 'https://host?q' is sent as '/?q')
 function RequestTarget(const AUri: TURI): string;
 begin
   Result := AUri.Path;
-  if AUri.HasQuery then
-    Result := Result + '?' + AUri.Query;
   if Result = '' then
     Result := '/';
+  if AUri.HasQuery then
+    Result := Result + '?' + AUri.Query;
 end;
 
 procedure ParseHttpUrl(const AUrl: string; out AHost: string; out APort: Word;

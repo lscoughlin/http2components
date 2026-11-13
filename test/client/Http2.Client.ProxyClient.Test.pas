@@ -385,7 +385,8 @@ procedure TUrlIpv6Test.TestPortAndPathAfterBrackets;
 begin
   AssertParsed('https://[::1]:8443/a/b?q=1', '::1', 8443, '/a/b?q=1');
   AssertParsed('http://[::1]:8080', '::1', 8080, '/');
-  AssertParsed('https://[::1]?q=1', '::1', 443, '?q=1');
+  // an empty path with a query is sent as '/?...' (RFC 9110, RFC 3986 section 6.2.3)
+  AssertParsed('https://[::1]?q=1', '::1', 443, '/?q=1');
 end;
 
 procedure TUrlIpv6Test.TestUserinfoIsDropped;
@@ -450,7 +451,9 @@ begin
   AssertParsed('http://example.com:8080/x', 'example.com', 8080, '/x');
   AssertParsed('example.com/x', 'example.com', 443, '/x');
   AssertParsed('https://example.com', 'example.com', 443, '/');
-  AssertParsed('https://example.com?q=1', 'example.com', 443, '?q=1');
+  // an empty path with a query is sent as '/?...' (RFC 9110, RFC 3986 section 6.2.3)
+  AssertParsed('https://example.com?q=1', 'example.com', 443, '/?q=1');
+  AssertParsed('https://example.com/p?q=1', 'example.com', 443, '/p?q=1');
 end;
 
 procedure TUrlIpv6Test.TestAnIpv6OriginIsDialledAndRouted;
