@@ -23,6 +23,11 @@ uses
 const
   cHttp1MaxHeaderBytes = 64 * 1024;
   cHttp1ReadBufferSize = 16 * 1024;
+  /// the trailer block of a chunked body: at most this many lines and bytes
+  cHttp1MaxTrailerLines = 256;
+  cHttp1MaxTrailerBytes = 64 * 1024;
+  /// the field lines of one response head (interim heads included, one at a time)
+  cHttp1MaxHeadLines = 256;
 
 type
   /// one parsed HTTP/1.1 header field.  Name keeps the first-seen spelling;
@@ -51,12 +56,27 @@ type
     FLastReadUs: Int64;
     FLastReadSeq: Int64;
     FFillCount: Int64;
+    /// the GetTickCount64 instant at which the response head must be complete;
+    /// 0 when no head is being read
+    FDeadlineMs: QWord;
     /// drop the entries for bytes already consumed
     procedure TrimStamps;
     /// pull another transport buffer into FBuf; False at end of stream
     function Fill: Boolean;
+    /// one transport read.  APartial takes what is available (IPartialReader).
+    /// Under a deadline each read waits at most the time that remains, and an
+    /// expired deadline raises EHttpTimeout before the read starts.
+    function ReadTransport(var ABuffer; const ACount: Integer;
+      const APartial: Boolean): Integer;
   public
     constructor Create(const ASocket: IHttp2Socket);
+    /// start the deadline of a response head: the head must be complete when
+    /// GetTickCount64 reaches ADeadlineMs (one deadline for the whole head)
+    procedure SetDeadline(const ADeadlineMs: QWord);
+    /// end the deadline of the head; the body reads have no deadline
+    procedure ClearDeadline;
+    /// true while a head deadline is set
+    function HasDeadline: Boolean;
     /// read up to ACount bytes; 0 only at end of stream.  A call returns bytes
     /// of one transport read only, so LastReadUs names its arrival.
     function ReadBytes(var ABuffer; const ACount: Integer): Integer;
@@ -248,13 +268,16 @@ begin
         end;
     if not Found then
     begin
-      SetLength(Result, Count + 1);
+      // the array doubles; the final length is set after the loop
+      if Count = Length(Result) then
+        SetLength(Result, Count * 2 + 4);
       Result[Count].Name := Name;
       Result[Count].Value := Value;
       Last := Count;
       Inc(Count);
     end;
   end;
+  SetLength(Result, Count);
 end;
 
 function ParseChunkSize(const ALine: string): Int64;
@@ -297,6 +320,54 @@ begin
   FLastReadUs := 0;
   FLastReadSeq := 0;
   FFillCount := 0;
+  FDeadlineMs := 0;
+end;
+
+procedure TBufferedReader.SetDeadline(const ADeadlineMs: QWord);
+begin
+  FDeadlineMs := ADeadlineMs;
+end;
+
+procedure TBufferedReader.ClearDeadline;
+begin
+  FDeadlineMs := 0;
+end;
+
+function TBufferedReader.HasDeadline: Boolean;
+begin
+  Result := FDeadlineMs > 0;
+end;
+
+function TBufferedReader.ReadTransport(var ABuffer; const ACount: Integer;
+  const APartial: Boolean): Integer;
+var
+  PR: IPartialReader;
+  Now, Remaining: QWord;
+  Saved: Integer;
+begin
+  if FDeadlineMs = 0 then
+  begin
+    if APartial and Supports(FSocket, IPartialReader, PR) then
+      Exit(PR.ReadSome(ABuffer, ACount));
+    Exit(FSocket.Read(ABuffer, ACount));
+  end;
+  // a read may wait only for the time that is left of the head deadline.  A
+  // timeout of that read is final: no byte was consumed, and the deadline has
+  // passed when it fires.
+  Now := GetTickCount64;
+  if Now >= FDeadlineMs then
+    raise EHttpTimeout.Create('response head deadline passed');
+  Remaining := FDeadlineMs - Now;
+  Saved := FSocket.ReadTimeoutMs;
+  FSocket.ReadTimeoutMs := Integer(Remaining);
+  try
+    if APartial and Supports(FSocket, IPartialReader, PR) then
+      Result := PR.ReadSome(ABuffer, ACount)
+    else
+      Result := FSocket.Read(ABuffer, ACount);
+  finally
+    FSocket.ReadTimeoutMs := Saved;
+  end;
 end;
 
 procedure TBufferedReader.TrimStamps;
@@ -322,7 +393,6 @@ function TBufferedReader.Fill: Boolean;
 var
   N: Integer;
   Tmp: TBytes;
-  PR: IPartialReader;
   Stamp: Int64;
 begin
   // compact the consumed prefix so the buffer does not grow without bound
@@ -339,11 +409,8 @@ begin
   SetLength(Tmp, cHttp1ReadBufferSize);
   // IHttp2Socket.Read insists on the full count (or EOF), which would stall a
   // keep-alive connection until the server closes it.  A socket that can
-  // return what is available says so with IPartialReader.
-  if Supports(FSocket, IPartialReader, PR) then
-    N := PR.ReadSome(Tmp[0], cHttp1ReadBufferSize)
-  else
-    N := FSocket.Read(Tmp[0], cHttp1ReadBufferSize);
+  // return what is available says so with IPartialReader (see ReadTransport).
+  N := ReadTransport(Tmp[0], cHttp1ReadBufferSize, True);
   // the arrival stamp: taken as soon as the transport read returns
   Stamp := NowUs;
   if N <= 0 then
@@ -422,52 +489,57 @@ function TBufferedReader.ReadLineNoReadAhead(out ALine: string;
 var
   One: array[0..0] of Byte;
   Bytes: TBytes;
-  N: Integer;
+  N, Len: Integer;
+  Last: Byte;
 begin
   // This variant never reads past the terminating LF: it pulls one byte at a
   // time straight from the socket.  It is used at the h2c upgrade boundary,
   // where the bytes after the status line are HTTP/2 frames that must stay
   // in the socket for the HTTP/2 connection to read.
   ALine := '';
-  SetLength(Bytes, 0);
+  Len := 0;
+  SetLength(Bytes, 128);
   while True do
   begin
     if FPos < FEnd then
     begin
-      SetLength(Bytes, Length(Bytes) + 1);
-      Bytes[High(Bytes)] := FBuf[FPos];
+      Last := FBuf[FPos];
       Inc(FPos);
     end
     else
     begin
-      N := FSocket.Read(One[0], 1);
+      N := ReadTransport(One[0], 1, False);
       if N <= 0 then
         Break;
-      SetLength(Bytes, Length(Bytes) + 1);
-      Bytes[High(Bytes)] := One[0];
+      Last := One[0];
     end;
-    if Bytes[High(Bytes)] = 10 then
+    // the buffer doubles, so a long line costs O(n) copies, not O(n^2)
+    if Len = Length(Bytes) then
+      SetLength(Bytes, Len * 2);
+    Bytes[Len] := Last;
+    Inc(Len);
+    if Last = 10 then
       Break;
-    if Length(Bytes) > cHttp1MaxHeaderBytes then
+    if Len > cHttp1MaxHeaderBytes then
       raise EHttpProtocolError.Create(
         'HTTP/1.1 header line exceeds the ' +
         IntToStr(cHttp1MaxHeaderBytes) + '-byte limit', ecProtocolError);
   end;
-  if Length(Bytes) = 0 then
+  if Len = 0 then
     Exit(False);
-  if Bytes[High(Bytes)] = 10 then
+  if Bytes[Len - 1] = 10 then
   begin
-    SetLength(Bytes, Length(Bytes) - 1);
+    Dec(Len);
     // strict: the LF must follow a CR (a bare LF is refused)
-    if AStrict and ((Length(Bytes) = 0) or (Bytes[High(Bytes)] <> 13)) then
+    if AStrict and ((Len = 0) or (Bytes[Len - 1] <> 13)) then
       raise EHttpProtocolError.Create('bare LF in HTTP/1.1 line',
         ecProtocolError);
   end;
-  if (Length(Bytes) > 0) and (Bytes[High(Bytes)] = 13) then
-    SetLength(Bytes, Length(Bytes) - 1);
-  SetLength(ALine, Length(Bytes));
-  if Length(Bytes) > 0 then
-    Move(Bytes[0], ALine[1], Length(Bytes));
+  if (Len > 0) and (Bytes[Len - 1] = 13) then
+    Dec(Len);
+  SetLength(ALine, Len);
+  if Len > 0 then
+    Move(Bytes[0], ALine[1], Len);
   if AStrict and (Pos(#13, ALine) > 0) then
     raise EHttpProtocolError.Create('bare CR in HTTP/1.1 line',
       ecProtocolError);
@@ -545,11 +617,12 @@ procedure THttp1BodyStream.ReadTrailers;
 var
   Line: string;
   Lines: TArray<string>;
-  N, I: Integer;
+  N, I, Bytes: Integer;
   Fields: TArray<THttp1HeaderField>;
 begin
   SetLength(Lines, 0);
   N := 0;
+  Bytes := 0;
   while True do
   begin
     if not FReader.ReadLine(Line, True) then
@@ -557,10 +630,19 @@ begin
         ecStreamClosed);
     if Line = '' then
       Break;
-    SetLength(Lines, N + 1);
-    Lines[N] := Line;
+    // RFC 9112 section 7.1.2 leaves the size open; the client bounds it
     Inc(N);
+    Inc(Bytes, Length(Line) + 2);
+    if (N > cHttp1MaxTrailerLines) or (Bytes > cHttp1MaxTrailerBytes) then
+      raise EHttpProtocolError.Create('chunked trailer block exceeds the ' +
+        IntToStr(cHttp1MaxTrailerLines) + '-line or ' +
+        IntToStr(cHttp1MaxTrailerBytes) + '-byte limit', ecProtocolError);
+    // the array doubles as lines arrive
+    if N > Length(Lines) then
+      SetLength(Lines, Length(Lines) * 2 + 8);
+    Lines[N - 1] := Line;
   end;
+  SetLength(Lines, N);
   if (N > 0) and (FTrailers <> nil) then
   begin
     Fields := ParseFieldLines(Lines);
