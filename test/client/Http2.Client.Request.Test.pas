@@ -174,7 +174,8 @@ begin
   R := THttpRequest.Create(hmGet, 'https://api.example');
   AssertEquals('empty path defaults to /', '/', R.Path);
   R := THttpRequest.Create(hmGet, 'https://api.example?x=1');
-  AssertEquals('query-only URL keeps the query', '?x=1', R.Path);
+  // an empty path with a query is sent as '/?...' (RFC 9110, RFC 3986 section 6.2.3)
+  AssertEquals('query-only URL keeps the query', '/?x=1', R.Path);
   R := THttpRequest.Create(hmGet, 'https://api.example/search?q=2');
   AssertEquals('path + query preserved', '/search?q=2', R.Path);
 end;
