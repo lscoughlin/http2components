@@ -246,9 +246,17 @@ three helper functions for this check. `IsValidHeaderName` accepts a
 non-empty RFC 9110 token and refuses a leading `:`. `IsValidHeaderValue`
 refuses a value that holds CR, LF or NUL. `IsValidTargetPart` refuses a
 target that holds a byte at or below 0x20 or the byte 0x7F. The map keeps
-its current behavior. The helpers are available to every builder of a message;
-the builders that call them are listed in the work of the client request,
-response and server validation stories.
+its current behavior.
+
+The client request builders call the helpers. `THttpRequest.WithHeader` checks
+each name with `IsValidHeaderName` and each value with `IsValidHeaderValue`.
+The HTTP/1.1 request builder checks the path and the `Host` value with
+`IsValidTargetPart`. The CONNECT builder checks the host of the tunnel
+authority with `IsValidTargetPart`. The h2c upgrade builder checks the path and
+the `Host` value with `IsValidTargetPart`. The client connection checks the
+decoded value of each header field in every received HEADERS and CONTINUATION
+block for CR, LF and NUL. The server request validation checks `:method` as a
+token, and it checks `:path` and `:authority` with `IsValidTargetPart`.
 
 Header names are a set of constants of common HTTP header names:
 

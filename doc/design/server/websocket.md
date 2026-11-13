@@ -344,6 +344,11 @@ handshake from the response it receives.
   ordinary response with `END_STREAM`.
 - **After the head.** The stream accepts `DATA`, `RST_STREAM`, `WINDOW_UPDATE` and
   `PRIORITY`. A second `HEADERS` block, a trailer for example, is a stream error.
+- **The handler time limit.** When the option `MaxHandlerTimeMs` is set (its default
+  is 0, which turns the limit off), the limit applies to the checks and the detach of
+  the handshake, because they run in the handler thread. The session does not run in
+  that thread, so the limit does not bound it. The answer to a handler that passes the
+  limit is in [limits](limits.md).
 
 ### The close mapping
 
