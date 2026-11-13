@@ -61,6 +61,8 @@ type
   published
     /// the four lines of one connection appear in order
     procedure TestLinesAppearInOrderWhenOn;
+    /// the write_done line reports the length and the sent bytes
+    procedure TestWriteDoneReportsTheSentBytes;
     /// no line appears when the trace is off
     procedure TestNothingWhenOff;
   end;
@@ -193,6 +195,11 @@ begin
   AssertTrue('the server did not answer', RunOneConnection);
   Lines := FCollector.Snapshot;
   try
+    // the write_done and close lines come after the start events, and their
+    // time against the answer of the server is not fixed
+    for I := Lines.Count - 1 downto 0 do
+      if (Pos(' write_done ', Lines[I]) > 0) or (Pos(' close ', Lines[I]) > 0) then
+        Lines.Delete(I);
     AssertEquals('the number of trace lines', Length(cExpectedEvents),
       Lines.Count);
     Id := FieldOf(Lines[0], 'conn');
@@ -213,6 +220,39 @@ begin
   finally
     Lines.Free;
   end;
+end;
+
+procedure TAsyncStartTraceTest.TestWriteDoneReportsTheSentBytes;
+var
+  Lines: TStringList;
+  I: Integer;
+  Line: string;
+  Deadline: QWord;
+begin
+  SetAsyncTrace(True, FCollector.Add);
+  AssertTrue('the server did not answer', RunOneConnection);
+  Line := '';
+  Deadline := GetTickCount64 + QWord(cAnswerWaitMs);
+  repeat
+    Lines := FCollector.Snapshot;
+    try
+      for I := 0 to Lines.Count - 1 do
+        if Pos(' write_done ', Lines[I]) > 0 then
+          Line := Lines[I];
+    finally
+      Lines.Free;
+    end;
+    if Line = '' then
+      Sleep(5);
+  until (Line <> '') or (GetTickCount64 >= Deadline);
+  AssertTrue('no write_done line', Line <> '');
+  AssertTrue('the line has no length: ' + Line,
+    StrToIntDef(FieldOf(Line, 'len'), 0) >= 9);
+  AssertEquals('the bytes left the process: ' + Line, '0',
+    FieldOf(Line, 'pending'));
+  AssertTrue('the send count is less than the length: ' + Line,
+    StrToInt64Def(FieldOf(Line, 'sent_total'), 0) >=
+    StrToIntDef(FieldOf(Line, 'len'), 1));
 end;
 
 procedure TAsyncStartTraceTest.TestNothingWhenOff;

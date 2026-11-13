@@ -481,10 +481,9 @@ begin
         end;
         TraceWrite(FTrace, pointer(Data), Length(Data));
         Before := PendingWriteBytes;
-        // the mORMot2 write path takes the connection write lock, sends at
-        // once when it can, and otherwise subscribes for the write event.  A
-        // false answer means the lock went to the IO thread, so one retry runs
-        // the second check of the mORMot2 wake-up pattern
+        // the mORMot2 write path takes the write lock, sends at once when it
+        // can, and otherwise subscribes for the write event.  A false answer
+        // means the lock went to the IO thread, so one retry runs the second check
         if not fOwner.Write(Self, pointer(Data), Length(Data),
              cWriteTimeoutMs) then
           if not fOwner.Write(Self, pointer(Data), Length(Data),
@@ -495,9 +494,9 @@ begin
             CloseAbortively;
             exit;
           end;
-        result := True;
+        result := True; After := PendingWriteBytes;
+        TraceWriteDone(FTrace, Length(Data), After, fBytesSend);
         // a shrunk or new backlog is progress; the sweep measures from here
-        After := PendingWriteBytes;
         if (After < Before) or ((Before = 0) and (After > 0)) then
           FLastWriteProgressMs := mormot.core.os.GetTickCount64;
         // the batch reached the write path, so the budget releases what the
@@ -702,6 +701,7 @@ end;
 
 procedure THttp2AsyncConnection.OnClose;
 begin
+  TraceClose(FTrace, PendingWrite, fBytesSend);
   try
     if (FTlsAdapter <> nil) and not FPeerTlsClosed and
        not FLocalTlsShutdown then
