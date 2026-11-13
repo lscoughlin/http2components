@@ -35,7 +35,8 @@ uses
   Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.Limits, Http2.Server.Observer, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Parser,
-  Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.SessionCore;
+  Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.SessionCore,
+  Http2.Server.WebSocket.Environment, Http2.Server.WebSocket.Budget;
 
 /// start a session on AChannel, which is detached and pending
 // - ARequest is the upgrade request; the session keeps a copy of what it needs
@@ -309,6 +310,7 @@ begin
   if Dropping then
   begin
     ReleaseCredit(True);
+    ReleaseQueued(Length(ATask.Data));
     Exit;
   end;
   try
@@ -320,6 +322,7 @@ begin
       Fail(E);
   end;
   ReleaseCredit(True);
+  ReleaseQueued(Length(ATask.Data));
 end;
 
 procedure TWsSession.DoPong(const ATask: TWsTask);
@@ -453,7 +456,8 @@ end;
 procedure TWsSession.Message(const AText: Boolean; const AData: TBytes);
 var
   T: TWsTask;
-  TooMany, AfterClose: Boolean;
+  TooMany, AfterClose, OverBudget: Boolean;
+  Octets: Int64;
 begin
   if not FMessages.TryTake(1) then
   begin
@@ -461,14 +465,27 @@ begin
     ProtocolFail(WsClosePolicy, 'too many messages');
     Exit;
   end;
+  Octets := Length(AData);
   FLock.Acquire;
   try
     if FState = wsEnded then
       Exit;
     AfterClose := FInputClosed;
     TooMany := FQueuedMsgs >= FOpts.QueuedMessages;
+    OverBudget := False;
     if not (AfterClose or TooMany) then
-      Inc(FQueuedMsgs);
+    begin
+      // the server-wide budget counts the octets of the queue; a message that
+      // would pass it closes the session like a message past the queue limit
+      if FBudget <> nil then
+        OverBudget := not FBudget.TryAddBytes(Octets);
+      if not OverBudget then
+      begin
+        Inc(FQueuedMsgs);
+        if FBudget <> nil then
+          Inc(FQueuedBytes, Octets);
+      end;
+    end;
   finally
     FLock.Release;
   end;
@@ -480,6 +497,11 @@ begin
   if TooMany then
   begin
     ProtocolFail(WsClosePolicy, 'too many messages wait for the application');
+    Exit;
+  end;
+  if OverBudget then
+  begin
+    ProtocolFail(WsClosePolicy, 'the queued bytes of the server are full');
     Exit;
   end;
   FEnv.Count(wcMessagesIn, 1);
@@ -694,18 +716,49 @@ function WsStartSession(const AChannel: IDuplexChannel; const ARequest: IServerR
   const AOffered: TArray<string>): IWsSession;
 var
   Env: IWsEnvironment;
+  Budgeted: IWsBudgetSource;
+  Budget: TWsByteBudget;
+  Admitted: Boolean;
   Source: IStreamSource;
   Session: TWsSession;
   Registry: IChannelRegistry;
 begin
+  Result := nil;
   Registry := AChannel.Registry;
   if (Registry = nil) or not Supports(Registry.WsEnvironment, IWsEnvironment, Env) then
     raise EHttpError.Create('the server has no WebSocket environment');
+  Budget := nil;
+  if Supports(Env, IWsBudgetSource, Budgeted) then
+    Budget := Budgeted.Budget;
+  // a session past the cap of the server is refused before it starts
+  Admitted := False;
+  if Budget <> nil then
+  begin
+    if not Budget.TryOpenSession then
+    begin
+      Env.Report(seWsRejected, 503, 'the server holds its limit of WebSocket sessions');
+      AChannel.Complete(503, nil, nil);
+      Exit;
+    end;
+    Admitted := True;
+  end;
   Source := Registry.NewSource;
   if Source = nil then
+  begin
+    if Admitted then
+      Budget.CloseSession;
     raise EHttpError.Create('the server has no streaming pool');
-  Session := TWsSession.Create(Env, AChannel, Source, AHandler, AHandshake,
-    ARequest, AOffered);
+  end;
+  try
+    Session := TWsSession.Create(Env, AChannel, Source, AHandler, AHandshake,
+      ARequest, AOffered);
+  except
+    if Admitted then
+      Budget.CloseSession;
+    raise;
+  end;
+  if Admitted then
+    Session.AdoptSlot(Budget);
   Result := Session;
   Session.Start;
 end;

@@ -174,6 +174,13 @@ message on the queue of its session.
 - **The queue cap.** A session holds at most `QueuedMessages` messages for the
   application. A peer that sends more, because it ignores the window or because the
   protocol has no window, is closed with 1008.
+- **The byte budget.** The octets of the queued messages of all sessions of a server
+  count in one budget, `MaxWsQueuedBytes`. A message that would pass the budget closes
+  its session with 1008, as a message past `QueuedMessages` does. The session gives
+  back its octets when a message leaves the queue and when the session ends, so the
+  count returns to zero when the sessions have ended.
+- **The early bytes.** Before the session takes the channel, the octets that arrive
+  wait in the channel. When they pass `WsEarlyBytes`, the connection closes at once.
 - **The buckets.** One token bucket counts the control frames that arrive (Ping and
   Pong), and one counts the messages. An empty bucket closes the session with 1008
   and raises `seWsBucketTripped`. A Close frame costs no token.
@@ -370,6 +377,14 @@ without the setting for example, is a stream error and counts as the other reset
 of the connection do (as described in [limits](limits.md)).
 
 
+### The session cap
+
+The server counts its open WebSocket sessions. `MaxWsSessions` is the greatest number
+of open sessions; 0 turns the cap off. An upgrade that arrives when the cap is reached
+is answered with 503 and no session starts. The slot of a session returns once, when
+the session ends: after a Close frame, a protocol error, a lost peer, a refused or
+timed out `Init`, or a failed callback.
+
 ## Settings
 
 The record `TWsOptions` belongs to the server builder (`WithWebSockets`). The
@@ -388,9 +403,13 @@ defaults live in `Create`.
 | `InitTimeoutMs` | 10000 | the wait for `Init` |
 | `ControlBucket` | 100 tokens, 10 a second | Ping and Pong frames that arrive |
 | `MessageBucket` | 10000 tokens, 10000 a second | data messages that arrive |
+| `WsEarlyBytes` | 262144 | the octets that the channel holds before the session takes it |
 | `OriginPolicy` | `opSameOrAbsent` | as described in above |
 | `AllowedOrigins` | none | the allow-list, each entry `scheme://host[:port]` |
 | `Subprotocols` | none | the subprotocols the server picks from, in order of preference |
+
+The record `TServerLimits` holds `MaxWsQueuedBytes` (default 128 MiB, at least 1 MiB) and
+`MaxWsSessions` (default 5000, 0 turns the cap off).
 
 The factory validates each value and the entries of both lists.
 

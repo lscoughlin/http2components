@@ -30,7 +30,7 @@ uses
   Http2.Server.Limits, Http2.Server.Observer, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Parser,
   Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.Utf8,
-  Http2.Server.ClientCert;
+  Http2.Server.ClientCert, Http2.Server.WebSocket.Budget;
 
 type
   TWsState = (wsInit, wsOpen, wsClosing, wsEnded);
@@ -104,6 +104,12 @@ type
     FTasks: TList<TWsTask>;
     FQueuedMsgs: Integer;
     FHeldCredit: Int64;
+    /// the server-wide budget of the queued octets and the sessions; nil when none
+    FBudget: TWsByteBudget;
+    /// True while the session holds a slot of the session cap
+    FSlotHeld: Boolean;
+    /// the octets of the queued messages that the budget counts for this session
+    FQueuedBytes: Int64;
     FReader: TWsReader;
     /// the due time of the armed timer, in the tick count of GetTickCount64
     FArmedDue: QWord;
@@ -141,7 +147,15 @@ type
     /// the messages that wait are dropped from now on
     procedure DropPending;
     procedure ReleaseCredit(const AMessageDone: Boolean);
+    /// give back the octets of a message that left the queue; never more than the
+    /// session still holds
+    procedure ReleaseQueued(const ABytes: Int64);
+    /// give back the slot of the session cap and the octets that wait; runs once,
+    /// when the session ends
+    procedure ReleaseSessionSlot;
   public
+    /// take the slot of the session cap that the caller has taken for this session
+    procedure AdoptSlot(const ABudget: TWsByteBudget);
     constructor Create(const AEnv: IWsEnvironment; const AChannel: IDuplexChannel;
       const ASource: IStreamSource; const AHandler: IWsHandler;
       const AHandshake: IWsHandshake; const ARequest: IServerRequest;
@@ -288,6 +302,7 @@ end;
 
 destructor TWsSessionCore.Destroy;
 begin
+  ReleaseSessionSlot;
   FReader.Free;
   FControl.Free;
   FMessages.Free;
@@ -313,6 +328,7 @@ begin
   UnwatchInit;
   if FCounted then
     FEnv.SessionClosed;
+  ReleaseSessionSlot;
   FSnapshot.Cancel;
 end;
 
@@ -379,6 +395,56 @@ begin
   finally
     FLock.Release;
   end;
+end;
+
+procedure TWsSessionCore.AdoptSlot(const ABudget: TWsByteBudget);
+begin
+  FLock.Acquire;
+  try
+    FBudget := ABudget;
+    FSlotHeld := True;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TWsSessionCore.ReleaseQueued(const ABytes: Int64);
+var
+  Give: Int64;
+begin
+  FLock.Acquire;
+  try
+    Give := ABytes;
+    if Give > FQueuedBytes then
+      Give := FQueuedBytes;
+    Dec(FQueuedBytes, Give);
+  finally
+    FLock.Release;
+  end;
+  if (Give > 0) and (FBudget <> nil) then
+    FBudget.ReleaseBytes(Give);
+end;
+
+procedure TWsSessionCore.ReleaseSessionSlot;
+var
+  Held: Boolean;
+  Bytes: Int64;
+begin
+  if FBudget = nil then
+    Exit;
+  FLock.Acquire;
+  try
+    Held := FSlotHeld;
+    FSlotHeld := False;
+    Bytes := FQueuedBytes;
+    FQueuedBytes := 0;
+  finally
+    FLock.Release;
+  end;
+  if Bytes > 0 then
+    FBudget.ReleaseBytes(Bytes);
+  if Held then
+    FBudget.CloseSession;
 end;
 
 procedure TWsSessionCore.ReleaseCredit(const AMessageDone: Boolean);

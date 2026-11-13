@@ -28,7 +28,8 @@ interface
 
 uses
   SysUtils, SyncObjs,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Duplex, Http2.Server.Http1.Host;
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Duplex, Http2.Server.Http1.Host,
+  Http2.Server.WebSocket.Types;
 
 type
   /// what the upgrade code reads from an HTTP/1.1 response and request
@@ -82,6 +83,8 @@ type
     FCloseDuringActivate: Boolean;
     FCloseMode: TChannelClose;
     procedure Release;
+    /// the early limit of the WebSocket options; 0 when the server has no environment
+    function EarlyCap: Int64;
   public
     constructor Create(const AOwner: IH1UpgradeOwner; const ARegistry: IChannelRegistry);
     destructor Destroy; override;
@@ -135,13 +138,26 @@ begin
   end;
 end;
 
+function TH1SocketChannel.EarlyCap: Int64;
+var
+  Env: IWsEnvironment;
+begin
+  Result := 0;
+  if (FRegistry <> nil) and Supports(FRegistry.WsEnvironment, IWsEnvironment, Env) then
+    Result := Env.Options.WsEarlyBytes;
+end;
+
 procedure TH1SocketChannel.Inbound(const AData; const ACount: Integer);
 var
   Sink: IChannelSink;
   At: Integer;
+  Cap: Int64;
+  Over: Boolean;
 begin
   if ACount <= 0 then
     Exit;
+  Cap := EarlyCap;
+  Over := False;
   FLock.Acquire;
   try
     if FState = csClosed then
@@ -149,14 +165,30 @@ begin
     Sink := FSink;
     if Sink = nil then
     begin
-      // the session has not taken the sink yet; the octets wait for it
-      At := Length(FEarly);
-      SetLength(FEarly, At + ACount);
-      Move(AData, FEarly[At], ACount);
-      Exit;
+      // the session has not taken the sink yet; the octets wait for it, up to the
+      // early limit of the WebSocket options
+      if (Cap > 0) and (Int64(Length(FEarly)) + ACount > Cap) then
+      begin
+        FEarly := nil;
+        Over := True;
+      end
+      else
+      begin
+        At := Length(FEarly);
+        SetLength(FEarly, At + ACount);
+        Move(AData, FEarly[At], ACount);
+        Exit;
+      end;
     end;
   finally
     FLock.Release;
+  end;
+  if Over then
+  begin
+    // the peer sent more octets than the limit before the session: the connection
+    // closes. Close calls the owner outside the lock
+    Close(ccAbort);
+    Exit;
   end;
   Sink.BytesReceived(AData, ACount);
 end;
