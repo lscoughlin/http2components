@@ -54,6 +54,7 @@ uses
   Http2.Client.ControlQueue.Test,
   Http2.Client.WriteTimeout.Test,
   Http2.Client.PartialReadTimeout.Test,
-  Http2.Client.PlainSocketPending.Test;
+  Http2.Client.PlainSocketPending.Test,
+  Http2.Client.PoolWait.Test;
 
 end.

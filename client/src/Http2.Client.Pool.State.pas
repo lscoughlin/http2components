@@ -31,6 +31,49 @@ uses
 
 
 type
+  /// the wait and wake state of the callers of one origin base key.  Dials
+  /// is guarded by the pool lock (FLock, level 1).  The fine lock (level 2)
+  /// guards only Waiters and Generation, so a hold is a few instructions and
+  /// never blocks.  A waiter reads Generation in the same FLock section in
+  /// which it decides to wait; a dial that ends increments Generation and sets
+  /// the event.  A late waiter reads the new value, so it cannot miss a wake.
+  /// The pool frees the object under FLock when Dials and Waiters are 0.
+  TOriginDial = class
+  private
+    FFine: TCriticalSection;
+    FEvent: PRTLEvent;
+    FWaiters: Integer;
+    FGeneration: Cardinal;
+  public
+    /// dials in flight for the origin; guarded by FLock
+    Dials: Integer;
+    /// the base key of the origin; the key of the object in FDialing
+    Base: string;
+    constructor Create(const ABase: string);
+    destructor Destroy; override;
+    /// TryEnter of the fine lock; False when another thread holds it
+    function TryAddWaiter(out AGeneration: Cardinal): Boolean;
+    procedure RemoveWaiter;
+    function Generation: Cardinal;
+    function Waiters: Integer;
+    /// the end of a dial or of a selector round: a new generation and a wake
+    procedure Signal;
+    /// wait for the event for at most ASliceMs, then wake the next waiter when
+    /// the generation changed (the event wakes one thread, so a waiter that
+    /// leaves because of a change passes the wake on)
+    procedure WaitSlice(const AGeneration: Cardinal; const ASliceMs: Integer);
+    property Event: PRTLEvent read FEvent;
+  end;
+
+  /// internal test seam, not part of the public API: when set, replaces the
+  /// wait of one slice of a caller that waits for an origin
+  TPoolWaitHook = procedure(const ADial: TOriginDial;
+    const ASliceMs: Integer);
+
+var
+  PoolWaitHook: TPoolWaitHook = nil;
+
+type
   TPoolState = class
   protected
     FLock: TCriticalSection;
@@ -69,7 +112,7 @@ type
     FSelecting: TDictionary<string, Boolean>;
     /// dials in progress, per base key; each one holds a reserved slot that
     /// counts against the caps until it registers or fails; guarded by FLock
-    FDialing: TDictionary<string, Integer>;
+    FDialing: TObjectDictionary<string, TOriginDial>;
     FDialingTotal: Integer;
     /// connections that Evict took out of the pool; they close after FLock is
     /// released, because a close can block (TLS close_notify); guarded by FLock
@@ -132,10 +175,23 @@ type
     /// ReleaseDial under FLock, in the same locked section that registers the
     /// new connection, so the slot is never counted twice or not at all.
     function ReserveDial(const AKey: string): Boolean;
-    /// give the slot of a finished or failed dial back; the caller holds FLock
-    procedure ReleaseDial(const AKey: string);
+    /// give the slot of a finished or failed dial back; the caller holds FLock.
+    /// ASignal False keeps the waiters asleep: the new connection is an
+    /// HTTP/1.1 connection that its dialer is about to use, so no waiter can
+    /// take it, and a waiter that woke first would see the connection before
+    /// its dialer wrote the request (the caller then calls SignalOrigin)
+    procedure ReleaseDial(const AKey: string; const ASignal: Boolean = True);
     /// dials in progress for the origin and route of AKey; the caller holds FLock
     function DialingForBase(const AKey: string): Integer;
+    /// the caller holds FLock and has decided to wait for the origin of AKey:
+    /// counts the caller as a waiter and reads the generation.  nil when the
+    /// fine lock is busy (TryEnter failed); the caller then goes round again
+    function EnterWait(const AKey: string;
+      out AGeneration: Cardinal): TOriginDial;
+    /// the caller holds FLock: ends the wait that EnterWait began
+    procedure LeaveWait(const ADial: TOriginDial);
+    /// the caller holds FLock: wakes the waiters of the origin of AKey
+    procedure SignalOrigin(const AKey: string);
     /// close the connections that Evict took out; the caller does NOT hold FLock
     procedure CloseVictims;
   public
@@ -184,6 +240,103 @@ type
 
 implementation
 
+{ TOriginDial }
+
+constructor TOriginDial.Create(const ABase: string);
+begin
+  inherited Create;
+  Base := ABase;
+  FFine := TCriticalSection.Create;
+  FEvent := RTLEventCreate;
+end;
+
+destructor TOriginDial.Destroy;
+begin
+  RTLEventDestroy(FEvent);
+  FFine.Free;
+  inherited Destroy;
+end;
+
+function TOriginDial.TryAddWaiter(out AGeneration: Cardinal): Boolean;
+begin
+  Result := FFine.TryEnter;
+  if not Result then
+    Exit;
+  try
+    Inc(FWaiters);
+    AGeneration := FGeneration;
+  finally
+    FFine.Release;
+  end;
+end;
+
+procedure TOriginDial.RemoveWaiter;
+begin
+  // a hold of the fine lock is a few instructions and never waits for another
+  // lock, so this Enter under FLock is bounded
+  FFine.Acquire;
+  try
+    Dec(FWaiters);
+  finally
+    FFine.Release;
+  end;
+end;
+
+function TOriginDial.Generation: Cardinal;
+begin
+  FFine.Acquire;
+  try
+    Result := FGeneration;
+  finally
+    FFine.Release;
+  end;
+end;
+
+function TOriginDial.Waiters: Integer;
+begin
+  FFine.Acquire;
+  try
+    Result := FWaiters;
+  finally
+    FFine.Release;
+  end;
+end;
+
+procedure TOriginDial.Signal;
+begin
+  FFine.Acquire;
+  try
+    Inc(FGeneration);
+  finally
+    FFine.Release;
+  end;
+  RTLEventSetEvent(FEvent);
+end;
+
+procedure TOriginDial.WaitSlice(const AGeneration: Cardinal;
+  const ASliceMs: Integer);
+var
+  Changed, Others: Boolean;
+begin
+  // no lock is held here.  A generation that changed since the caller read it
+  // means a wake that the caller must not wait for
+  if Generation = AGeneration then
+    if Assigned(PoolWaitHook) then
+      PoolWaitHook(Self, ASliceMs)
+    else
+      RTLEventWaitFor(FEvent, ASliceMs);
+  FFine.Acquire;
+  try
+    Changed := FGeneration <> AGeneration;
+    Others := FWaiters > 1;
+  finally
+    FFine.Release;
+  end;
+  // the event wakes one thread: pass the wake on to the next waiter
+  if Changed and Others then
+    RTLEventSetEvent(FEvent);
+end;
+
 constructor TPoolState.Create(const AFactory: IHttp2SocketFactory;
   const AMaxConnectionsPerHost, AMaxTotalConnections,
   AMaxStreamsPerConnection, AConnectTimeoutMs, AHeaderTimeoutMs,
@@ -198,7 +351,7 @@ begin
   FPending := TDictionary<string, Integer>.Create;
   FIdentityKeys := TDictionary<string, string>.Create;
   FSelecting := TDictionary<string, Boolean>.Create;
-  FDialing := TDictionary<string, Integer>.Create;
+  FDialing := TObjectDictionary<string, TOriginDial>.Create([doOwnsValues]);
   FVictims := TList<IPooledConnection>.Create;
   FFactory := AFactory;
   FObserver := AObserver;
@@ -226,36 +379,79 @@ end;
 function TPoolState.ReserveDial(const AKey: string): Boolean;
 var
   Base: string;
-  N: Integer;
+  D: TOriginDial;
 begin
   Base := BaseOfKey(AKey);
-  if not FDialing.TryGetValue(Base, N) then
-    N := 0;
-  FDialing.AddOrSetValue(Base, N + 1);
+  if not FDialing.TryGetValue(Base, D) then
+  begin
+    D := TOriginDial.Create(Base);
+    FDialing.Add(Base, D);
+  end;
+  Inc(D.Dials);
   Inc(FDialingTotal);
   Result := True;
 end;
 
-procedure TPoolState.ReleaseDial(const AKey: string);
+procedure TPoolState.ReleaseDial(const AKey: string;
+  const ASignal: Boolean);
 var
   Base: string;
-  N: Integer;
+  D: TOriginDial;
 begin
   Base := BaseOfKey(AKey);
-  if FDialing.TryGetValue(Base, N) then
+  if FDialing.TryGetValue(Base, D) then
   begin
-    if N > 1 then
-      FDialing.AddOrSetValue(Base, N - 1)
-    else
-      FDialing.Remove(Base);
+    Dec(D.Dials);
     Dec(FDialingTotal);
+    if ASignal then
+      D.Signal;
+    if (D.Dials <= 0) and (D.Waiters = 0) then
+      FDialing.Remove(Base);
   end;
 end;
 
 function TPoolState.DialingForBase(const AKey: string): Integer;
+var
+  D: TOriginDial;
 begin
-  if not FDialing.TryGetValue(BaseOfKey(AKey), Result) then
+  if FDialing.TryGetValue(BaseOfKey(AKey), D) then
+    Result := D.Dials
+  else
     Result := 0;
+end;
+
+function TPoolState.EnterWait(const AKey: string;
+  out AGeneration: Cardinal): TOriginDial;
+var
+  Base: string;
+begin
+  Base := BaseOfKey(AKey);
+  if not FDialing.TryGetValue(Base, Result) then
+  begin
+    Result := TOriginDial.Create(Base);
+    FDialing.Add(Base, Result);
+  end;
+  if not Result.TryAddWaiter(AGeneration) then
+  begin
+    if (Result.Dials <= 0) and (Result.Waiters = 0) then
+      FDialing.Remove(Base);
+    Result := nil;
+  end;
+end;
+
+procedure TPoolState.LeaveWait(const ADial: TOriginDial);
+begin
+  ADial.RemoveWaiter;
+  if (ADial.Dials <= 0) and (ADial.Waiters = 0) then
+    FDialing.Remove(ADial.Base);
+end;
+
+procedure TPoolState.SignalOrigin(const AKey: string);
+var
+  D: TOriginDial;
+begin
+  if FDialing.TryGetValue(BaseOfKey(AKey), D) then
+    D.Signal;
 end;
 
 procedure TPoolState.CloseVictims;
@@ -479,8 +675,7 @@ begin
     Exit(False);
   Base := BaseOfKey(AKey);
   // a dial in progress holds a slot, so it counts like a connection
-  if not FDialing.TryGetValue(Base, Dialing) then
-    Dialing := 0;
+  Dialing := DialingForBase(AKey);
   Result := (CountForBase(Base) + Dialing < FMaxConnectionsPerHost) and
             (FTotalConnections + FDialingTotal < FMaxTotalConnections);
   if Result then
