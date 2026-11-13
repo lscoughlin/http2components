@@ -93,6 +93,7 @@ type
     FHeadersSent: Boolean;
     FRegistry: IChannelRegistry;
     FDetached: Boolean;
+    FEnded: Boolean;
     FOnDetach: TDetachNotify;
     procedure CheckNotDetached;
   public
@@ -122,6 +123,9 @@ type
     property Detached: Boolean read FDetached;
     /// true once the handler sent the response headers
     property HeadersSent: Boolean read FHeadersSent;
+    /// true once the handler ended the response, with Finish or with a head
+    /// that carries END_STREAM
+    property Ended: Boolean read FEnded;
   end;
 
 implementation
@@ -294,6 +298,9 @@ begin
   if AStatus >= 200 then
     FStatus := AStatus;
   FStream.QueueResponseHeaders(AStatus, Prepared, AEndStream);
+  // an interim status (1xx) cannot end the response
+  if AEndStream and (AStatus >= 200) then
+    FEnded := True;
 end;
 
 procedure TServerStreamResponse.Write(const AData: TBytes);
@@ -329,6 +336,7 @@ begin
       Inc(FBodyOctets, Length(Chunk));
     end;
   FStream.RequestFinish;
+  FEnded := True;
 end;
 
 function TServerStreamResponse.LoggedStatus: Integer;

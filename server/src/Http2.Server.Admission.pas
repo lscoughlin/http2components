@@ -789,8 +789,10 @@ var
   Res: TServerStreamResponse;
   ReqRef: IServerRequest;
   ResRef: IServerResponse;
+  Returned: Boolean;
 begin
   Result := False;
+  Returned := False;
   if not FQueue.DequeueEntry(Entry, Outcome) then
     Exit;
   Result := True;
@@ -852,6 +854,7 @@ begin
       // lock and would stall the whole IO pool
       Http2AssertHandlerThread('THandlerPool.TakeOne');
       FHandler.Handle(Req, WrapDeadlineResponse(FDeadlines, Stream, Res));
+      Returned := True;
     except
       on E: EStreamCancelled do
         ; // the cancellation ends the handler quietly
@@ -863,6 +866,11 @@ begin
         else
           ReportError(Stream, not Res.HeadersSent);
     end;
+    // a handler that returned and did not end the response leaves the peer
+    // with an open stream: a detached stream and a cancelled stream are not
+    // this pool's to answer
+    if Returned and not (Res.Detached or Res.Ended or Stream.IsCancelled) then
+      ReportError(Stream, not Res.HeadersSent);
   finally
     // the last reference destroys the pair
     ResRef := nil;
