@@ -92,7 +92,7 @@ thread.
 
 | Item | Value |
 | --- | --- |
-| Class | `TByteBoundedFrameQueue` (`client/src/Http2.Client.Stream.Receive.pas:25`). It wraps `TBlockingQueueState<TFrame>` with capacity 0 and a second lock `FLock` for the byte count. |
+| Class | `TByteBoundedFrameQueue` (`client/src/Http2.Client.Stream.Receive.pas`). It wraps a lock-free single-producer single-consumer ring of frames and an atomic byte counter. On a 32-bit CPU a leaf lock guards the counter. |
 | Created by | `TStreamLease.Create` (`client/src/Http2.Client.Stream.pas:339`), on the stream thread. |
 | Freed by | `TStreamLease.Destroy` (`client/src/Http2.Client.Stream.pas:361`). The thread that drops the last interface reference runs it. |
 | Producers (`Push`) | The reader thread only. |
@@ -100,7 +100,7 @@ thread.
 | `IsShutdown` | The consumer. |
 | `Shutdown` | The reader thread, the thread of `Start`, and the consumer. See below. |
 | Lock outside the queue | None for the pop side. The producer side has no second producer. |
-| Limit | The byte cap `MaxReceiveQueueBytes` on DATA. A `Push` over the cap raises `EHttpStreamError` and does not block. The item count has no limit (capacity 0). |
+| Limit | The byte cap `MaxReceiveQueueBytes` on DATA and the frame cap `cReceiveQueueFrameCap` (1024, the ring capacity). A `Push` over either cap raises `EHttpStreamError` with a flow-control error and does not block. |
 | Verdict | One producer thread. One consumer thread at a time. |
 
 Evidence for the one producer thread. Every path that reaches `Push` starts
