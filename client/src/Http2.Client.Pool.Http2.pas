@@ -40,7 +40,11 @@ type
     FOrigin: string;
     FMaxStreamsPerConnection: Integer;
     FClosing: Boolean;
-    procedure MaybeClose;
+    /// set under FLock by the thread that will close FConn, so only one does
+    FCloseClaimed: Boolean;
+    /// the caller holds FLock: True when the caller must close FConn after it
+    /// has released FLock (the close can join the reader thread)
+    function ClaimClose: Boolean;
   public
     constructor Create(const AConn: TConnection; const AOrigin: string;
       const AMaxStreamsPerConnection: Integer);
@@ -68,12 +72,81 @@ type
     function GetKey: Pointer;
   end;
 
+/// the number of connections that a cleanup thread still frees (test seam)
+function PendingConnectionCleanups: Integer;
+
 implementation
 
 uses
+  Classes,
   Http2.Client.Response,
   Http2.Client.Body.Limits,
   Http2.Client.Encoding;
+
+type
+  /// frees the parts of a connection that was released on its reader thread
+  TConnectionCleanup = class(TThread)
+  private
+    FConn: TConnection;
+    FEncoder: THpackCodec;
+    FDecoder: THpackCodec;
+    FAllocator: TStreamIdAllocator;
+    FLock: TCriticalSection;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const AConn: TConnection; const AEncoder,
+      ADecoder: THpackCodec; const AAllocator: TStreamIdAllocator;
+      const ALock: TCriticalSection);
+  end;
+
+var
+  GPendingCleanups: Integer;
+
+function PendingConnectionCleanups: Integer;
+begin
+  Result := GPendingCleanups;
+end;
+
+{ closes the connection (this joins the reader thread: the caller is not the
+  reader) and frees the parts in the order of the owner }
+procedure FreeParts(const AConn: TConnection; const AEncoder,
+  ADecoder: THpackCodec; const AAllocator: TStreamIdAllocator;
+  const ALock: TCriticalSection);
+begin
+  AConn.Close;
+  AConn.HeaderDecoder := nil;
+  AConn.HeaderEncoder := nil;
+  AConn.HeaderEncoderLock := nil;
+  AConn.Free;
+  AEncoder.Free;
+  ADecoder.Free;
+  AAllocator.Free;
+  ALock.Free;
+end;
+
+constructor TConnectionCleanup.Create(const AConn: TConnection;
+  const AEncoder, ADecoder: THpackCodec;
+  const AAllocator: TStreamIdAllocator; const ALock: TCriticalSection);
+begin
+  FConn := AConn;
+  FEncoder := AEncoder;
+  FDecoder := ADecoder;
+  FAllocator := AAllocator;
+  FLock := ALock;
+  FreeOnTerminate := True;
+  InterlockedIncrement(GPendingCleanups);
+  inherited Create(False);
+end;
+
+procedure TConnectionCleanup.Execute;
+begin
+  try
+    FreeParts(FConn, FEncoder, FDecoder, FAllocator, FLock);
+  finally
+    InterlockedDecrement(GPendingCleanups);
+  end;
+end;
 
 constructor THttpConnection.Create(const AConn: TConnection;
   const AOrigin: string; const AMaxStreamsPerConnection: Integer);
@@ -94,15 +167,18 @@ end;
 
 destructor THttpConnection.Destroy;
 begin
-  FConn.Close;
-  FConn.HeaderDecoder := nil;
-  FConn.HeaderEncoder := nil;
-  FConn.HeaderEncoderLock := nil;
-  FConn.Free;
-  FEncoder.Free;
-  FDecoder.Free;
-  FAllocator.Free;
-  FLock.Free;
+  if (FConn.Thread <> nil) and
+    (GetCurrentThreadId = FConn.Thread.ThreadID) then
+  begin
+    // a callback on the reader thread dropped the last reference: the reader
+    // still uses the connection, the codecs and the lock when the callback
+    // returns, and it cannot join itself.  A cleanup thread frees them all
+    // after it has joined the reader.
+    TConnectionCleanup.Create(FConn, FEncoder, FDecoder, FAllocator, FLock);
+    inherited Destroy;
+    Exit;
+  end;
+  FreeParts(FConn, FEncoder, FDecoder, FAllocator, FLock);
   inherited Destroy;
 end;
 
@@ -235,31 +311,40 @@ begin
     FConn.Security.MaxDecodedResponseBytes, FConn.Security.MaxDecodeRatio);
 end;
 
-procedure THttpConnection.MaybeClose;
+function THttpConnection.ClaimClose: Boolean;
 begin
-  if FClosing and (FConn.StreamCount = 0) then
-    FConn.Close;
+  Result := FClosing and (FConn.StreamCount = 0) and not FCloseClaimed;
+  if Result then
+    FCloseClaimed := True;
 end;
 
 procedure THttpConnection.Drain;
+var
+  DoClose: Boolean;
 begin
   FLock.Acquire;
   try
     FClosing := True;
-    MaybeClose;
+    DoClose := ClaimClose;
   finally
     FLock.Release;
   end;
+  if DoClose then
+    FConn.Close;                     // outside the encoder lock
 end;
 
 procedure THttpConnection.ReleaseIfIdle;
+var
+  DoClose: Boolean;
 begin
   FLock.Acquire;
   try
-    MaybeClose;
+    DoClose := ClaimClose;
   finally
     FLock.Release;
   end;
+  if DoClose then
+    FConn.Close;                     // outside the encoder lock
 end;
 
 function THttpConnection.Closed: Boolean;

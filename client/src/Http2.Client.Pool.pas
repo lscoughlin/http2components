@@ -472,6 +472,8 @@ begin
       finally
         FLock.Release;
       end;
+      if not Dialing then
+        CloseVictims;                // what ReapIdleLocked took out, outside FLock
       if Retry then
       begin
         ThreadSwitch;
