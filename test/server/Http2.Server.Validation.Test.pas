@@ -30,7 +30,8 @@ uses
   mormot.net.sock,
   Http2.Server,
   Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Config,
-  Http2.Common.Frames, Http2.Common.Headers, Http2.Server.Test.Socket;
+  Http2.Common.Frames, Http2.Common.Headers, Http2.Server.Test.Socket,
+  Http2.Server.Async.Trace;
 
 type
   /// a handler that answers a generated body, an echo, or a text answer
@@ -95,7 +96,11 @@ type
     FCodec: THpackCodec;
     FBuf: RawByteString;
     FAll: RawByteString;
+    FSawData: Boolean;
+    FLastState: TCrtSocketPending;
     procedure Pump(const AWaitMs: Integer);
+    procedure NoteBytes(const ACount: Integer);
+    procedure DrainAfterError;
   public
     constructor Create(const APort: Integer);
     destructor Destroy; override;
@@ -455,7 +460,10 @@ constructor TRawClient.Create(const APort: Integer);
 begin
   inherited Create;
   FCodec := THpackCodec.Create;
+  FLastState := cspNoData;
+  TraceClient('connect_start');
   FSock := TCrtSocket.Open('127.0.0.1', IntToStr(APort), nlTcp, IoTimeoutMs);
+  TraceClient('connect');
 end;
 
 destructor TRawClient.Destroy;
@@ -478,12 +486,54 @@ begin
   case Pending of
     cspDataAvailable, cspDataAvailableOnClosedSocket:
       ;
+    cspNoData:
+      begin
+        TraceClient('read_timeout');
+        Exit;
+      end;
   else
+    // poll reports an error (for example RST) before it reports the bytes that
+    // the kernel still holds, so one non-blocking read looks for them
+    if Pending <> FLastState then
+      TraceClient('poll_state', 'state=' + IntToStr(Ord(Pending)));
+    FLastState := Pending;
+    if Pending = cspSocketError then
+      DrainAfterError;
     Exit;
   end;
   Chunk := FSock.SockReceiveString;
   if Chunk <> '' then
   begin
+    NoteBytes(Length(Chunk));
+    FAll := FAll + Chunk;
+    FBuf := FBuf + Chunk;
+  end;
+end;
+
+procedure TRawClient.NoteBytes(const ACount: Integer);
+begin
+  if not FSawData then
+    TraceClient('first_read', 'bytes=' + IntToStr(ACount))
+  else
+    TraceClient('read', 'bytes=' + IntToStr(ACount));
+  FSawData := True;
+end;
+
+procedure TRawClient.DrainAfterError;
+var
+  Chunk: RawByteString;
+begin
+  Chunk := '';
+  try
+    Chunk := FSock.SockReceiveString;
+  except
+    on E: Exception do
+      TraceClient('drain_error', 'class=' + E.ClassName);
+  end;
+  if Chunk <> '' then
+  begin
+    NoteBytes(Length(Chunk));
+    TraceClient('drain_after_error', 'bytes=' + IntToStr(Length(Chunk)));
     FAll := FAll + Chunk;
     FBuf := FBuf + Chunk;
   end;
@@ -512,6 +562,7 @@ begin
     FrameBytes(BuildSettingsFrame(TConnectionSettings.Defaults)));
   FSock.SockSend(@Wire[0], Length(Wire));
   FSock.SockSendFlush();
+  TraceClient('send_preface', 'bytes=' + IntToStr(Length(Wire)));
 end;
 
 procedure TRawClient.SendWideWindow(const AInitialWindow: LongWord);
@@ -553,6 +604,7 @@ begin
     Exit;
   FSock.SockSend(@AData[0], Length(AData));
   FSock.SockSendFlush();
+  TraceClient('send', 'bytes=' + IntToStr(Length(AData)));
 end;
 
 function TRawClient.EncodeHeaders(const AFields: THeaderBlock): TBytes;
