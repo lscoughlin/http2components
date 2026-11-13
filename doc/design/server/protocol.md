@@ -149,9 +149,22 @@ section 8.3.1. A request that fails a check is a stream error: the server sends
 
 - `:method` is a token of RFC 9110 section 5.6.2. A space or an empty method is
   a fault.
-- `:path` starts with `/`, or it is exactly `*` for the method `OPTIONS`. It holds
-  no byte of 0x00 to 0x20, no 0x7F and no byte above 0x7E. An empty `:path` is a
-  fault.
+- `:path` starts with `/`, or it is exactly `*` for the method `OPTIONS`. An empty
+  `:path` is a fault. The byte rule follows the Go HTTP/2 server. The server reads
+  Go at the golang.org/x/net commit e44ac12c0d40f5de4834f3f6f73aeed26f066bca (one
+  commit after tag v0.62.0) and the net/url package at the Go master commit
+  224934336832d84eedcf168ae633e376a5decb22, both on 2026-11-13. The check
+  `url.ParseRequestURI` refuses a byte of 0x00 to 0x1F and 0x7F, and the server
+  refuses the same bytes. The server accepts the space (0x20) and every byte of
+  0x80 to 0xFF, as Go accepts them. The space is accepted because the access log
+  writes the target inside a quoted field, where the escape of `"`, `\` and every
+  byte outside 0x20 to 0x7E keeps a space from ending the field. A `%` in the path
+  part (the octets before the first `?`) holds two hex digits, as `net/url`
+  requires. The query part is not checked for escapes. The fragment sign `#` is
+  accepted. The rule has one deviation from Go: `*` is valid only for `OPTIONS`,
+  as RFC 9113 section 8.3.1 states, and Go accepts `*` for every method. The RFC
+  text is https://www.rfc-editor.org/rfc/rfc9113.txt, checked on 2026-11-13 against
+  the copy in `doc/references/`.
 - `:authority` holds no space, no control byte, no `@` (so no userinfo), and no
   `/`, `?` or `#`. The server parses it with `TryParseURI` (`Http2.Common.Uri`).
 - The `host` field is compared with `:authority` when both are present and the
