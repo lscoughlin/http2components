@@ -33,8 +33,10 @@ type
     procedure TestMethodMustBeAToken;
     procedure TestMethodWithSpaceIsRefused;
     procedure TestPathMustStartWithASlash;
-    procedure TestPathWithControlOrSpaceIsRefused;
-    procedure TestPathWithDeleteOrHighByteIsRefused;
+    procedure TestPathWithControlByteIsRefused;
+    procedure TestPathWithDeleteIsRefused;
+    procedure TestPathByteTableFollowsGo;
+    procedure TestPathPercentEscapeInPathPart;
     procedure TestAsteriskIsOnlyForOptions;
     procedure TestEmptyPathIsRefused;
     procedure TestAuthorityWithSpaceIsRefused;
@@ -100,19 +102,51 @@ begin
   AssertTrue('leading slash', Valid('GET', '/x', 'example.test', ''));
 end;
 
-procedure TRequestPseudoTest.TestPathWithControlOrSpaceIsRefused;
+procedure TRequestPseudoTest.TestPathWithControlByteIsRefused;
 begin
-  AssertFalse('space', Valid('GET', '/a b', 'example.test', ''));
   AssertFalse('control 0x01', Valid('GET', '/a' + #$01, 'example.test', ''));
+  AssertFalse('tab 0x09', Valid('GET', '/a' + #9 + 'b', 'example.test', ''));
+  AssertFalse('line feed 0x0A', Valid('GET', '/a' + #10 + 'b', 'example.test', ''));
+  AssertFalse('carriage return 0x0D', Valid('GET', '/a' + #13 + 'b', 'example.test', ''));
+  AssertFalse('unit separator 0x1F', Valid('GET', '/a' + #$1F, 'example.test', ''));
   AssertFalse('nul', Valid('GET', '/a' + #0, 'example.test', ''));
   AssertTrue('a query is legal', Valid('GET', '/a?b=c&d=%20', 'example.test', ''));
 end;
 
-procedure TRequestPseudoTest.TestPathWithDeleteOrHighByteIsRefused;
+procedure TRequestPseudoTest.TestPathWithDeleteIsRefused;
 begin
   AssertFalse('DEL 0x7F', Valid('GET', '/a' + #$7F, 'example.test', ''));
-  AssertFalse('high byte 0x80', Valid('GET', '/a' + #$80, 'example.test', ''));
-  AssertFalse('high byte 0xFF', Valid('GET', '/a' + #$FF, 'example.test', ''));
+end;
+
+procedure TRequestPseudoTest.TestPathByteTableFollowsGo;
+var
+  B: Integer;
+  Expected: Boolean;
+begin
+  // the rule of Go (x/net/http2, url.ParseRequestURI): every byte of 0x20 to
+  // 0x7E and every byte of 0x80 to 0xFF is accepted, every byte of 0x00 to 0x1F
+  // and 0x7F is refused. A percent sign is tested in its own method.
+  for B := 0 to 255 do
+  begin
+    if B = Ord('%') then
+      Continue;
+    Expected := (B >= $20) and (B <> $7F);
+    AssertEquals('byte ' + IntToHex(B, 2), Expected,
+      Valid('GET', '/a' + Chr(B) + 'b', 'example.test', ''));
+  end;
+end;
+
+procedure TRequestPseudoTest.TestPathPercentEscapeInPathPart;
+begin
+  // Go checks the escapes of the path part only, before the first '?'
+  AssertTrue('escape in path', Valid('GET', '/a%2F', 'example.test', ''));
+  AssertFalse('bad escape in path', Valid('GET', '/a%zz', 'example.test', ''));
+  AssertFalse('escape cut short', Valid('GET', '/a%2', 'example.test', ''));
+  AssertFalse('lone percent', Valid('GET', '/a%', 'example.test', ''));
+  AssertFalse('escape cut short by the query', Valid('GET', '/a%2?x', 'example.test', ''));
+  AssertTrue('bad escape in query is not checked', Valid('GET', '/a?%zz', 'example.test', ''));
+  AssertTrue('fragment sign is accepted', Valid('GET', '/a#b', 'example.test', ''));
+  AssertTrue('high bytes', Valid('GET', '/a' + #$C3 + #$A9, 'example.test', ''));
 end;
 
 procedure TRequestPseudoTest.TestAsteriskIsOnlyForOptions;

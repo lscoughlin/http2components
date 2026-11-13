@@ -133,20 +133,39 @@ begin
       Exit(False);
 end;
 
-/// RFC 9113 section 8.3.1: :path starts with "/", or it is "*" for OPTIONS;
-/// it holds no byte of 0x00 to 0x20, no 0x7F and no byte above 0x7E
+/// true when C is a hexadecimal digit (RFC 3986 section 2.1)
+function IsHexChar(const C: Char): Boolean;
+begin
+  Result := C in ['0'..'9', 'a'..'f', 'A'..'F'];
+end;
+
+/// RFC 9113 section 8.3.1: :path starts with "/", or it is "*" for OPTIONS.
+/// The byte rule follows Go (golang.org/x/net/http2, url.ParseRequestURI):
+/// no byte of 0x00 to 0x1F and no 0x7F; the space and the bytes above 0x7F are
+/// accepted. A "%" in the path part (before the first "?") holds two hex digits.
 function ValidPath(const APath, AMethod: string): Boolean;
 var
-  I: Integer;
+  I, PathEnd: Integer;
 begin
   if APath = '*' then
     Exit(AMethod = 'OPTIONS');
-  Result := (APath <> '') and (APath[1] = '/') and IsValidTargetPart(APath);
+  Result := (APath <> '') and (APath[1] = '/');
   if not Result then
     Exit;
   for I := 1 to Length(APath) do
-    if Ord(APath[I]) > $7E then
+    if (Ord(APath[I]) < $20) or (Ord(APath[I]) = $7F) then
       Exit(False);
+  PathEnd := Pos('?', APath);
+  if PathEnd = 0 then
+    PathEnd := Length(APath) + 1;
+  for I := 1 to PathEnd - 1 do
+    if APath[I] = '%' then
+    begin
+      if I + 2 > PathEnd - 1 then
+        Exit(False);
+      if not (IsHexChar(APath[I + 1]) and IsHexChar(APath[I + 2])) then
+        Exit(False);
+    end;
 end;
 
 /// RFC 3986 section 3.2: an authority is parsed with the scheme of the request
