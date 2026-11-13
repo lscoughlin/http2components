@@ -34,7 +34,8 @@ interface
 uses
   SysUtils, Classes, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Tls, Http2.Client.Stream, Http2.Client.Messages,
-  Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.Http1.Body;
+  Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.Http1.Body,
+  Http2.Client.Tls.Types;
 
 const
   /// ceiling for the whole response head (status line + all header fields),
@@ -145,6 +146,9 @@ type
     /// default keep-alive and no "Connection: close"; read-to-close framing
     /// always forbids reuse)
     function Reusable: Boolean;
+    /// true when input that belongs to no response is already waiting:
+    /// buffered bytes, or a socket that reports readable through IPendingInput
+    function HasUnreadInput: Boolean;
     procedure Close;
     /// trailers of the last chunked response, filled once its body is drained
     property LastTrailers: IHttpHeaders read FLastTrailers;
@@ -777,6 +781,18 @@ end;
 function THttp1Connection.Reusable: Boolean;
 begin
   Result := FReusable and FReuse.Reusable;
+end;
+
+function THttp1Connection.HasUnreadInput: Boolean;
+var
+  Pending: IPendingInput;
+begin
+  Result := FReader.Buffered > 0;
+  if Result or (FSocket = nil) then
+    Exit;
+  // TLS sockets do not implement IPendingInput: the session cannot report buffered plaintext.
+  if Supports(FSocket, IPendingInput, Pending) then
+    Result := Pending.HasPendingInput;
 end;
 
 procedure THttp1Connection.Close;

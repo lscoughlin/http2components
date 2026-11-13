@@ -536,7 +536,12 @@ begin
       ecStreamClosed);
   Dec(FRemaining, Result);
   if FRemaining = 0 then
+  begin
     FDone := True;   // the next Read observes EOF and returns 0
+    // bytes read past the body belong to no response of this connection
+    if (FReader.Buffered > 0) and (FReuse <> nil) then
+      FReuse.MarkNotReusable;
+  end;
 end;
 
 function THttp1BodyStream.ReadChunked(var ABuffer;
@@ -581,6 +586,9 @@ begin
       ReadTrailers;
       FDone := True;
       FObservedEof := True;   // this Read observes EOF and returns 0
+      // bytes read past the body belong to no response of this connection
+      if (FReader.Buffered > 0) and (FReuse <> nil) then
+        FReuse.MarkNotReusable;
       Exit(0);
     end;
     FChunkRemaining := Size;

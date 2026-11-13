@@ -546,13 +546,14 @@ var
   Written: string;
 begin
   Sock := TSocketScript.Create;
-  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 2'#13#10#13#10'aa' +
-    'HTTP/1.1 200 OK'#13#10'Content-Length: 2'#13#10#13#10'bb');
+  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 2'#13#10#13#10'aa');
   Conn := THttp1Connection.Create(Sock);
   try
     R1 := Conn.Send(NewGetRequest('/a'));
     AssertEquals('first body', 'aa', DrainBody(R1.Body));
     AssertTrue('still reusable', Conn.Reusable);
+    // the peer answers the second request only after the first body is drained
+    Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 2'#13#10#13#10'bb');
     R2 := Conn.Send(NewGetRequest('/b'));
     AssertEquals('second status', 200, R2.StatusCode);
     AssertEquals('second body', 'bb', DrainBody(R2.Body));

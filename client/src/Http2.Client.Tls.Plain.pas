@@ -22,7 +22,8 @@ type
   /// is configured the TCP connection goes to the proxy and a CONNECT tunnel
   /// to the real target is negotiated first, so every layer above (TLS, h2c,
   /// HTTP/1.1) sees a transparent byte stream to the origin.
-  TPlainSocket = class(TInterfacedObject, IHttp2Socket, IPartialReader)
+  TPlainSocket = class(TInterfacedObject, IHttp2Socket, IPartialReader,
+    IPendingInput)
   private
     FSocket: TInetSocket;
     FHandle: Integer;
@@ -43,6 +44,7 @@ type
     property Handle: Integer read FHandle;
     function Read(var ABuffer; ACount: Integer): Integer;
     function ReadSome(var ABuffer; ACount: Integer): Integer;
+    function HasPendingInput: Boolean;
     function Write(const ABuffer; ACount: Integer): Integer;
     procedure Close;
     function GetConnected: Boolean;
@@ -296,6 +298,21 @@ begin
       raise EHttpConnectionClosed.CreateFmt('socket read failed (errno %d)',
         [fpGetErrno]);
   end;
+end;
+
+/// a zero-timeout poll: True when a read would not block (input or end of
+// stream is waiting); an unconnected socket reports False
+function TPlainSocket.HasPendingInput: Boolean;
+var
+  Pfd: pollfd;
+begin
+  Result := False;
+  if FHandle < 0 then
+    Exit;
+  Pfd.fd := FHandle;
+  Pfd.events := POLLIN;
+  Pfd.revents := 0;
+  Result := fpPoll(@Pfd, 1, 0) > 0;
 end;
 
 function TPlainSocket.Write(const ABuffer; ACount: Integer): Integer;
