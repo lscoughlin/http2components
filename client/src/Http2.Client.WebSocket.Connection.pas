@@ -650,17 +650,17 @@ begin
   ReportIn(mkWsClose, Length(AFrame.Payload));
   FPeerCode := Code;
   FPeerReason := Reason;
-  FStateLock.Enter;
-  try
-    FInputClosed := True;
-    Local := FLocalClose;
-  finally
-    FStateLock.Leave;
-  end;
   Echoed := False;
   Stamp := 0;
-  FSendLock.Enter;
+  FSendLock.Enter;                    // Close holds it until FLocalClose is set
   try
+    FStateLock.Enter;
+    try
+      FInputClosed := True;
+      Local := FLocalClose;
+    finally
+      FStateLock.Leave;
+    end;
     if not FOutputClosed then
     begin
       if Code = cWsCloseNoStatus then
