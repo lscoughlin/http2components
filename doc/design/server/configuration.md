@@ -330,7 +330,7 @@ The rules are:
 | the initial connection window is at most 2^31-1 | the connection window is above the limit |
 | the initial stream window and the initial connection window are at least 1 | the window is below 1 |
 | the concurrent stream limit is at least 1 | the concurrent stream limit is below 1 |
-| the header table size is at most 2^31-1 | the header table size is above the limit |
+| the header table size is at most 16 MiB (16777216) | the header table size is above the limit |
 | each of the six control buckets has a capacity of at least 1 and a refill rate of at least 0 | the bucket capacity is below 1, or the refill rate is below 0 |
 | the idle, header and graceful stop timeouts are at least 0 | the timeout is below 0 |
 | the maximum connection age is at least 0 | the maximum connection age is below 0 |

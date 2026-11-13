@@ -114,7 +114,8 @@ begin
   begin
     Stream := AStreams[I];
     Credit := Stream.ConsumedSinceUpdate;
-    if Credit < AThreshold then
+    // a WINDOW_UPDATE of 0 is a PROTOCOL_ERROR, so no frame carries 0
+    if (Credit = 0) or (Credit < AThreshold) then
       Continue;
     Stream.ClearConsumed;
     AQueue(BuildWindowUpdateFrame(Stream.StreamId, Credit));
@@ -126,6 +127,9 @@ procedure FlushConnectionCredit(ARecv: TFlowControl;
   const AThreshold: LongWord; var APending: LongWord;
   const AQueue: TQueueFrameProc);
 begin
+  // a WINDOW_UPDATE of 0 is a PROTOCOL_ERROR, so an empty credit sends nothing
+  if APending = 0 then
+    Exit;
   if APending < AThreshold then
   begin
     // an empty window stalls every stream, so it is refilled at once

@@ -8,7 +8,8 @@ notes:
   - A token bucket counts a client action that a peer can repeat at a high
     rate, such as a reset or a control frame.
   - The bucket has no lock; the caller holds the connection lock.
-  - No numeric limit is in this unit; every limit comes from the options.
+  - The bounds that Validate accepts for an option are constants in this
+    unit. The default value of every option comes from the options.
 ---
 }
 /// Per-connection abuse limits for the HTTP/2 server
@@ -31,6 +32,19 @@ interface
 
 uses
   SysUtils;
+
+const
+  /// the least MaxHeaderListSize: 1 KiB
+  cMinHeaderListSize = 1024;
+  /// the greatest MaxHeaderListSize: 2^30 - 1, so the block limit of twice
+  /// the list limit fits a signed 32-bit number
+  cMaxHeaderListSize = High(LongInt) div 2;
+  /// the greatest SETTINGS_HEADER_TABLE_SIZE that the server accepts: 16 MiB
+  cMaxHeaderTableSize = 16777216;
+  /// the greatest MaxContinuationFrames
+  cMaxContinuationLimit = 1024;
+  /// the greatest MaxConcurrentStreams
+  cMaxConcurrentStreamsLimit = 100000;
 
 type
   /// a clock that only moves forward, in milliseconds

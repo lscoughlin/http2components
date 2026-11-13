@@ -50,11 +50,6 @@ uses
   Http2.Server.Config.Unix,
   Http2.Server.Seam;
 
-const
-  /// the greatest header table size: 2^31 - 1, so the value fits a signed
-  /// 32-bit number in the HPACK encoder and decoder
-  cMaxHeaderTableSize = High(LongInt);
-
 type
   /// the action of the server when the request queue is full
   TQueueRefusalMode = (
@@ -795,12 +790,17 @@ var
     Problems[Count - 1] := AProblem;
   end;
 
-  procedure CheckBucket(const AName: string; const ABucket: TTokenBucketOptions);
+  procedure CheckBucket(const AName: string; const ABucket: TTokenBucketOptions;
+    const ARequireCosts: Boolean);
   begin
     if ABucket.Capacity < 1 then
       Add('the ' + AName + ' bucket capacity is below 1');
     if ABucket.RefillPerSecond < 0 then
       Add('the ' + AName + ' bucket refill rate is below 0');
+    // a cost of 0 never empties the bucket, so the limit would be off
+    if ARequireCosts and ((ABucket.CostBeforeDispatch < 1) or
+       (ABucket.CostAfterDispatch < 1)) then
+      Add('the ' + AName + ' bucket cost is below 1');
   end;
 
 begin
@@ -862,14 +862,25 @@ begin
     Add('the initial connection window is below 1');
   if FMaxConcurrentStreams < 1 then
     Add('the concurrent stream limit is below 1');
+  if FMaxConcurrentStreams > cMaxConcurrentStreamsLimit then
+    Add('the concurrent stream limit is above ' +
+      IntToStr(cMaxConcurrentStreamsLimit));
+  if (FMaxHeaderListSize < cMinHeaderListSize) or
+     (FMaxHeaderListSize > cMaxHeaderListSize) then
+    Add('the maximum header list size is outside ' +
+      IntToStr(cMinHeaderListSize) + ' to ' + IntToStr(cMaxHeaderListSize));
+  if (FMaxContinuationFrames < 1) or
+     (FMaxContinuationFrames > cMaxContinuationLimit) then
+    Add('the continuation frame limit is outside 1 to ' +
+      IntToStr(cMaxContinuationLimit));
   if FHeaderTableSize > cMaxHeaderTableSize then
     Add('the header table size is above ' + IntToStr(cMaxHeaderTableSize));
-  CheckBucket('reset', FResetBucket);
-  CheckBucket('ping', FPingBucket);
-  CheckBucket('settings', FSettingsBucket);
-  CheckBucket('empty-data', FEmptyDataBucket);
-  CheckBucket('window-update', FWindowUpdateBucket);
-  CheckBucket('continuation', FContinuationBucket);
+  CheckBucket('reset', FResetBucket, True);
+  CheckBucket('ping', FPingBucket, False);
+  CheckBucket('settings', FSettingsBucket, False);
+  CheckBucket('empty-data', FEmptyDataBucket, False);
+  CheckBucket('window-update', FWindowUpdateBucket, False);
+  CheckBucket('continuation', FContinuationBucket, False);
   if FIdleTimeoutMs < 0 then
     Add('the idle timeout is below 0');
   if FHeaderTimeoutMs < 0 then

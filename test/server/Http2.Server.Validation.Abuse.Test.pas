@@ -99,8 +99,10 @@ function TAbuseLimitTest.StartWithBuckets(const AReset,
 var
   Factory: THttp2ServerFactory;
 begin
+  // the reset bucket takes the production costs: Validate refuses a cost of 0
   Factory := BaseFactory(TValidationHandler.Create)
-    .WithResetBucket(AReset)
+    .WithResetBucket(AReset.WithCostBeforeDispatch(1)
+      .WithCostAfterDispatch(5))
     .WithPingBucket(AControl)
     .WithSettingsBucket(AControl)
     .WithEmptyDataBucket(AControl)

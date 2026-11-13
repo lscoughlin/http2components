@@ -331,6 +331,10 @@ begin
       // connection stays open. After a GOAWAY the server takes no new stream.
       // The block is still decoded and dropped, because the HPACK state of the
       // peer already holds its fields (RFC 9113 section 4.3)
+      // a refusal by the stream limit is a fault of the peer, so it charges
+      // the reset bucket; a HEADERS frame in flight after a GOAWAY does not
+      if (not FGoAwaySent) and (FLimits <> nil) then
+        FLimits.ChargeReset(True);
       SendRstStream(AFrame.Header.StreamId, ecRefusedStream);
       Discard := True;
     end
@@ -502,6 +506,8 @@ begin
   begin
     // RFC 9113 section 8.1.2.6: a malformed request is a stream error, so
     // only this stream ends and the connection stays open
+    if FLimits <> nil then
+      FLimits.ChargeReset(True);
     SendRstStream(AStream.StreamId, ecProtocolError);
     AStream.Cancel(ecProtocolError);
     CloseStream(AStream);
@@ -586,6 +592,8 @@ begin
     begin
       // RFC 9113 section 8.1.2.6: the body passed the declared content-length,
       // so this stream ends and the connection stays open
+      if FLimits <> nil then
+        FLimits.ChargeReset(True);
       SendRstStream(AFrame.Header.StreamId, ecProtocolError);
       Stream.Cancel(ecProtocolError);
       CloseStream(Stream);

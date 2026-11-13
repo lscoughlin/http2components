@@ -216,6 +216,26 @@ begin
     raise EHttpConnectionError.Create(UnixStateProblem(State));
 end;
 
+function HeaderBlockBound(const AListLimit: LongWord): LongWord;
+var
+  Bound: Int64;
+begin
+  // twice the list limit, clamped so the Integer cast of the core cannot wrap
+  Bound := Int64(AListLimit) * 2;
+  if Bound > High(LongInt) then
+    Bound := High(LongInt);
+  Result := LongWord(Bound);
+end;
+
+function HalfWindowThreshold(const AWindow: LongWord): LongWord;
+begin
+  // a threshold of 0 makes every flush send a WINDOW_UPDATE of 0, which is
+  // a PROTOCOL_ERROR, so the threshold is at least 1
+  Result := AWindow div 2;
+  if Result < 1 then
+    Result := 1;
+end;
+
 function BuildConnectionCoreOptions(
   const AFactory: THttp2ServerFactory): TConnectionCoreOptions;
 begin
@@ -228,13 +248,14 @@ begin
   result.MaxContinuations := AFactory.MaxContinuationFrames;
   // the header block bound is twice the header list bound, so one block that
   // meets the list limit always fits
-  result.MaxHeaderBlockBytes := AFactory.MaxHeaderListSize * 2;
+  result.MaxHeaderBlockBytes := HeaderBlockBound(AFactory.MaxHeaderListSize);
   // the inbound buffer is the initial stream window, so a peer cannot buffer
   // more than the server granted it
   result.InboundBufferLimit := Integer(AFactory.InitialStreamWindow);
   result.OutboundBufferLimit := Integer(AFactory.InitialStreamWindow);
-  result.ConnectionUpdateThreshold := AFactory.InitialConnectionWindow div 2;
-  result.StreamUpdateThreshold := AFactory.InitialStreamWindow div 2;
+  result.ConnectionUpdateThreshold :=
+    HalfWindowThreshold(AFactory.InitialConnectionWindow);
+  result.StreamUpdateThreshold := HalfWindowThreshold(AFactory.InitialStreamWindow);
   result.ConnectProtocol := AFactory.WebSocketsEnabled;
   result.MaxOutputBytes := LongWord(AFactory.MaxOutputQueueBytes);
   result.MaxStreams := LongWord(AFactory.MaxStreamsPerConnection);
