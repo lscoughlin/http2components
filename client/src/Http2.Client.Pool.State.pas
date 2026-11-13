@@ -27,7 +27,7 @@ uses
   Http2.Client.SocketFactory.Types,
   Http2.Client.Pool.Types,
   Http2.Client.Defaults,
-  Http2.Client.Clock;
+  Http2.Client.Clock, Http2.Client.Config.Security;
 
 
 type
@@ -49,6 +49,8 @@ type
     /// (doc/design/fallback.md)
     FHttp1Fallback: Boolean;
     FClearTextPolicy: TClearTextPolicy;
+    /// the security limits that each new connection receives; set by Build
+    FSecurity: TClientSecurityOptions;
     /// last time a pooled connection was used, keyed by IPooledConnection.Key
     FIdleSince: TDictionary<Pointer, QWord>;
     /// when a pooled connection was registered, keyed like FIdleSince
@@ -145,6 +147,8 @@ type
     /// install the identity selector (called by Build, before any request)
     property IdentitySelector: IClientIdentitySelector
       read FIdentitySelector write FIdentitySelector;
+    /// the security limits for new connections (called by Build, before any request)
+    property Security: TClientSecurityOptions read FSecurity write FSecurity;
     /// a snapshot of the counts, copied under FLock and returned by value
     function Stats: TPoolStats;
     // test seams
@@ -184,6 +188,7 @@ begin
   FIdleTimeoutMs := AIdleTimeoutMs;
   FHttp1Fallback := AHttp1Fallback;
   FClearTextPolicy := AClearTextPolicy;
+  FSecurity := TClientSecurityOptions.Default;
   FTotalConnections := 0;
   FClosed := False;
 end;

@@ -17,6 +17,7 @@ uses
   Http2.Client.BodyReader,
   Http2.Client.ClientCert,
   Http2.Client.Clock,
+  Http2.Client.Config.Security,
   Http2.Client.Connection.Observer,
   Http2.Client.Connection.Queue,
   Http2.Client.Connection.SendCredit,

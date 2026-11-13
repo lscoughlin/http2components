@@ -116,6 +116,7 @@ var
   Err: EHttpError;
 begin
   Conn := TConnection.Create(Sock);
+  Conn.SetSecurity(FSecurity);
   if FObserver <> nil then
     Conn.Observer := FObserver;
   if FIdleTimeoutMs > 0 then
