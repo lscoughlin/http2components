@@ -231,6 +231,11 @@ and the bound is `MaxBodySize` for each connection. This is a deviation from HTT
 a handler that streams a very large upload needs a larger `MaxBodySize` on HTTP/1.1,
 and the memory of the server then grows with the number of such uploads.
 
+The server-wide budget of [limits](limits.md) bounds the sum of these bodies
+over all connections. A body that does not fit under the budget gets a 503 answer,
+and its connection closes. The other exchanges continue. The budget is off when
+its option is 0.
+
 A client that stops reading a response cannot make the memory of the connection
 grow. A handler write waits while the backlog is above `ChannelQueueLimit`. The
 backlog is the queue of the core plus the octets that the socket layer of mORMot2

@@ -359,6 +359,8 @@ begin
 end;
 
 procedure TH1Core.UpgradeCancel;
+var
+  Ref: IInterface;
 begin
   FLock.Acquire;
   try
@@ -368,11 +370,15 @@ begin
       FCloseAfter := True
     else if Length(FHeld) > 0 then
       FParser.Feed(FHeld[0], Length(FHeld));
+    Ref := FCurrentRef;
     FHeld := nil;
     FHeldLost := False;
   finally
     FLock.Release;
   end;
+  // outside the lock: a refused body budget answers 503
+  if (Ref <> nil) and (Ref as TH1Exchange).BodyBudgetRefused then
+    (Ref as TH1Exchange).Fail(503);
 end;
 
 procedure TH1Core.CloseAfterOutput;
@@ -492,6 +498,7 @@ end;
 procedure TH1Core.Feed(const AData: TBytes);
 var
   Target: IH1Inbound;
+  Ref: IInterface;
 begin
   if Length(AData) = 0 then
     Exit;
@@ -522,9 +529,13 @@ begin
         FHeadStartMs := GetTickCount64;
       FParser.Feed(AData[0], Length(AData));
     end;
+    Ref := FCurrentRef;
   finally
     FLock.Release;
   end;
+  // outside the lock: a refused body budget answers 503
+  if (Ref <> nil) and (Ref as TH1Exchange).BodyBudgetRefused then
+    (Ref as TH1Exchange).Fail(503);
   // outside the lock: the channel calls into the session
   if Target <> nil then
     Target.Inbound(AData[0], Length(AData));

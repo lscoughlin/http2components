@@ -69,7 +69,7 @@ type
     FRoomEv: PRTLEvent;
     FBody: TBytes;
     FBodyHead, FBodyTail: Integer;
-    FBodyEnded: Boolean; FCharged: Int64; // the body octets that the budget holds
+    FBodyEnded: Boolean; FCharged: Int64; FBudgetRefused: Boolean; // budget charge
     FCancelled: Boolean;
     FExpectAsked: Boolean;
     FLastProgressMs: QWord;
@@ -125,6 +125,7 @@ type
     // the core feeds the body
     procedure AppendBody(const AData; const ACount: Integer);
     procedure EndBody;
+    function BodyBudgetRefused: Boolean; // the core answers 503 after its lock
     /// the request broke after the head: answer AStatus if no answer started,
     /// wake the handler and end the exchange so the connection closes
     procedure Fail(const AStatus: Integer);
@@ -207,6 +208,7 @@ end;
 
 destructor TH1Exchange.Destroy;
 begin
+  DropCharge(FOptions.BodyBudget, FCharged); // a charge no end path gave back
   RTLEventDestroy(FBodyEv);
   RTLEventDestroy(FRoomEv);
   FLock.Free;
@@ -215,7 +217,7 @@ end;
 
 procedure TH1Exchange.AppendBody(const AData; const ACount: Integer);
 var
-  Need: Integer; Refused: Boolean;
+  Need: Integer;
 begin
   if ACount <= 0 then
     Exit;
@@ -224,26 +226,34 @@ begin
     // a response that finished without the body drops the rest of it
     if FCancelled or FFinished then
       Exit;
-    Refused := not TakeCharge(FOptions.BodyBudget, FCharged, ACount);
-    if not Refused then
+    if not TakeCharge(FOptions.BodyBudget, FCharged, ACount) then
     begin
-      if FBodyHead = FBodyTail then
-      begin
-        FBodyHead := 0;
-        FBodyTail := 0;
-      end;
-      Need := FBodyTail + ACount;
-      if Need > Length(FBody) then
-        SetLength(FBody, GrownLength(Need, Length(FBody)));
-      Move(AData, FBody[FBodyTail], ACount);
-      FBodyTail := Need;
-      FLastProgressMs := GetTickCount64;
+      FBudgetRefused := True; // the core answers 503 after its lock; body dropped
+      FCancelled := True;
+      DropCharge(FOptions.BodyBudget, FCharged);
+      RTLEventSetEvent(FBodyEv);
+      Exit;
     end;
+    if FBodyHead = FBodyTail then
+    begin
+      FBodyHead := 0;
+      FBodyTail := 0;
+    end;
+    Need := FBodyTail + ACount;
+    if Need > Length(FBody) then
+      SetLength(FBody, GrownLength(Need, Length(FBody)));
+    Move(AData, FBody[FBodyTail], ACount);
+    FBodyTail := Need;
+    FLastProgressMs := GetTickCount64;
   finally
     FLock.Release;
   end;
-  if Refused then Fail(503); // a full budget: 503 and end, outside the lock
   RTLEventSetEvent(FBodyEv);
+end;
+
+function TH1Exchange.BodyBudgetRefused: Boolean;
+begin
+  Result := FBudgetRefused;
 end;
 
 procedure TH1Exchange.EndBody;
