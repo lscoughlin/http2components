@@ -263,6 +263,36 @@ begin
   Pair := TSessionPair.Create(AContext, AClientOptions, AServerOptions);
   try
     Pair.Open;
+    Check(Pair.Client.PendingPlaintext = 0,
+      'an open session without data reports pending plaintext');
+    Buffer := [51, 52, 53, 54, 55];
+    Check(Pair.Server.WritePlaintext(Buffer, 0, Length(Buffer)) = Length(Buffer),
+      'pending plaintext probe was not accepted');
+    I := 0;
+    while Pair.Client.PendingPlaintext < Length(Buffer) do
+    begin
+      Inc(I);
+      Check(I < 1000, 'plaintext did not reach the client session');
+      Pair.Pump;
+    end;
+    Check(Pair.Client.PendingPlaintext = Length(Buffer),
+      'pending plaintext count is wrong');
+    Check(Pair.Client.PendingPlaintext = Length(Buffer),
+      'the pending plaintext query changed state');
+    Check(Pair.Client.ReadPlaintext(Buffer, 0, 2) = 2, 'partial read failed');
+    Check(Pair.Client.PendingPlaintext = 3,
+      'pending plaintext did not shrink after a read');
+    Check(Pair.Client.ReadPlaintext(Buffer, 0, 3) = 3, 'rest read failed');
+    Check(Pair.Client.PendingPlaintext = 0,
+      'pending plaintext remains after all reads');
+    Pass('pending plaintext query');
+  finally
+    Pair.Free;
+  end;
+
+  Pair := TSessionPair.Create(AContext, AClientOptions, AServerOptions);
+  try
+    Pair.Open;
     Buffer := [41, 42, 43, 44, 45];
     Check(Pair.Server.WritePlaintext(Buffer, 0, Length(Buffer)) = Length(Buffer),
       'final plaintext was not accepted');

@@ -53,6 +53,10 @@ type
       when the peer starts an orderly close. On failure, zero available bytes raises the
       stored ETlsSessionError. }
     function ReadPlaintext(var ABuffer: TBytes; const AOffset, ACapacity: SizeInt): SizeInt;
+    { The number of decrypted octets that the session holds and has not returned
+      to the caller. The method reads no socket, takes no input and changes no
+      state. A TLS 1.3 NewSessionTicket and a key update hold no plaintext. }
+    function PendingPlaintext: SizeInt;
     { Advances without waiting. AMonotonicMs is an absolute monotonic time.
       The effective deadline is the earlier context and role deadline. Input
       does not restart the deadline. }

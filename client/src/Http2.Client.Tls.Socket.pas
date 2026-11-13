@@ -37,7 +37,7 @@ procedure RejectLegacyTlsPolicy(const AInsecure: Boolean;
 
 type
   TTlsSocket = class(TInterfacedObject, IHttp2Socket, IPartialReader,
-    IHttp2TlsSocketInfo)
+    IHttp2TlsSocketInfo, IPendingInput)
   private
     FTransport: IHttp2Socket;
     FReader: IPartialReader;
@@ -53,6 +53,7 @@ type
     FWriteLock: TCriticalSection;
     FInputProgress: PRTLEvent;
     FInputGeneration: LongInt;
+    FPlainBuffer: TBytes;
     FEncryptedPending: TBytes;
     FEncryptedOffset: SizeInt;
     FEncryptedOutput: TBytes;
@@ -67,6 +68,7 @@ type
     function ReadEncrypted: Boolean;
     function ReadApplicationEncrypted: Boolean;
     function GetPlain(var ABuffer; const ACount: Integer): Integer;
+    function PollSessionInput: Boolean;
     procedure PutPlain(const ABuffer; const ACount: Integer);
   public
     constructor Create(const ATransport: IHttp2Socket; const AHost: string;
@@ -119,6 +121,7 @@ type
     procedure SetWriteTimeoutMs(const AValue: Integer);
     function NegotiatedTlsInfo: TTlsNegotiatedInfo;
     function SelectedProtocol: string;
+    function HasPendingInput: Boolean;
     property Connected: Boolean read GetConnected;
     property ConnectTimeoutMs: Integer read GetConnectTimeoutMs write SetConnectTimeoutMs;
     property ReadTimeoutMs: Integer read GetReadTimeoutMs write SetReadTimeoutMs;
@@ -615,6 +618,14 @@ function TTlsSocket.GetPlain(var ABuffer; const ACount: Integer): Integer;
 var B: TBytes;
 begin
   if ACount <= 0 then Exit(0);
+  if Length(FPlainBuffer) > 0 then
+  begin
+    Result := ACount;
+    if Result > Length(FPlainBuffer) then Result := Length(FPlainBuffer);
+    Move(FPlainBuffer[0], ABuffer, Result);
+    Delete(FPlainBuffer, 0, Result);
+    Exit;
+  end;
   SetLength(B, ACount); Result := FSession.ReadPlaintext(B, 0, ACount);
   if Result > 0 then Move(B[0], ABuffer, Result);
 end;
@@ -631,6 +642,67 @@ begin
     Host := Copy(Host, 2, Length(Host) - 2);
   Result := Http2.Client.Proxy.ParseIp4Literal(Host, V4) or
     Http2.Client.Proxy.ParseIp6Literal(Host, V6);
+end;
+
+/// True when the session holds plaintext, an alert or an end of stream, or
+// when the transport is readable and the bytes in it give one of these.  A
+// read that gives no plaintext (a TLS 1.3 NewSessionTicket, a key update)
+// leaves the socket not pending.  Plaintext that the check reads stays in
+// FPlainBuffer for the next read.  The caller holds both locks.
+function TTlsSocket.PollSessionInput: Boolean;
+var
+  Source: IPendingInput;
+  Chunk: TBytes;
+  N: SizeInt;
+begin
+  Result := True;
+  try
+    if (Length(FPlainBuffer) > 0) or (FSession.PendingPlaintext > 0) or
+       FTransportEof or (FSession.State in [tssClosed, tssFailed]) then
+      Exit;
+    Result := False;
+    if not Supports(FTransport, IPendingInput, Source) then
+      Exit;
+    while (Length(FEncryptedPending) > 0) or Source.HasPendingInput do
+    begin
+      if not ReadEncrypted and not FTransportEof then
+        Exit(True);   // the session holds input that it cannot take
+      AdvanceSession;
+      FlushEncrypted;
+      SetLength(Chunk, TlsMaxEncryptedInput);
+      N := FSession.ReadPlaintext(Chunk, 0, Length(Chunk));
+      if N > 0 then
+      begin
+        SetLength(Chunk, N);
+        FPlainBuffer := Chunk;
+        Exit(True);
+      end;
+      if FTransportEof or (FSession.State in [tssClosed, tssFailed]) then
+        Exit(True);
+    end;
+  except
+    on Exception do Result := True;   // the next read reports the problem
+  end;
+end;
+
+function TTlsSocket.HasPendingInput: Boolean;
+begin
+  if not FConnected then
+    Exit(False);
+  Result := True;   // a socket in use is not idle
+  if not FReadLock.TryEnter then
+    Exit;
+  try
+    if not FSessionLock.TryEnter then
+      Exit;
+    try
+      Result := PollSessionInput;
+    finally
+      FSessionLock.Release;
+    end;
+  finally
+    FReadLock.Release;
+  end;
 end;
 
 procedure TTlsSocket.PutPlain(const ABuffer; const ACount: Integer);

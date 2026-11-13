@@ -76,6 +76,7 @@ type
       ACount: SizeInt): SizeInt;
     function ReadPlaintext(var ABuffer: TBytes; const AOffset,
       ACapacity: SizeInt): SizeInt;
+    function PendingPlaintext: SizeInt;
     function Advance(const AMonotonicMs: Int64): TTlsProgress;
     procedure NotifyTransportEof;
     procedure BeginShutdown;
@@ -298,6 +299,7 @@ end;
 function TObservedSession.ReadPlaintext(var ABuffer: TBytes;
   const AOffset, ACapacity: SizeInt): SizeInt;
 begin Result := FInner.ReadPlaintext(ABuffer, AOffset, ACapacity); end;
+function TObservedSession.PendingPlaintext: SizeInt; begin Result := FInner.PendingPlaintext; end;
 function TObservedSession.Advance(const AMonotonicMs: Int64): TTlsProgress;
 begin
   Result := FInner.Advance(AMonotonicMs);
