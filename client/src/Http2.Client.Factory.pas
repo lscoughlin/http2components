@@ -25,7 +25,8 @@ uses
   Http2.Client.RequestObserver,
   Http2.Client.Api,
   Http2.Client.Defaults,
-  Http2.Client.SocketFactory.Types;
+  Http2.Client.SocketFactory.Types,
+  Http2.Client.Config.Security;
 
 
 type
@@ -63,6 +64,7 @@ type
     FUnixPathError: string;
     FUnixProxyPath: string;
     FUnixProxyKind: TProxyKind;
+    FSecurity: TClientSecurityOptions;
   public
     class function Create: THttpClientFactory; static;
     /// compatibility shim: sets BOTH the per-host and the total cap to AMax,
@@ -162,6 +164,29 @@ type
       const AObserver: IHttpClientObserver): THttpClientFactory;
     /// receives library diagnostics, such as an observer that raised
     function WithLogger(const ALogger: IHttpLogger): THttpClientFactory;
+    /// replace every security limit at once (see TClientSecurityOptions)
+    function WithSecurityOptions(const AOptions: TClientSecurityOptions):
+      THttpClientFactory;
+    /// the redirect policy of a followed redirect; the default is rpAnyHost
+    function WithRedirectPolicy(const APolicy: TRedirectPolicy): THttpClientFactory;
+    /// the byte cap of one stream's receive queue (16 KiB to 1 GiB)
+    function WithMaxReceiveQueueBytes(const AValue: Int64): THttpClientFactory;
+    /// the byte cap of a response body; 0 is unlimited
+    function WithMaxResponseBytes(const AValue: Int64): THttpClientFactory;
+    /// the byte cap of a decoded response body; 0 is unlimited
+    function WithMaxDecodedResponseBytes(const AValue: Int64): THttpClientFactory;
+    /// the decoded to encoded ratio that stops a decode; 0 is off
+    function WithMaxDecodeRatio(const AValue: Integer): THttpClientFactory;
+    /// the cap of a response header list (1 KiB to 16 MiB)
+    function WithMaxHeaderListSize(const AValue: Integer): THttpClientFactory;
+    /// the cap of one server-sent event line; 0 is no cap
+    function WithSseMaxLineBytes(const AValue: Integer): THttpClientFactory;
+    /// the cap of one server-sent event; 0 is no cap
+    function WithSseMaxEventBytes(const AValue: Integer): THttpClientFactory;
+    /// the idle time of a server-sent event stream in ms; 0 is off
+    function WithSseMaxIdleTimeMs(const AValue: Integer): THttpClientFactory;
+    /// the largest retry delay that a server-sent event may ask for, in ms
+    function WithSseMaxRetryMs(const AValue: Integer): THttpClientFactory;
     function Build: IHttpClient;
 
     /// compatibility alias for MaxConnectionsPerHost
@@ -232,6 +257,7 @@ begin
   Result.FUnixPathError := '';
   Result.FUnixProxyPath := '';
   Result.FUnixProxyKind := pkHttp;
+  Result.FSecurity := TClientSecurityOptions.Default;
   Result.FObserver := nil;
   Result.FRequestObservers := nil;
   Result.FLogger := nil;
@@ -480,6 +506,83 @@ begin
   Result.FClearTextPolicy := APolicy;
 end;
 
+function THttpClientFactory.WithSecurityOptions(
+  const AOptions: TClientSecurityOptions): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := AOptions;
+end;
+
+function THttpClientFactory.WithRedirectPolicy(
+  const APolicy: TRedirectPolicy): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := Result.FSecurity.WithRedirectPolicy(APolicy);
+end;
+
+function THttpClientFactory.WithMaxReceiveQueueBytes(
+  const AValue: Int64): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := Result.FSecurity.WithMaxReceiveQueueBytes(AValue);
+end;
+
+function THttpClientFactory.WithMaxResponseBytes(
+  const AValue: Int64): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := Result.FSecurity.WithMaxResponseBytes(AValue);
+end;
+
+function THttpClientFactory.WithMaxDecodedResponseBytes(
+  const AValue: Int64): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := Result.FSecurity.WithMaxDecodedResponseBytes(AValue);
+end;
+
+function THttpClientFactory.WithMaxDecodeRatio(
+  const AValue: Integer): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := Result.FSecurity.WithMaxDecodeRatio(AValue);
+end;
+
+function THttpClientFactory.WithMaxHeaderListSize(
+  const AValue: Integer): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := Result.FSecurity.WithMaxHeaderListSize(AValue);
+end;
+
+function THttpClientFactory.WithSseMaxLineBytes(
+  const AValue: Integer): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := Result.FSecurity.WithSseMaxLineBytes(AValue);
+end;
+
+function THttpClientFactory.WithSseMaxEventBytes(
+  const AValue: Integer): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := Result.FSecurity.WithSseMaxEventBytes(AValue);
+end;
+
+function THttpClientFactory.WithSseMaxIdleTimeMs(
+  const AValue: Integer): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := Result.FSecurity.WithSseMaxIdleTimeMs(AValue);
+end;
+
+function THttpClientFactory.WithSseMaxRetryMs(
+  const AValue: Integer): THttpClientFactory;
+begin
+  Result := Self;
+  Result.FSecurity := Result.FSecurity.WithSseMaxRetryMs(AValue);
+end;
+
 function THttpClientFactory.Build: IHttpClient;
 var
   Fixed: IProxy;
@@ -492,6 +595,9 @@ var
 begin
   if FUnixPathError <> '' then
     raise EHttpUnixSocketConfigError.Create(FUnixPathError);
+  // an out-of-range security limit is refused before any client exists
+  if FSecurity.Problems <> '' then
+    raise EHttpError.Create(FSecurity.Problems);
   Factory := FSocketFactory;
   // an injected factory that cannot present identities would drop them
   // silently: refuse the combination
@@ -566,6 +672,7 @@ begin
     FObserver, FHttp1Fallback, FClearTextPolicy, Selector);
   Client.InstallRequestObservers(FRequestObservers, FLogger);
   Client.InstallIdentitySelector(FIdentitySelector);
+  Client.InstallSecurity(FSecurity);
   Result := Client;
 end;
 

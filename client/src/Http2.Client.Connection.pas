@@ -22,7 +22,8 @@ uses
   Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls, Http2.Client.Observer, Http2.Common.FlowControl,
   Http2.Client.Clock, Http2.Common.Hpack, Http2.Client.Connection.Observer,
   Http2.Client.Connection.Queue, Http2.Client.Connection.SendCredit,
-  Http2.Client.Connection.Credit, Http2.Client.Connection.HeaderBlock;
+  Http2.Client.Connection.Credit, Http2.Client.Connection.HeaderBlock,
+  Http2.Client.Config.Security;
 
 const
   /// connection-level receive window we advertise (RFC 7540 section 6.9.2)
@@ -141,6 +142,7 @@ type
     FFlowControl: TFlowControl;
     FCredit: TReceiveCreditTracker;
     FSendCreditWaiters: ISendCreditWaiterRegistry;
+    FSecurity: TClientSecurityOptions;
     function GetState: TConnectionState;
     function GetWorkerHeaderStream: LongWord;
     function GetPeerSettings: TConnectionSettings;
@@ -157,6 +159,7 @@ type
   public
     /// internal state operations used by the connection worker
     procedure SetState(const AValue: TConnectionState);
+    procedure SetSecurity(const AValue: TClientSecurityOptions);
     procedure TrackReceivedData(const AStreamId, ALength: LongWord);
     procedure ApplyWindowUpdate(const AStreamId, AIncrement: LongWord);
     /// release every sender parked on its per-sender event; each re-checks its own
@@ -262,6 +265,7 @@ type
     property PingTimeoutMs: Integer read FPingTimeoutMs write FPingTimeoutMs;
     /// optional observability sink; nil (the default) means no overhead
     property Observer: IHttp2Observer read GetObserver write SetObserver;
+    property Security: TClientSecurityOptions read FSecurity;
   end;
 
 /// the 24-byte client connection preface (RFC 7540 section 3.5)
@@ -338,6 +342,7 @@ begin
   FLock := TCriticalSection.Create;
   FStateEvent := RTLEventCreate;
   FSendCreditWaiters := NewSendCreditWaiterRegistry;
+  FSecurity := TClientSecurityOptions.Default;
   FSocket := ASocket;
   FOutbound := TBlockingQueue<TFrame>.Create(cDefaultQueueCapacity);
   FInbound := TBlockingQueue<TFrame>.Create(0); // unbounded: only the reader fills it
@@ -946,5 +951,8 @@ procedure TConnection.SetObserver(const AValue: IHttp2Observer);
 begin
   FNotifications.SetObserver(AValue);
 end;
+
+procedure TConnection.SetSecurity(const AValue: TClientSecurityOptions);
+begin FSecurity := AValue; end;
 
 end.

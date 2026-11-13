@@ -31,11 +31,11 @@ uses
   Http2.Client.Request,
   Http2.Client.Pool,
   Http2.Client.Pool.Types,
-  Http2.Client.SocketFactory.Types;
+  Http2.Client.SocketFactory.Types, Http2.Client.Config.Security;
 
 
 type
-  THttpClient = class(TInterfacedObject, IHttpClient)
+  THttpClient = class(TInterfacedObject, IHttpClient, IHttpClientOptions)
   private
     FPool: TConnectionPool;
     FHeaderTimeoutMs: Integer;
@@ -54,6 +54,8 @@ type
     FClonedAttempts: Integer;
     /// nil = the factory's fixed identity (or none)
     FIdentitySelector: IClientIdentitySelector;
+    /// the security limits (Build installs them; the pool and connections share the value)
+    FSecurity: TClientSecurityOptions;
     function SendOnce(const ARequest: THttpRequest;
       const AExchange: IExchangeObserver): IHttpResponse;
   public
@@ -79,6 +81,10 @@ type
       const ALogger: IHttpLogger);
     /// install the origin identity selector (called by Build)
     procedure InstallIdentitySelector(const ASelector: IClientIdentitySelector);
+    /// install the security limits (called by Build, before any request)
+    procedure InstallSecurity(const ASecurity: TClientSecurityOptions);
+    /// the security limits that the client was built with (IHttpClientOptions)
+    function Options: TClientSecurityOptions;
     /// the pool (test seam)
     property Pool: TConnectionPool read FPool;
     /// attempts that were cloned for an observer (test seam): stays 0 for a
@@ -130,6 +136,7 @@ begin
   FClosed := False;
   FHttp1Fallback := AHttp1Fallback;
   FClearTextPolicy := AClearTextPolicy;
+  FSecurity := TClientSecurityOptions.Default;
 end;
 
 destructor THttpClient.Destroy;
@@ -160,6 +167,17 @@ procedure THttpClient.InstallIdentitySelector(
 begin
   FIdentitySelector := ASelector;
   FPool.IdentitySelector := ASelector;
+end;
+
+procedure THttpClient.InstallSecurity(const ASecurity: TClientSecurityOptions);
+begin
+  FSecurity := ASecurity;
+  FPool.Security := ASecurity;
+end;
+
+function THttpClient.Options: TClientSecurityOptions;
+begin
+  Result := FSecurity;
 end;
 
 procedure THttpClient.InstallRequestObservers(
