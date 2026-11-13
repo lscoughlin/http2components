@@ -118,8 +118,7 @@ type
 
   TPoolStatsTest = class(TTestCase)
   private
-    function WaitPending(const AClient: THttpClient;
-      const AWant: Integer): Boolean;
+    function WaitCapsSteady(const AClient: THttpClient): Boolean;
   published
     procedure TestDefaultSnapshotIsAllZeros;
     procedure TestCountsMatchTheCapsUnderLoad;
@@ -135,6 +134,8 @@ implementation
 
 const
   cWaitMs = 10000;
+  /// bound on the wait for the caps to settle after the callers park
+  cSteadyWaitMs = 5000;
   cPeerStreams = 7;
   cPeerWindow = 32768;
   cPeerFrame = 20000;
@@ -354,19 +355,32 @@ end;
 
 { TPoolStatsTest }
 
-function TPoolStatsTest.WaitPending(const AClient: THttpClient;
-  const AWant: Integer): Boolean;
+function TPoolStatsTest.WaitCapsSteady(const AClient: THttpClient): Boolean;
 var
   Tick: PRTLEvent;
   Waited: Integer;
+  S: TPoolStats;
+
+  function AtSteadyState: Boolean;
+  begin
+    // the state the caps settle into: two connections, each with one busy
+    // stream, and three callers parked. The second connection registers
+    // (and its first stream is acquired) only after its dial completes, so
+    // a snapshot taken during that dial shows one connection and three
+    // parked callers. Those transient counts are not the state under test.
+    S := AClient.PoolStats;
+    Result := (S.Connections = 2) and (S.IdleConnections = 0) and
+      (S.ActiveStreams = 2) and (S.PendingAcquires = 3);
+  end;
+
 begin
-  // bounded poll: nothing signals "a caller parked", so re-read the snapshot
+  // bounded poll: nothing signals "the caps settled", so re-read the snapshot
   Tick := RTLEventCreate;
   try
     Waited := 0;
-    while AClient.PoolStats.PendingAcquires <> AWant do
+    while not AtSteadyState do
     begin
-      if Waited >= cWaitMs then
+      if Waited >= cSteadyWaitMs then
         Exit(False);
       RTLEventWaitFor(Tick, 5);
       Inc(Waited, 5);
@@ -420,8 +434,8 @@ begin
     Workers[I] := THoldWorker.Create(Client, 'https://api.example/x');
     Workers[I].Start;
   end;
-  AssertTrue('three callers park behind the two connections',
-    WaitPending(Http, 3));
+  AssertTrue('the caps settle: two busy connections, three callers parked',
+    WaitCapsSteady(Http));
   S := Http.PoolStats;
   AssertEquals('connections at the cap', 2, S.Connections);
   AssertEquals('every connection is busy', 0, S.IdleConnections);
