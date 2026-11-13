@@ -375,7 +375,12 @@ begin
         ReapClosed;
         ReapIdleLocked;
         Conn := PickEligible(Key);
-        if (Conn = nil) and CanOpenNew(Key, not (Selecting and not Resolved)) then
+        // one dial in flight per origin and route: a caller that finds one
+        // waits (poll below) and then picks the connection it registered, so a
+        // cold burst multiplexes on the first connection; another origin is
+        // not affected
+        if (Conn = nil) and (DialingForBase(Key) = 0) and
+          CanOpenNew(Key, not (Selecting and not Resolved)) then
         begin
           if Selecting and not Resolved then
           begin

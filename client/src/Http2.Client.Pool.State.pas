@@ -134,6 +134,8 @@ type
     function ReserveDial(const AKey: string): Boolean;
     /// give the slot of a finished or failed dial back; the caller holds FLock
     procedure ReleaseDial(const AKey: string);
+    /// dials in progress for the origin and route of AKey; the caller holds FLock
+    function DialingForBase(const AKey: string): Integer;
     /// close the connections that Evict took out; the caller does NOT hold FLock
     procedure CloseVictims;
   public
@@ -248,6 +250,12 @@ begin
       FDialing.Remove(Base);
     Dec(FDialingTotal);
   end;
+end;
+
+function TPoolState.DialingForBase(const AKey: string): Integer;
+begin
+  if not FDialing.TryGetValue(BaseOfKey(AKey), Result) then
+    Result := 0;
 end;
 
 procedure TPoolState.CloseVictims;

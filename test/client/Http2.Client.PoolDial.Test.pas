@@ -91,6 +91,7 @@ type
     procedure TestSlowDialDoesNotBlockOtherOrigin;
     procedure TestTwentyThreadsNeverPassMaxConnectionsPerHost;
     procedure TestFailedDialFreesItsSlot;
+    procedure TestTwoColdRequestsToOneOriginDialOnce;
     procedure TestCancelDuringDialKeepsTheConnectionAndRaisesCancel;
     procedure TestCloseDuringDialRaisesConnectionClosed;
   end;
@@ -381,6 +382,38 @@ begin
   finally
     Hold.Free;
   end;
+end;
+
+procedure TPoolDialTest.TestTwoColdRequestsToOneOriginDialOnce;
+var
+  Factory: TBlockingDialFactory;
+  Client: IHttpClient;
+  A, B: TDialSender;
+begin
+  Factory := TBlockingDialFactory.Create;
+  Client := Build(Factory, 4, 8);
+  A := TDialSender.Create(Client, 'https://slow.test/x');
+  B := nil;
+  try
+    AssertTrue('the slow dial started', Factory.WaitStarted(5000));
+    B := TDialSender.Create(Client, 'https://slow.test/x');
+    Sleep(300);       // time for a wrong second dial to show
+    AssertEquals('one dial in flight for the origin', 1, Factory.Dials);
+    AssertEquals('one reservation', 1,
+      (Client as THttpClient).Pool.DialingCount);
+  finally
+    Factory.OpenGate;
+    Client.Close;
+    A.WaitFor;
+    A.Free;
+    if B <> nil then
+    begin
+      B.WaitFor;
+      B.Free;
+    end;
+  end;
+  AssertEquals('no reservation is left', 0,
+    (Client as THttpClient).Pool.DialingCount);
 end;
 
 procedure TPoolDialTest.TestFailedDialFreesItsSlot;
