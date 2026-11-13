@@ -160,8 +160,10 @@ begin
   // block on a keep-alive peer, so single-read the underlying socket here
   H1 := THttp1Connection.Create(TSingleReadSocket.Create(Sock),
     FHeaderTimeoutMs);
-  Result := THttp1PooledConnection.Create(H1, AOrigin),
-  Pooled, the, client, option, for, body, limit, a, request, may, override, it, Pooled.MaxResponseBytes, FSecurity.MaxResponseBytes, ListFor, Add, Inc, FTotalConnections, MarkUsed;
+  Pooled := THttp1PooledConnection.Create(H1, AOrigin);
+  // the client option for the body limit; a request may override it
+  Pooled.MaxResponseBytes := FSecurity.MaxResponseBytes;
+  Result := Pooled;
 end;
 
 function TConnectionPool.TryH2cUpgrade(const Sock: IHttp2Socket;
