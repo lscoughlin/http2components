@@ -78,9 +78,40 @@ Server:
 
 ### Test counts
 
-- Common: 282 tests (macOS).
-- Client: about 1026 tests (macOS).
-- Server: Linux run: pending.
+Counts on the integration branch. All runs had 0 errors and 0 failures.
+
+- macOS: common 282 tests, client 1032 tests.
+- Linux x86-64 (Ubuntu 24.04, FPC 3.2.4, idle host): common 282, client 1032, API 16,
+  integration 19, full server suite 877 (232 s, so `TEST_TIMEOUT` above the default 180 s is
+  needed for the server suite).
+- Linux, 14 busy loops on a 16-core host: every client and server test class was run alone in
+  three passes. Passes 1 and 3 were clean. Pass 2 showed one test that depended on thread order
+  (fixed) and one server stall of a new connection, which also exists in the code from before this
+  work (see the notes below). The loaded passes have not been repeated since that fix.
+- Validation gates on Linux (a throwaway container with the host Docker socket, an open-file limit
+  of 65536 and the repository mounted at the same path as on the host): sanity, interop (13 passed,
+  1 skipped), SSE, proxy, WebSocket, Autobahn (296 OK, 3 informational, 2 non-strict, as the gate
+  expects), cleartext, mTLS, server conformance, server fast, server TLS live, server mTLS live,
+  server WebSocket over HTTP/1 and over HTTP/2, server SSE and server abuse passed. Two gates were
+  not run: `validate:client:proxy:real` and `validate:client:mtls-real` need an `ssh` client and a
+  remote host. The harness gate (`validate:client:harness`) needs more than 25 minutes on this
+  host. A run with a 70-minute limit is in progress, and its result is not part of these counts.
+
+### Fixes found by the Linux load runs
+
+These two faults exist in the code from before this work.
+
+- Client: a read that timed out after it had consumed some bytes lost those bytes, and the reader
+  then continued in the middle of a frame. A frame that arrived with a gap of more than the 20 ms
+  poll could break the connection. A read now returns the bytes it has, and a frame that does not
+  complete within the socket read timeout fails the connection.
+- Client WebSocket: a peer close frame that arrived between the local close frame and the local
+  state change made the close look remote. The reader now reads the state under the send lock.
+
+### Known open items
+
+- A new connection of the async server gets no answer for more than 6 s about 1 time in 20 on a
+  heavily loaded host. The code from before this work shows the same stall.
 
 The follow-up recommendations are listed in the project notes.
 
