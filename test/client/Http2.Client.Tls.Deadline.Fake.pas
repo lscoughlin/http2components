@@ -49,6 +49,7 @@ type
       const AOffset, ACount: SizeInt): SizeInt;
     function ReadPlaintext(var ABuffer: TBytes;
       const AOffset, ACapacity: SizeInt): SizeInt;
+    function PendingPlaintext: SizeInt;
     function Advance(const AMonotonicMs: Int64): TTlsProgress;
     procedure NotifyTransportEof;
     procedure BeginShutdown;
@@ -80,6 +81,9 @@ begin Result := 0; end;
 
 function TTlsDeadlineSession.ReadPlaintext(var ABuffer: TBytes;
   const AOffset, ACapacity: SizeInt): SizeInt;
+begin Result := 0; end;
+
+function TTlsDeadlineSession.PendingPlaintext: SizeInt;
 begin Result := 0; end;
 
 function TTlsDeadlineSession.Advance(const AMonotonicMs: Int64): TTlsProgress;

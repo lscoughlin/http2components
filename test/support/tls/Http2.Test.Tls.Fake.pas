@@ -84,6 +84,7 @@ type
     function DrainEncrypted(var ABuffer: TBytes; const AOffset, ACapacity: SizeInt): SizeInt;
     function WritePlaintext(const ABuffer: TBytes; const AOffset, ACount: SizeInt): SizeInt;
     function ReadPlaintext(var ABuffer: TBytes; const AOffset, ACapacity: SizeInt): SizeInt;
+    function PendingPlaintext: SizeInt;
     function Advance(const AMonotonicMs: Int64): TTlsProgress;
     procedure NotifyTransportEof;
     procedure BeginShutdown;
@@ -274,6 +275,8 @@ begin
   if (Result = 0) and (FState = tssFailed) then
     raise ETlsSessionError.Create(FFailureMessage, FFailureCategory);
 end;
+function TTlsFakeSession.PendingPlaintext: SizeInt;
+begin Result := Length(FPlaintext); end;
 function TTlsFakeSession.Advance(const AMonotonicMs: Int64): TTlsProgress;
 var I, OldLength, N: SizeInt; B: Byte; PeerClosed: Boolean;
 begin

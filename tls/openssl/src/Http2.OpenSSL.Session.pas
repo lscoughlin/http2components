@@ -49,6 +49,7 @@ type
     function DrainEncrypted(var ABuffer:TBytes; const AOffset,ACapacity:SizeInt):SizeInt;
     function WritePlaintext(const ABuffer:TBytes; const AOffset,ACount:SizeInt):SizeInt;
     function ReadPlaintext(var ABuffer:TBytes; const AOffset,ACapacity:SizeInt):SizeInt;
+    function PendingPlaintext:SizeInt;
     function Advance(const AMonotonicMs:Int64):TTlsProgress;
     procedure NotifyTransportEof;
     procedure BeginShutdown;
@@ -475,6 +476,12 @@ begin
   end;
   if FState = tssFailed then RaiseFailure;
   Result := 0;
+end;
+function TOpenSSLSession.PendingPlaintext: SizeInt;
+begin
+  Result := Length(FPlain);
+  if (FSsl <> nil) and (FState in [tssOpen, tssClosing]) then
+    Inc(Result, SSL_pending(FSsl));
 end;
 procedure TOpenSSLSession.CaptureInfo;
 var V: string; Data: PByte; Len: Cardinal; Peer: PX509;

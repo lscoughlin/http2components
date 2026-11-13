@@ -42,6 +42,7 @@ type
     function DrainEncrypted(var ABuffer: TBytes; const AOffset, ACapacity: SizeInt): SizeInt;
     function WritePlaintext(const ABuffer: TBytes; const AOffset, ACount: SizeInt): SizeInt;
     function ReadPlaintext(var ABuffer: TBytes; const AOffset, ACapacity: SizeInt): SizeInt;
+    function PendingPlaintext: SizeInt;
     function Advance(const AMonotonicMs: Int64): TTlsProgress;
     procedure NotifyTransportEof;
     procedure BeginShutdown;
@@ -325,6 +326,13 @@ begin
   if FState = tssFailed then
     RaiseFailure;
   if (FEngine <> nil) and FEngine.IsInboundClosed then FState := tssClosed;
+end;
+
+function TTlsLibSession.PendingPlaintext: SizeInt;
+begin
+  Result := Length(FPlain);
+  if (FEngine <> nil) and (FState in [tssOpen, tssClosing]) then
+    Inc(Result, FEngine.PendingAppData);
 end;
 
 function TTlsLibSession.Advance(const AMonotonicMs: Int64): TTlsProgress;

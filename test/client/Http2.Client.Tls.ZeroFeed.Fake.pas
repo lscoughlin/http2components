@@ -57,6 +57,7 @@ type
       const AOffset, ACount: SizeInt): SizeInt;
     function ReadPlaintext(var ABuffer: TBytes;
       const AOffset, ACapacity: SizeInt): SizeInt;
+    function PendingPlaintext: SizeInt;
     function Advance(const AMonotonicMs: Int64): TTlsProgress;
     procedure NotifyTransportEof;
     procedure BeginShutdown;
@@ -126,6 +127,12 @@ begin
     Exit(1);
   end;
   Result := FInner.ReadPlaintext(ABuffer, AOffset, ACapacity);
+end;
+
+function TZeroFeedSession.PendingPlaintext: SizeInt;
+begin
+  Result := FInner.PendingPlaintext;
+  if FReturnPlaintext then Inc(Result);
 end;
 
 function TZeroFeedSession.Advance(const AMonotonicMs: Int64): TTlsProgress;

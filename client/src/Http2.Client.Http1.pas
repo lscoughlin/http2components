@@ -775,7 +775,6 @@ begin
   Result := FReader.Buffered > 0;
   if Result or (FSocket = nil) then
     Exit;
-  // TLS sockets do not implement IPendingInput: the session cannot report buffered plaintext.
   if Supports(FSocket, IPendingInput, Pending) then
     Result := Pending.HasPendingInput;
 end;
