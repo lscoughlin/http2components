@@ -79,6 +79,26 @@ type
     function Buffered: Integer;
   end;
 
+  /// a reuse flag shared by one HTTP/1.1 connection and the body streams it
+  /// hands out.  A body that is released before its end marks the flag, so
+  /// the connection stops being reusable.  The body holds a counted reference,
+  /// so the flag stays valid when the connection is destroyed first.
+  IReuseFlag = interface
+    ['{C3A1E5B2-6D47-4F9A-8E21-5B7D0A9C1E03}']
+    function GetReusable: Boolean;
+    procedure MarkNotReusable;
+    property Reusable: Boolean read GetReusable;
+  end;
+
+  TReuseFlag = class(TInterfacedObject, IReuseFlag)
+  private
+    FReusable: Boolean;
+    function GetReusable: Boolean;
+  public
+    constructor Create;
+    procedure MarkNotReusable;
+  end;
+
   /// how a response body is delimited
   TBodyFraming = (bfNone, bfContentLength, bfChunked, bfUntilClose);
 
@@ -94,6 +114,7 @@ type
     FChunkRemaining: Int64;     // bytes left in the current chunk
     FAtChunkEnd: Boolean;       // the CRLF after the current chunk is pending
     FDone: Boolean;
+    FReuse: IReuseFlag;         // nil when no connection owns the body
     FObservedEof: Boolean;
     FTrailers: IHttpHeaders;    // filled when the chunked terminator is parsed
     // observed-attempt hook (doc/design/request-observability.md)
@@ -124,6 +145,8 @@ type
     /// the response was released: report an abandoned end unless the body was
     /// already finished
     procedure ReleaseExchange;
+    /// let a release before the end of the body retire the owning connection
+    procedure BindReuseFlag(const AFlag: IReuseFlag);
     property Trailers: IHttpHeaders read FTrailers;
   end;
 
@@ -605,7 +628,32 @@ end;
 
 procedure THttp1BodyStream.ReleaseExchange;
 begin
+  if (not FDone) and (FReuse <> nil) then
+    FReuse.MarkNotReusable;
   EndExchange(nil, not FDone);
+end;
+
+procedure THttp1BodyStream.BindReuseFlag(const AFlag: IReuseFlag);
+begin
+  FReuse := AFlag;
+end;
+
+{ TReuseFlag }
+
+constructor TReuseFlag.Create;
+begin
+  inherited Create;
+  FReusable := True;
+end;
+
+function TReuseFlag.GetReusable: Boolean;
+begin
+  Result := FReusable;
+end;
+
+procedure TReuseFlag.MarkNotReusable;
+begin
+  FReusable := False;
 end;
 
 function THttp1BodyStream.Read(var ABuffer; const ACount: LongInt): LongInt;
