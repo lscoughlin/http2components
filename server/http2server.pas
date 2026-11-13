@@ -41,6 +41,7 @@ uses
   Http2.Server.Http1.Driver,
   Http2.Server.Http1.Exchange,
   Http2.Server.Http1.Guard,
+  Http2.Server.Http1.BodyBudget,
   Http2.Server.Http1.Grow,
   Http2.Server.Http1.Host,
   Http2.Server.Http1.Limits,

@@ -326,6 +326,10 @@
         <Filename Value="src/Http2.Server.Http1.Grow.pas" />
         <UnitName Value="Http2.Server.Http1.Grow" />
       </Item75>
+      <Item76>
+        <Filename Value="src/Http2.Server.Http1.BodyBudget.pas" />
+        <UnitName Value="Http2.Server.Http1.BodyBudget" />
+      </Item76>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
