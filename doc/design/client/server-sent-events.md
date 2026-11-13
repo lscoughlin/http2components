@@ -72,9 +72,11 @@ differ, and the difference is stated rather than papered over:
   on frame arrival, so an idle stream is never reaped and never stalls the
   connection.
 - **HTTP/1.1 fallback — best-effort.** `THttp1Connection.Create` sets
-  `FSocket.ReadTimeoutMs := ATimeoutMs` from the *header* timeout, and `THttp1BodyStream.Read` has no token and
-  no cancel path. So over the fallback an idle SSE stream is bounded by the
-  socket read timeout and cannot be cancelled mid-read; the parser, event
+  `FSocket.ReadTimeoutMs := ATimeoutMs` from the *header* timeout. The body
+  reader waits for each body read under the body-read timeout of the request
+  (`SseMaxIdleTimeMs`), as HTTP/2 does. `THttp1BodyStream.Read` has no token and
+  no cancel path. So over the fallback an idle SSE stream ends after
+  `SseMaxIdleTimeMs` and cannot be cancelled mid-read; the parser, event
   delivery and reconnect/resume still work. The fallback is off by default
   and is a single-connection codec, so an event stream monopolizes it for
   its lifetime.
@@ -261,12 +263,18 @@ decides whether to open a new stream. The idle time is the bound of the body
 read. It does not bound the wait for the response headers, which keep the header
 timeout.
 
-**HTTP/1.1 fallback.** The fallback does not honor the per-request body-read
-deadline. `THttp1Connection.Create` sets the socket read timeout from the header
-timeout, and each body read waits under that timeout. A silent fallback stream
-therefore ends with an `EHttpTimeout` from the socket. The source maps that error
-to `EHttpSseIdleTimeout` in the same way. The value of `SseMaxIdleTimeMs` does not
-change the fallback deadline.
+**HTTP/1.1 fallback.** The fallback honors the per-request body-read deadline in
+the same way as HTTP/2. When the response head is complete, the body reader takes
+the body-read timeout of the request. Each body read that waits for the peer waits
+at most that time. The socket read timeout returns to its value after each read.
+A silent fallback stream therefore ends with an `EHttpTimeout` from the socket,
+and the source maps that error to `EHttpSseIdleTimeout`. A request without a
+body-read timeout keeps the socket read timeout (the header timeout) as the bound
+of each body read.
+
+A body read that times out in the middle of a chunk loses no bytes. The bytes
+that the reader already holds stay in its buffer, and the next read continues at
+the same position.
 
 ## Cancellation
 
@@ -555,8 +563,7 @@ These choices are also indexed in [open-questions](open-questions.md).
    observer that opts in with `IHttpMessageObserver`, so a chatty stream is
    high-cardinality only for a consumer that asked for it.
 3. **SSE over the HTTP/1.1 fallback.** Supported but best-effort, not
-   rejected. Liveness is bounded by the socket read timeout
-   (`THttp1Connection.Create` sets `FSocket.ReadTimeoutMs := ATimeoutMs`) and
-   `THttp1BodyStream.Read` has no cancel path, so an idle fallback stream
-   cannot wait indefinitely and a blocked read cannot be cancelled. HTTP/2
-   has no such limit.
+   rejected. Liveness is bounded by the body-read timeout (`SseMaxIdleTimeMs`,
+   set on the request), so an idle fallback stream ends after that time, and
+   `THttp1BodyStream.Read` has no cancel path, so a blocked read cannot be
+   cancelled. HTTP/2 has no such limit.

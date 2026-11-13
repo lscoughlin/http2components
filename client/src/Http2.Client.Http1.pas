@@ -666,6 +666,10 @@ begin
 
   // the head is complete: the body reads have no head deadline
   FReader.ClearDeadline;
+  // the body reads wait with the body-read timeout of the request, when it set
+  // one (SseMaxIdleTimeMs of an event stream); an unset request keeps the socket
+  FReader.SetBodyReadTimeout(FSendRequest.BodyReadTimeoutMs,
+    FSendRequest.BodyReadTimeoutSet);
 
   // bodyless responses: HEAD, 204 and 304 never carry a body even when a
   // content-length is present (RFC 9110 section 6.4.1)
