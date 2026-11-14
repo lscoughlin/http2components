@@ -130,15 +130,17 @@ Counts on the integration branch. All runs had 0 errors and 0 failures.
   of 65536 and the repository mounted at the same path as on the host): sanity, interop (13 passed,
   1 skipped), SSE, proxy, WebSocket, Autobahn (296 OK, 3 informational, 2 non-strict, as the gate
   expects), cleartext, mTLS, server conformance, server fast, server TLS live, server mTLS live,
-  server WebSocket over HTTP/1 and over HTTP/2, server SSE and server abuse passed. Two gates were
-  not run: `validate:client:proxy:real` and `validate:client:mtls-real` need an `ssh` client and a
-  remote host. The interop and Autobahn gates need a container with host networking. The harness
+  server WebSocket over HTTP/1 and over HTTP/2, server SSE and server abuse passed. The gates
+  `validate:client:proxy:real` (65 pass, 0 fail, 3 skip) and `validate:client:mtls-real` (nginx,
+  Apache httpd and Caddy) ran from the macOS host. They copy the tree to the Linux host over `ssh`
+  and run their containers there. Both passed. The interop and Autobahn gates need a container
+  with host networking. The harness
   gate (`validate:client:harness`) ran 32 minutes and passed: PASS=69, FAIL=0, CLASS-DIFF=15,
   UNKNOWN=62, INFRASTRUCTURE=0. A CLASS-DIFF case is one where the reference client gives no
   verdict and the client reports a connection error; an UNKNOWN case has no verdict from the
   reference either. Between two full runs a few cases moved between BETTER and CLASS-DIFF. Run alone,
   those cases give the same result on the code from before the follow-up work and on the final code,
-  so the movement comes from the interaction of the cases in a full run. 17 of the 19 gates passed.
+  so the movement comes from the interaction of the cases in a full run. All 19 gates passed.
 
 ### Fixes found by the Linux load runs
 
