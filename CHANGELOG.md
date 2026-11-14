@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.31.0 — 2026-11-14 (source release)
 
-This work fixes security findings from the security review. The fixes are listed
+This release is a source release. It has no binary artifacts. This work fixes security findings from the security review. The fixes are listed
 by area. The behavior changes that a caller can notice follow the list.
 
 ### Security fixes
@@ -171,10 +171,6 @@ These three faults exist in the code from before this work.
   overload and the byte cap overload. No test covers an `Int64` specialization.
 
 The follow-up recommendations are listed in the project notes.
-
-## 0.31.0 — in development
-
-- Version bump after the 0.30.0 source release. No other change yet.
 
 ## 0.30.0 — 2026-11-12 (source release)
 
