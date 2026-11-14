@@ -1,9 +1,14 @@
 # Changelog
 
+## 0.32.0 — in development
+
+- Version bump after the 0.31.0 source release. No other change yet.
+
 ## 0.31.0 — 2026-11-14 (source release)
 
-This release is a source release. It has no binary artifacts. This work fixes security findings from the security review. The fixes are listed
-by area. The behavior changes that a caller can notice follow the list.
+This release is a source release. It has no binary artifacts. This work fixes
+security findings from the security review. The fixes are listed by area. The
+behavior changes that a caller can notice follow the list.
 
 ### Security fixes
 

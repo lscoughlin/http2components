@@ -9,7 +9,7 @@ vars:
   LICENSE_SPDX: 'Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)'
   COPYRIGHT_LINE: 'copyright: Copyright 2026 Liam Seamus Coughlin'
   # The current version. The VERSION file and each .lpk file agree with it.
-  VERSION_EXPECTED: '0.31.0'
+  VERSION_EXPECTED: '0.32.0'
   # The component directories. Each has a src directory and the .lpk files.
   COMPONENT_DIRS: 'common client server tls/openssl tls/tlslib'
   # The directories that hold maintained Pascal files.
