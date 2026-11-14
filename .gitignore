@@ -9,6 +9,15 @@ bin/
 *.a
 spike/*.o
 
+# Package units that lazbuild generates from the .lpk files
+/common/http2common.pas
+/client/http2client.pas
+/client/http2clientreaders.pas
+/server/http2server.pas
+/tls/openssl/http2openssl.pas
+/tls/tlslib/http2tlslib.pas
+/packagefiles.xml
+
 # Vendored third-party checkouts (kept locally, never committed; the
 # second line also covers a symlink file of the same name, which the
 # trailing-slash form does not match)
@@ -23,6 +32,9 @@ tools/ast-grep-mcp/
 *.lps
 *.bak
 *~
+
+# Local settings (hosts, Docker contexts) that Taskfile.yaml loads
+.env
 
 # Task runner cache (go-task checksum cache)
 .task

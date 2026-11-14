@@ -9,7 +9,7 @@
 #   bash tools/client/validate/proxy-real.sh            # or: task validate:client:proxy:real
 #
 # It runs on a Docker host.  With no argument the script copies the tree to
-# the host named by PROXY_REAL_HOST (default lscoughlin@liam-rzbox.local; set
+# the host named by PROXY_REAL_HOST (no default; set it in .env; set
 # PROXY_REAL_LOCAL=1 to use this machine's Docker instead) through
 # tools/client/container/remote-run.sh and runs itself there with --on-host.  On the
 # host everything is a container started from stock images, all with
@@ -39,7 +39,7 @@ if [ -z "${PROFILE:-}" ]; then
   [ -n "${DEBUG:-}" ] && PROFILE=debug
 fi
 VALIDATION_BIN="$ROOT/bin/$TARGET/$PROFILE/validation"
-HOST="${PROXY_REAL_HOST:-lscoughlin@liam-rzbox.local}"
+HOST="${PROXY_REAL_HOST:-}"
 # the remote tree remote-run.sh uses for this checkout (same derivation)
 RDIR="${HTTP2_REMOTE_DIR:-http2client-ci/run-$(printf '%s' "$ROOT" | cksum | cut -d' ' -f1)}"
 export HTTP2_REMOTE_DIR="$RDIR"
@@ -51,6 +51,10 @@ SQUID_IMG="${PR_SQUID_IMAGE:-ubuntu/squid:latest}"
 if [ "${1:-}" != "--on-host" ] && [ "${1:-}" != "--build" ]; then
   if [ "${PROXY_REAL_LOCAL:-0}" = 1 ]; then
     exec bash "$HERE/proxy-real.sh" --on-host
+  fi
+  if [ -z "$HOST" ]; then
+    echo "proxy-real: PROXY_REAL_HOST is not set (put it in .env), or set PROXY_REAL_LOCAL=1" >&2
+    exit 2
   fi
   # remote-run.sh copies the tree to the host as a side effect of running a
   # command in the dev container; the gate itself then runs on the host

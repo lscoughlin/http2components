@@ -2,7 +2,18 @@
 
 ## 0.32.0 — in development
 
-- Version bump after the 0.31.0 source release. No other change yet.
+- Version bump after the 0.31.0 source release.
+- Every program in `examples/`, `tools/client/` and `test/` has a Lazarus
+  project file (`.lpi`) that `lazbuild` builds.
+- The package `http2tlslib` builds with a plain `lazbuild` run. It requires the
+  upstream package `TlsLib4PascalPackage`.
+- The client, server, OpenSSL, readers and TlsLib packages no longer put
+  `common/src` on their unit paths. They use the units of the `http2common`
+  package.
+- The generated package units are ignored by git: `http2common.pas`,
+  `http2client.pas`, `http2clientreaders.pas`, `http2server.pas`,
+  `http2openssl.pas` and `http2tlslib.pas`. `task build` compiles the facade
+  units `Http2.OpenSSL.pas` and `Http2.TlsLib.pas` instead.
 
 ## 0.31.0 — 2026-11-14 (source release)
 

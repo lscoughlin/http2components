@@ -7,8 +7,8 @@
 #   sh tools/server/unix-linux.sh
 #   DOCKER_CONTEXT=<context> sh tools/server/unix-linux.sh
 #
-# DOCKER_CONTEXT names the Docker context that runs the build (default
-# rzbox). The host must answer "linux x86_64". The script stages the tracked
+# DOCKER_CONTEXT names the Docker context that runs the build (no default;
+# set it in .env). The host must answer "linux x86_64". The script stages the tracked
 # files in bin/unix-linux-stage, builds the toolchain stage of
 # tools/server/container/Dockerfile, then builds
 # tools/server/container/Dockerfile.unix on that context. The full output of
@@ -21,7 +21,7 @@
 
 set -eu
 
-DOCKER_CONTEXT=${DOCKER_CONTEXT:-rzbox}
+: "${DOCKER_CONTEXT:?DOCKER_CONTEXT is not set (put it in .env)}"
 
 info=$(docker -c "$DOCKER_CONTEXT" info --format '{{.OSType}} {{.Architecture}}') || {
   echo "unix-linux: docker -c $DOCKER_CONTEXT info failed" >&2

@@ -266,7 +266,7 @@ vars:
       { cat "$FPCDIR/openssl-direct.cfg"; mormot_lines; mormot_static; user_flags; } > "$_f"
       (
         open_ssl_env
-        fpc_cfg "$_f" "$OUT/openssl/units" "$OUT/openssl/programs" tls/openssl/http2openssl.pas
+        fpc_cfg "$_f" "$OUT/openssl/units" "$OUT/openssl/programs" tls/openssl/src/Http2.OpenSSL.pas
       )
     }
 
@@ -294,7 +294,7 @@ vars:
       done
       _f2=$_cfg/flags-facade.cfg
       { cat "$_f"; printf '%s\n' "-Fucommon/src" "-Futls/tlslib/src"; } > "$_f2"
-      fpc_cfg "$_f2" "$_units" "$_programs" tls/tlslib/http2tlslib.pas
+      fpc_cfg "$_f2" "$_units" "$_programs" tls/tlslib/src/Http2.TlsLib.pas
     }
 
     # Program files under examples/<role>, sorted, as "<role> <path>". A

@@ -30,8 +30,8 @@ Python `ssl` script and `nghttpd`.
 
 ## Method
 
-The script runs on a Docker host (`MTLS_REAL_HOST`, default
-`lscoughlin@liam-rzbox.local`; `local` uses this machine). It copies the tree
+The script runs on a Docker host (`MTLS_REAL_HOST`, no default,
+set in `.env`; `local` uses this machine). It copies the tree
 with `tools/container/remote-run.sh`, compiles the example in the dev image,
 and starts the servers as sibling containers from their stock images with
 `--network host` on ports from `MTLS_REAL_BASE` (default 9440). The client runs

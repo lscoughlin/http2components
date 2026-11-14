@@ -16,7 +16,7 @@
       <SearchPaths>
         <IncludeFiles Value="../common/src;src" />
         <UnitOutputDirectory Value="../bin/$(TargetCPU)-$(TargetOS)/default/package-http2clientreaders/units" />
-        <OtherUnitFiles Value="../common/src;src;../third_party/mORMot2/src/core;../third_party/mORMot2/src/lib" />
+        <OtherUnitFiles Value="src;../third_party/mORMot2/src/core;../third_party/mORMot2/src/lib" />
       </SearchPaths>
       <Parsing>
         <SyntaxOptions>

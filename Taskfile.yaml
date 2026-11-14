@@ -3,6 +3,10 @@
 # when this file was written is 3.54.0.
 version: '3'
 
+# Local settings. The file is git-ignored. It sets PROXY_REAL_HOST,
+# MTLS_REAL_HOST and DOCKER_CONTEXT. The file is optional.
+dotenv: ['.env']
+
 includes:
   pins:
     taskfile: ./tools/dependencies.yml

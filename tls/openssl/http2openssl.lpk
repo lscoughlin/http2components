@@ -16,7 +16,7 @@
       <SearchPaths>
         <IncludeFiles Value="../../common/src;src" />
         <UnitOutputDirectory Value="../../bin/$(TargetCPU)-$(TargetOS)/default/package-http2openssl/units" />
-        <OtherUnitFiles Value="../../common/src;src;../../third_party/mORMot2/src/core;../../third_party/mORMot2/src/lib;../../third_party/mORMot2/src/net;../../third_party/mORMot2/src/crypt" />
+        <OtherUnitFiles Value="src;../../third_party/mORMot2/src/core;../../third_party/mORMot2/src/lib;../../third_party/mORMot2/src/net;../../third_party/mORMot2/src/crypt" />
       </SearchPaths>
       <Parsing>
         <SyntaxOptions>

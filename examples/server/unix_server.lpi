@@ -1,0 +1,62 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<CONFIG>
+  <ProjectOptions>
+    <Version Value="12"/>
+    <General>
+      <Flags>
+        <MainUnitHasCreateFormStatements Value="False"/>
+        <MainUnitHasTitleStatement Value="False"/>
+        <MainUnitHasScaledStatement Value="False"/>
+      </Flags>
+      <SessionStorage Value="InProjectDir"/>
+      <Title Value="unix_server"/>
+      <UseAppBundle Value="False"/>
+      <ResourceType Value="res"/>
+    </General>
+    <BuildModes>
+      <Item Name="Default" Default="True"/>
+    </BuildModes>
+    <PublishOptions>
+      <Version Value="2"/>
+      <UseFileFilters Value="True"/>
+    </PublishOptions>
+    <RunParams>
+      <FormatVersion Value="2"/>
+    </RunParams>
+    <RequiredPackages Count="1">
+      <Item1>
+        <PackageName Value="FCL"/>
+      </Item1>
+    </RequiredPackages>
+    <Units Count="1">
+      <Unit0>
+        <Filename Value="unix_server.pas"/>
+        <IsPartOfProject Value="True"/>
+      </Unit0>
+    </Units>
+  </ProjectOptions>
+  <CompilerOptions>
+    <Version Value="11"/>
+    <Target>
+      <Filename Value="../../bin/$(TargetCPU)-$(TargetOS)/default/lpi/unix_server/unix_server"/>
+    </Target>
+    <SearchPaths>
+      <IncludeFiles Value="../../common/src;../../client/src;../../server/src;../../tls/openssl/src;../../third_party/mORMot2/src/core;../../third_party/mORMot2/src/lib;../../third_party/mORMot2/src/net;../../third_party/mORMot2/src/crypt"/>
+      <OtherUnitFiles Value="../../common/src;../../client/src;../../server/src;../../tls/openssl/src;../../third_party/mORMot2/src/core;../../third_party/mORMot2/src/lib;../../third_party/mORMot2/src/net;../../third_party/mORMot2/src/crypt"/>
+      <UnitOutputDirectory Value="../../bin/$(TargetCPU)-$(TargetOS)/default/lpi/unix_server/units"/>
+    </SearchPaths>
+    <Parsing>
+      <SyntaxOptions>
+        <SyntaxMode Value="Delphi"/>
+      </SyntaxOptions>
+    </Parsing>
+    <CodeGeneration>
+      <Optimizations>
+        <OptimizationLevel Value="2"/>
+      </Optimizations>
+    </CodeGeneration>
+    <Other>
+      <CustomOptions Value="-Fl../../third_party/mORMot2/static/$(TargetCPU)-$(TargetOS)"/>
+    </Other>
+  </CompilerOptions>
+</CONFIG>

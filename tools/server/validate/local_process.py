@@ -120,7 +120,7 @@ def build_openssl(env):
     flags = ['-O2', '-vw', '-Mdelphi', '-dUSE_OPENSSL', '-Fucommon/src',
              '-Futls/openssl/src', *parts, static, *user_flags()]
     run([compiler(), *flags, f'-FU{units}', f'-FE{programs}',
-         'tls/openssl/http2openssl.pas'], env=env, timeout=300)
+         'tls/openssl/src/Http2.OpenSSL.pas'], env=env, timeout=300)
 
 
 def compile_example_server(env):

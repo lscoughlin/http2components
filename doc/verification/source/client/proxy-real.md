@@ -31,8 +31,8 @@ for the proxies; this one uses the software deployments run.
 ## How it runs
 
 `tools/validate/proxy-real.sh` copies the tree to a Docker host through
-`tools/container/remote-run.sh` (`PROXY_REAL_HOST`, default
-`lscoughlin@liam-rzbox.local`; `PROXY_REAL_LOCAL=1` uses the local Docker) and
+`tools/container/remote-run.sh` (`PROXY_REAL_HOST`, no default,
+set in `.env`; `PROXY_REAL_LOCAL=1` uses the local Docker) and
 runs itself there. Everything is a sibling container from a stock image with
 `--network host` on loopback ports `PR_BASE` (18400) and up; no image is
 built:

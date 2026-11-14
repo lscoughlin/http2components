@@ -2,7 +2,7 @@
 # tools/client/container/remote-run.sh — run a command in the dev container on a remote Docker host.
 #
 # Usage: tools/client/container/remote-run.sh HOST COMMAND...   (each checkout gets its own remote directory)
-#   e.g. tools/client/container/remote-run.sh lscoughlin@liam-rzbox.local task test
+#   e.g. tools/client/container/remote-run.sh user@docker-host task test
 #
 # The image (tools/client/container/Dockerfile) is built once and reused: it is
 # rebuilt only when it is missing or HTTP2_REBUILD_IMAGE=1.  The working tree

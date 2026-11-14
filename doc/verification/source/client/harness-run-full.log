@@ -151,5 +151,5 @@ running 146 ids (reference + probe each)...
   http2/8.1.2.5/1  ref=pass/conn-error   ours=conn-error    MATCH
 
 harness: MATCH=29 BETTER=41 WORSE=0 CLASS-DIFF=13 UNKNOWN=63
-wrote /Users/liamcoughlin/Source/lscoughlin/http2client/bin/validation-results.md
+wrote <repo>/bin/validation-results.md
 RESULT: PASS=70 FAIL=0 CLASS-DIFF=13 UNKNOWN=63

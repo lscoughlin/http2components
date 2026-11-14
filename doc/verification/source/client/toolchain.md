@@ -47,7 +47,7 @@ reproduce commands.
 | mormot checkout | `third_party/mORMot2` @ `b2b195da1e0580058672a88620ef71bb47283eb1` (2026-10-08, "core: Locked*() are now full memory barriers on FPC non-Intel CPUs"), the revision `../http2server` pins. Unit dirs: `core`, `lib`, `net`, `crypt`. |
 | mormot2 WebSocket references | read as design references, not linked: `src/net/mormot.net.ws.core.pas` (`TWebSocketFrameOpCode`, `FRAME_LEN_MASK`, `ProcessMask`, `ComputeChallenge`, `FrameSendEncode` and its use of `NetRandom32`), `src/net/mormot.net.ws.client.pas` (`THttpClientWebSockets` and its handshake). The linked pieces are unchanged: `Http2.Client.WebSocket.Connection` takes its random masking key from `RAND_bytes` in `mormot.lib.openssl11`. The WebSocket design is in `doc/design/websocket.md`. |
 | mormot2 proxy-routing references | read as design references, not linked: `src/net/mormot.net.sock.pas` (`TUri`, `TIp4SubNet`, `NetIsIP4`, `NetIsIP6`, `TCrtSocket.DoOpenTunnel`), `src/core/mormot.core.os.pas` (`IsLocalHost`, `GetSystemEnv`). Linked by `Http2.Client.Tls`: `src/lib/mormot.lib.openssl11.pas` (`BIO_s_mem`, `BIO_read`, `BIO_write`, `BIO_ctrl`, `SSL_set_bio`). Absent from the OpenSSL binding: `BIO_meth_new`, `BIO_set_data`, `BIO_set_retry_*`, `BIO_new_bio_pair`. No SOCKS client exists in the checkout. The proxy design is in `doc/design/proxy.md`. |
-| `OPENSSL_LIBPATH` | **Required on this machine.** Without it `OpenSslIsAvailable=FALSE` and `OpenSslVersionText=''`. With `OPENSSL_LIBPATH=/opt/homebrew/opt/openssl@3/lib`: `OpenSslIsAvailable=TRUE`, `OpenSslVersionText='OpenSSL 3.6.5 29 Sep 2026'`. Probed from `/tmp/mormotprobe/probe_tls.pas`. |
+| `OPENSSL_LIBPATH` | **Required when OpenSSL is outside the system loader path.** Without it `OpenSslIsAvailable=FALSE` and `OpenSslVersionText=''`. With `OPENSSL_LIBPATH=/opt/homebrew/opt/openssl@3/lib`: `OpenSslIsAvailable=TRUE`, `OpenSslVersionText='OpenSSL 3.6.5 29 Sep 2026'`. Probed from `/tmp/mormotprobe/probe_tls.pas`. |
 | Backend library | OpenSSL `3.6.5` — `/opt/homebrew/opt/openssl@3` (kegs 3.4/3.5/3.6 also present). |
 | LibreSSL | API-compatible (`libssl` OpenSSL-1.1 symbol surface). **No separate backend**; document only. |
 
@@ -63,7 +63,7 @@ above.
 | `brew` | present | installs the `nghttp2` CLI. |
 | `libnghttp2` 1.70.0 | present (brew keg) | linked library. |
 | `nghttpd`, `nghttp` | **installed** — nghttp2/1.70.0 at `/opt/homebrew/bin` | interop server (`nghttpd`) and differential oracle (`nghttp -nv`). |
-| `docker` | present (Rancher Desktop, `/Users/liamcoughlin/.rd/bin/docker`) | run the locally-built harness image. |
+| `docker` | present (Rancher Desktop) | run the locally-built harness image. |
 | h2 harness image | **not published on any registry** (`docker pull nomadlabsinc/h2-client-test-harness` → `pull access denied … repository does not exist`). Source cloned to `third_party/h2-client-test-harness` (module `github.com/nomadlabsinc/h2-client-test-harness`, `go 1.24.4`); image is built locally with `docker build -t h2-test-harness .` (Dockerfile = `golang:1.24-alpine`, builds `/h2-client-test-harness` + `/h2-verifier`, entrypoint `/test-runner.sh`). |
 | `go` | **absent** | the harness runs through Docker, not `go run`. |
 | `node` v26.10.0, `npm` | present | legacy `http2/http2-test` only (best-effort). |
@@ -136,33 +136,6 @@ mormot's own `.lpk` forces defines (`FPCMM_REPORTMEMORYLEAKS`,
 mormot source dirs on `OtherUnitFiles` instead makes the package compile
 self-contained from within the repo, with no IDE package state.
 
-**Environment quirk (this machine).** The checked-out Lazarus 4.2
-(`/Users/liamcoughlin/Downloads/lazarus`) was built against a different FPC
-than the system `fpc 3.2.4`, so its prebuilt
-`packager/units/aarch64-darwin/lazaruspackageintf.ppu` trips
-`(10028) Recompiling LazarusPackageIntf, checksum changed for system.ppu`
-and then `(10022) Can't find unit LazarusPackageIntf`. Workaround: compile
-that unit from source against 3.2.4 into a scratch dir and pass it to
-`lazbuild`:
-
-```sh
-L=/Users/liamcoughlin/Downloads/lazarus
-F=/usr/local/lib/fpc/3.2.4/units/aarch64-darwin
-mkdir -p /tmp/lpkintf
-fpc -Mobjfpc -Fu$L/packager/registration -Fu$L/components/buildintf \
-    -Fu$L/designer -Fu$L/ideintf \
-    -Fu$F/rtl -Fu$F/fcl-base -Fu$F/fcl-net -Fu$F/rtl-generics \
-    -Fu$F/fcl-process -Fu$F/paszlib -Fu$F/hash \
-    -FU/tmp/lpkintf -FE/tmp/lpkintf \
-    $L/packager/registration/lazaruspackageintf.pas
-lazbuild --opt=-Fu/tmp/lpkintf \
-         --opt=-Fu$L/packager/registration http2client.lpk
-```
-
-Verified at 0.17.0: `85387 lines compiled`, with 16 `Http2.Client` units plus the
-auto-created `http2client` registration unit in `lib/aarch64-darwin/`. A stock
-Lazarus matched to its FPC does not need the `--opt` workaround.
-
 Last counted: `task test` reports **648 tests, 0 errors, 0 failures** and
 `task examples` builds eight programs.
 
@@ -199,7 +172,7 @@ task build && task test
 ```
 
 `OPENSSL_LIBPATH` must be exported for any binary that loads TLS (the
-build tasks do this). Verified on this machine: `docker run --rm
+build tasks do this). Verified: `docker run --rm
 h2-test-harness --list` lists **146** case ids, matching the harness README.
 
 ## Linux x86_64 (container)

@@ -30,8 +30,8 @@
 # with unread client data can turn the alert into a generic error only some of
 # the time.  Every client run is under a timeout.
 #
-# Needs Docker.  From a machine without it, set MTLS_REAL_HOST (default
-# lscoughlin@liam-rzbox.local): the tree is copied there with
+# Needs Docker.  From a machine without it, set MTLS_REAL_HOST (no default;
+# set it in .env): the tree is copied there with
 # tools/client/container/remote-run.sh and this script runs on that host.
 # MTLS_REAL_HOST=local runs it on this machine.  MTLS_REAL_NATIVE=1 builds and
 # runs the client with the host's own Free Pascal (as `task test:client` does) and
@@ -46,10 +46,14 @@ set -u
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../../.." && pwd)"
-HOST="${MTLS_REAL_HOST:-lscoughlin@liam-rzbox.local}"
+HOST="${MTLS_REAL_HOST:-}"
 
 NATIVE="${MTLS_REAL_NATIVE:-0}"
 if [ "$NATIVE" != 1 ] && [ "${MTLS_REAL_LOCAL:-0}" != 1 ] && [ "$HOST" != local ]; then
+  if [ -z "$HOST" ]; then
+    echo "mtls-real: MTLS_REAL_HOST is not set (put it in .env), or set it to local" >&2
+    exit 2
+  fi
   # the remote tree remote-run.sh uses for this checkout (same derivation)
   DIR="${HTTP2_REMOTE_DIR:-http2client-ci/run-$(printf '%s' "$ROOT" | cksum | cut -d' ' -f1)}"
   export HTTP2_REMOTE_DIR="$DIR"

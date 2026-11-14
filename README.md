@@ -59,6 +59,43 @@ Package outputs and Lazarus primary configuration directories are isolated
 under `bin/`. The root build does not run tests, examples, external peers, or
 load checks.
 
+The file `.env` in the repository root holds local settings. Git ignores the
+file, and `Taskfile.yaml` loads it when it exists. The file has no defaults.
+The keys below are read from the file. The remote validation tasks need their
+keys, and a task fails with a message when its key is missing. `OPENSSL_LIBPATH`
+is optional:
+
+| Key | Task that needs it | Value |
+|---|---|---|
+| `OPENSSL_LIBPATH` | The tasks that load OpenSSL, such as `validate:client:sanity` | The OpenSSL 3 runtime library directory. It is needed only when OpenSSL is outside the system loader path. |
+| `PROXY_REAL_HOST` | `validate:client:proxy:real` | The Docker host as `user@host`. `PROXY_REAL_LOCAL=1` uses the local Docker instead. |
+| `MTLS_REAL_HOST` | `validate:client:mtls-real` | The Docker host as `user@host`. The value `local` uses this machine. |
+| `DOCKER_CONTEXT` | `unix:linux` | The name of a Docker context for a Linux x86_64 host. |
+
+```sh
+OPENSSL_LIBPATH=/path/to/openssl3/lib
+PROXY_REAL_HOST=user@docker-host
+MTLS_REAL_HOST=user@docker-host
+DOCKER_CONTEXT=docker-context-name
+```
+
+The build, example and check tasks do not read the remote keys.
+
+`lazbuild` builds each package (`lazbuild <package>.lpk`) and each program
+(`lazbuild <program>.lpi`). A `.lpi` file is next to the source of each program
+in `examples/`, `tools/client/` and `test/`. The `.lpi` files use source search
+paths, as the Taskfile does. Only the `.lpi` files of the TlsLib programs
+require packages (`http2common` and `http2tlslib`). `lazbuild` generates the
+package units `http2common.pas`, `http2client.pas`, `http2clientreaders.pas`,
+`http2server.pas`, `http2openssl.pas` and `http2tlslib.pas`. Git ignores these
+files. The package `http2tlslib` requires the upstream package
+`TlsLib4PascalPackage`. A plain `lazbuild` build of `http2tlslib` needs a package
+link for each of these `.lpk` files, registered once with
+`lazbuild --add-package-link`: `http2common`, `HashLib4PascalPackage`,
+`SimpleBaseLib4PascalPackage`, `CryptoLib4PascalPackage` and
+`TlsLib4PascalPackage`. `task packages:check` registers the links in a private
+configuration.
+
 The required tools are `fpc` 3.2.4, `git`, and `task` (go-task, version 3.42.0
 or later). Lazarus 4.0 is needed for package builds. Python 3 is needed only
 where an interop peer, a load driver, an abuse or seam test, or
