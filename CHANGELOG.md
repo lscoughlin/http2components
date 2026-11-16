@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.32.0 — in development
+## 0.32.0 — 2026-11-16 (source release)
 
-- Version bump after the 0.31.0 source release.
+- This release is a source release. It has no binary artifacts.
 - Every program in `examples/`, `tools/client/` and `test/` has a Lazarus
   project file (`.lpi`) that `lazbuild` builds.
 - The package `http2tlslib` builds with a plain `lazbuild` run. It requires the
