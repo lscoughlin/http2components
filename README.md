@@ -1,7 +1,7 @@
-# http2components 0.32.0
+# http2components 0.33.0
 
 This repository contains Free Pascal HTTP/2 client and server libraries. The
-source version is 0.32.0. This text does not state that the version is a
+source version is 0.33.0. This text does not state that the version is a
 published release.
 
 ## Public units and packages
@@ -17,7 +17,7 @@ published release.
 
 Production units are in five source roots: `common/src`, `client/src`,
 `server/src`, `tls/openssl/src`, and `tls/tlslib/src`. Readers remain
-separate from client core. All six packages use version 0.32.0.
+separate from client core. All six packages use version 0.33.0.
 
 Applications select a provider by creating a context and passing it to a role
 factory with `WithTlsContext`. HTTPS proxy TLS uses the separate
