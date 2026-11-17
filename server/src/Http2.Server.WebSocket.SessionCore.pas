@@ -320,7 +320,6 @@ end;
 
 destructor TWsSessionCore.Destroy;
 begin
-  // the pump is a counted object: DropPump releases it, and Free is never called
   DropPump;
   ReleaseSessionSlot;
   FReader.Free;
@@ -366,7 +365,8 @@ begin
   finally
     FLock.Release;
   end;
-  // Stop takes the pump lock only, so no lock is held across the call
+  // Stop can release the writer here, on the IO thread: its destructor must not
+  // block and must not take a lock that a caller of Send can hold
   if P <> nil then
     P.Stop;
 end;
@@ -742,7 +742,6 @@ begin
     if FStreamActive then
       Exit(srFull);
     FStreamActive := True;
-    // the old pump, if any, is in psDone; this drops the reference of the session
     Old := FPump;
     FPump := TWsStreamPump.Create(AReader, AText, FOpts.FrameSize,
       FOpts.MaxMessageSize, WsPumpStepChunks, Self);
@@ -817,10 +816,10 @@ var
   Keep: IInterface;
   P: IWsPump;
 begin
-  // The pool runs the tasks of one source one at a time, and a session has one
-  // source (StreamPool.pas: PostTask, NextTask, FinishTask). So a Step, a timer
-  // and a task of one session do not run at the same time. The pump does not
-  // rely on this: its lock covers the shared fields
+  // The pool runs one task of a session at a time (one source for each session;
+  // StreamPool.pas: PostTask, NextTask, FinishTask; S00). A stale schedule acts on
+  // the current pump: this is harmless only because of that rule. The FInStep
+  // guard in Enter still prevents a double write
   Keep := Self;
   Http2AssertStreamThread('TWsSessionCore.PumpEntry');
   FLock.Acquire;
@@ -840,7 +839,9 @@ begin
   FLock.Acquire;
   P := FPump;
   FLock.Release;
-  // a timer that fires late wakes a later park early at worst; it never starts a Step
+  // A stale timer acts on the current pump and wakes a later park early at worst.
+  // This is harmless because the pool runs one task of a session at a time (S00;
+  // StreamPool.pas); the FInStep guard in Enter still prevents a double write
   if P <> nil then
     P.TimerFired;
 end;
@@ -849,15 +850,20 @@ procedure TWsSessionCore.PumpEnded(const AFailure: Exception);
 var
   Old: IWsPump;
 begin
-  // the pump released its host reference already: this breaks the other half of the cycle
+  if AFailure <> nil then
+  begin
+    // The stream stays active until the session ends, so no Send can split it.
+    // Fail goes to TryEnd, and TryEnd calls DropPump, which clears the fields
+    Fail(AFailure);
+    Exit;
+  end;
+  // a normal end: this breaks the cycle of the pump and the session
   FLock.Acquire;
   FStreamActive := False;
   Old := FPump;
   FPump := nil;
   FLock.Release;
   Old := nil;
-  if AFailure <> nil then
-    Fail(AFailure);
 end;
 
 procedure TWsSessionCore.Ping(const AData: TBytes);

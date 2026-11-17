@@ -42,7 +42,6 @@ type
   private
     FLock: TCriticalSection;
     FResults: TList<TSendResult>;
-    FActive: LongInt;
   public
     Writes: TList<TWriteRec>;
     Counted: Integer;
@@ -53,7 +52,8 @@ type
     EndedIsHttpError: Boolean;
     /// runs inside PumpWrite, after the write is recorded and before the result returns
     OnWrite: TProc_;
-    Overlaps: LongInt;
+    /// PumpCount or PumpSchedule raises after it did its work
+    RaiseInCount, RaiseInSchedule: Boolean;
     WriteCalls: Integer;
     /// every Nth write answers srFull (0 means never)
     EveryNthFull: Integer;
@@ -143,6 +143,8 @@ type
     procedure TestPoolStoppedEnds;
     procedure TestPoolStoppedAtParkEnds;
     procedure TestLateStepAfterTheEndDoesNothing;
+    procedure TestPumpCountRaisingEndsThePump;
+    procedure TestScheduleRaisingStopsThePump;
     procedure TestConcurrentWakeAndStep;
   end;
 
@@ -202,49 +204,38 @@ function TFakeHost.PumpWrite(const AWire: TBytes; const AFin: Boolean): TSendRes
 var
   Rec: TWriteRec;
 begin
-  // two pump steps that overlap show here as a count over 1
-  if InterlockedIncrement(FActive) <> 1 then
-    InterlockedIncrement(Overlaps);
+  FLock.Acquire;
   try
-    FLock.Acquire;
-    try
-      Inc(WriteCalls);
-      Result := srQueued;
-      if FResults.Count > 0 then
-      begin
-        Result := FResults[0];
-        FResults.Delete(0);
-      end
-      else if (EveryNthFull > 0) and (WriteCalls mod EveryNthFull = 0) then
-        Result := srFull;
-      Rec.Wire := Copy(AWire);
-      Rec.Fin := AFin;
-      Rec.Result := Result;
-      Writes.Add(Rec);
-    finally
-      FLock.Release;
-    end;
-    if Assigned(OnWrite) then
-      OnWrite();
+    Inc(WriteCalls);
+    Result := srQueued;
+    if FResults.Count > 0 then
+    begin
+      Result := FResults[0];
+      FResults.Delete(0);
+    end
+    else if (EveryNthFull > 0) and (WriteCalls mod EveryNthFull = 0) then
+      Result := srFull;
+    Rec.Wire := Copy(AWire);
+    Rec.Fin := AFin;
+    Rec.Result := Result;
+    Writes.Add(Rec);
   finally
-    InterlockedDecrement(FActive);
+    FLock.Release;
   end;
+  if Assigned(OnWrite) then
+    OnWrite();
 end;
 
 procedure TFakeHost.PumpCount(const APayload: Integer);
 begin
-  if InterlockedIncrement(FActive) <> 1 then
-    InterlockedIncrement(Overlaps);
+  FLock.Acquire;
   try
-    FLock.Acquire;
-    try
-      Inc(Counted, APayload);
-    finally
-      FLock.Release;
-    end;
+    Inc(Counted, APayload);
   finally
-    InterlockedDecrement(FActive);
+    FLock.Release;
   end;
+  if RaiseInCount then
+    raise EPumpTestError.Create('count');
 end;
 
 function TFakeHost.PumpSchedule: Boolean;
@@ -258,6 +249,8 @@ begin
     FLock.Release;
   end;
   WorkEvent.SetEvent;
+  if RaiseInSchedule then
+    raise EPumpTestError.Create('schedule');
 end;
 
 function TFakeHost.PumpScheduleAfter(const ADelayMs: Integer): Boolean;
@@ -544,7 +537,7 @@ begin
   CheckFrame(1, WsOpText, False, 'a');
   AssertEquals('never parked: no timer', 0, FHost.AfterCount);
   AssertEquals('the Wake started no step', 0, FHost.ScheduleCount);
-  AssertTrue('never parked', FPump.State <> psParked);
+  AssertTrue('never parked, and ended', FPump.State = psDone);
 end;
 
 procedure TWsPumpTest.TestWakeOnARunningPumpOnlySetsTheFlag;
@@ -772,6 +765,7 @@ begin
   FPump.Step;
   AssertFalse('the writer lives while NextChunk runs', FDestroyedInCall);
   AssertTrue('the writer is released when Step returns', GWriterDestroyed);
+  AssertEquals('exactly one write follows the Stop', 1, FHost.Writes.Count);
   AssertTrue(FPump.State = psDone);
   AssertEquals('no second chunk is asked', 1, GWriterCalls);
 end;
@@ -806,6 +800,42 @@ begin
   FPump.Step;
   AssertEquals(1, FHost.Writes.Count);
   AssertEquals(0, FHost.DefectCount);
+end;
+
+procedure TWsPumpTest.TestPumpCountRaisingEndsThePump;
+begin
+  FWriter.Add('a', True);
+  FWriter.Add('b', False);
+  Start;
+  FHost.RaiseInCount := True;
+  FPump.Step;
+  AssertEquals(1, FHost.EndedCount);
+  AssertEquals('EPumpTestError', FHost.EndedClass);
+  AssertEquals('count', FHost.EndedMessage);
+  AssertTrue(FPump.State = psDone);
+  AssertTrue(GWriterDestroyed);
+  // the pump does not stay owned: a later Wake and Step do nothing
+  FPump.Wake;
+  FPump.Step;
+  AssertEquals(1, FHost.Writes.Count);
+  AssertEquals(0, FHost.ScheduleCount);
+  AssertEquals(0, FHost.DefectCount);
+end;
+
+procedure TWsPumpTest.TestScheduleRaisingStopsThePump;
+var
+  I: Integer;
+begin
+  for I := 1 to 5 do
+    FWriter.Add('c', True);
+  Start(True, 1000, 2);
+  FHost.RaiseInSchedule := True;
+  FPump.Step;
+  AssertEquals('the step limit asked for a schedule', 1, FHost.ScheduleCount);
+  AssertTrue(FPump.State = psDone);
+  AssertTrue(GWriterDestroyed);
+  AssertEquals('Stop never calls PumpEnded', 0, FHost.EndedCount);
+  AssertEquals(2, FHost.Writes.Count);
 end;
 
 procedure TWsPumpTest.WorkerLoop;
@@ -864,8 +894,8 @@ begin
       Threads[I].Free;
     end;
   end;
-  AssertEquals('no two steps overlapped', 0, FHost.Overlaps);
-  AssertEquals('no defect', 0, FHost.DefectCount);
+  // the FInStep guard of Enter reports a second Step as a defect before it can write
+  AssertEquals('no two steps overlapped (no defect)', 0, FHost.DefectCount);
   AssertEquals('each chunk is asked once, and the end', cChunks + 1, GWriterCalls);
   N := 0;
   Sum := 0;

@@ -104,19 +104,22 @@ type
     FPendingFin: Boolean;
     FPendingPayload: Integer;
     FStarted: Boolean;
-    FEnded: Boolean;
     FBuf: TChunkBuffer;
     /// DONE: the end of the pump; returns the host that PumpEnded needs (nil after Stop)
     function Done: IWsPumpHost;
-    /// GIVE-UP-OWNERSHIP of STEP-LIMIT
-    procedure GiveUp;
+    /// GIVE-UP-OWNERSHIP of STEP-LIMIT; False when a Stop came (the caller does Done)
+    function GiveUp: Boolean;
     /// ENTER
     function Enter(out AHost: IWsPumpHost): Boolean;
     function Pull: TWsPumpAct;
     function WriteOut(const AHost: IWsPumpHost): TWsPumpAct;
     function Queued(const AHost: IWsPumpHost): TWsPumpAct;
-    function Limit(const AHost: IWsPumpHost; var AChunks: Integer): TWsPumpAct;
-    function Park(const AHost: IWsPumpHost): TWsPumpAct;
+    function Limit(const AHost: IWsPumpHost; var AChunks: Integer;
+      var AOwned: Boolean): TWsPumpAct;
+    function Park(const AHost: IWsPumpHost; var AOwned: Boolean): TWsPumpAct;
+    /// a host call that schedules; an exception counts as False
+    function Schedule(const AHost: IWsPumpHost): Boolean;
+    function ScheduleAfter(const AHost: IWsPumpHost; const ADelayMs: Integer): Boolean;
     /// the drain rule of Wake and TimerFired
     procedure Signal(const AClearTimer: Boolean);
   public
@@ -192,11 +195,14 @@ begin
   Reader := nil;
 end;
 
-procedure TWsStreamPump.GiveUp;
+function TWsStreamPump.GiveUp: Boolean;
 begin
   FLock.Acquire;
   try
-    FInStep := False;
+    // after a Stop the Step ends the pump instead, so it releases the reader
+    Result := FState <> psDone;
+    if Result then
+      FInStep := False;
   finally
     FLock.Release;
   end;
@@ -298,8 +304,8 @@ begin
     Op := WsOpText
   else
     Op := WsOpBinary;
-  FEnded := not More;
   // the wire array holds a copy of the chunk, so FBuf is free for the next call
+  // - Integer(FBuf.Size) is safe: TWsOptions caps MaxMessageSize, and so a chunk, at MaxInt
   FPending := WsEncodeFragment(Op, not More, FBuf.Memory^, Integer(FBuf.Size),
     FFrameSize);
   FPendingFin := not More;
@@ -308,31 +314,38 @@ begin
 end;
 
 function TWsStreamPump.WriteOut(const AHost: IWsPumpHost): TWsPumpAct;
-var
-  Host: IWsPumpHost;
+begin
+  // an exception of the host goes to the handler of Step
+  case AHost.PumpWrite(FPending, FPendingFin) of
+    srQueued:
+      Result := paQueued;
+    srClosed:
+      begin
+        // no data frame may go out any more: the session knows, so this is quiet
+        Done;
+        Result := paExit;
+      end;
+  else
+    Result := paPark;
+  end;
+end;
+
+function TWsStreamPump.Schedule(const AHost: IWsPumpHost): Boolean;
 begin
   try
-    case AHost.PumpWrite(FPending, FPendingFin) of
-      srQueued:
-        Result := paQueued;
-      srClosed:
-        begin
-          // no data frame may go out any more: the session knows, so this is quiet
-          Done;
-          Result := paExit;
-        end;
-    else
-      Result := paPark;
-    end;
+    Result := AHost.PumpSchedule;
   except
-    on E: Exception do
-    begin
-      // the host raised: the pump ends like a writer that raised
-      Host := Done;
-      if Host <> nil then
-        Host.PumpEnded(E);
-      Result := paExit;
-    end;
+    Result := False;
+  end;
+end;
+
+function TWsStreamPump.ScheduleAfter(const AHost: IWsPumpHost;
+  const ADelayMs: Integer): Boolean;
+begin
+  try
+    Result := AHost.PumpScheduleAfter(ADelayMs);
+  except
+    Result := False;
   end;
 end;
 
@@ -353,19 +366,27 @@ begin
   Result := paLimit;
 end;
 
-function TWsStreamPump.Limit(const AHost: IWsPumpHost; var AChunks: Integer): TWsPumpAct;
+function TWsStreamPump.Limit(const AHost: IWsPumpHost; var AChunks: Integer;
+  var AOwned: Boolean): TWsPumpAct;
 begin
   Inc(AChunks);
   if AChunks < FStepChunks then
     Exit(paPull);
-  // from here the Step touches no owner field: the next Step can start at once
-  GiveUp;
-  if not AHost.PumpSchedule then
+  if not GiveUp then
+  begin
+    // a Stop came: this Step ends the pump and releases the reader
+    Done;
+    Exit(paExit);
+  end;
+  // from here the Step touches no owner field and ends no pump: the next Step can
+  // start at once
+  AOwned := False;
+  if not Schedule(AHost) then
     Stop;
   Result := paExit;
 end;
 
-function TWsStreamPump.Park(const AHost: IWsPumpHost): TWsPumpAct;
+function TWsStreamPump.Park(const AHost: IWsPumpHost; var AOwned: Boolean): TWsPumpAct;
 var
   Gone, Again, ArmTimer: Boolean;
 begin
@@ -403,8 +424,10 @@ begin
   end;
   if Again then
     Exit(paWrite);
-  // no owner field is touched from here: a Wake can start the next Step now
-  if ArmTimer and not AHost.PumpScheduleAfter(cWsPumpParkPollMs) then
+  // no owner field is touched from here, and this Step ends no pump: a Wake can
+  // start the next Step now
+  AOwned := False;
+  if ArmTimer and not ScheduleAfter(AHost, cWsPumpParkPollMs) then
     Stop;
   Result := paExit;
 end;
@@ -414,21 +437,36 @@ var
   Host: IWsPumpHost;
   Act: TWsPumpAct;
   Chunks: Integer;
+  Owned: Boolean;
+  Ended: IWsPumpHost;
 begin
   if not Enter(Host) then
     Exit;
+  Owned := True;
   Chunks := 0;
   Act := paPull;
-  while Act <> paExit do
-    case Act of
-      paPull: Act := Pull;
-      paWrite: Act := WriteOut(Host);
-      paQueued: Act := Queued(Host);
-      paLimit: Act := Limit(Host, Chunks);
-      paPark: Act := Park(Host);
-    else
-      Act := paExit;
-    end;
+  try
+    while Act <> paExit do
+      case Act of
+        paPull: Act := Pull;
+        paWrite: Act := WriteOut(Host);
+        paQueued: Act := Queued(Host);
+        paLimit: Act := Limit(Host, Chunks, Owned);
+        paPark: Act := Park(Host, Owned);
+      else
+        Act := paExit;
+      end;
+  except
+    on E: Exception do
+      // an exception of the host or of the encoder: the pump ends like a writer
+      // that raised. After Limit or Park gave up ownership this Step ends no pump
+      if Owned then
+      begin
+        Ended := Done;
+        if Ended <> nil then
+          Ended.PumpEnded(E);
+      end;
+  end;
 end;
 
 procedure TWsStreamPump.Signal(const AClearTimer: Boolean);
@@ -456,7 +494,7 @@ begin
   finally
     FLock.Release;
   end;
-  if Resume and (Host <> nil) and not Host.PumpSchedule then
+  if Resume and (Host <> nil) and not Schedule(Host) then
     Stop;
 end;
 
