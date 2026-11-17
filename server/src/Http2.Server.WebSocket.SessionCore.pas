@@ -687,14 +687,16 @@ var
   All, Chunk: TBytes;
   Buf: TChunkBuffer;
   At: Integer;
+  More: Boolean;
 begin
   // replaced by the pump (story S03)
   All := nil;
   Buf := TChunkBuffer.Create;
   try
-    Buf.Reset;
-    while AReader.NextChunk(Buf) do
-    begin
+    repeat
+      Buf.Reset;
+      // the octets of the call that returns False are the last chunk (D22)
+      More := AReader.NextChunk(Buf);
       Chunk := ChunkBytes(Buf);
       At := Length(All);
       // the whole message is built in memory, so its size has a cap
@@ -703,8 +705,7 @@ begin
       SetLength(All, At + Length(Chunk));
       if Length(Chunk) > 0 then
         Move(Chunk[0], All[At], Length(Chunk));
-      Buf.Reset;
-    end;
+    until not More;
   finally
     Buf.Free;
   end;

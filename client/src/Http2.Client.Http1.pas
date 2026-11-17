@@ -313,6 +313,7 @@ var
   Buf: TChunkBuffer;
   Ch, All: TBytes;
   I, J: Integer;
+  More: Boolean;
 begin
   if not IsValidTargetPart(ARequest.Path) then
     raise EHttpProtocolError.Create('invalid HTTP/1.1 request target',
@@ -377,9 +378,10 @@ begin
     Writer := ARequest.BodyWriter;
     Buf := TChunkBuffer.Create;
     try
-      Buf.Reset;
-      while Writer.NextChunk(Buf) do
-      begin
+      repeat
+        Buf.Reset;
+        // the octets of the call that returns False are the last chunk (D22)
+        More := Writer.NextChunk(Buf);
         if Buf.Size > 0 then
         begin
           Ch := ChunkBytes(Buf);
@@ -388,8 +390,7 @@ begin
           All := ConcatBytes(All, Ch);
           All := ConcatBytes(All, BytesOf(cCrLf));
         end;   // a zero-length chunk would look like the terminator
-        Buf.Reset;
-      end;
+      until not More;
     finally
       Buf.Free;
     end;

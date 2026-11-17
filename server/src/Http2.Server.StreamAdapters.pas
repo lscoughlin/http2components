@@ -328,23 +328,26 @@ end;
 procedure TServerStreamResponse.Finish;
 var
   Buf: TChunkBuffer;
+  More: Boolean;
 begin
   CheckNotDetached;
   if FBodyWriter <> nil then
   begin
     Buf := TChunkBuffer.Create;
     try
-      Buf.Reset;
-      while FBodyWriter.NextChunk(Buf) do
-      begin
+      repeat
+        Buf.Reset;
+        // the octets of the call that returns False are the last chunk (D22)
+        More := FBodyWriter.NextChunk(Buf);
         // TServerStream.DoWrite copies the octets into its outbound buffer
         // before it returns (Http2.Server.Stream.pas lines 653 to 655), so the
         // buffer is free for the next chunk after the call
         if Buf.Size > 0 then
+        begin
           FStream.Write(Buf.Memory^, Buf.Size);
-        Inc(FBodyOctets, Buf.Size);
-        Buf.Reset;
-      end;
+          Inc(FBodyOctets, Buf.Size);
+        end;
+      until not More;
     finally
       Buf.Free;
     end;

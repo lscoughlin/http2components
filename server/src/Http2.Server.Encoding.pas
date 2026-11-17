@@ -493,6 +493,7 @@ end;
 function TCompressingBodyWriter.NextChunk(const ABuffer: TStream): Boolean;
 var
   Coded: TBytes;
+  More: Boolean;
 begin
   if FDone then
     Exit(False);
@@ -502,19 +503,23 @@ begin
     // the inner chunk is fed to the coder at once, so FInnerBuf is reused
     // for the next inner call
     FInnerBuf.Reset;
-    if not FInner.NextChunk(FInnerBuf) then
+    // the octets of the inner call that returns False are the last inner
+    // chunk, so they are coded too (D22)
+    More := FInner.NextChunk(FInnerBuf);
+    if FInnerBuf.Size > 0 then
+      FCoder.Write(FInnerBuf.Memory^, FInnerBuf.Size);
+    if not More then
     begin
       // the inner writer is exhausted: close the container so the footer
-      // reaches the peer, then emit whatever is left
+      // reaches the peer. The coded octets that the close gives are the
+      // last chunk, so they go out in this call with False.
       FCoder.Free;
       FCoder := nil;
       FDone := True;
       Coded := Take;
       ChunkAppend(ABuffer, Coded);
-      Exit(Length(Coded) > 0);
+      Exit(False);
     end;
-    if FInnerBuf.Size > 0 then
-      FCoder.Write(FInnerBuf.Memory^, FInnerBuf.Size);
     Coded := Take;
     if Length(Coded) > 0 then
     begin

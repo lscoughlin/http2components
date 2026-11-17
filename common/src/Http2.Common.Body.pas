@@ -27,7 +27,9 @@ type
   // - the writer does not seek before the place where it began
   // - the library reads a chunk through Size, never through Position (D22)
   // - a chunk of Size = 0 is an empty chunk
-  // - octets that a call writes before it returns False are ignored
+  // - the octets of a call that returns False are the last chunk of the body;
+  //   the library sends them and then ends the body (D4, D22)
+  // - a call that returns False with Size = 0 only ends the body
   // - NextChunk can block; the library never calls it from an IO thread (D16, D17)
   IBodyWriter = interface
     ['{7E1F0C11-00F2-4A11-9C72-000000003101}']
