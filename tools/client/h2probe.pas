@@ -26,7 +26,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, TypInfo, Http2.Client.Errors, Http2.Client.Tls, Http2.Client.Messages, Http2.Client,
   Http2.Common, Http2.OpenSSL,
-  Http2.Client.Stream,
+  Http2.Client.Stream, Http2.Common.Body,
   Http2.Client.ProbeOutcome, Http2.Common.Frames, Http2.Client.Observer;
 
 const
@@ -221,7 +221,7 @@ type
     /// generate ACount bytes on the fly; used by the flow-control case so a
     /// body far larger than the peer's window never has to be typed out
     constructor CreateSynthetic(const ACount: Integer; const AChunk: Integer);
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
 constructor TChunkWriter.Create(const AData: string; const AChunk: Integer);
@@ -289,17 +289,16 @@ begin
   WriteLn('FRAME out ', FrameLine('', AFrame));
 end;
 
-function TChunkWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TChunkWriter.NextChunk(const ABuffer: TStream): Boolean;
 var
   N: Integer;
 begin
-  ABuffer := nil;
   N := Length(FData) - FPos;
   if N <= 0 then
     Exit(False);
   if N > FChunk then
     N := FChunk;
-  ABuffer := Copy(FData, FPos, N);
+  ChunkAppend(ABuffer, Copy(FData, FPos, N));
   Inc(FPos, N);
   Result := True;
 end;

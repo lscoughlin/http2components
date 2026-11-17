@@ -17,7 +17,7 @@ interface
 
 uses
   SysUtils, SyncObjs, Http2.Client.Tls, Http2.Common.Headers,
-  Http2.Common.Frames;
+  Http2.Common.Frames, Http2.Common.Body;
 
 type
   /// the HTTP methods this client sends. The token is uppercased on the
@@ -50,9 +50,8 @@ type
   /// a pulled request body: NextChunk is called until it returns False, at
   /// which point the last emitted DATA frame carries END_STREAM
   /// (doc/design/messages.md "Request and response streaming").
-  IBodyWriter = interface
-    function NextChunk(out ABuffer: TBytes): Boolean;
-  end;
+  // - the interface is declared once, in Http2.Common.Body, and shared with the server
+  IBodyWriter = Http2.Common.Body.IBodyWriter;
 
   /// an in-memory request body; IsSet distinguishes an empty body from none
   THttpBody = record
