@@ -92,6 +92,12 @@ type
     procedure TestReasonTruncationKeepsWholeCharacters;
     procedure TestOptionsAreCrossChecked;
     procedure TestFourMebibyteMessageEncodesInBoundedTime;
+    procedure TestFragmentOfOneFrameWithFin;
+    procedure TestFragmentWithoutFinHasNoFinBit;
+    procedure TestFragmentSplitsByFrameSize;
+    procedure TestFragmentFinOnlyOnLastFrame;
+    procedure TestFragmentEmptyPayload;
+    procedure TestMessageEncodingIsUnchanged;
     procedure TestSendStreamHasASizeCap;
   end;
 
@@ -456,6 +462,86 @@ begin
     GetTickCount64 - Started < 700);
   AssertEquals('payload plus 4 header octets for each of 4096 frames',
     Length(Data) + 4096 * 4, Length(Wire));
+end;
+
+procedure TWsHardeningTest.TestFragmentOfOneFrameWithFin;
+var
+  Data, Wire: TBytes;
+begin
+  SetLength(Data, 10);
+  FillChar(Data[0], Length(Data), 5);
+  Wire := WsEncodeFragment(WsOpBinary, True, Data[0], Length(Data), 100);
+  AssertEquals('one frame: 2 header octets and 10 payload octets', 12, Length(Wire));
+  AssertEquals('the opcode is binary and FIN is set', $82, Integer(Wire[0]));
+  AssertEquals('the payload length is 10', 10, Integer(Wire[1]));
+end;
+
+procedure TWsHardeningTest.TestFragmentWithoutFinHasNoFinBit;
+var
+  Data, Wire: TBytes;
+begin
+  SetLength(Data, 10);
+  FillChar(Data[0], Length(Data), 5);
+  Wire := WsEncodeFragment(WsOpText, False, Data[0], Length(Data), 100);
+  AssertEquals('one frame: 2 header octets and 10 payload octets', 12, Length(Wire));
+  AssertEquals('the opcode is text and FIN is not set', $01, Integer(Wire[0]));
+end;
+
+procedure TWsHardeningTest.TestFragmentSplitsByFrameSize;
+var
+  Data, Wire: TBytes;
+begin
+  SetLength(Data, 250);
+  FillChar(Data[0], Length(Data), 9);
+  Wire := WsEncodeFragment(WsOpText, False, Data[0], Length(Data), 100);
+  AssertEquals('three frames of 102, 102 and 52 octets', 256, Length(Wire));
+  AssertEquals('frame 1 opcode is text, no FIN', $01, Integer(Wire[0]));
+  AssertEquals('frame 1 payload length is 100', 100, Integer(Wire[1]));
+  AssertEquals('frame 2 opcode is continuation, no FIN', $00, Integer(Wire[102]));
+  AssertEquals('frame 2 payload length is 100', 100, Integer(Wire[103]));
+  AssertEquals('frame 3 opcode is continuation, no FIN', $00, Integer(Wire[204]));
+  AssertEquals('frame 3 payload length is 50', 50, Integer(Wire[205]));
+end;
+
+procedure TWsHardeningTest.TestFragmentFinOnlyOnLastFrame;
+var
+  Data, Wire: TBytes;
+begin
+  SetLength(Data, 250);
+  FillChar(Data[0], Length(Data), 9);
+  Wire := WsEncodeFragment(WsOpText, True, Data[0], Length(Data), 100);
+  AssertEquals('three frames of 102, 102 and 52 octets', 256, Length(Wire));
+  AssertEquals('frame 1 has no FIN bit', $01, Integer(Wire[0]));
+  AssertEquals('frame 2 has no FIN bit', $00, Integer(Wire[102]));
+  AssertEquals('frame 3 has the FIN bit', $80, Integer(Wire[204]));
+end;
+
+procedure TWsHardeningTest.TestFragmentEmptyPayload;
+var
+  Dummy: Byte;
+  Wire: TBytes;
+begin
+  Dummy := 0;
+  Wire := WsEncodeFragment(WsOpContinuation, True, Dummy, 0, 100);
+  AssertEquals('one empty frame', 2, Length(Wire));
+  AssertEquals('the FIN bit is set, the opcode is continuation', $80, Integer(Wire[0]));
+  AssertEquals('the payload length is 0', $00, Integer(Wire[1]));
+  Wire := WsEncodeFragment(WsOpContinuation, False, Dummy, 0, 100);
+  AssertEquals('one empty frame', 2, Length(Wire));
+  AssertEquals('no FIN bit, the opcode is continuation', $00, Integer(Wire[0]));
+  AssertEquals('the payload length is 0', $00, Integer(Wire[1]));
+end;
+
+procedure TWsHardeningTest.TestMessageEncodingIsUnchanged;
+var
+  Data, Whole, Fragment: TBytes;
+begin
+  SetLength(Data, 4096);
+  FillChar(Data[0], Length(Data), 3);
+  Whole := WsEncodeMessage(WsOpBinary, Data, 1024);
+  Fragment := WsEncodeFragment(WsOpBinary, True, Data[0], Length(Data), 1024);
+  AssertEquals('the same number of octets', Length(Whole), Length(Fragment));
+  AssertTrue('the same octets', CompareMem(@Whole[0], @Fragment[0], Length(Whole)));
 end;
 
 procedure TWsHardeningTest.TestSendStreamHasASizeCap;
