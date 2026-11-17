@@ -57,6 +57,13 @@ type
     // - srClosed: the session has ended or the Close frame went out
     function Send(const AData: TBytes; const AText: Boolean): TSendResult;
     /// queue one message that the reader supplies in pieces
+    // - each chunk of the reader goes out as one fragment of the message, and the
+    //   call returns at once with srQueued
+    // - the streaming pool reads the chunks. When the channel is full, the stream
+    //   waits and the drain of the channel wakes it
+    // - while the stream runs, Send and SendStream return srFull; Ping and Close still
+    //   go out between the fragments
+    // - a reader that raises ends the session with Failed
     function SendStream(const AReader: IBodyWriter; const AText: Boolean): TSendResult;
     /// queue a Ping with up to 125 octets
     procedure Ping(const AData: TBytes);
