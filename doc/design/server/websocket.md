@@ -6,6 +6,7 @@ notes:
   - This document describes the WebSocket part of the server, which serves a WebSocket on any detached channel, over HTTP/1.1 and over HTTP/2.
   - RFC 6455 (the WebSocket protocol) is the main source. It was checked on 2026-10-22 at https://www.rfc-editor.org/info/rfc6455. The plain-text copy is doc/references/rfc6455.txt. RFC 6454 (the web origin) was checked on the same date at https://www.rfc-editor.org/info/rfc6454.
   - The IANA registry of close codes was checked on 2026-10-22. The copy is doc/references/iana-websocket-registry.xml.
+  - RFC 6455 sections 5.4 (fragmentation), 5.5 (control frames) and 5.5.1 (close) were read in the plain-text copy and checked on 2026-11-17 at https://www.rfc-editor.org/info/rfc6455. The streamed message of `SendStream` follows section 5.4.
   - Imported from http2server/doc/design/server/websocket.md at the source commit recorded in the source inventory.
 scope: The frame codec, the session contract, the receive path, the closing handshake, the heartbeat, the limits, the origin policy, the Init hook and the settings.
 primary_types:
@@ -27,7 +28,7 @@ invariants:
   - The handler is called on a thread of the streaming pool, one call at a time for a session, in the order of the events, and never on an IO thread.
   - Exactly one of Closed or Failed ends the conversation, unless the application calls Abort.
   - The server never puts the close codes 1005, 1006 or 1015 on the wire.
-  - A message is sent with one write to the channel, so the frames of two messages never mix.
+  - A message that Send sends is written with one call of the channel, so the frames of two messages never mix. A streamed message is written one fragment at a time, and no other data message is written while its stream runs.
 ---
 
 # WebSocket
@@ -99,10 +100,12 @@ one at a time, in the order of the events. A callback can call `Send`, `Ping`,
 `Send` is legal from any thread at any time. It never blocks. It writes all frames of
 the message with one call of the channel, so a refusal leaves nothing half written
 and the frames of two messages never mix. It answers `srFull` when the outbound queue
-is over `ChannelQueueLimit`, and `srClosed` after the session has ended or the Close
-frame has gone out. The session does not drop a message by itself. The sender
-splits a message into frames of `FrameSize` octets. A Pong and a Close echo are
-separate writes, so they do not wait behind a message that is being built.
+is over `ChannelQueueLimit` or while a streamed message runs, and `srClosed` after the
+session has ended or the Close frame has gone out. The session does not drop a message
+by itself. The sender splits a message into frames of `FrameSize` octets. A Pong and a
+Close echo are separate writes, so they do not wait behind a message that is being
+built. `SendStream` sends a message that a writer gives in pieces (see
+[Streaming a message](#streaming-a-message)).
 
 **The send lock.** One send lock keeps the frames of two writers apart. A writer
 encodes its message before it takes the lock, then checks under the lock that the
@@ -118,14 +121,71 @@ reply (a Pong, a Close echo or the Close frame of a protocol error) goes to the
 streaming pool as a task. The pool sends the replies in order, and a reply that must
 close the channel closes it after the frame.
 
-**The size of a sent message.** `SendStream` builds the message in memory, so the
-message is limited by `MaxMessageSize`. `MaxMessageSize` is at most 2147483647, and
-`MaxFrameSize` is at most `MaxMessageSize`. A close reason must be UTF-8, and the
-server cuts a reason that it builds itself on the boundary of a character.
+**The size of a sent message.** `Send` builds the message in memory, so the message is
+limited by `MaxMessageSize`. `MaxMessageSize` is at most 2147483647, and `MaxFrameSize`
+is at most `MaxMessageSize`. A close reason must be UTF-8, and the server cuts a reason
+that it builds itself on the boundary of a character.
+
+A streamed message has no such limit on its total size. `MaxMessageSize` limits one
+chunk of the writer. The rules are in [Streaming a message](#streaming-a-message).
 
 `Abort` closes the channel at once, with no Close frame and no later callback.
 `SetContext` and `Context` keep a value of the application for the life of the
 session; the session releases it at the end.
+
+## Streaming a message
+
+`SendStream` sends one message whose octets come from an `IBodyWriter` (see
+[body](../common/body.md)). It returns `srQueued` at once. It returns `srClosed` when
+the session has ended or the Close frame has gone out, and `srFull` when another stream
+of the session runs. It raises `EHttpError` when the writer is nil.
+
+Each chunk of the writer is one fragment of the message (RFC 6455 section 5.4). A chunk
+that is longer than `FrameSize` is split into frames of `FrameSize` octets, as a whole
+message is. The first fragment has the opcode text or binary. Each later fragment has
+the continuation opcode. Only the last fragment has the FIN bit.
+
+The last call of the writer ends the message. When that call returns False with octets,
+those octets form the last fragment, and that fragment has the FIN bit. When the last
+call returns False with no octets, the session sends one empty continuation frame with
+FIN. When the writer gives no chunk at all, the session sends one empty frame with the
+opcode and FIN. A call that returns True with no octets is an empty chunk, and the
+session skips it.
+
+The streaming pool reads the chunks. One step reads at most 16 chunks. The step then
+ends, and the next step waits at the end of the queue of the session. The writer runs
+on a streaming pool thread and never on an IO thread. A writer can block. A blocking
+writer holds one pool thread, and it delays the other tasks of the session. For example,
+a cancel message from the client waits until the writer returns.
+
+When the channel refuses a fragment, the stream keeps the encoded fragment and parks. The
+drain of the channel wakes the stream. A parked stream also arms a timer of 250
+milliseconds. The channel does not signal a drain for a refusal in the held bytes of a
+channel that is not active yet, for example a `SendStream` that the `Init` callback
+starts. The timer checks the channel again, so a lost drain signal delays the stream by
+at most one poll after room appears.
+
+While a streamed message runs, `Send` and `SendStream` return `srFull`. Ping, Pong and
+Close frames can go out between the fragments (RFC 6455 section 5.5). The session never
+sends a data frame after a Close frame.
+
+When a Close frame goes out, the session ends, or the session aborts, the stream stops at
+its next step. The message then stays incomplete, and no FIN frame follows (RFC 6455
+section 5.5.1). The writer is released.
+
+When the writer raises, or when a chunk is longer than `MaxMessageSize`, the session
+calls `Fail`. The handler receives `Failed`, and a Close frame with code 1011 follows.
+
+The counter of payload octets out grows by the payload of each fragment that the channel
+takes. The counter of messages out grows by one when the FIN fragment is queued.
+
+The server does not check the UTF-8 of a streamed text message. A text chunk can end
+inside a character, and the receiver checks the whole message.
+
+A stream suits one large message. A browser WebSocket gives the page the whole message
+only at its end, so a stream does not deliver the pieces to the page one at a time. For
+a series of messages, such as rows that are ready one at a time, the application sends
+one message for each batch with `Send`.
 
 ## The Init hook
 
@@ -412,7 +472,7 @@ defaults live in `Create`.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `MaxMessageSize` | 1048576 | the greatest message, in octets, over all fragments |
+| `MaxMessageSize` | 1048576 | the greatest message that the server receives, in octets, over all fragments; for a message that `SendStream` sends, the greatest chunk, in octets |
 | `MaxFrameSize` | 65536 | the greatest payload of one frame that the server accepts |
 | `MaxFragments` | 1024 | the greatest number of frames of one message |
 | `QueuedMessages` | 16 | the greatest number of messages that wait for the application |
@@ -445,5 +505,6 @@ missing Pong. The observer gets `seWsOpened`, `seWsRejected` (with the status),
 
 - [RFC 6454](https://www.rfc-editor.org/rfc/rfc6454.html), checked 2026-11-11.
 - [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html), checked 2026-11-11.
+- [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html) section 5.4 (fragmentation), section 5.5 (control frames) and section 5.5.1 (close), checked 2026-11-17. The plain-text copy is `doc/references/rfc6455.txt`.
 - [RFC 7936](https://www.rfc-editor.org/rfc/rfc7936.html), checked 2026-11-11.
 - [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441.html), checked 2026-11-11.

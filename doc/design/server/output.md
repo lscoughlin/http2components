@@ -85,6 +85,11 @@ A handler that writes more than the outbound buffer holds blocks in
 stream waiter of that stream carries the wake-up from the drain to the
 handler.
 
+A body writer of a response follows the same rule. The library writes one chunk
+of the writer, and the write waits in the same way. The library pulls the next
+chunk only after the write returns. The octets that the last call returns with
+`False` are written as the last chunk, and then the stream ends.
+
 ## See also
 
 - [connection](connection.md) states how the core feeds and drains one

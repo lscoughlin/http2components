@@ -4,6 +4,55 @@
 
 - Version bump after the 0.32.0 source release. No other change yet.
 
+### WebSocket
+
+- **Behavior change.** `IWsSession.SendStream` sends each chunk of the writer as one
+  fragment of the message, and it returns at once. A full channel parks the stream
+  until the channel drains. While a stream runs, `Send` and `SendStream` return
+  `srFull`. `MaxMessageSize` limits one chunk, not the whole streamed message.
+
+### Client
+
+- The HTTP/1.1 client sends a request body from an `IBodyWriter` chunk by chunk, with
+  chunked transfer coding. It no longer holds the whole body in memory. The other
+  `IBodyWriter` paths already stream: the server response, the server WebSocket stream
+  and the HTTP/2 client upload. This release adds tests for them.
+
+### Common
+
+- **Breaking change of the API.** `IBodyWriter.NextChunk` takes a `TStream` in place of
+  an `out TBytes`: `function NextChunk(const ABuffer: TStream): Boolean`. The library
+  passes one reusable `TChunkBuffer`, so a long body makes no allocation for each
+  chunk. The client and the server share this one interface, declared in
+  `Http2.Common.Body`. The names `Http2.Client.IBodyWriter` and
+  `Http2.Server.IBodyWriter` stay as aliases of it. A writer that has a `TBytes`
+  appends it with `ChunkAppend`. A call that returns False and writes octets sends
+  those octets as the last chunk, and then the body ends.
+
+  Old shape of a small writer:
+
+  ```pascal
+  function TGreeting.NextChunk(out ABuffer: TBytes): Boolean;
+  begin
+    Result := not FSent;
+    if Result then
+      ABuffer := BytesOf('hello');
+    FSent := True;
+  end;
+  ```
+
+  New shape of the same writer:
+
+  ```pascal
+  function TGreeting.NextChunk(const ABuffer: TStream): Boolean;
+  begin
+    Result := not FSent;
+    if Result then
+      ChunkAppend(ABuffer, BytesOf('hello'));
+    FSent := True;
+  end;
+  ```
+
 ## 0.32.0 — 2026-11-16 (source release)
 
 - This release is a source release. It has no binary artifacts.

@@ -135,6 +135,10 @@ type
   `COMPRESSION_ERROR`, settings error) fail all in-flight leases.
 - **Stream errors** (`ftRstStream` or stream-level protocol error) fail only
   that lease.
+- **Writer failures:** when `NextChunk` of an `IBodyWriter` raises during an
+  HTTP/1.1 upload, the connection closes. A chunked body that stops in the middle
+  leaves the connection out of step, so the connection is never reused. The
+  exception of the writer is raised to the caller of `Send`.
 - **Cancellation:** abandoning a `Send`/`Read` sends `RST_STREAM` with
   `CANCEL` and releases the lease. A request may carry an
   `ICancellationToken` (`THttpRequest.WithCancelToken`); cancelling it resets
