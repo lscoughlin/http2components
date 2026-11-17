@@ -32,7 +32,7 @@ interface
 
 uses
   SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Duplex,
-  Http2.Server.ClientCert;
+  Http2.Server.ClientCert, Http2.Common.Body;
 
 type
   /// the outcome of one IStreamWaiter.Wait call
@@ -73,11 +73,9 @@ type
   /// A pulled response body.
   ///
   /// The server calls NextChunk until it answers False.  A False answer sends
-  /// the END_STREAM flag on the last DATA frame.
-  IBodyWriter = interface
-    ['{7E1F0C11-0002-4A11-9C72-000000000502}']
-    function NextChunk(out ABuffer: TBytes): Boolean;
-  end;
+  /// the END_STREAM flag on the last DATA frame.  The interface is shared with
+  /// the client; its declaration is in Http2.Common.Body.
+  IBodyWriter = Http2.Common.Body.IBodyWriter;
 
   /// The request as one handler sees it.
   ///

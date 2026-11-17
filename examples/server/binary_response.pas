@@ -19,9 +19,9 @@ program binary_response;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils,
+  SysUtils, Classes,
   mormot.core.base,
-  Http2.Server;
+  Http2.Common.Body, Http2.Server;
 
 const
   /// how many octets the response holds
@@ -37,7 +37,7 @@ type
     FSeed: Byte;
   public
     constructor Create(const AOctets: Integer);
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
   /// the handler of the example
@@ -54,22 +54,23 @@ begin
   FSeed := 1;
 end;
 
-function TBytesBodyWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TBytesBodyWriter.NextChunk(const ABuffer: TStream): Boolean;
 var
   N, I: Integer;
+  Chunk: TBytes;
 begin
-  ABuffer := nil;
   if FLeft <= 0 then
     Exit(False);
   N := ChunkOctets;
   if N > FLeft then
     N := FLeft;
-  SetLength(ABuffer, N);
+  SetLength(Chunk, N);
   for I := 0 to N - 1 do
   begin
-    ABuffer[I] := FSeed;
+    Chunk[I] := FSeed;
     Inc(FSeed);
   end;
+  ChunkAppend(ABuffer, Chunk);
   Dec(FLeft, N);
   // False ends the response, so the writer answers False on the last call
   Result := FLeft > 0;

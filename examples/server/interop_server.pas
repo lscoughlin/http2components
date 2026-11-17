@@ -30,9 +30,9 @@ program interop_server;
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils,
+  SysUtils, Classes,
   mormot.core.base,
-  Http2.Server, Http2.Common, Http2.OpenSSL;
+  Http2.Common.Body, Http2.Server, Http2.Common, Http2.OpenSSL;
 
 const
   /// the size of one write to the response
@@ -51,7 +51,7 @@ type
     FChunk: TBytes;
   public
     constructor Create(const ATotal, AChunkSize: Int64);
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
   /// writes every server event to the standard error stream, for a trace run
@@ -82,21 +82,20 @@ begin
     FChunk[Index] := Byte(Index mod 251);
 end;
 
-function TPatternWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TPatternWriter.NextChunk(const ABuffer: TStream): Boolean;
 var
   Count: Integer;
+  Chunk: TBytes;
 begin
   Result := FLeft > 0;
   if not Result then
-  begin
-    ABuffer := nil;
     Exit;
-  end;
   Count := Length(FChunk);
   if Int64(Count) > FLeft then
     Count := FLeft;
-  SetLength(ABuffer, Count);
-  Move(FChunk[0], ABuffer[0], Count);
+  SetLength(Chunk, Count);
+  Move(FChunk[0], Chunk[0], Count);
+  ChunkAppend(ABuffer, Chunk);
   Dec(FLeft, Count);
 end;
 
