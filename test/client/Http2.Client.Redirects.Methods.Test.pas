@@ -30,7 +30,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack,
-  Http2.Client.Tls, Http2.Client.Connection, Http2.Client.Stream, Http2.Client.Messages, Http2.Client, Http2.Client.Redirects.Test;
+  Http2.Common.Body, Http2.Client.Tls, Http2.Client.Connection, Http2.Client.Stream, Http2.Client.Messages, Http2.Client, Http2.Client.Redirects.Test;
 type
   TRedirectMethodTest = class(TTestCase)
   published
@@ -164,15 +164,15 @@ type
   private
     FIssued: Boolean;
   public
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
-function TTwoChunkWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TTwoChunkWriter.NextChunk(const ABuffer: TStream): Boolean;
 begin
   if FIssued then
     Exit(False);
   FIssued := True;
-  ABuffer := BytesOf('streamed');
+  ChunkAppend(ABuffer, BytesOf('streamed'));
   Result := True;
 end;
 

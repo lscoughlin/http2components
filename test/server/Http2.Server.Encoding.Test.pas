@@ -18,7 +18,8 @@ interface
 
 uses
   SysUtils, Classes, fpcunit, testregistry,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Encoding;
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam,
+  Http2.Server, Http2.Client, Http2.Server.Encoding;
 
 type
   TEncodingTest = class(TTestCase)
@@ -58,6 +59,7 @@ type
     procedure TestCompressingWriterEmitsAGzipBody;
     procedure TestCompressingWriterEmitsADeflateBody;
     procedure TestCompressingWriterIsEmptyAware;
+    procedure TestOneWriterServesTheServerAndTheClientAlias;
   end;
 
   /// a body writer over a fixed list of chunks
@@ -67,7 +69,17 @@ type
     FNext: Integer;
   public
     constructor Create(const AChunks: array of TBytes);
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
+  end;
+
+  /// a body writer that names the shared interface of Http2.Common.Body
+  TAliasWriter = class(TInterfacedObject, Http2.Common.Body.IBodyWriter)
+  private
+    FChunks: TArray<TBytes>;
+    FNext: Integer;
+  public
+    constructor Create(const AChunks: array of TBytes);
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
 procedure RegisterTests;
@@ -87,12 +99,33 @@ begin
   FNext := 0;
 end;
 
-function TChunkWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TChunkWriter.NextChunk(const ABuffer: TStream): Boolean;
 begin
-  SetLength(ABuffer, 0);
   if FNext > High(FChunks) then
     Exit(False);
-  ABuffer := FChunks[FNext];
+  ChunkAppend(ABuffer, FChunks[FNext]);
+  Inc(FNext);
+  Result := True;
+end;
+
+{ TAliasWriter }
+
+constructor TAliasWriter.Create(const AChunks: array of TBytes);
+var
+  I: Integer;
+begin
+  inherited Create;
+  SetLength(FChunks, Length(AChunks));
+  for I := 0 to High(AChunks) do
+    FChunks[I] := Copy(AChunks[I], 0, Length(AChunks[I]));
+  FNext := 0;
+end;
+
+function TAliasWriter.NextChunk(const ABuffer: TStream): Boolean;
+begin
+  if FNext > High(FChunks) then
+    Exit(False);
+  ChunkAppend(ABuffer, FChunks[FNext]);
   Inc(FNext);
   Result := True;
 end;
@@ -333,15 +366,39 @@ end;
 
 function DrainWriter(const AWriter: IBodyWriter): TBytes;
 var
+  Buffer: TChunkBuffer;
   Chunk: TBytes;
+  More: Boolean;
 begin
   SetLength(Result, 0);
-  while AWriter.NextChunk(Chunk) do
-  begin
-    SetLength(Result, Length(Result) + Length(Chunk));
-    if Length(Chunk) > 0 then
-      Move(Chunk[0], Result[Length(Result) - Length(Chunk)], Length(Chunk));
+  Buffer := TChunkBuffer.Create;
+  try
+    repeat
+      Buffer.Reset;
+      More := AWriter.NextChunk(Buffer);
+      // the octets of the call that returns False are the last chunk
+      if Buffer.Size > 0 then
+      begin
+        Chunk := ChunkBytes(Buffer);
+        SetLength(Result, Length(Result) + Length(Chunk));
+        Move(Chunk[0], Result[Length(Result) - Length(Chunk)], Length(Chunk));
+      end;
+    until not More;
+  finally
+    Buffer.Free;
   end;
+end;
+
+/// the server name of the shared interface reads a body
+function DrainAsServer(const AWriter: Http2.Server.IBodyWriter): TBytes;
+begin
+  Result := DrainWriter(AWriter);
+end;
+
+/// the client name of the shared interface reads a body
+function DrainAsClient(const AWriter: Http2.Client.IBodyWriter): TBytes;
+begin
+  Result := DrainWriter(AWriter);
 end;
 
 procedure TEncodingTest.TestCompressingWriterEmitsAGzipBody;
@@ -391,6 +448,19 @@ begin
     Length(Out32) >= 18);
   AssertEquals('an empty coded body decodes to nothing', 0,
     Length(GzipDecompress(Out32)));
+end;
+
+procedure TEncodingTest.TestOneWriterServesTheServerAndTheClientAlias;
+var
+  Writer: Http2.Common.Body.IBodyWriter;
+begin
+  // one writer type, read through the server name and then through the client name
+  Writer := TAliasWriter.Create([BytesOf('one'), BytesOf('two')]);
+  AssertEquals('the server name reads both chunks', 'onetwo',
+    TextOf(DrainAsServer(Writer)));
+  Writer := TAliasWriter.Create([BytesOf('one'), BytesOf('two')]);
+  AssertEquals('the client name reads the same chunks', 'onetwo',
+    TextOf(DrainAsClient(Writer)));
 end;
 
 procedure RegisterTests;
