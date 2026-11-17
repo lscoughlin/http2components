@@ -31,7 +31,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.HandlerJob, Http2.Server.HandlerDeadline, Http2.Server.Http1.Guard, Http2.Server.Http1.Host,
   Http2.Server.Http1.ResponseHead, Http2.Server.Http1.Channel,
   Http2.Server.Http1.SocketChannel, Http2.Server.AccessLog,
@@ -672,11 +672,23 @@ end;
 
 procedure TH1Exchange.SetBodyWriter(const AWriter: IBodyWriter);
 var
-  Chunk: TBytes;
+  Buf: TChunkBuffer;
 begin
   CheckCanWrite;
-  while AWriter.NextChunk(Chunk) do
-    Write(Chunk);
+  Buf := TChunkBuffer.Create;
+  try
+    Buf.Reset;
+    while AWriter.NextChunk(Buf) do
+    begin
+      // WriteBody copies the octets into the frame before it returns, so the
+      // buffer is free for the next chunk after the call
+      if Buf.Size > 0 then
+        Write(Buf.Memory^, Buf.Size);
+      Buf.Reset;
+    end;
+  finally
+    Buf.Free;
+  end;
   Finish;
 end;
 

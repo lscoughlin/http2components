@@ -30,7 +30,7 @@ interface
 
 uses
   SysUtils, Classes,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, zstream;
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, zstream;
 
 type
   /// the content codings this server can produce
@@ -108,6 +108,7 @@ type
   TCompressingBodyWriter = class(TInterfacedObject, IBodyWriter)
   private
     FInner: IBodyWriter;
+    FInnerBuf: TChunkBuffer;
     FCoding: TContentEncoding;
     FSink: TMemoryStream;
     FCoder: TStream;
@@ -120,7 +121,7 @@ type
     constructor Create(const AInner: IBodyWriter;
       const ACoding: TContentEncoding);
     destructor Destroy; override;
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
 implementation
@@ -445,6 +446,7 @@ constructor TCompressingBodyWriter.Create(const AInner: IBodyWriter;
 begin
   inherited Create;
   FInner := AInner;
+  FInnerBuf := TChunkBuffer.Create;
   FCoding := ACoding;
   FSink := TMemoryStream.Create;
   FDone := False;
@@ -455,6 +457,7 @@ destructor TCompressingBodyWriter.Destroy;
 begin
   FCoder.Free;
   FSink.Free;
+  FInnerBuf.Free;
   inherited Destroy;
 end;
 
@@ -487,31 +490,37 @@ begin
   FSink.Position := 0;
 end;
 
-function TCompressingBodyWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TCompressingBodyWriter.NextChunk(const ABuffer: TStream): Boolean;
 var
-  Inner: TBytes;
+  Coded: TBytes;
 begin
-  SetLength(ABuffer, 0);
   if FDone then
     Exit(False);
   StartCoder;
   while True do
   begin
-    if not FInner.NextChunk(Inner) then
+    // the inner chunk is fed to the coder at once, so FInnerBuf is reused
+    // for the next inner call
+    FInnerBuf.Reset;
+    if not FInner.NextChunk(FInnerBuf) then
     begin
       // the inner writer is exhausted: close the container so the footer
       // reaches the peer, then emit whatever is left
       FCoder.Free;
       FCoder := nil;
       FDone := True;
-      ABuffer := Take;
-      Exit(Length(ABuffer) > 0);
+      Coded := Take;
+      ChunkAppend(ABuffer, Coded);
+      Exit(Length(Coded) > 0);
     end;
-    if Length(Inner) > 0 then
-      FCoder.Write(Inner[0], Length(Inner));
-    ABuffer := Take;
-    if Length(ABuffer) > 0 then
+    if FInnerBuf.Size > 0 then
+      FCoder.Write(FInnerBuf.Memory^, FInnerBuf.Size);
+    Coded := Take;
+    if Length(Coded) > 0 then
+    begin
+      ChunkAppend(ABuffer, Coded);
       Exit(True);
+    end;
   end;
 end;
 

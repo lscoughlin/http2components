@@ -26,7 +26,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, Generics.Collections,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.Limits, Http2.Server.Observer, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Parser,
   Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.Utf8,
@@ -685,18 +685,28 @@ end;
 function TWsSessionCore.SendStream(const AReader: IBodyWriter; const AText: Boolean): TSendResult;
 var
   All, Chunk: TBytes;
+  Buf: TChunkBuffer;
   At: Integer;
 begin
+  // replaced by the pump (story S03)
   All := nil;
-  while AReader.NextChunk(Chunk) do
-  begin
-    At := Length(All);
-    // the whole message is built in memory, so its size has a cap
-    if Int64(At) + Length(Chunk) > FOpts.MaxMessageSize then
-      raise EHttpError.Create('a message to send is over the size limit');
-    SetLength(All, At + Length(Chunk));
-    if Length(Chunk) > 0 then
-      Move(Chunk[0], All[At], Length(Chunk));
+  Buf := TChunkBuffer.Create;
+  try
+    Buf.Reset;
+    while AReader.NextChunk(Buf) do
+    begin
+      Chunk := ChunkBytes(Buf);
+      At := Length(All);
+      // the whole message is built in memory, so its size has a cap
+      if Int64(At) + Length(Chunk) > FOpts.MaxMessageSize then
+        raise EHttpError.Create('a message to send is over the size limit');
+      SetLength(All, At + Length(Chunk));
+      if Length(Chunk) > 0 then
+        Move(Chunk[0], All[At], Length(Chunk));
+      Buf.Reset;
+    end;
+  finally
+    Buf.Free;
   end;
   Result := Send(All, AText);
 end;
