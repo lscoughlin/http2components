@@ -77,6 +77,7 @@ uses
   Http2.Server.OutputCaps.Test,
   Http2.Server.Licence.Test,
   Http2.Server.Encoding.Test,
+  Http2.Server.BodyWriterStreaming.Test,
   Http2.Server.Validation.Test,
   Http2.Server.Validation.Abuse.Test,
   Http2.Server.Admission.Test,
