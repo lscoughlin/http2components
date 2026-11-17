@@ -39,6 +39,8 @@ type
     FRegistry: IChannelRegistry;
     FHold: TBytes;
     FState: TChannelState;
+    /// the number of Send calls that still return srFull
+    FFullLeft: Integer;
     function SendLocked(const AData: TBytes): TSendResult;
   public
     Sent: TBytes;
@@ -79,6 +81,11 @@ type
     /// deliver client frames to the session, as an IO thread does
     procedure Deliver(const AData: TBytes);
     procedure DeliverPeerClosed(const AClean: Boolean);
+    /// clear Full, then call WriteDrained on the sink, as the IO thread does
+    // - the call holds ConnLock when it is set, and FLock is not held during the call
+    procedure Drain;
+    /// make the next N calls of Send return srFull, then return to normal
+    procedure SetFullCount(const N: Integer);
   end;
 
   TFakeHandshake = class(TInterfacedObject, IWsHandshake)
@@ -207,6 +214,12 @@ begin
   try
     if FState = csClosed then
       Exit(srClosed);
+    // a counted refusal comes first, then the Full flag
+    if FFullLeft > 0 then
+    begin
+      Dec(FFullLeft);
+      Exit(srFull);
+    end;
     if Full then
       Exit(srFull);
     if Length(AData) = 0 then
@@ -379,6 +392,37 @@ end;
 procedure TFakeWsChannel.DeliverPeerClosed(const AClean: Boolean);
 begin
   Sink.PeerClosed(AClean);
+end;
+
+procedure TFakeWsChannel.Drain;
+begin
+  FLock.Acquire;
+  try
+    Full := False;
+  finally
+    FLock.Release;
+  end;
+  if Sink = nil then
+    Exit;
+  // the IO thread of a real channel holds the connection lock while the sink runs
+  if ConnLock <> nil then
+    ConnLock.Acquire;
+  try
+    Sink.WriteDrained;
+  finally
+    if ConnLock <> nil then
+      ConnLock.Release;
+  end;
+end;
+
+procedure TFakeWsChannel.SetFullCount(const N: Integer);
+begin
+  FLock.Acquire;
+  try
+    FFullLeft := N;
+  finally
+    FLock.Release;
+  end;
 end;
 
 { TFakeHandshake }
