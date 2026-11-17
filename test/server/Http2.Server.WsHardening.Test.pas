@@ -98,7 +98,10 @@ type
     procedure TestFragmentFinOnlyOnLastFrame;
     procedure TestFragmentEmptyPayload;
     procedure TestMessageEncodingIsUnchanged;
-    procedure TestSendStreamHasASizeCap;
+    procedure TestSendStreamChunkOverTheLimitFails;
+  private
+    function StreamOut: Boolean;
+    function Close1011Out: Boolean;
   end;
 
   TSseHardeningTest = class(TTestCase)
@@ -547,19 +550,53 @@ begin
   AssertTrue('the same octets', CompareMem(@Whole[0], @Fragment[0], Length(Whole)));
 end;
 
-procedure TWsHardeningTest.TestSendStreamHasASizeCap;
+function TWsHardeningTest.StreamOut: Boolean;
 var
-  Raised: Boolean;
+  L: TStringList;
+  I: Integer;
+begin
+  // the reader joins the fragments: a binary message shows as one line
+  Result := False;
+  L := DecodeOutput(FChannel.SentBytes);
+  try
+    for I := 0 to L.Count - 1 do
+      if Copy(L[I], 1, 2) = 'B:' then
+        Result := True;
+  finally
+    L.Free;
+  end;
+end;
+
+function TWsHardeningTest.Close1011Out: Boolean;
+var
+  L: TStringList;
+  I: Integer;
+begin
+  Result := False;
+  L := DecodeOutput(FChannel.SentBytes);
+  try
+    for I := 0 to L.Count - 1 do
+      if Copy(L[I], 1, 7) = 'C:1011:' then
+        Result := True;
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TWsHardeningTest.TestSendStreamChunkOverTheLimitFails;
 begin
   Build(Quick.WithMaxMessageSize(1000).WithMaxFrameSize(1000));
-  Raised := False;
-  try
-    FSession.SendStream(TChunkWriter.Create(5, 400), False);
-  except
-    on EHttpError do
-      Raised := True;
-  end;
-  AssertTrue('WS-7: SendStream refuses a message over the size limit', Raised);
+  // five chunks of 400 octets: the total is over the limit, but no chunk is
+  AssertTrue('the stream is queued',
+    FSession.SendStream(TChunkWriter.Create(5, 400), False) = srQueued);
+  AssertTrue('the message of 2000 octets completes', WaitUntil(StreamOut, 5000));
+  // one chunk of 1001 octets is over the limit: the stream fails
+  TearDown;
+  Build(Quick.WithMaxMessageSize(1000).WithMaxFrameSize(1000));
+  AssertTrue('the second stream is queued',
+    FSession.SendStream(TChunkWriter.Create(1, 1001), False) = srQueued);
+  AssertTrue('the handler hears Failed', WaitHandler('failed', 5000));
+  AssertTrue('the channel gets a Close frame with code 1011', WaitUntil(Close1011Out, 5000));
 end;
 
 { TSseHardeningTest }
