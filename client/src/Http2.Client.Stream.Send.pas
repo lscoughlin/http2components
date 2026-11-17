@@ -298,14 +298,18 @@ begin
         Cur.Reset;
         if ARequest.BodyWriter.NextChunk(Cur) then
         begin
-          if PendingSet then
-            EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
-              APeerDone, APeerReset, AUploadStopped, ABytesSent,
-              Ahead.Memory^, Ahead.Size, False);
-          Swap := Cur;
-          Cur := Ahead;
-          Ahead := Swap;
-          PendingSet := True;
+          // an empty chunk that a call returns with True is skipped (D4)
+          if Cur.Size > 0 then
+          begin
+            if PendingSet then
+              EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+                APeerDone, APeerReset, AUploadStopped, ABytesSent,
+                Ahead.Memory^, Ahead.Size, False);
+            Swap := Cur;
+            Cur := Ahead;
+            Ahead := Swap;
+            PendingSet := True;
+          end;
         end
         else
         begin
