@@ -79,6 +79,7 @@ end;
 
 function ChunkBytes(const ABuffer: TChunkBuffer): TBytes;
 begin
+  Result := nil;
   SetLength(Result, ABuffer.Size);
   if ABuffer.Size > 0 then
     Move(ABuffer.Memory^, Result[0], ABuffer.Size);
