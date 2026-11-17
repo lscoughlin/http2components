@@ -19,7 +19,7 @@ interface
 uses
   SysUtils, Classes, fpcunit, testregistry,
   Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam,
-  Http2.Server, Http2.Client, Http2.Server.Encoding;
+  Http2.Server, Http2.Server.Encoding;
 
 type
   TEncodingTest = class(TTestCase)
@@ -395,12 +395,6 @@ begin
   Result := DrainWriter(AWriter);
 end;
 
-/// the client name of the shared interface reads a body
-function DrainAsClient(const AWriter: Http2.Client.IBodyWriter): TBytes;
-begin
-  Result := DrainWriter(AWriter);
-end;
-
 procedure TEncodingTest.TestCompressingWriterEmitsAGzipBody;
 var
   Inner: IBodyWriter;
@@ -454,13 +448,11 @@ procedure TEncodingTest.TestOneWriterServesTheServerAndTheClientAlias;
 var
   Writer: Http2.Common.Body.IBodyWriter;
 begin
-  // one writer type, read through the server name and then through the client name
+  // the server name is the shared type; the client name is checked in the
+  // client tests, because the server test build has no client unit
   Writer := TAliasWriter.Create([BytesOf('one'), BytesOf('two')]);
   AssertEquals('the server name reads both chunks', 'onetwo',
     TextOf(DrainAsServer(Writer)));
-  Writer := TAliasWriter.Create([BytesOf('one'), BytesOf('two')]);
-  AssertEquals('the client name reads the same chunks', 'onetwo',
-    TextOf(DrainAsClient(Writer)));
 end;
 
 procedure RegisterTests;

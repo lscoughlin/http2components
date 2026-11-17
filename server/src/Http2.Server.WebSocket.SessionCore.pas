@@ -732,9 +732,11 @@ end;
 function TWsSessionCore.SendStream(const AReader: IBodyWriter; const AText: Boolean): TSendResult;
 var
   Old: IWsPump;
+  Hold: IBodyWriter;
 begin
   if AReader = nil then
     raise EHttpError.Create('SendStream needs a writer');
+  Hold := AReader; // a const parameter takes no reference: a refused writer would leak
   FLock.Acquire;
   try
     if (FState = wsEnded) or FOutputClosed then

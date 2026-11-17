@@ -71,12 +71,13 @@ implementation
 
 const
   /// the octets of one chunk that the writer sends
-  // - the test uses 1000 octets, so 50 chunks make 50 000 octets
-  // - if the transport buffers more than 50 KB, use 65536 octets and 400 chunks
-  //   (the plan's fallback); that setting was not measured on a real transport
-  cChunkBytes = 1000;
+  // - the test uses 65536 octets, so 200 chunks make 13 107 200 octets
+  // - 1000 octets and 50 chunks fit in the buffers of a Linux loopback, so
+  //   the stream never parked
+  // - the client limit is 16 MiB for one message, so 200 chunks stay under it
+  cChunkBytes = 65536;
   /// the chunks of the body, before the writer answers False
-  cChunkCount = 50;
+  cChunkCount = 200;
   /// the octets of the whole message
   cTotalBytes = cChunkBytes * cChunkCount;
   /// the wait for a message, in milliseconds
