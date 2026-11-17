@@ -91,6 +91,7 @@ uses
   Http2.Server.ContentLength.Test,
   Http2.Server.H2Locks.Test,
   Http2.Server.WsHardening.Test,
+  Http2.Server.WebSocket.Pump.Test,
   Http2.Server.Lifecycle.Test,
   Http2.Server.ConfigRanges.Test,
   Http2.Server.RapidResetGaps.Test,
