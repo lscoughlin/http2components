@@ -36,7 +36,8 @@ uses
   Http2.Server.Limits, Http2.Server.Observer, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Parser,
   Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.SessionCore,
-  Http2.Server.WebSocket.Environment, Http2.Server.WebSocket.Budget;
+  Http2.Server.WebSocket.Environment, Http2.Server.WebSocket.Budget,
+  Http2.Server.WebSocket.Pump;
 
 /// start a session on AChannel, which is detached and pending
 // - ARequest is the upgrade request; the session keeps a copy of what it needs
@@ -629,8 +630,19 @@ begin
 end;
 
 procedure TWsSession.WriteDrained;
+var
+  P: IWsPump;
 begin
-  // the application reads the result of Send; the session keeps no waiting writer
+  // the drain wakes a parked stream; the call never sends. This method runs on the
+  // IO thread with the channel lock held, so it only calls Wake
+  FLock.Acquire;
+  try
+    P := FPump;
+  finally
+    FLock.Release;
+  end;
+  if P <> nil then
+    P.Wake;
 end;
 
 { the stop of the server, and the time limit of Init }

@@ -46,7 +46,8 @@ type
   public
     /// the defaults
     class function Create: TWsOptions; static;
-    /// the greatest message, summed over its fragments, in octets
+    /// the greatest message, summed over its fragments, in octets that the server
+    // receives; for a message that SendStream sends it is the greatest chunk
     function WithMaxMessageSize(const AValue: Int64): TWsOptions;
     /// the greatest payload of one frame that the server accepts, in octets
     function WithMaxFrameSize(const AValue: Int64): TWsOptions;
