@@ -175,6 +175,13 @@ section 5.5.1). The writer is released.
 
 When the writer raises, or when a chunk is longer than `MaxMessageSize`, the session
 calls `Fail`. The handler receives `Failed`, and a Close frame with code 1011 follows.
+The session ends before any other data frame can go out, so no whole message follows an
+unfinished fragment.
+
+The session releases the writer when the stream ends. When the peer closes the session or
+a protocol error ends it, the release runs on the thread that ends the session, which can
+be an IO thread. The destructor of a writer does not block, and it does not take a lock
+that a caller of `Send` can hold.
 
 The counter of payload octets out grows by the payload of each fragment that the channel
 takes. The counter of messages out grows by one when the FIN fragment is queued.

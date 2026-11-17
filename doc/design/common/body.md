@@ -120,6 +120,12 @@ buffer keeps its allocation after a smaller chunk, and it frees the allocation
 when the body ends. The limit of a place (for example `MaxMessageSize` for one
 WebSocket chunk) bounds the greatest chunk where such a limit applies.
 
+The library releases a writer when its body ends, and for a WebSocket stream
+that can be on an IO thread. A WebSocket stream ends when the peer closes the
+session or when the session fails, and the release then runs on the thread that
+ends the session. The destructor of a writer therefore does not block, and it
+does not take a lock that a caller of `Send` can hold.
+
 ## The end of a body
 
 The octets of the last call are part of the body. A writer can return its final
