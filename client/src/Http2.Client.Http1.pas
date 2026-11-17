@@ -35,7 +35,7 @@ uses
   SysUtils, Classes, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Tls, Http2.Client.Stream, Http2.Client.Messages,
   Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.Http1.Body,
-  Http2.Client.Tls.Types;
+  Http2.Client.Tls.Types, Http2.Common.Body;
 
 const
   /// ceiling for the whole response head (status line + all header fields),
@@ -310,6 +310,7 @@ var
   GenerateLength, GenerateChunked: Boolean;
   Host, Value, Chunk: string;
   Writer: IBodyWriter;
+  Buf: TChunkBuffer;
   Ch, All: TBytes;
   I, J: Integer;
 begin
@@ -372,15 +373,25 @@ begin
     Head := Head + 'Transfer-Encoding: chunked' + cCrLf;
     Head := Head + cCrLf;
     All := BytesOf(Head);
+    // temporary: S08 streams this path; one buffer is reused for each chunk
     Writer := ARequest.BodyWriter;
-    while Writer.NextChunk(Ch) do
-    begin
-      if Length(Ch) = 0 then
-        Continue;   // a zero-length chunk would look like the terminator
-      Chunk := IntToHex(Integer(Length(Ch)), 1) + cCrLf;
-      All := ConcatBytes(All, BytesOf(Chunk));
-      All := ConcatBytes(All, Ch);
-      All := ConcatBytes(All, BytesOf(cCrLf));
+    Buf := TChunkBuffer.Create;
+    try
+      Buf.Reset;
+      while Writer.NextChunk(Buf) do
+      begin
+        if Buf.Size > 0 then
+        begin
+          Ch := ChunkBytes(Buf);
+          Chunk := IntToHex(Integer(Length(Ch)), 1) + cCrLf;
+          All := ConcatBytes(All, BytesOf(Chunk));
+          All := ConcatBytes(All, Ch);
+          All := ConcatBytes(All, BytesOf(cCrLf));
+        end;   // a zero-length chunk would look like the terminator
+        Buf.Reset;
+      end;
+    finally
+      Buf.Free;
     end;
     All := ConcatBytes(All, BytesOf('0' + cCrLf + cCrLf));
   end
