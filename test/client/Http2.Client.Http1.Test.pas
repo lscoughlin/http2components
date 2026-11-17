@@ -26,7 +26,7 @@ interface
 
 uses
   SysUtils, Classes, fpcunit, testregistry,
-  Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Tls, Http2.Client.Stream, Http2.Client.Messages,
+  Http2.Client.Errors, Http2.Common.Headers, Http2.Common.Body, Http2.Client.Tls, Http2.Client.Stream, Http2.Client.Messages,
   Http2.Client.Http1;
 
 type
@@ -74,7 +74,7 @@ type
     FIndex: Integer;
   public
     constructor Create(const AChunks: array of string);
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
   THttp1Test = class(TTestCase)
@@ -229,14 +229,11 @@ begin
   FIndex := 0;
 end;
 
-function TScriptedBodyWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TScriptedBodyWriter.NextChunk(const ABuffer: TStream): Boolean;
 begin
   if FIndex >= Length(FChunks) then
-  begin
-    ABuffer := nil;
     Exit(False);
-  end;
-  ABuffer := FChunks[FIndex];
+  ChunkAppend(ABuffer, FChunks[FIndex]);
   Inc(FIndex);
   Result := True;
 end;

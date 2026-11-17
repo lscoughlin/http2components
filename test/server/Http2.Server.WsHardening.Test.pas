@@ -27,7 +27,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
   mormot.core.os,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.Limits, Http2.Server.StreamPool, Http2.Server.Sse.Encoder,
   Http2.Server.Sse, Http2.Server.Sse.Test, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Utf8,
@@ -55,7 +55,7 @@ type
     FLeft, FSize: Integer;
   public
     constructor Create(const ACount, ASize: Integer);
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
   TWsHardeningTest = class(TTestCase)
@@ -169,15 +169,18 @@ begin
   FSize := ASize;
 end;
 
-function TChunkWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TChunkWriter.NextChunk(const ABuffer: TStream): Boolean;
+var
+  LChunk: TBytes;
 begin
-  ABuffer := nil;
   Result := FLeft > 0;
   if not Result then
     Exit;
   Dec(FLeft);
-  SetLength(ABuffer, FSize);
-  FillChar(ABuffer[0], FSize, Ord('x'));
+  SetLength(LChunk, FSize);
+  if FSize > 0 then
+    FillChar(LChunk[0], FSize, Ord('x'));
+  ChunkAppend(ABuffer, LChunk);
 end;
 
 { TWsHardeningTest }
