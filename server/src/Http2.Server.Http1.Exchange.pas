@@ -673,19 +673,20 @@ end;
 procedure TH1Exchange.SetBodyWriter(const AWriter: IBodyWriter);
 var
   Buf: TChunkBuffer;
+  More: Boolean;
 begin
   CheckCanWrite;
   Buf := TChunkBuffer.Create;
   try
-    Buf.Reset;
-    while AWriter.NextChunk(Buf) do
-    begin
+    repeat
+      Buf.Reset;
+      // the octets of the call that returns False are the last chunk (D22)
+      More := AWriter.NextChunk(Buf);
       // WriteBody copies the octets into the frame before it returns, so the
       // buffer is free for the next chunk after the call
       if Buf.Size > 0 then
         Write(Buf.Memory^, Buf.Size);
-      Buf.Reset;
-    end;
+    until not More;
   finally
     Buf.Free;
   end;

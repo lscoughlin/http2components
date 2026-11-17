@@ -259,7 +259,7 @@ procedure LeaseSendBody(const AConnection: TConnection;
   var ALocalState: TLeaseLocalState);
 var
   Cur, Ahead, Swap: TChunkBuffer;
-  PendingSet: Boolean;
+  PendingSet, Ended, LastSent: Boolean;
   NoData: Byte;
   Body: TBytes;
 begin
@@ -285,30 +285,56 @@ begin
   begin
     // Ahead holds the chunk that waits for the next one, so that the last
     // DATA frame carries END_STREAM (D16). Cur receives the next chunk.
+    // The octets of the call that returns False are the last chunk (D22):
+    // they go out with END_STREAM, and Ahead goes out before them.
     Cur := TChunkBuffer.Create;
     Ahead := TChunkBuffer.Create;
     try
       PendingSet := False;
-      Cur.Reset;
-      while (not AUploadStopped) and ARequest.BodyWriter.NextChunk(Cur) do
+      Ended := False;
+      LastSent := False;
+      while (not AUploadStopped) and (not Ended) do
       begin
+        Cur.Reset;
+        if ARequest.BodyWriter.NextChunk(Cur) then
+        begin
+          if PendingSet then
+            EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+              APeerDone, APeerReset, AUploadStopped, ABytesSent,
+              Ahead.Memory^, Ahead.Size, False);
+          Swap := Cur;
+          Cur := Ahead;
+          Ahead := Swap;
+          PendingSet := True;
+        end
+        else
+        begin
+          Ended := True;
+          if Cur.Size > 0 then
+          begin
+            // Cur is the last chunk: Ahead goes before it, without END_STREAM
+            if PendingSet then
+              EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+                APeerDone, APeerReset, AUploadStopped, ABytesSent,
+                Ahead.Memory^, Ahead.Size, False);
+            EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+              APeerDone, APeerReset, AUploadStopped, ABytesSent,
+              Cur.Memory^, Cur.Size, True);
+            PendingSet := False;
+            LastSent := True;
+          end;
+        end;
+      end;
+      // no END_STREAM frame is sent yet when the upload stopped or the
+      // call that returned False carried no octets
+      if not LastSent then
         if PendingSet then
           EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
             APeerDone, APeerReset, AUploadStopped, ABytesSent,
-            Ahead.Memory^, Ahead.Size, False);
-        Swap := Cur;
-        Cur := Ahead;
-        Ahead := Swap;
-        PendingSet := True;
-        Cur.Reset;
-      end;
-      if PendingSet then
-        EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
-          APeerDone, APeerReset, AUploadStopped, ABytesSent,
-          Ahead.Memory^, Ahead.Size, True)
-      else
-        EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
-          APeerDone, APeerReset, AUploadStopped, ABytesSent, NoData, 0, True);
+            Ahead.Memory^, Ahead.Size, True)
+        else
+          EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+            APeerDone, APeerReset, AUploadStopped, ABytesSent, NoData, 0, True);
     finally
       Ahead.Free;
       Cur.Free;
