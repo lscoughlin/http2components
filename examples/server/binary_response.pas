@@ -72,8 +72,9 @@ begin
   end;
   ChunkAppend(ABuffer, Chunk);
   Dec(FLeft, N);
-  // False ends the response, so the writer answers False on the last call
-  Result := FLeft > 0;
+  // the octets of a call that answers False are ignored, so this call answers
+  // True; the next call answers False because FLeft is 0
+  Result := True;
 end;
 
 procedure TBinaryHandler.Handle(const ARequest: IServerRequest;
