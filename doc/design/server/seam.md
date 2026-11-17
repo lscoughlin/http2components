@@ -80,6 +80,27 @@ and an exception when the stream is cancelled or the read deadline passes. A
 `Read` that must wait calls the stream waiter and releases every lock first, so
 the connection lock stays available to the IO thread during a handler wait.
 
+## The body writer
+
+`IBodyWriter` is the pull writer of a response body. `SetBodyWriter` and the body
+that `Finish` pulls use it. The interface is declared in `Http2.Common.Body`, and
+the client shares it. `Http2.Server.IBodyWriter` is an alias of the common type
+(see [body](../common/body.md)).
+
+The library owns the stream that `NextChunk` fills. The library resets the stream
+before each call and passes the same stream for each call of one body. The writer
+fills the stream with one chunk, and it does not keep the stream after the call.
+The library reads the chunk through `Size`.
+
+The library pulls one chunk at a time. It writes the chunk to the response before it
+calls `NextChunk` again, so a body holds one chunk in the library at a time. A call
+of `NextChunk` can block. The library calls it on the handler thread that calls
+`SetBodyWriter` or `Finish`, and never on an IO thread.
+
+A call that returns False with octets written gives the last chunk. The library
+writes those octets, and then it ends the response. A call that returns True with
+no octets gives an empty chunk, and the library writes nothing for it.
+
 ## The waiter
 
 `IStreamWaiter` has four members and no more.
@@ -175,6 +196,11 @@ The sink then hears `WriteDrained` once the buffer falls to the low-water mark
 (a detached stream takes the factory setting `ChannelLowWater`, 65536 bytes by
 default; an ordinary stream takes half of its limit). `srClosed` means that the channel is closed or the
 stream ended. A producer on any thread may call `Send`.
+
+The WebSocket session uses `WriteDrained` to wake a stream that waits for room in
+the channel (see [websocket](websocket.md)). A `srFull` from the held bytes of a
+channel that is not active yet gives no `WriteDrained` call. A stream that waits
+on such a refusal recovers through a timer.
 
 **Receiving.** With a sink set, the IO thread delivers the DATA payload to the
 sink and keeps no copy in the inbound buffer of the stream. The data call runs on
@@ -297,7 +323,9 @@ offered no coding is never sent one. `HeaderValueOf(ARequest.Headers,
 - `CompressFor(Coding, Bytes)` codes a complete body, and
 `GzipCompress`/`DeflateCompress` code one directly.
 - `TCompressingBodyWriter` wraps another `IBodyWriter` and codes every
-chunk, so a large body is coded as it streams. It is handed to
+chunk, so a large body is coded as it streams. It keeps one inner chunk at a
+time. When the coder gives no octets for an inner chunk, it pulls the next inner
+chunk. It is handed to
 `IServerResponse.SetBodyWriter`. The gzip container is closed when the
 inner writer is exhausted, so the footer reaches the peer before the
 response ends.

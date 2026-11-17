@@ -142,8 +142,9 @@ type
   THttpMethod = (hmGet, hmHead, hmPost, hmPut, hmDelete, hmConnect,
     hmOptions, hmTrace, hmPatch);
 
+  // declared in Http2.Common.Body; Http2.Client.IBodyWriter is an alias of it
   IBodyWriter = interface
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
   THttpBody = record
@@ -308,11 +309,21 @@ flowchart TB
 
 ## Request and response streaming
 
-- **Request:** a `THttpBody` is sent in one or more `ftData` frames; an
-  `IBodyWriter` is pulled by the connection thread until
-  `NextChunk` returns `False`, then `END_STREAM` is set on the last DATA
-  frame (or on `HEADERS` when there is no body). A writer body is single-use
-  and non-replayable.
+- **Request:** a `THttpBody` is sent in one or more `ftData` frames. An
+  `IBodyWriter` is pulled on the thread of the client call that sends the
+  request. The library passes one `TChunkBuffer` and pulls the chunks until
+  `NextChunk` returns `False`. The interface is declared in `Http2.Common.Body`,
+  and the client name is an alias of it (see [body](../common/body.md)).
+  - The client pulls the next chunk before it sends the chunk in hand. That
+    look-ahead chunk tells the client which DATA frame is the last one.
+  - `END_STREAM` is set on the DATA frame of the last chunk. A writer that
+    returns its final octets with `False` sends those octets with `END_STREAM`.
+    When the body has no octets, `END_STREAM` is set on an empty DATA frame,
+    or on `HEADERS` when there is no body.
+  - A writer body is sent with chunked transfer coding on HTTP/1.1 (RFC 9112
+    section 7.1). Each chunk of the writer goes out as one HTTP chunk, and the
+    body is never held whole in memory.
+  - A writer body is single-use and non-replayable.
 - **Response:** `Send` returns after HEADERS. The caller reads `Body` until
   `Eof`. `END_STREAM` (or a bodyless `HEADERS`) ends the body;
   `ftRstStream` mid-body surfaces from `Read`, not from the already-returned

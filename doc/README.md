@@ -25,6 +25,7 @@ source revisions. They do not report results for the combined TLS implementation
 | Document | Subject |
 | --- | --- |
 | [Architecture](design/common/architecture.md) | Common, role, and provider boundaries. |
+| [Body writer](design/common/body.md) | The shared body writer contract and its buffer. |
 | [Protocol](design/common/protocol.md) | The shared HTTP/2 protocol areas and their RFC references. |
 | [URI](design/common/uri.md) | The shared URI parser, host rules, reference resolution and origin helpers. |
 

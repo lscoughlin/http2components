@@ -181,6 +181,13 @@ this scope:
   exceeding it raises `EHttpProtocolError`
   (`ecProtocolError`).
 - Body: `Content-Length` or `Transfer-Encoding: chunked`.
+- Writer body: a request with an `IBodyWriter` is sent with chunked transfer
+  coding (RFC 9112 section 7.1). The head goes out first. Each chunk of the
+  writer goes out as one HTTP chunk, in one socket write, before the next chunk
+  is pulled. The client never holds the whole body. A chunk of length 0 is
+  skipped, because it would end the body on the wire. The octets that the last
+  call returns with `False` go out as the last chunk. The last-chunk marker `0`
+  and the empty trailer follow.
 - Response: status line, headers, and body. The body uses
   `Content-Length`, chunked coding, or connection close.
 - Connection reuse: `keep-alive` is the default in HTTP/1.1. The codec takes

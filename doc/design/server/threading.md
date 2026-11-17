@@ -150,6 +150,14 @@ thread, also from inside a task.
 The pool lock is the innermost lock. A caller can post while it holds the
 connection lock, and a pool thread runs a task with no pool lock held.
 
+The lock order of the WebSocket send path is: connection lock, stream lock, channel
+lock, session lock, pump lock, pool lock. A reading of the source on 2026-11-17 found
+no path that takes these locks in the other direction. The session lock and the pump
+lock are never held across a call into the channel, the writer, the pool or the
+handler. The drain path of a channel runs on an IO thread with the connection lock
+and the channel lock held. Its session call takes the session lock and the pump lock
+only briefly, and it posts a pool task. It never writes to the channel.
+
 ### The tasks of a WebSocket session
 
 A WebSocket session is a work source of this pool. Its tasks are `Init`, each
@@ -163,6 +171,17 @@ and Close, and queues the data messages. The time limit of `Init` runs on one
 watchdog thread of the server and not on the pool, because `Init` can hold every pool
 thread. The lock of a session guards its flags and its queue only, and the session
 never holds it across a call into the channel or the handler.
+
+A WebSocket stream (`SendStream`) adds its pump steps to the tasks of the session. A
+pump step calls the writer, one step at a time for one stream. A step reads at most
+16 chunks, and then it posts the next step to the end of the queue of the session.
+When the channel refuses a fragment, the stream parks. The drain of the channel
+posts a pump step later. A park also arms a timer of 250 milliseconds, and the timer
+posts a check of the channel, so a lost drain signal delays the stream by one poll.
+Because the pump steps and the messages of a session share one queue, a slow writer
+delays the messages of its own session. For example, a cancel message from the client
+waits while a query streams. A writer runs on a streaming pool thread, never on an IO
+thread.
 
 ## Wake-up safety
 
