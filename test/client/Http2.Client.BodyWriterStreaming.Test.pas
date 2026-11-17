@@ -172,14 +172,10 @@ begin
 end;
 
 procedure TStallPeer.Answer;
-var
-  Enc: TBytes;
 begin
-  // HPACK indexed field 8 is ':status: 200' in the static table
-  SetLength(Enc, 1);
-  Enc[0] := $88;
-  FSocket.FeedLocked(FrameToBytes(
-    BuildHeadersFrame(FStreamId, Enc, True, True)));
+  // the mock already sent the response HEADERS (200, no END_STREAM), so the
+  // answer is the empty DATA frame that ends the response
+  FSocket.FeedLocked(FrameToBytes(BuildDataFrame(FStreamId, nil, True)));
 end;
 
 procedure TStallPeer.OnClientFrame(const AFrame: TFrame);
@@ -206,10 +202,12 @@ end;
 constructor TUploadWorker.Create(const AClient: IHttpClient;
   const AWriter: IBodyWriter);
 begin
-  inherited Create(False);
+  // the fields are set before the thread starts
+  inherited Create(True);
   FClient := AClient;
   FWriter := AWriter;
   FStatus := -1;
+  Start;
 end;
 
 procedure TUploadWorker.Execute;
@@ -257,6 +255,8 @@ var
   Waited: Boolean;
 begin
   FactoryRef := TMockSocketFactory.Create;
+  // the response HEADERS come at once, without END_STREAM; the body stays open
+  (FactoryRef as TMockSocketFactory).SetResponse('200', nil, False);
   (FactoryRef as TMockSocketFactory).OnDial := AttachPeer;
   Client := THttpClientFactory.Create.WithSocketFactory(FactoryRef).Build;
   Writer := TCountingWriter.Create(cUploadChunks, cUploadChunk);
@@ -278,24 +278,29 @@ begin
     AssertTrue('the writer ran', Yielded > 0);
     AssertTrue('the writer waits for credit: at most 65535 div 1024 + 3 chunks',
       Yielded <= cWindow div cUploadChunk + 3);
+    // the client sends the window and no more; the last chunk is split (the
+    // client grants the octets that the window holds: AcquireSendCredit)
     AssertEquals('the peer got the window and no more', Int64(cWindow),
       FPeer.DataOctets);
-    AssertFalse('the upload waits for credit', Worker.Finished);
     // the peer grants credit, and the rest follows
     FPeer.Socket.FeedFrames([
       BuildWindowUpdateFrame(0, cGrant),
       BuildWindowUpdateFrame(FPeer.StreamId, cGrant)]);
     Deadline := GetTickCount64 + cWaitMs;
-    while (not Worker.Finished) and (GetTickCount64 < Deadline) do
+    while (not FPeer.Ended) and (GetTickCount64 < Deadline) do
       Sleep(10);
-    AssertTrue('the upload finishes', Worker.Finished);
-    AssertEquals('no error: ' + Worker.Error, '', Worker.Error);
-    AssertEquals('status', 200, Worker.Status);
+    AssertTrue('the peer saw END_STREAM', FPeer.Ended);
     AssertEquals('the writer yielded every chunk', cUploadChunks,
       (Writer as TCountingWriter).Yielded);
     AssertEquals('the peer got every octet',
       Int64(cUploadChunks) * cUploadChunk, FPeer.DataOctets);
-    AssertTrue('the peer saw END_STREAM', FPeer.Ended);
+    // the call returns once the response ends and the upload is over
+    Deadline := GetTickCount64 + cWaitMs;
+    while (not Worker.Finished) and (GetTickCount64 < Deadline) do
+      Sleep(10);
+    AssertTrue('the call returns', Worker.Finished);
+    AssertEquals('no error: ' + Worker.Error, '', Worker.Error);
+    AssertEquals('status', 200, Worker.Status);
   finally
     // a stalled worker and its client stay blocked; leaking them is the price
     // of a test that fails in seconds instead of hanging (as in the flow test)

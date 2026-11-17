@@ -396,6 +396,8 @@ begin
   Options.BodyTotalMs := 0;
   Options.WriteStallMs := 0;
   Options.BodyBudget := nil;
+  // the head holds no field that the test does not set, so zero it first
+  FillChar(Head, SizeOf(Head), 0);
   Head.Line.Method := 'GET';
   Head.Line.Minor := 1;
   Head.KeepAlive := True;
