@@ -30,7 +30,7 @@ uses
   mormot.net.sock,
   Http2.Server,
   Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Config,
-  Http2.Common.Frames, Http2.Common.Headers, Http2.Server.Test.Socket,
+  Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Body, Http2.Server.Test.Socket,
   Http2.Server.Async.Trace;
 
 type
@@ -283,9 +283,7 @@ begin
   // /echo answers the request body, byte for byte
   if Path = '/echo' then
   begin
-    Body := nil;
-    while ARequest.ReadChunk(Chunk) do
-      Body := ConcatBytes(Body, Chunk);
+    Body := ReadAllBody(ARequest);
     SetLength(Fields, 1);
     Fields[0].Name := 'content-type';
     Fields[0].Value := 'application/octet-stream';

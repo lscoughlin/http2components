@@ -26,11 +26,14 @@ primary_types:
   - IChannelSink
   - IChannelRegistry
   - THttp2StreamChannel
+  - IBodyReader
 db_tables: None.
 related_docs:
   - doc/design/server/protocol.md
   - doc/design/server/limits.md
+  - doc/design/common/body.md
 invariants:
+  - A ReadChunk call that returns True writes at least one octet, and its window update covers the octets that it writes.
   - The sequence of a stream wait has four members, and no other unit waits on a stream.
   - The wait result names a signal, a timeout or a cancellation, and never a mixture.
   - A handler call holds no lock across a wait.
@@ -50,10 +53,21 @@ The IO side owns a socket, the connection lock and every protocol structure.
 The handler side runs a synchronous handler that may block. The seam gives
 each side the small part of the other that it needs, and hides the rest.
 
+`IServerRequest` extends `IBodyReader`, the reader interface of `Http2.Common.Body`.
+`ReadChunk(const ABuffer: TStream): Boolean` comes from that interface. It appends
+the next buffered chunk to the caller's stream at its position. While the buffer is
+empty and the body has not ended, the call blocks, as `Read` does. When the read
+timeout of the stream expires first, the call raises `EHttpTimeout`. A True answer writes at least one octet. A False answer
+means that the body has ended, and it writes no octet. The end repeats: each later
+`ReadChunk` and `Read` answers the end again, with False and 0.
+
+The server sends `WINDOW_UPDATE` for the octets that a `ReadChunk` call takes, as
+`Read` does for the octets that it gives. The window update of a call covers those
+octets only, and an end sends no window update.
+
 ```pascal
-IServerRequest  = interface
+IServerRequest  = interface(IBodyReader)
   function  Read(var ABuffer; const ACount: Integer): Integer;
-  function  ReadChunk(out AChunk: TBytes): Boolean;
   function  BodyIsComplete: Boolean;
   function  IsCancelled: Boolean;
   function  StreamId: LongWord;

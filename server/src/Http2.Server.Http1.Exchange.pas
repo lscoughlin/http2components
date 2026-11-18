@@ -141,7 +141,7 @@ type
     function Path: string;
     function Headers: THeaderBlock;
     function Read(var ABuffer; const ACount: Integer): Integer;
-    function ReadChunk(out AChunk: TBytes): Boolean;
+    function ReadChunk(const ABuffer: TStream): Boolean;
     function BodyIsComplete: Boolean;
     function IsCancelled: Boolean;
     function StreamId: LongWord;
@@ -434,20 +434,15 @@ begin
   end;
 end;
 
-function TH1Exchange.ReadChunk(out AChunk: TBytes): Boolean;
+function TH1Exchange.ReadChunk(const ABuffer: TStream): Boolean;
 var
-  Buf: TBytes;
+  Buf: array[0..cReadChunkBytes - 1] of Byte;
   N: Integer;
 begin
-  AChunk := nil;
-  SetLength(Buf, 16384);
-  N := Read(Buf[0], Length(Buf));
+  N := Read(Buf[0], cReadChunkBytes);
   Result := N > 0;
   if Result then
-  begin
-    SetLength(Buf, N);
-    AChunk := Buf;
-  end;
+    ABuffer.WriteBuffer(Buf[0], N);
 end;
 
 function TH1Exchange.BodyIsComplete: Boolean;

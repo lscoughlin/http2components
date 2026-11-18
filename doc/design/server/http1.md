@@ -224,6 +224,10 @@ The request body is held in memory until the handler reads it. The parser checks
 body limit before it delivers any octet, so the memory of one request is bounded by
 `MaxBodySize`. A request body is not streamed past that limit.
 
+The request implements `IBodyReader`. That interface does not change this limit:
+`ReadChunk` takes its octets from the buffer that the parser has filled, and one call
+gives at most `cReadChunkBytes` (16384) octets of it.
+
 HTTP/2 bounds the unread request body with flow control, because the server sends
 `WINDOW_UPDATE` only when the handler reads. HTTP/1.1 has no such mechanism in this
 server. The async layer of mORMot2 has no supported call that pauses the reads of

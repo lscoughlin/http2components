@@ -22,6 +22,61 @@
   `IBodyWriter` paths already stream: the server response, the server WebSocket stream
   and the HTTP/2 client upload. This release adds tests for them.
 
+### Server
+
+- **Breaking change of the API.** `IServerRequest.ReadChunk` takes a `TStream` in place
+  of an `out TBytes`: `function ReadChunk(const ABuffer: TStream): Boolean`. The request
+  now extends `IBodyReader`, which declares `ReadChunk`. `ReadChunk` appends the next
+  buffered chunk to the stream that the caller gives. It blocks while the buffer is
+  empty and the body has not ended, as `Read` does, and it raises `EHttpTimeout` at the
+  read timeout. Before, it answered True with no octet while the buffer was empty.
+  A False answer writes no octet, and the end repeats on each later call.
+
+  Old shape of a handler that reads the body in chunks:
+
+  ```pascal
+  procedure TEchoHandler.Handle(const ARequest: IServerRequest;
+    const AResponse: IServerResponse);
+  var
+    Chunk: TBytes;
+  begin
+    AResponse.SendHeaders(200, nil, False);
+    while ARequest.ReadChunk(Chunk) do
+      AResponse.Write(Chunk);
+    AResponse.Finish;
+  end;
+  ```
+
+  New shape of the same handler. The loop keeps the octets of a call that returns
+  False, because the last chunk can come with that answer. It sends each chunk at
+  once, so the handler never holds the whole body:
+
+  ```pascal
+  procedure TEchoHandler.Handle(const ARequest: IServerRequest;
+    const AResponse: IServerResponse);
+  var
+    Buf: TChunkBuffer;
+    More: Boolean;
+  begin
+    AResponse.SendHeaders(200, nil, False);
+    Buf := TChunkBuffer.Create;
+    try
+      repeat
+        Buf.Reset;
+        More := ARequest.ReadChunk(Buf);
+        if Buf.Size > 0 then
+          AResponse.Write(ChunkBytes(Buf));
+      until not More;
+    finally
+      Buf.Free;
+    end;
+    AResponse.Finish;
+  end;
+  ```
+
+  A handler that needs the whole body can call `Body := ReadAllBody(ARequest)`
+  instead.
+
 ### Common
 
 - **Breaking change of the API.** `IBodyWriter.NextChunk` takes a `TStream` in place of
