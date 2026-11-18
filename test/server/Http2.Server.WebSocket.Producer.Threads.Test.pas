@@ -39,10 +39,12 @@ type
     procedure DrainLoop;
     function Expected: TBytes;
     function MessageDone: Boolean;
+    function ProducerLeft: Boolean;
   protected
     procedure TearDown; override;
   published
     procedure TestProducerAgainstADrainingThread;
+    procedure TestStopRacesTheSink;
   end;
 
 implementation
@@ -95,6 +97,11 @@ begin
   Result := (Length(L) > 0) and L[High(L)].Fin;
 end;
 
+function TWsProducerThreadTest.ProducerLeft: Boolean;
+begin
+  Result := FFixture.Finished >= 1;
+end;
+
 procedure TWsProducerThreadTest.TestProducerAgainstADrainingThread;
 var
   Rows: TArray<TBytes>;
@@ -134,6 +141,51 @@ begin
   AssertEquals('the octets are complete', TextOf(Want), TextOf(Got));
   AssertEquals('no overlapping pump step was reported', 0, FRig.EventCount(seHandlerException));
   AssertEquals('no Write raised', '', FFixture.ErrorClass);
+end;
+
+procedure TWsProducerThreadTest.TestStopRacesTheSink;
+var
+  Rows: TArray<TBytes>;
+  Drainer: TProcThread;
+  Reached: TEvent;
+  W: IBodyWriter;
+  I: Integer;
+begin
+  Build(Quick);
+  SetLength(Rows, cProducerRows);
+  for I := 0 to cProducerRows - 1 do
+    Rows[I] := OneOctet(Byte(65 + (I mod 26)));
+  FFixture := TRowProducer.Create(Rows);
+  Reached := TEvent.Create(nil, True, False, '');
+  try
+    // the producer signals after its 100th row; the drainer keeps the sink refused and
+    // woken, so the sink is in or near its wait when the session ends
+    FFixture.HoldAfter := 100;
+    FFixture.Reached := Reached;
+    Drainer := TProcThread.Create(DrainLoop);
+    try
+      W := RowWriter(FFixture, 1);
+      AssertTrue('the stream is queued', FSession.SendStream(W, True) = srQueued);
+      W := nil;
+      AssertTrue('the producer reached its 100th row', Reached.WaitFor(20000) = wrSignaled);
+      FSession.Abort;
+      AssertTrue('the producer leaves', WaitUntil(ProducerLeft, 10000));
+    finally
+      InterlockedExchange(FStop, 1);
+      if Drainer.Done.WaitFor(10000) <> wrSignaled then
+        Fail('the draining thread does not end');
+      Drainer.WaitFor;
+      Drainer.Free;
+    end;
+  finally
+    FreeAndNil(Reached);
+  end;
+  AssertEquals('the Write of the producer raised EStreamCancelled', 'EStreamCancelled',
+    FFixture.ErrorClass);
+  FWantGone := 1;
+  AssertTrue('the writer is released', WaitUntil(WriterGone, 5000));
+  AssertEquals('no overlapping pump step was reported', 0, FRig.EventCount(seHandlerException));
+  AssertEquals('the cancel is quiet: no Failed', 0, FRig.EventCount(seWsFailed));
 end;
 
 initialization
