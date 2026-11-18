@@ -380,9 +380,9 @@ waker to signal the IO thread, as `ReturnCredit` does. The call is made outside 
 connection lock, and the wake flag joins the signals of reads that follow each other
 into one. The flush then sends one `WINDOW_UPDATE` for the sum of the consumed octets
 when the sum reaches the stream update threshold. A request body that is larger than
-the stream window (65535 octets by default) depends on this wake: before it, the
-upload waited until some other event woke the IO thread, and a handler read ended
-with `EHttpTimeout` at the read timeout.
+the stream window (65535 octets by default) depends on this wake: without it, the
+credit would stay in the buffer of the stream until some other event woke the IO
+thread, and a handler read would end with `EHttpTimeout` at the read timeout.
 
 ## Content coding
 

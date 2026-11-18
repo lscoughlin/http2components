@@ -279,7 +279,7 @@ blocked read ends with `EHttpTimeout`, as an idle poll does. The thread then
 drains the queues at once. Input that is already available takes precedence: the
 read returns it, and the wake byte is only consumed. A socket without the contract
 keeps the timed read, so the poll interval is the longest delay of such a socket.
-The poll interval is no longer the cost of a flow-control round trip.
+The poll interval is therefore not the cost of a flow-control round trip.
 
 A write timeout is not an idle poll. Only a read that returns no byte before
 the poll interval ends is an idle poll, and the reader then continues its loop.
