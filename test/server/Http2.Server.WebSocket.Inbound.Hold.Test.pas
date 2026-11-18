@@ -123,12 +123,12 @@ procedure TWsInboundHoldTest.TestAbortAfterAHeldTailNeverCreditsTwice;
 begin
   DeliverTailAndSmallMessage;
   AssertEquals(FCredited + cHead, FChannel.CreditSoFar);
-  // the session ends while the credit of M2 waits. The channel is closed, so the held
-  // octets may stay with the session, but no octet is credited twice
+  // the session ends while the credit of M2 waits. The channel is aborted, so credit
+  // that is still outstanding has no peer to reach; but no octet is credited twice
   FSession.Abort;
   FHandler.Resume.SetEvent;
   Sleep(200);
-  AssertTrue(FChannel.CreditSoFar <= FTotal);
+  AssertTrue('no octet is credited twice', FChannel.CreditSoFar <= FTotal);
 end;
 
 initialization
