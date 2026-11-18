@@ -160,7 +160,8 @@ together with no name clash.
 | `Http2.Server.Http1.Status.pas` | 87 | http1 | the reason phrases of the status line |
 | `Http2.Server.Http1.ResponseHead.pas` | 159 | http1 | the response head and its framing |
 | `Http2.Server.Http1.Host.pas` | 213 | http1 | the cut-able link between an exchange and its core |
-| `Http2.Server.Http1.Exchange.pas` | 722 | http1 | one HTTP/1.1 request with its response and its pool job |
+| `Http2.Server.Http1.Exchange.pas` | 959 | http1 | one HTTP/1.1 request with its response and its pool job |
+| `Http2.Server.Http1.Exchange.Frames.pas` | 115 | http1 | the frames of a response body and the headers of a refusal or an upgrade |
 | `Http2.Server.Http1.Channel.pas` | 356 | http1 | the chunked channel of a detached HTTP/1.1 response |
 | `Http2.Server.Http1.Core.pas` | 467 | http1 | the HTTP/1.1 connection core |
 | `Http2.Server.Http1.Driver.pas` | 128 | http1 | the staged close, the deadlines and the idle decision |
