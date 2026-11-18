@@ -102,6 +102,7 @@ uses
   Http2.Server.WebSocket.Producer.Test,
   Http2.Server.WebSocket.Producer.Control.Test,
   Http2.Server.WebSocket.Producer.Threads.Test,
+  Http2.Server.WebSocket.Snapshot.Test,
   Http2.Server.Lifecycle.Test,
   Http2.Server.ConfigRanges.Test,
   Http2.Server.RapidResetGaps.Test,
