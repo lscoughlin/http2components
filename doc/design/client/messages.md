@@ -429,6 +429,8 @@ hand-rolled loop.
   the bytes **verbatim** — no charset sniffing, no transcoding. It is the
   string counterpart of reading the raw `TBytes`. `ReadText(AResponse, AMaxBytes)`
   adds a cap on the body bytes, as described in the response size limits.
+  The helper is a wrapper over `ReadText` of `Http2.Common.Body.Text`. The
+  wrapper turns an `EBodyTooLarge` of the common unit into `EHttpResponseTooLarge`.
 - `TResponseReader<T>` keeps its raw-passthrough semantics for byte strings,
   `TBytes`, and unmanaged fixed-size values. It does not support other managed
   types or dynamic arrays. A reader that wants interpretation must do it
@@ -446,12 +448,17 @@ in their `uses` clause.
 | `TJsonReader<T: TJSONData>` / `ReadJsonData` | `T` | any `TJSONData` descendant |
 | `TXmlDocumentReader` / `ReadXmlDocument` | `TXMLDocument` | accepts `us-ascii` declarations |
 
-- Every `Read` helper consumes the whole body to EOF.
+- The Read helpers are wrappers over the common units of
+  `Http2.Common.Body.Json` and `Http2.Common.Body.Xml`. `ReadXmlDocument` parses
+  the body as its octets arrive. `ReadJsonObject` and `ReadJsonData` read the
+  body to EOF before they parse it, because `fcl-json` needs the whole text.
+  See [formats](../common/formats.md).
 - The returned object is **caller-owned**; the helper never caches or frees
   it.
 - A body that does not parse raises `EHttpProtocolError`
-  (`ecProtocolError`); the underlying `EJSONParser` / `EXMLReadError` is
-  caught and re-raised, never leaked.
+  (`ecProtocolError`). The common units raise `EBodyFormatError`, and the
+  wrapper turns it into `EHttpProtocolError` with the text `response body is ...`.
+  No `fcl-json` or `fcl-xml` exception leaves the helper.
 - The class forms expose a `Parse(const AText: string)` static function and a
   `Read(const AResponse)` instance method, so the same reader works on a
   string payload in a test or on a live response.
@@ -471,6 +478,14 @@ touch the network:
   defaults `content-type: application/xml`.
 
 Each respects an explicitly set content-type.
+
+`WithJsonBody` and `WithXmlBody` keep the serialized text as one body
+(`WithTextBody`). The body has a known length, so HTTP/1.1 sends a
+`content-length`, and a redirect with status 307 or 308 can replay it. A writer
+body (`WithBodyWriter`, with `XmlBodyWriter` or `JsonBodyWriter` from the common
+units) has no known length, so HTTP/1.1 sends it with chunked coding, and it is
+not replayable. A caller that wants the document as a writer uses the
+common factories with `WithBodyWriter` directly.
 
 ## RFC references
 

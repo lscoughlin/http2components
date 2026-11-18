@@ -217,6 +217,14 @@ Both answers repeat on every later call. A reader that fails raises an exception
 from `Read` or `ReadChunk`, and the exception passes to the caller. A reader that
 answers a count outside of its range raises `EBodyFormatError`.
 
+## Format helpers
+
+The text, JSON and XML helpers read a body through `IBodyReader` and write a body
+through `IBodyWriter`. They are in the units `Http2.Common.Body.Text`,
+`Http2.Common.Body.Json` and `Http2.Common.Body.Xml`. The read-only stream
+`TReaderStream` that the XML reader uses is in `Http2.Common.Body.Streams`. The
+contract of each helper is in [formats](formats.md).
+
 ## RFC references
 
 - [RFC 9112](https://www.rfc-editor.org/rfc/rfc9112.html), section 7.1 (chunked

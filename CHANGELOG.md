@@ -17,6 +17,15 @@
 
 ### Client
 
+- The reader helpers of `Http2.Client.Readers` (`ReadJsonObject`, `ReadJsonData`,
+  `ReadXmlDocument` and the classes `TJsonObjectReader`, `TJsonReader<T>` and
+  `TXmlDocumentReader`) and `ReadText` of `Http2.Client` are wrappers over the common
+  units of `Http2.Common.Body`. Their names and signatures do not change. A body that
+  does not parse still raises `EHttpProtocolError` with `ecProtocolError`, and the text
+  of the message does not change. `ReadXmlDocument` parses the body as it arrives. The
+  send helpers `WithJsonBody`, `WithJsonText` and `WithXmlBody` keep their behavior: the
+  body stays one text, so the request has a known length and a 307 or 308 redirect can
+  replay it. See `doc/design/common/formats.md`.
 - The HTTP/1.1 client sends a request body from an `IBodyWriter` chunk by chunk, with
   chunked transfer coding. It no longer holds the whole body in memory. The other
   `IBodyWriter` paths already stream: the server response, the server WebSocket stream
@@ -127,6 +136,21 @@
 
 ### Common
 
+- New format helpers over `IBodyReader` and `IBodyWriter`, in four units. The units
+  `Http2.Common.Body.Text` (`ReadText`, `TextBodyWriter`), `Http2.Common.Body.Json`
+  (`ParseJson`, `ReadJson`, `ReadJsonObject`, `JsonBodyWriter`) and
+  `Http2.Common.Body.Xml` (`ParseXml`, `ReadXml`, `XmlBodyWriter`) read and write a
+  body. The unit `Http2.Common.Body.Streams` holds `TReaderStream`, a read-only stream
+  over a reader with a pushback, and the base class `TSerializedBodyWriter`. A format
+  error raises `EBodyFormatError`, declared in `Http2.Common.Body`. The JSON and XML
+  units are separate, so a program that does not use them does not link fcl-json or
+  fcl-xml. The XML reader parses the body as its octets arrive. The JSON reader reads
+  the whole body first, because fcl-json needs the whole text. See
+  `doc/design/common/formats.md`.
+- The server example `examples/server/json_echo.pas` reads a JSON request with
+  `ReadJson` and answers with `JsonBodyWriter`. The server library is unchanged.
+- A program that uses both `Http2.Client` and `Http2.Common.Body.Text` gets an
+  ambiguous `ReadText`. The program qualifies the name of one of them.
 - **Breaking change of the API.** `IBodyWriter.NextChunk` takes a `TStream` in place of
   an `out TBytes`: `function NextChunk(const ABuffer: TStream): Boolean`. The library
   passes one reusable `TChunkBuffer`, so a long body makes no allocation for each

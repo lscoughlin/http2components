@@ -22,7 +22,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="15">
+    <Files Count="19">
       <Item1>
         <Filename Value="src/Http2.Common.Body.pas" />
         <UnitName Value="Http2.Common.Body" />
@@ -83,6 +83,22 @@
         <Filename Value="src/Http2.Common.SpscRing.pas" />
         <UnitName Value="Http2.Common.SpscRing" />
       </Item15>
+      <Item16>
+        <Filename Value="src/Http2.Common.Body.Streams.pas" />
+        <UnitName Value="Http2.Common.Body.Streams" />
+      </Item16>
+      <Item17>
+        <Filename Value="src/Http2.Common.Body.Text.pas" />
+        <UnitName Value="Http2.Common.Body.Text" />
+      </Item17>
+      <Item18>
+        <Filename Value="src/Http2.Common.Body.Json.pas" />
+        <UnitName Value="Http2.Common.Body.Json" />
+      </Item18>
+      <Item19>
+        <Filename Value="src/Http2.Common.Body.Xml.pas" />
+        <UnitName Value="Http2.Common.Body.Xml" />
+      </Item19>
     </Files>
     <RequiredPkgs Count="1">
       <Item1>
