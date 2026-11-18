@@ -29,7 +29,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, Generics.Collections,
-  Http2.Common.Hpack, Http2.Server.Errors, Http2.Server.Seam,
+  Http2.Common.Hpack, Http2.Common.Status, Http2.Server.Errors, Http2.Server.Seam,
   Http2.Server.Duplex, Http2.Server.AccessLog, Http2.Server.Stream,
   Http2.Server.StreamAdapters, Http2.Server.HandlerJob;
 
@@ -656,7 +656,8 @@ begin
     // 1: answer 503 when no head went out
     if Taken = 0 then
     begin
-      AStream.QueueResponseHeaders(503, WithDate(nil, 503), True);
+      AStream.QueueResponseHeaders(HttpStatusServiceUnavailable,
+        WithDate(nil, HttpStatusServiceUnavailable), True);
       WaitHeadTaken(AStream);
     end;
     // 2, 3 and 4: cancel the handler side, reset the stream and free the slot

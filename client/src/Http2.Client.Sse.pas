@@ -33,7 +33,7 @@ interface
 
 uses
   SysUtils, Classes, Generics.Collections,
-  Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Stream, Http2.Client.Messages, Http2.Client.Clock,
+  Http2.Client.Errors, Http2.Common.Headers, Http2.Common.Status, Http2.Client.Stream, Http2.Client.Messages, Http2.Client.Clock,
   Http2.Client.Config.Security,
   Http2.Client.RequestObserver, Http2.Client.Api, Http2.Client.Request, Http2.Client.BodyReader;
 
@@ -632,7 +632,7 @@ begin
   Result := False;
   if AResponse = nil then
     Exit;
-  if AResponse.StatusCode <> 200 then
+  if AResponse.StatusCode <> HttpStatusOk then
     raise EHttpProtocolError.Create(Format(
       'event stream requires status 200, got %d',
       [AResponse.StatusCode]), ecProtocolError);

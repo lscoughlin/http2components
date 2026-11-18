@@ -200,7 +200,7 @@ const
   cTokenChars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz' +
                 '0123456789!#$%&''*+-.^_`|~';
   ForbiddenFields: array[0..4] of string = (
-    'connection', 'keep-alive', 'transfer-encoding', 'upgrade',
+    HeaderConnection, 'keep-alive', HeaderTransferEncoding, HeaderUpgrade,
     'proxy-connection');
 
 function IsForbiddenField(const ALowerName: string): Boolean;
@@ -225,7 +225,7 @@ function IsFoldRefusedField(const AName: string): Boolean;
 var Lower: string;
 begin
   Lower := LowerCase(AName);
-  Result := (Lower = 'content-length') or IsForbiddenField(Lower) or
+  Result := (Lower = HeaderContentLength) or IsForbiddenField(Lower) or
     (Copy(Lower, 1, 14) = 'sec-websocket-');
 end;
 

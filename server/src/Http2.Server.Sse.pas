@@ -25,8 +25,8 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
-  Http2.Server.Sse.Encoder, Http2.Server.ResponseWriter;
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Headers, Http2.Common.Status,
+  Http2.Server.Seam, Http2.Server.Duplex, Http2.Server.Sse.Encoder, Http2.Server.ResponseWriter;
 
 type
   /// an open event stream
@@ -353,14 +353,14 @@ begin
   CheckResponseHeaders(AExtraHeaders);
   Channel := AResponse.Detach;
   SetLength(Headers, 2 + Length(AExtraHeaders));
-  Headers[0].Name := 'content-type';
+  Headers[0].Name := HeaderContentType;
   Headers[0].Value := 'text/event-stream';
-  Headers[1].Name := 'cache-control';
+  Headers[1].Name := HeaderCacheControl;
   Headers[1].Value := 'no-store';
   for I := 0 to High(AExtraHeaders) do
     Headers[2 + I] := AExtraHeaders[I];
   try
-    Channel.Activate(200, Headers);
+    Channel.Activate(HttpStatusOk, Headers);
   except
     // the channel is detached but not active: abort it, so it frees its slot
     Channel.Close(ccAbort);
@@ -378,7 +378,7 @@ begin
   if Registry <> nil then
     Source := Registry.NewSource;
   Stream := TSseStream.Create(Channel, Source, KeepMs, StallMs,
-    SseCleanLastEventId(HeaderValue(ARequest.Headers, 'last-event-id')));
+    SseCleanLastEventId(HeaderValue(ARequest.Headers, HeaderLastEventId)));
   Result := Stream;
   Stream.Start;
 end;

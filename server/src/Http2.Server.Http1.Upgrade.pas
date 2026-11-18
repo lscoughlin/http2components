@@ -27,8 +27,8 @@ unit Http2.Server.Http1.Upgrade;
 interface
 
 uses
-  SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam,
-  Http2.Server.Duplex, Http2.Server.Http1.SocketChannel, Http2.Server.WebSocket.Types;
+  SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Headers, Http2.Common.Status,
+  Http2.Server.Seam, Http2.Server.Duplex, Http2.Server.Http1.SocketChannel, Http2.Server.WebSocket.Types;
 
 type
   /// the 101 response of an accepted upgrade
@@ -75,20 +75,20 @@ var
 
 begin
   Result := Default(TWsActivation);
-  Result.Status := 101;
+  Result.Status := HttpStatusSwitchingProtocols;
   N := 0;
-  Add('upgrade', 'websocket');
-  Add('connection', 'Upgrade');
-  Add('sec-websocket-accept', WsAcceptKey(FKey));
+  Add(HeaderUpgrade, 'websocket');
+  Add(HeaderConnection, 'Upgrade');
+  Add(HeaderSecWebSocketAccept, WsAcceptKey(FKey));
   if ASubprotocol <> '' then
-    Add('sec-websocket-protocol', ASubprotocol);
+    Add(HeaderSecWebSocketProtocol, ASubprotocol);
   for I := 0 to High(AExtra) do
   begin
     // the protocol fields belong to the server
-    if SameText(AExtra[I].Name, 'upgrade') or SameText(AExtra[I].Name, 'connection') or
-       SameText(AExtra[I].Name, 'sec-websocket-accept') or
-       SameText(AExtra[I].Name, 'sec-websocket-protocol') or
-       SameText(AExtra[I].Name, 'sec-websocket-extensions') then
+    if SameText(AExtra[I].Name, HeaderUpgrade) or SameText(AExtra[I].Name, HeaderConnection) or
+       SameText(AExtra[I].Name, HeaderSecWebSocketAccept) or
+       SameText(AExtra[I].Name, HeaderSecWebSocketProtocol) or
+       SameText(AExtra[I].Name, HeaderSecWebSocketExtensions) then
       raise EHttpError.Create('Init set the handshake field ' + AExtra[I].Name);
     Add(AExtra[I].Name, AExtra[I].Value);
   end;
@@ -102,7 +102,7 @@ var
 begin
   H := nil;
   SetLength(H, 1);
-  H[0].Name := 'content-length';
+  H[0].Name := HeaderContentLength;
   H[0].Value := '0';
   if AExtraName <> '' then
   begin
@@ -132,25 +132,25 @@ begin
   // the checks of RFC 6455 section 4.2.1, cheap ones first
   if AUpgrade.UpgradeMethod <> 'GET' then
   begin
-    Refuse(AResponse, 405, 'allow', 'GET');
+    Refuse(AResponse, HttpStatusMethodNotAllowed, HeaderAllow, 'GET');
     Exit;
   end;
   if (AUpgrade.UpgradeMinor < 1) or not AUpgrade.UpgradeTokensPresent then
   begin
-    Refuse(AResponse, 400);
+    Refuse(AResponse, HttpStatusBadRequest);
     Exit;
   end;
-  Key := WsFirstField(Headers, 'sec-websocket-key');
-  if (WsFieldCount(Headers, 'sec-websocket-key') <> 1) or not WsKeyIsValid(Key) then
+  Key := WsFirstField(Headers, HeaderSecWebSocketKey);
+  if (WsFieldCount(Headers, HeaderSecWebSocketKey) <> 1) or not WsKeyIsValid(Key) then
   begin
-    Refuse(AResponse, 400);
+    Refuse(AResponse, HttpStatusBadRequest);
     Exit;
   end;
-  if (WsFieldCount(Headers, 'sec-websocket-version') <> 1) or
-     (Trim(WsFirstField(Headers, 'sec-websocket-version')) <> '13') then
+  if (WsFieldCount(Headers, HeaderSecWebSocketVersion) <> 1) or
+     (Trim(WsFirstField(Headers, HeaderSecWebSocketVersion)) <> '13') then
   begin
     // RFC 6455 section 4.4: the answer names the version that the server speaks
-    Refuse(AResponse, 400, 'sec-websocket-version', '13');
+    Refuse(AResponse, HttpStatusBadRequest, HeaderSecWebSocketVersion, '13');
     Exit;
   end;
   Verdict := WsCheckUpgradeOrigin(Env.Options, ARequest.Scheme, ARequest.Authority, Headers);
@@ -162,12 +162,12 @@ begin
   // the host allow-list (an empty list turns the check off)
   if not WsHostAllowed(Env.Options.WsAllowedHosts, ARequest.Scheme, ARequest.Authority) then
   begin
-    Refuse(AResponse, 403);
+    Refuse(AResponse, HttpStatusForbidden);
     Exit;
   end;
   if AUpgrade.HasRequestBody or (AUpgrade.BufferedAfterHead > 0) then
   begin
-    Refuse(AResponse, 400);
+    Refuse(AResponse, HttpStatusBadRequest);
     Exit;
   end;
 
@@ -177,7 +177,7 @@ begin
   except
     on EDetachRefused do
     begin
-      Refuse(AResponse, 503, 'retry-after', '1');
+      Refuse(AResponse, HttpStatusServiceUnavailable, HeaderRetryAfter, '1');
       Exit;
     end;
   end;

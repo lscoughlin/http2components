@@ -23,7 +23,8 @@ interface
 
 uses
   SysUtils,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.AccessLog;
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Headers, Http2.Common.Status,
+  Http2.Server.Seam, Http2.Server.AccessLog;
 
 type
   /// calls the inner handler, then gives the writer one record
@@ -106,8 +107,8 @@ begin
   Result.Target := ARequest.Path;
   Result.StreamId := ARequest.StreamId;
   Result.DurationMs := Int64(GetTickCount64 - AStartTick);
-  Result.UserAgent := HeaderValueOf(Headers, 'user-agent');
-  Result.Referer := HeaderValueOf(Headers, 'referer');
+  Result.UserAgent := HeaderValueOf(Headers, HeaderUserAgent);
+  Result.Referer := HeaderValueOf(Headers, HeaderReferer);
   // an explicit principal wins over the unverified name of a Basic credential
   Result.Principal := ARequest.Principal;
   if Result.Principal = '' then
@@ -135,7 +136,7 @@ begin
       Probe := nil;
     Rec := BuildRecord(ARequest, Probe, AStart, AStartTick);
     if AFailed and (Rec.Status = 0) then
-      Rec.Status := 500;
+      Rec.Status := HttpStatusInternalServerError;
     FWriter.Write(Rec);
   except
     // dropped on purpose

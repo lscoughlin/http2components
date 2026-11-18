@@ -22,7 +22,7 @@ interface
 
 uses
   SysUtils, SyncObjs,
-  Http2.Common.Hpack;
+  Http2.Common.Hpack, Http2.Common.Headers;
 
 type
   /// the structured record of one finished request
@@ -205,7 +205,7 @@ var
 begin
   Result := '';
   for I := 0 to High(AHeaders) do
-    if SameText(AHeaders[I].Name, 'authorization') then
+    if SameText(AHeaders[I].Name, HeaderAuthorization) then
     begin
       Value := Trim(AHeaders[I].Value);
       if (Length(Value) <= Length(Scheme)) or

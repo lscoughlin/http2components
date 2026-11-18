@@ -20,6 +20,7 @@ uses
   Http2.Client.Errors,
   Http2.Common.Frames,
   Http2.Common.Hpack,
+  Http2.Common.Headers,
   Http2.Client.Tls,
   Http2.Client.Connection,
   Http2.Client.Stream,
@@ -307,7 +308,7 @@ begin
   Result := WrapLimitedResponse(Result,
     EffectiveResponseLimit(ARequest, FConn.Security.MaxResponseBytes));
   Result := WrapDecodingResponse(Result,
-    ARequest.Headers.Contains('accept-encoding'),
+    ARequest.Headers.Contains(HeaderAcceptEncoding),
     FConn.Security.MaxDecodedResponseBytes, FConn.Security.MaxDecodeRatio);
 end;
 
@@ -418,7 +419,7 @@ begin
   Result := WrapLimitedResponse(Result,
     EffectiveResponseLimit(ARequest, FConn.Security.MaxResponseBytes));
   Result := WrapDecodingResponse(Result,
-    ARequest.Headers.Contains('accept-encoding'),
+    ARequest.Headers.Contains(HeaderAcceptEncoding),
     FConn.Security.MaxDecodedResponseBytes, FConn.Security.MaxDecodeRatio);
 end;
 

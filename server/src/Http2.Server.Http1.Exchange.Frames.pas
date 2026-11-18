@@ -26,7 +26,7 @@ unit Http2.Server.Http1.Exchange.Frames;
 interface
 
 uses
-  SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body,
+  SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Headers, Http2.Common.Body,
   Http2.Server.HandlerJob, Http2.Server.Http1.ResponseHead;
 
 type
@@ -109,7 +109,7 @@ begin
   Result := Copy(AHeaders);
   N := Length(Result);
   SetLength(Result, N + 1);
-  Result[N].Name := 'content-length';
+  Result[N].Name := HeaderContentLength;
   Result[N].Value := IntToStr(ALength);
   Result[N].Sensitive := False;
 end;
@@ -131,7 +131,7 @@ begin
   if AReason <> jrStopped then
   begin
     SetLength(Result, 1);
-    Result[0].Name := 'retry-after';
+    Result[0].Name := HeaderRetryAfter;
     Result[0].Value := '1';
   end;
 end;

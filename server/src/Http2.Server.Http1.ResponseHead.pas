@@ -24,7 +24,7 @@ unit Http2.Server.Http1.ResponseHead;
 interface
 
 uses
-  SysUtils, Http2.Server.Errors, Http2.Common.Hpack;
+  SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Headers, Http2.Common.Status;
 
 type
   /// how the response body is framed
@@ -110,12 +110,12 @@ begin
   for I := 0 to High(AHeaders) do
   begin
     N := LowerCase(AHeaders[I].Name);
-    if (N = 'connection') or (N = 'keep-alive') or (N = 'transfer-encoding') or
-       (N = 'upgrade') or (N = 'proxy-connection') then
+    if (N = HeaderConnection) or (N = 'keep-alive') or (N = HeaderTransferEncoding) or
+       (N = HeaderUpgrade) or (N = 'proxy-connection') then
       raise EHttpError.Create('a handler never sets the connection field ' + N);
-    if N = 'content-length' then
+    if N = HeaderContentLength then
     begin
-      if (AStatus = 204) or (AStatus < 200) then
+      if (AStatus = HttpStatusNoContent) or (AStatus < 200) then
         Continue;
       if HasLength then
         raise EHttpError.Create('a handler set Content-Length twice');
@@ -126,7 +126,8 @@ begin
     S := S + AHeaders[I].Name + ': ' + AHeaders[I].Value + #13#10;
   end;
 
-  AFraming.NoBody := (AMethod = 'HEAD') or (AStatus = 204) or (AStatus = 304);
+  AFraming.NoBody := (AMethod = 'HEAD') or (AStatus = HttpStatusNoContent) or
+    (AStatus = HttpStatusNotModified);
   AFraming.Keep := ARequestKeep;
   if HasLength then
     AFraming.Remaining := Len
@@ -151,7 +152,7 @@ begin
     S := S + 'connection: close'#13#10;
 
   // RFC 9110 section 6.6.1: the server adds Date unless the handler set one
-  if not ResponseHasHeader(AHeaders, 'date') then
+  if not ResponseHasHeader(AHeaders, HeaderDate) then
     S := S + 'date: ' + HttpDateNow + #13#10;
   Result := H1TextBytes(Http1StatusLine(AStatus, AMinor) + S + #13#10);
 end;

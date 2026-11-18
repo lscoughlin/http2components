@@ -19,6 +19,7 @@ uses
   SyncObjs,
   Http2.Client.Errors,
   Http2.Common.Headers,
+  Http2.Common.Status,
   Http2.Client.Tls,
   Http2.Client.Stream,
   Http2.Client.Messages,
@@ -106,8 +107,9 @@ end;
 
 function HttpStatusIsRedirect(const AStatus: LongInt): Boolean;
 begin
-  Result := (AStatus = 301) or (AStatus = 302) or (AStatus = 303) or
-    (AStatus = 307) or (AStatus = 308);
+  Result := (AStatus = HttpStatusMovedPermanently) or (AStatus = HttpStatusFound) or
+    (AStatus = HttpStatusSeeOther) or (AStatus = HttpStatusTemporaryRedirect) or
+    (AStatus = HttpStatusPermanentRedirect);
 end;
 
 /// ask ASelector for the identity of a dial to AHost:APort; any exception it
@@ -273,7 +275,7 @@ begin
           Tracker.Arm(Result);
         Break;
       end;
-      Location := Result.Headers.GetFirst('location');
+      Location := Result.Headers.GetFirst(HeaderLocation);
       if Location = '' then
       begin
         if Tracker <> nil then
@@ -289,7 +291,7 @@ begin
       // redirect returns the 3xx response to the caller
       Refuse := DecideRedirect(FSecurity.RedirectPolicy, BaseUri, TargetUri) = rdRefuse;
       // a body is never sent to another origin by a 307 or 308 redirect
-      if ((Status = 307) or (Status = 308)) and Current.Body.IsSet and
+      if ((Status = HttpStatusTemporaryRedirect) or (Status = HttpStatusPermanentRedirect)) and Current.Body.IsSet and
          not SameOrigin(BaseUri, TargetUri) then
         Refuse := True;
       if Refuse then
@@ -306,13 +308,13 @@ begin
 
       DroppedBody := False;
       case Status of
-        303:
+        HttpStatusSeeOther:
           begin
             Method := 'GET';
             Current := Current.DropBody;
             DroppedBody := True;
           end;
-        301, 302:
+        HttpStatusMovedPermanently, HttpStatusFound:
           begin
             // spec errors-redirects.md leaves 301/302 method rewriting to the
             // "standard rules"; these preserve the method for GET/HEAD and
@@ -325,7 +327,7 @@ begin
               DroppedBody := True;
             end;
           end;
-        307, 308:
+        HttpStatusTemporaryRedirect, HttpStatusPermanentRedirect:
           if Current.BodyWriter <> nil then
             raise EHttpNotReplayable.Create(
               'a body writer cannot be replayed on a ' +
@@ -339,15 +341,15 @@ begin
         Current := Current.Clone;
         if Strip then
         begin
-          Current.Headers.Remove('authorization');
-          Current.Headers.Remove('cookie');
+          Current.Headers.Remove(HeaderAuthorization);
+          Current.Headers.Remove(HeaderCookie);
           Current.Headers.Remove('proxy-authorization');
         end;
         if DroppedBody then
         begin
-          Current.Headers.Remove('content-length');
-          Current.Headers.Remove('content-type');
-          Current.Headers.Remove('content-encoding');
+          Current.Headers.Remove(HeaderContentLength);
+          Current.Headers.Remove(HeaderContentType);
+          Current.Headers.Remove(HeaderContentEncoding);
         end;
       end;
       // like a credential header, the request identity follows a redirect

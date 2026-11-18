@@ -31,7 +31,7 @@ uses
   SysUtils, Classes,
   mormot.core.base, mormot.net.http,
   Http2.Server.Http1.Limits, Http2.Server.Http1.Guard,
-  Http2.Server.Http1.Grow;
+  Http2.Server.Http1.Grow, Http2.Common.Status;
 
 type
   /// The receiver of the parser.
@@ -243,7 +243,7 @@ begin
     // later requests wait; the count of waiting octets is bounded
     if Unparsed + ACount > FLimits.MaxPipelinedOctets then
     begin
-      Fail(H1Refuse(400, 'the pipelined octets are over the limit'));
+      Fail(H1Refuse(HttpStatusBadRequest, 'the pipelined octets are over the limit'));
       Exit;
     end;
   Compact;
@@ -328,11 +328,11 @@ function TH1Parser.MapError: TH1Verdict;
 begin
   case FCtx.State of
     hrsErrorPayloadTooLarge:
-      Result := H1Refuse(413, 'the body is over the limit');
+      Result := H1Refuse(HttpStatusContentTooLarge, 'the body is over the limit');
     hrsErrorContentStreamWrite:
-      Result := H1Refuse(500, 'the body could not be stored');
+      Result := H1Refuse(HttpStatusInternalServerError, 'the body could not be stored');
   else
-    Result := H1Refuse(400, 'the message is malformed');
+    Result := H1Refuse(HttpStatusBadRequest, 'the message is malformed');
   end;
 end;
 
@@ -370,7 +370,7 @@ begin
       Exit(True);
     end;
   if N > FLimits.MaxTrailerOctets + 4 then
-    Fail(H1Refuse(431, 'the trailer section is too large'));
+    Fail(H1Refuse(HttpStatusRequestHeaderFieldsTooLarge, 'the trailer section is too large'));
 end;
 
 function TH1Parser.CheckHead: Boolean;
@@ -400,7 +400,7 @@ begin
   if (Framing <> Head.Framing) or
      ((Framing = bfLength) and (FCtx.ContentLength <> Head.ContentLength)) then
   begin
-    Fail(H1Refuse(400, 'the parser and the guard read the body framing differently'));
+    Fail(H1Refuse(HttpStatusBadRequest, 'the parser and the guard read the body framing differently'));
     Exit;
   end;
   FHeadDone := True;
@@ -436,7 +436,7 @@ begin
       begin
         if not SkipLeadingEmptyLines then
         begin
-          Fail(H1Refuse(400, 'too many empty lines before the request line'));
+          Fail(H1Refuse(HttpStatusBadRequest, 'too many empty lines before the request line'));
           Break;
         end;
         if Unparsed = 0 then
@@ -446,13 +446,13 @@ begin
           Break;
         if LineTooLong(FLimits.MaxRequestLine) then
         begin
-          Fail(H1Refuse(414, 'the request line is too long'));
+          Fail(H1Refuse(HttpStatusUriTooLong, 'the request line is too long'));
           Break;
         end;
       end
       else if HeaderRegionExceeds then
       begin
-        Fail(H1Refuse(431, 'a header line or the header section is too large'));
+        Fail(H1Refuse(HttpStatusRequestHeaderFieldsTooLarge, 'a header line or the header section is too large'));
         Break;
       end;
     end;
@@ -460,12 +460,12 @@ begin
     if ((Prev = hrsGetBodyChunkedHexFirst) or (Prev = hrsGetBodyChunkedHexNext)) and
        LineTooLong(FLimits.MaxChunkExtension + 24) then
     begin
-      Fail(H1Refuse(400, 'a chunk-size line is too long'));
+      Fail(H1Refuse(HttpStatusBadRequest, 'a chunk-size line is too long'));
       Break;
     end;
     if (Prev = hrsGetBodyChunkedDataVoidLine) and LineTooLong(8) then
     begin
-      Fail(H1Refuse(400, 'chunk data is not followed by CRLF'));
+      Fail(H1Refuse(HttpStatusBadRequest, 'chunk data is not followed by CRLF'));
       Break;
     end;
     if Unparsed = 0 then
@@ -510,7 +510,7 @@ begin
         hrsGetBodyChunkedDataVoidLine:
           if St.LineLen <> 0 then
           begin
-            Fail(H1Refuse(400, 'chunk data is not followed by CRLF'));
+            Fail(H1Refuse(HttpStatusBadRequest, 'chunk data is not followed by CRLF'));
             Break;
           end;
       end;

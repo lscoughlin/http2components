@@ -19,6 +19,7 @@ uses
   Generics.Collections,
   Http2.Client.Errors,
   Http2.Common.Frames,
+  Http2.Common.Status,
   Http2.Client.Tls,
   Http2.Client.Connection,
   Http2.Client.Stream,
@@ -198,7 +199,7 @@ begin
     raise EHttpProtocolError.Create('peer closed during the h2c upgrade',
       ecProtocolError);
   ParseStatusLine(Line, Version, Status, Reason);
-  Result := Status = 101;
+  Result := Status = HttpStatusSwitchingProtocols;
   if not Result then
   begin
     AStatusLine := Line;

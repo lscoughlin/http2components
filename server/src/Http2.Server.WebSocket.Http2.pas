@@ -27,8 +27,8 @@ unit Http2.Server.WebSocket.Http2;
 interface
 
 uses
-  SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam,
-  Http2.Server.Duplex, Http2.Server.StreamAdapters, Http2.Server.WebSocket.Types;
+  SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Headers, Http2.Common.Status,
+  Http2.Server.Seam, Http2.Server.Duplex, Http2.Server.StreamAdapters, Http2.Server.WebSocket.Types;
 
 type
   /// the 200 response of an accepted extended CONNECT
@@ -66,15 +66,15 @@ var
 
 begin
   Result := Default(TWsActivation);
-  Result.Status := 200;
+  Result.Status := HttpStatusOk;
   N := 0;
   if ASubprotocol <> '' then
-    Add('sec-websocket-protocol', ASubprotocol);
+    Add(HeaderSecWebSocketProtocol, ASubprotocol);
   for I := 0 to High(AExtra) do
   begin
-    if SameText(AExtra[I].Name, 'sec-websocket-protocol') or
-       SameText(AExtra[I].Name, 'sec-websocket-extensions') or
-       SameText(AExtra[I].Name, 'sec-websocket-accept') then
+    if SameText(AExtra[I].Name, HeaderSecWebSocketProtocol) or
+       SameText(AExtra[I].Name, HeaderSecWebSocketExtensions) or
+       SameText(AExtra[I].Name, HeaderSecWebSocketAccept) then
       raise EHttpError.Create('Init set the handshake field ' + AExtra[I].Name);
     Add(AExtra[I].Name, AExtra[I].Value);
   end;
@@ -88,7 +88,7 @@ var
 begin
   H := nil;
   SetLength(H, 1);
-  H[0].Name := 'content-length';
+  H[0].Name := HeaderContentLength;
   H[0].Value := '0';
   if AExtraName <> '' then
   begin
@@ -118,18 +118,18 @@ begin
   // RFC 8441 section 4: the method is CONNECT and :protocol is websocket
   if not Supports(ARequest, IH2ConnectRequest, Conn) or (ARequest.Method <> 'CONNECT') then
   begin
-    Refuse(AResponse, 405, 'allow', 'CONNECT');
+    Refuse(AResponse, HttpStatusMethodNotAllowed, HeaderAllow, 'CONNECT');
     Exit;
   end;
   if Conn.Protocol <> 'websocket' then
   begin
-    Refuse(AResponse, 501);
+    Refuse(AResponse, HttpStatusNotImplemented);
     Exit;
   end;
-  if (WsFieldCount(Headers, 'sec-websocket-version') <> 1) or
-     (Trim(WsFirstField(Headers, 'sec-websocket-version')) <> '13') then
+  if (WsFieldCount(Headers, HeaderSecWebSocketVersion) <> 1) or
+     (Trim(WsFirstField(Headers, HeaderSecWebSocketVersion)) <> '13') then
   begin
-    Refuse(AResponse, 400, 'sec-websocket-version', '13');
+    Refuse(AResponse, HttpStatusBadRequest, HeaderSecWebSocketVersion, '13');
     Exit;
   end;
   Verdict := WsCheckUpgradeOrigin(Env.Options, ARequest.Scheme, ARequest.Authority, Headers);
@@ -141,7 +141,7 @@ begin
   // the host allow-list (an empty list turns the check off)
   if not WsHostAllowed(Env.Options.WsAllowedHosts, ARequest.Scheme, ARequest.Authority) then
   begin
-    Refuse(AResponse, 403);
+    Refuse(AResponse, HttpStatusForbidden);
     Exit;
   end;
 
@@ -151,7 +151,7 @@ begin
   except
     on EDetachRefused do
     begin
-      Refuse(AResponse, 503, 'retry-after', '1');
+      Refuse(AResponse, HttpStatusServiceUnavailable, HeaderRetryAfter, '1');
       Exit;
     end;
   end;

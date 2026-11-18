@@ -85,7 +85,7 @@ function WsHostAllowed(const AAllowed: TArray<string>; const AScheme, AAuthority
 implementation
 
 uses
-  SysUtils;
+  SysUtils, Http2.Common.Status;
 
 function WsDefaultPort(const AScheme: string): Integer;
 begin
@@ -312,18 +312,18 @@ begin
   if Length(AOriginValues) = 0 then
     Exit(Allow);   // a client that is not a browser sends none
   if Length(AOriginValues) > 1 then
-    Exit(Refuse(400, 'more than one Origin field'));
+    Exit(Refuse(HttpStatusBadRequest, 'more than one Origin field'));
   if not SplitOriginList(AOriginValues[0], Members) then
-    Exit(Refuse(400, 'the Origin field is empty or malformed'));
+    Exit(Refuse(HttpStatusBadRequest, 'the Origin field is empty or malformed'));
   if (Length(Members) = 1) and (Members[0] = 'null') then
-    Exit(Refuse(403, 'the origin is null'));
+    Exit(Refuse(HttpStatusForbidden, 'the origin is null'));
   HaveServer := WsServerOrigin(AScheme, AAuthority, Server);
   for I := 0 to High(Members) do
   begin
     if Members[I] = 'null' then
-      Exit(Refuse(400, 'null inside a list of origins'));
+      Exit(Refuse(HttpStatusBadRequest, 'null inside a list of origins'));
     if not WsParseOrigin(Members[I], Item) then
-      Exit(Refuse(400, 'the Origin field is not a list of origins'));
+      Exit(Refuse(HttpStatusBadRequest, 'the Origin field is not a list of origins'));
     InList := False;
     if APolicy in [opAllowList, opAllowListOnly] then
       for J := 0 to High(AAllowed) do
@@ -335,12 +335,12 @@ begin
     if InList then
       Continue;
     if APolicy = opAllowListOnly then
-      Exit(Refuse(403, 'the origin is not in the allow-list'));
+      Exit(Refuse(HttpStatusForbidden, 'the origin is not in the allow-list'));
     // the same-origin test needs an origin of the server
     if not HaveServer then
-      Exit(Refuse(403, 'the server has no usable host to compare the origin with'));
+      Exit(Refuse(HttpStatusForbidden, 'the server has no usable host to compare the origin with'));
     if not SameOrigin(Item, Server) then
-      Exit(Refuse(403, 'the origin differs from the origin of the server'));
+      Exit(Refuse(HttpStatusForbidden, 'the origin differs from the origin of the server'));
   end;
   Result := Allow;
 end;

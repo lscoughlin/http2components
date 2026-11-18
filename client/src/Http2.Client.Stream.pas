@@ -32,7 +32,8 @@ interface
 
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections,
-  Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack, Http2.Client.Tls,
+  Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack, Http2.Common.Status,
+  Http2.Client.Tls,
   Http2.Client.Connection, Http2.Client.Stream.Types, Http2.Client.Stream.Receive, Http2.Common.Body;
 
 const
@@ -627,7 +628,7 @@ begin
     for I := 0 to High(Fields) do
     begin
       F := Fields[I];
-      if F.Name = ':status' then
+      if F.Name = HeaderStatus then
       begin
         // RFC 7540 section 8.1.2.1: pseudo-header fields MUST appear before
         // regular fields; a :status arriving after a regular field is a
@@ -658,13 +659,13 @@ begin
           raise EHttpStreamError.Create(
             'header field name is not lowercase: ' + F.Name, FStreamId,
             ecProtocolError);
-        if SameText(F.Name, 'content-length') then
+        if SameText(F.Name, HeaderContentLength) then
           FExpectedLength := StrToInt64Def(F.Value, -1);
         // RFC 9113 section 8.2.2: 'te' is the one connection-specific field
         // allowed in HTTP/2, and a *response* may carry it only with the
         // value 'trailers'. Any other value is malformed -> STREAM
         // PROTOCOL_ERROR (harness 8.1.2.2/2).
-        if SameText(F.Name, 'te') and (not SameText(Trim(F.Value), 'trailers')) then
+        if SameText(F.Name, HeaderTe) and (not SameText(Trim(F.Value), 'trailers')) then
           raise EHttpStreamError.Create(
             'response te header must be "trailers": ' + F.Value, FStreamId,
             ecProtocolError);
@@ -688,7 +689,7 @@ begin
       FExpectedLength := -1;
       MarkResponseComplete;
     end
-    else if (FStatusCode = 204) or (FStatusCode = 304) then
+    else if (FStatusCode = HttpStatusNoContent) or (FStatusCode = HttpStatusNotModified) then
       MarkResponseComplete
     else
       FResponseState := rsBodyOpen;
@@ -705,7 +706,7 @@ begin
     for I := 0 to High(Fields) do
     begin
       F := Fields[I];
-      if F.Name = ':status' then
+      if F.Name = HeaderStatus then
         raise EHttpStreamError.Create(
           'trailing HEADERS must not carry :status', FStreamId,
           ecProtocolError);

@@ -121,7 +121,7 @@ begin
           Value := Values[J];
           Field.Name := Name;
           Field.Value := Value;
-          Field.Sensitive := (Name = 'authorization') or (Name = 'cookie');
+          Field.Sensitive := (Name = HeaderAuthorization) or (Name = HeaderCookie);
           Fields.Add(Field);
         end;
       end;

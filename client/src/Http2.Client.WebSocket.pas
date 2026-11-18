@@ -22,6 +22,7 @@ interface
 
 uses
   SysUtils, sha1, base64, Http2.Client.Errors, Http2.Client.IdentityHandle,
+  Http2.Common.Headers, Http2.Common.Status,
   Http2.Client.WebSocket.Protocol;
 
 const
@@ -323,8 +324,8 @@ var
   L: string;
 begin
   L := LowerCase(Trim(AName));
-  Result := (L = 'host') or (L = 'upgrade') or (L = 'connection') or
-    (L = 'content-length') or (L = 'transfer-encoding') or (L = 'expect') or
+  Result := (L = HeaderHost) or (L = HeaderUpgrade) or (L = HeaderConnection) or
+    (L = HeaderContentLength) or (L = HeaderTransferEncoding) or (L = HeaderExpect) or
     (Copy(L, 1, 14) = 'sec-websocket-');
 end;
 
@@ -529,7 +530,7 @@ var
   Found: Boolean;
 begin
   AChosen := '';
-  if AStatus <> 101 then
+  if AStatus <> HttpStatusSwitchingProtocols then
     Exit(Format('server answered %d instead of 101', [AStatus]));
   if not HasToken(FieldValues(AFields, 'Upgrade'), 'websocket') then
     Exit('response has no "Upgrade: websocket"');

@@ -39,6 +39,7 @@ uses
   Http2.Server.AccessLog, Http2.Server.AccessLog.Handler,
   Http2.Common.Hpack,
   Http2.Common.Headers,
+  Http2.Common.Status,
   Http2.Server.Limits,
   Http2.Server.Seam,
   Http2.Server.ResponseWriter,
@@ -632,7 +633,7 @@ begin
   if not Supports(AJob, IAccessLogProbe, Probe) then
     Probe := nil;
   // an HTTP/1.1 job always answers 503
-  WriteRefusalRecord(FAccessLog, Req, Probe, 503);
+  WriteRefusalRecord(FAccessLog, Req, Probe, HttpStatusServiceUnavailable);
 end;
 
 procedure THandlerPool.AnswerRefusal(const AStream: TServerStream);
@@ -646,7 +647,7 @@ begin
     Req := TServerStreamRequest.Create(AStream);
     Probe := TServerStreamResponse.Create(AStream);
     if FOptions.RefusalMode = rmHttp503 then
-      WriteRefusalRecord(FAccessLog, Req, Probe, 503)
+      WriteRefusalRecord(FAccessLog, Req, Probe, HttpStatusServiceUnavailable)
     else
       WriteRefusalRecord(FAccessLog, Req, Probe, 0);
     Probe := nil;
@@ -658,7 +659,8 @@ begin
       // RST_STREAM that Refuse asks the connection to queue
       AStream.Refuse(ecRefusedStream);
     rmHttp503:
-      AStream.QueueResponseHeaders(503, WithDate(nil, 503), True);
+      AStream.QueueResponseHeaders(HttpStatusServiceUnavailable,
+        WithDate(nil, HttpStatusServiceUnavailable), True);
   end;
 end;
 

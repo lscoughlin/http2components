@@ -35,7 +35,7 @@ uses
   SysUtils, Classes, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Tls, Http2.Client.Stream, Http2.Client.Messages,
   Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.Http1.Body,
-  Http2.Client.Tls.Types, Http2.Common.Body;
+  Http2.Client.Tls.Types, Http2.Common.Body, Http2.Common.Status;
 
 const
   /// ceiling for the whole response head (status line + all header fields),
@@ -216,7 +216,7 @@ const
   /// HTTP/1.1 connection-specific fields the shared header map rejects; they
   /// describe framing, not the application payload
   ForbiddenFields: array[0..4] of string = (
-    'connection', 'keep-alive', 'transfer-encoding', 'upgrade',
+    HeaderConnection, 'keep-alive', HeaderTransferEncoding, HeaderUpgrade,
     'proxy-connection');
 
 function BytesOf(const S: string): TBytes;
@@ -800,7 +800,7 @@ begin
     // RFC 9110 section 15.2: a 1xx response other than 101 is interim; the
     // final response follows its own status line.  The fields above belong
     // to the interim response and are replaced by the next pass.
-    if (FStatusCode < 100) or (FStatusCode > 199) or (FStatusCode = 101) then
+    if (FStatusCode < 100) or (FStatusCode > 199) or (FStatusCode = HttpStatusSwitchingProtocols) then
       Break;
     Inc(Interim);
     if Interim > cHttp1MaxInterimResponses then
@@ -821,17 +821,17 @@ begin
 
   // bodyless responses: HEAD, 204 and 304 never carry a body even when a
   // content-length is present (RFC 9110 section 6.4.1)
-  Bodyless := SameText(FSendRequest.Method, 'HEAD') or (FStatusCode = 204) or
-    (FStatusCode = 304);
+  Bodyless := SameText(FSendRequest.Method, 'HEAD') or (FStatusCode = HttpStatusNoContent) or
+    (FStatusCode = HttpStatusNotModified);
 
   CL := HeaderFieldValue(Fields, HeaderContentLength);
-  TE := HeaderFieldValue(Fields, 'transfer-encoding');
-  Connection := HeaderFieldValue(Fields, 'connection');
+  TE := HeaderFieldValue(Fields, HeaderTransferEncoding);
+  Connection := HeaderFieldValue(Fields, HeaderConnection);
   ContentLength := 0;
   ChunkedWithLength := False;
   if Bodyless then
     Framing := bfNone
-  else if HasField(Fields, 'transfer-encoding') then
+  else if HasField(Fields, HeaderTransferEncoding) then
   begin
     // RFC 9112 section 6.1: chunked must be the last coding, and the client
     // knows no other transfer coding

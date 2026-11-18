@@ -33,7 +33,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, streamex,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Common.Status, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.HandlerJob, Http2.Server.HandlerDeadline, Http2.Server.Http1.Guard, Http2.Server.Http1.Host,
   Http2.Server.Http1.ResponseHead, Http2.Server.Http1.Channel,
   Http2.Server.Http1.SocketChannel, Http2.Server.AccessLog,
@@ -585,7 +585,7 @@ var
   Bytes: TBytes;
   Framing: TH1ResponseFraming;
 begin
-  if (AStatus < 100) or (AStatus > 599) or (AStatus = 101) then
+  if (AStatus < 100) or (AStatus > 599) or (AStatus = HttpStatusSwitchingProtocols) then
     raise EHttpError.Create('the status is not usable for a response');
   if AStatus < 200 then
   begin
@@ -756,7 +756,7 @@ begin
     begin
       if not FDetached then
         if not FHeadersSent then
-          SendError(500)
+          SendError(HttpStatusInternalServerError)
         else
           // the response is cut: a truncated chunked body must not look whole
           CompleteExchange(True);
@@ -774,7 +774,7 @@ begin
     if FHeadersSent then
       CompleteExchange(True)
     else
-      SendError(500);
+      SendError(HttpStatusInternalServerError);
     raise EHttpError.Create('the handler returned without Finish');
   end;
 end;
@@ -792,7 +792,7 @@ begin
   finally
     FLock.Release;
   end;
-  Emit(H1ErrorResponse(503, FHead.Line.Minor, H1RefusalHeaders(AReason)));
+  Emit(H1ErrorResponse(HttpStatusServiceUnavailable, FHead.Line.Minor, H1RefusalHeaders(AReason)));
   CompleteExchange(True);
 end;
 
@@ -806,7 +806,7 @@ begin
   finally
     FLock.Release;
   end;
-  SendError(503); // no head out: the 503 goes first and ends the exchange
+  SendError(HttpStatusServiceUnavailable); // no head out: the 503 goes first and ends the exchange
   CompleteExchange(True); // a head is out: the connection closes
   Cancel; // the handler sees EStreamCancelled on its next read or write
 end;

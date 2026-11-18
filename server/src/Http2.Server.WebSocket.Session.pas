@@ -40,7 +40,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, Generics.Collections,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Status, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.Limits, Http2.Server.Observer, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Parser,
   Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.SessionCore,
@@ -250,7 +250,7 @@ var
 begin
   Status := AResult.Status;
   if Status = 0 then
-    Status := 403;
+    Status := HttpStatusForbidden;
   EndQuietly;
   FEnv.Report(seWsRejected, Status, 'Init refused the upgrade');
   // the error response goes out and the connection returns to its protocol core
@@ -287,8 +287,8 @@ begin
       end;
       if not Decided then
       begin
-        FEnv.Report(seHandlerException, 500, E.ClassName + ' in Init');
-        FinishReject(TWsInitResult.Rejected(500));
+        FEnv.Report(seHandlerException, HttpStatusInternalServerError, E.ClassName + ' in Init');
+        FinishReject(TWsInitResult.Rejected(HttpStatusInternalServerError));
       end;
       Exit;
     end;
@@ -317,8 +317,8 @@ begin
       Known := True;
   if not Known then
   begin
-    FEnv.Report(seHandlerException, 500, 'Init chose a subprotocol that was not offered');
-    FinishReject(TWsInitResult.Rejected(500));
+    FEnv.Report(seHandlerException, HttpStatusInternalServerError, 'Init chose a subprotocol that was not offered');
+    FinishReject(TWsInitResult.Rejected(HttpStatusInternalServerError));
     Exit;
   end;
   FSubprotocol := R.Subprotocol;
@@ -343,7 +343,7 @@ begin
   except
     on E: Exception do
     begin
-      FEnv.Report(seHandlerException, 500, E.ClassName + ' in the handshake');
+      FEnv.Report(seHandlerException, HttpStatusInternalServerError, E.ClassName + ' in the handshake');
       EndQuietly;
       FChannel.Close(ccAbort);
       Exit;
@@ -921,9 +921,9 @@ begin
   // Init may hold the pool thread, so this runs on the watchdog: the upgrade is
   // answered, and the result of Init is dropped when it comes
   EndQuietly;
-  FEnv.Report(seWsRejected, 503, 'Init passed its time limit');
+  FEnv.Report(seWsRejected, HttpStatusServiceUnavailable, 'Init passed its time limit');
   try
-    FChannel.Complete(503, nil, nil);
+    FChannel.Complete(HttpStatusServiceUnavailable, nil, nil);
   except
     FChannel.Close(ccAbort);
   end;
@@ -954,8 +954,8 @@ begin
   begin
     if not Budget.TryOpenSession then
     begin
-      Env.Report(seWsRejected, 503, 'the server holds its limit of WebSocket sessions');
-      AChannel.Complete(503, nil, nil);
+      Env.Report(seWsRejected, HttpStatusServiceUnavailable, 'the server holds its limit of WebSocket sessions');
+      AChannel.Complete(HttpStatusServiceUnavailable, nil, nil);
       Exit;
     end;
     Admitted := True;

@@ -51,6 +51,9 @@ WebSocket handshake, which runs over HTTP/1.1.
 The unit `Http2.Common` repeats each name, so a program that uses `Http2.Common` needs no
 second unit for a name.
 
+The library code uses these constants for each field name that it matches or sends. A
+name with no constant, such as `keep-alive` or `proxy-authorization`, stays a literal.
+
 ## Status codes
 
 `Http2.Common.Status` declares the status codes as integer constants. Each name is
@@ -62,6 +65,9 @@ second unit for a name.
 - 451 (RFC 7725).
 
 The unit does not list 418, because RFC 9110 reserves it.
+
+The library code names each status code that it sends or tests for equality with its
+constant. A range check, such as `AStatus >= 200`, keeps its number.
 
 The unit holds constants only. The reason phrase of an HTTP/1.1 status line is in the
 server unit `Http2.Server.Http1.Status`.

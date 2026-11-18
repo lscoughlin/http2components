@@ -50,17 +50,17 @@ implementation
 
 const
   /// the request pseudo-headers of RFC 9113 section 8.3.1
-  PseudoMethod    = ':method';
-  PseudoScheme    = ':scheme';
-  PseudoPath      = ':path';
-  PseudoAuthority = ':authority';
+  PseudoMethod    = HeaderMethod;
+  PseudoScheme    = HeaderScheme;
+  PseudoPath      = HeaderPath;
+  PseudoAuthority = HeaderAuthority;
   PseudoProtocol  = ':protocol';
 
   /// HTTP/1.1 connection-specific header fields, forbidden on the HTTP/2
   /// wire (RFC 9113 section 8.1.2.2)
   ForbiddenHeaders: array[0..4] of string = (
-    'connection', 'keep-alive', 'proxy-connection', 'transfer-encoding',
-    'upgrade');
+    HeaderConnection, 'keep-alive', 'proxy-connection', HeaderTransferEncoding,
+    HeaderUpgrade);
 
 /// true when C is a token character of RFC 9110 section 5.6.2
 function IsTokenChar(const C: Char): Boolean;
@@ -265,20 +265,20 @@ begin
       Lower := LowerCase(Name);
       if IsForbidden(Lower) then
         Exit;
-      if Lower = 'host' then
+      if Lower = HeaderHost then
       begin
         // RFC 9113 section 8.3.1: a host field is compared with :authority
         SetLength(Hosts, Length(Hosts) + 1);
         Hosts[High(Hosts)] := Value;
       end;
-      if Lower = 'te' then
+      if Lower = HeaderTe then
       begin
         // RFC 9113 section 8.1.2.2: "te" is the sole exception, and its
         // only legal value is "trailers"
         if not SameText(Value, 'trailers') then
           Exit;
       end
-      else if Lower = 'content-length' then
+      else if Lower = HeaderContentLength then
       begin
         if HasLength or (not ParseContentLength(Value, Declared)) then
           Exit;

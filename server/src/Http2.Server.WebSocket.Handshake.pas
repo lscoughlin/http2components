@@ -24,7 +24,8 @@ unit Http2.Server.WebSocket.Handshake;
 interface
 
 uses
-  SysUtils, Http2.Common.Hpack, Http2.Server.WebSocket.Options, Http2.Server.WebSocket.Origin;
+  SysUtils, Http2.Common.Hpack, Http2.Common.Headers, Http2.Server.WebSocket.Options,
+  Http2.Server.WebSocket.Origin;
 
 const
   /// the GUID that RFC 6455 section 1.3 adds to the key
@@ -155,7 +156,7 @@ var
   Client: TArray<string>;
   I, N: Integer;
 begin
-  Client := WsFieldTokens(AHeaders, 'sec-websocket-protocol');
+  Client := WsFieldTokens(AHeaders, HeaderSecWebSocketProtocol);
   if Length(AServerList) = 0 then
     Exit(Client);
   Result := nil;
@@ -178,7 +179,7 @@ begin
   Values := nil;
   N := 0;
   for I := 0 to High(AHeaders) do
-    if SameText(AHeaders[I].Name, 'origin') then
+    if SameText(AHeaders[I].Name, HeaderOrigin) then
     begin
       SetLength(Values, N + 1);
       Values[N] := AHeaders[I].Value;

@@ -32,7 +32,7 @@ uses
   Http2.Server.Http1.Limits, Http2.Server.Http1.Guard, Http2.Server.Http1.Parser,
   Http2.Server.Http1.Host, Http2.Server.Http1.ResponseHead, Http2.Server.Http1.Exchange,
   Http2.Server.Errors, Http2.Server.Limits, Http2.Server.Observer,
-  Http2.Server.Http1.BodyBudget;
+  Http2.Server.Http1.BodyBudget, Http2.Common.Status;
 
 const
   /// the most octets that the core keeps while an upgrade is undecided
@@ -378,7 +378,7 @@ begin
   end;
   // outside the lock: a refused body budget answers 503
   if (Ref <> nil) and (Ref as TH1Exchange).BodyBudgetRefused then
-    (Ref as TH1Exchange).Fail(503);
+    (Ref as TH1Exchange).Fail(HttpStatusServiceUnavailable);
 end;
 
 procedure TH1Core.CloseAfterOutput;
@@ -535,7 +535,7 @@ begin
   end;
   // outside the lock: a refused body budget answers 503
   if (Ref <> nil) and (Ref as TH1Exchange).BodyBudgetRefused then
-    (Ref as TH1Exchange).Fail(503);
+    (Ref as TH1Exchange).Fail(HttpStatusServiceUnavailable);
   // outside the lock: the channel calls into the session
   if Target <> nil then
     Target.Inbound(AData[0], Length(AData));
@@ -709,7 +709,7 @@ begin
     begin
       // a partial request that missed its deadline gets a 408 and a close
       FHeadStartMs := 0;
-      RefuseDirect(408);
+      RefuseDirect(HttpStatusRequestTimeout);
       Result := True;
     end
     else if (FCurrent <> nil) and not FRequestDone and
@@ -719,7 +719,7 @@ begin
               (FCurrent.BodyAgeMs(ANowMs) > QWord(FOptions.Limits.BodyTotalMs)))) then
     begin
       // the client stopped sending the body
-      FCurrent.Fail(408);
+      FCurrent.Fail(HttpStatusRequestTimeout);
       FCloseAfter := True;
       Result := True;
     end;

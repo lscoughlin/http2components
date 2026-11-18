@@ -22,7 +22,7 @@ unit Http2.Server.ResponseWriter;
 interface
 
 uses
-  SysUtils, Http2.Server.Errors, Http2.Common.Hpack;
+  SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Headers;
 
 /// the current time as an HTTP-date, for example 'Sun, 06 Nov 1994 08:49:37 GMT'
 // - cached; the value changes once a second
@@ -137,9 +137,9 @@ begin
   for I := 0 to High(Result) do
   begin
     Lower := LowerCase(Result[I].Name);
-    if (Lower = 'connection') or (Lower = 'keep-alive') or
-       (Lower = 'proxy-connection') or (Lower = 'transfer-encoding') or
-       (Lower = 'upgrade') then
+    if (Lower = HeaderConnection) or (Lower = 'keep-alive') or
+       (Lower = 'proxy-connection') or (Lower = HeaderTransferEncoding) or
+       (Lower = HeaderUpgrade) then
       raise EHttpError.Create('the response field ' + Lower +
         ' is specific to one HTTP/1.1 connection and is not legal in HTTP/2');
     Result[I].Name := Lower;
@@ -152,11 +152,11 @@ var
 begin
   Result := AHeaders;
   // a 1xx response is not final, and the handler's own Date stays
-  if (AStatus < 200) or ResponseHasHeader(AHeaders, 'date') then
+  if (AStatus < 200) or ResponseHasHeader(AHeaders, HeaderDate) then
     Exit;
   N := Length(Result);
   SetLength(Result, N + 1);
-  Result[N].Name := 'date';
+  Result[N].Name := HeaderDate;
   Result[N].Value := HttpDateNow;
   Result[N].Sensitive := False;
 end;

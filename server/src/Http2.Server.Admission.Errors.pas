@@ -21,6 +21,7 @@ interface
 
 uses
   Http2.Common.Errors,
+  Http2.Common.Status,
   Http2.Server.ResponseWriter,
   Http2.Server.Stream;
 
@@ -38,7 +39,8 @@ procedure AnswerHandlerError(const AStream: TServerStream;
   const ABeforeHeaders: Boolean);
 begin
   if ABeforeHeaders then
-    AStream.QueueResponseHeaders(500, WithDate(nil, 500), True)
+    AStream.QueueResponseHeaders(HttpStatusInternalServerError,
+      WithDate(nil, HttpStatusInternalServerError), True)
   else
     AStream.Refuse(ecInternalError);
 end;

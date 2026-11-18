@@ -24,7 +24,7 @@ unit Http2.Server.Http1.Guard;
 interface
 
 uses
-  SysUtils, Http2.Common.Hpack, Http2.Server.Http1.Limits;
+  SysUtils, Http2.Common.Hpack, Http2.Common.Headers, Http2.Common.Status, Http2.Server.Http1.Limits;
 
 type
   /// the answer of a guard rule
@@ -234,37 +234,37 @@ begin
   ARequest := Default(TH1RequestLine);
   ARequest.Minor := 1;
   if Length(ALine) > ALimits.MaxRequestLine then
-    Exit(H1Refuse(414, 'the request line is too long'));
+    Exit(H1Refuse(HttpStatusUriTooLong, 'the request line is too long'));
   for I := 1 to Length(ALine) do
   begin
     C := ALine[I];
     if (C < ' ') or (C = #127) then
-      Exit(H1Refuse(400, 'the request line holds a control octet'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'the request line holds a control octet'));
   end;
   S1 := Pos(' ', ALine);
   if S1 < 2 then
-    Exit(H1Refuse(400, 'the request line has no method'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'the request line has no method'));
   Method := Copy(ALine, 1, S1 - 1);
   Rest := Copy(ALine, S1 + 1, MaxInt);
   S2 := Pos(' ', Rest);
   if S2 < 2 then
-    Exit(H1Refuse(400, 'the request line has no version'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'the request line has no version'));
   Target := Copy(Rest, 1, S2 - 1);
   Version := Copy(Rest, S2 + 1, MaxInt);
   if (Pos(' ', Version) > 0) or (Version = '') then
-    Exit(H1Refuse(400, 'the request line has extra parts'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'the request line has extra parts'));
   if not IsToken(Method) then
-    Exit(H1Refuse(400, 'the method is not a token'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'the method is not a token'));
   if Length(Method) > 32 then
-    Exit(H1Refuse(501, 'the method is too long'));
+    Exit(H1Refuse(HttpStatusNotImplemented, 'the method is too long'));
 
   // the version: 'HTTP/' DIGIT '.' DIGIT, in upper case only
   if (Length(Version) <> 8) or (Copy(Version, 1, 5) <> 'HTTP/') or
      (Version[7] <> '.') or not (Version[6] in ['0'..'9']) or
      not (Version[8] in ['0'..'9']) then
-    Exit(H1Refuse(400, 'the version is malformed'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'the version is malformed'));
   if Version[6] <> '1' then
-    Exit(H1Refuse(505, 'the major version is not 1'));
+    Exit(H1Refuse(HttpStatusHttpVersionNotSupported, 'the major version is not 1'));
   if Version[8] = '0' then
     ARequest.Minor := 0
   else
@@ -275,20 +275,20 @@ begin
     // authority-form: host ':' port, both needed
     Slash := Pos(':', Target);
     if (Slash < 2) or (Slash = Length(Target)) or not IsDigits(Copy(Target, Slash + 1, MaxInt)) then
-      Exit(H1Refuse(400, 'the CONNECT target is not host:port'));
-    Exit(H1Refuse(501, 'CONNECT is not supported'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'the CONNECT target is not host:port'));
+    Exit(H1Refuse(HttpStatusNotImplemented, 'CONNECT is not supported'));
   end;
 
   for I := 1 to Length(Target) do
   begin
     C := Target[I];
     if (C <= ' ') or (C >= #127) or (C = '#') then
-      Exit(H1Refuse(400, 'the target holds a space, a control octet, a fragment or a non-ASCII octet'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'the target holds a space, a control octet, a fragment or a non-ASCII octet'));
   end;
   if Target = '*' then
   begin
     if Method <> 'OPTIONS' then
-      Exit(H1Refuse(400, 'the asterisk target is for OPTIONS only'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'the asterisk target is for OPTIONS only'));
     ARequest.Method := BytesToStr(Method);
     ARequest.Target := '*';
     ARequest.Asterisk := True;
@@ -312,7 +312,7 @@ begin
     Rest := Copy(Target, 9, MaxInt);
   end
   else
-    Exit(H1Refuse(400, 'the target is not in a known form'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'the target is not in a known form'));
   Slash := Pos('/', Rest);
   if Slash = 0 then
   begin
@@ -325,7 +325,7 @@ begin
     Rest := Copy(Rest, Slash, MaxInt);
   end;
   if (Pos('@', Target) > 0) or not ValidHost(Target) then
-    Exit(H1Refuse(400, 'the authority of the target is not valid'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'the authority of the target is not valid'));
   ARequest.TargetAuthority := BytesToStr(Target);
   ARequest.Target := BytesToStr(Rest);
   Result := H1Ok;
@@ -349,7 +349,7 @@ begin
   if ARaw = '' then
     Exit(H1Ok);
   if Length(ARaw) > ALimits.MaxHeaderOctets then
-    Exit(H1Refuse(431, 'the header section is too large'));
+    Exit(H1Refuse(HttpStatusRequestHeaderFieldsTooLarge, 'the header section is too large'));
   Pos0 := 1;
   while Pos0 <= Length(ARaw) do
   begin
@@ -362,26 +362,26 @@ begin
     else
       Pos0 := E;
     if Length(Line) > ALimits.MaxHeaderLine then
-      Exit(H1Refuse(431, 'a header line is too long'));
+      Exit(H1Refuse(HttpStatusRequestHeaderFieldsTooLarge, 'a header line is too long'));
     if Line = '' then
-      Exit(H1Refuse(400, 'an empty line inside the header section'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'an empty line inside the header section'));
     if Line[1] in [' ', #9] then
-      Exit(H1Refuse(400, 'obsolete line folding or a line that starts with white space'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'obsolete line folding or a line that starts with white space'));
     Colon := Pos(':', Line);
     if Colon < 2 then
-      Exit(H1Refuse(400, 'a header line with no name or no colon'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'a header line with no name or no colon'));
     Name := Copy(Line, 1, Colon - 1);
     if not IsToken(Name) then
-      Exit(H1Refuse(400, 'a header name is not a token'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'a header name is not a token'));
     for I := Colon + 1 to Length(Line) do
     begin
       C := Line[I];
       if ((C < ' ') and (C <> #9)) or (C = #127) then
-        Exit(H1Refuse(400, 'a header value holds a control octet'));
+        Exit(H1Refuse(HttpStatusBadRequest, 'a header value holds a control octet'));
     end;
     Inc(N);
     if N > ALimits.MaxHeaderCount then
-      Exit(H1Refuse(431, 'too many header lines'));
+      Exit(H1Refuse(HttpStatusRequestHeaderFieldsTooLarge, 'too many header lines'));
     SetLength(AFields, N);
     AFields[N - 1].Name := LowerRaw(Name);
     AFields[N - 1].Value := TrimOws(Copy(Line, Colon + 1, MaxInt));
@@ -434,24 +434,24 @@ begin
   UpgradeWs := False;
   for I := 0 to High(Fields) do
   begin
-    if Fields[I].Name = 'content-length' then
+    if Fields[I].Name = HeaderContentLength then
     begin
       Inc(CLCount);
       CLValue := Fields[I].Value;
     end
-    else if Fields[I].Name = 'transfer-encoding' then
+    else if Fields[I].Name = HeaderTransferEncoding then
     begin
       Inc(TECount);
       TEValue := Fields[I].Value;
     end
-    else if Fields[I].Name = 'host' then
+    else if Fields[I].Name = HeaderHost then
     begin
       Inc(HostCount);
       HostValue := Fields[I].Value;
     end
-    else if Fields[I].Name = 'expect' then
+    else if Fields[I].Name = HeaderExpect then
       Inc(ExpectCount)
-    else if Fields[I].Name = 'connection' then
+    else if Fields[I].Name = HeaderConnection then
     begin
       Members := SplitList(Fields[I].Value);
       for J := 0 to High(Members) do
@@ -464,7 +464,7 @@ begin
           Upgrade_ := True;
       end;
     end
-    else if Fields[I].Name = 'upgrade' then
+    else if Fields[I].Name = HeaderUpgrade then
     begin
       Members := SplitList(Fields[I].Value);
       for J := 0 to High(Members) do
@@ -475,40 +475,40 @@ begin
 
   // framing (RFC 9112 section 6.3): the request message gets one length rule
   if (TECount > 0) and (CLCount > 0) then
-    Exit(H1Refuse(400, 'Content-Length together with Transfer-Encoding'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'Content-Length together with Transfer-Encoding'));
   AHead.Framing := bfNone;
   AHead.ContentLength := 0;
   if TECount > 0 then
   begin
     if TECount > 1 then
-      Exit(H1Refuse(400, 'more than one Transfer-Encoding field'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'more than one Transfer-Encoding field'));
     if ARequest.Minor = 0 then
-      Exit(H1Refuse(400, 'Transfer-Encoding in an HTTP/1.0 request'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'Transfer-Encoding in an HTTP/1.0 request'));
     TEValue := LowerRaw(TEValue);
     Chunked := TEValue = 'chunked';
     if not Chunked then
     begin
       if TEValue = '' then
-        Exit(H1Refuse(400, 'an empty Transfer-Encoding'));
+        Exit(H1Refuse(HttpStatusBadRequest, 'an empty Transfer-Encoding'));
       // only the single value chunked is accepted. A list that holds chunked,
       // chunked with parameters, or a coding before chunked is refused as a
       // malformed message. A coding that the server does not know is 501
       if Pos('chunked', TEValue) > 0 then
-        Exit(H1Refuse(400, 'chunked is not the only transfer coding'));
+        Exit(H1Refuse(HttpStatusBadRequest, 'chunked is not the only transfer coding'));
       // RFC 9112 section 6.3: a request whose last coding is not chunked has
       // a body length that cannot be known: 400, not 501
-      Exit(H1Refuse(400, 'the last transfer coding is not chunked'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'the last transfer coding is not chunked'));
     end;
     AHead.Framing := bfChunked;
     if ALimits.MaxBodySize = 0 then
-      Exit(H1Refuse(413, 'the server accepts no request body'));
+      Exit(H1Refuse(HttpStatusContentTooLarge, 'the server accepts no request body'));
   end
   else if CLCount > 0 then
   begin
     if CLCount > 1 then
-      Exit(H1Refuse(400, 'more than one Content-Length field'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'more than one Content-Length field'));
     if not IsDigits(CLValue) then
-      Exit(H1Refuse(400, 'Content-Length is not 1*DIGIT'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'Content-Length is not 1*DIGIT'));
     // more than 18 digits cannot fit in 63 bits: refuse without a conversion
     if Length(CLValue) > 18 then
     begin
@@ -516,11 +516,11 @@ begin
       while (I < Length(CLValue)) and (CLValue[I] = '0') do
         Inc(I);
       if Length(CLValue) - I + 1 > 18 then
-        Exit(H1Refuse(413, 'Content-Length is too large'));
+        Exit(H1Refuse(HttpStatusContentTooLarge, 'Content-Length is too large'));
     end;
     Len := StrToInt64(string(CLValue));
     if Len > ALimits.MaxBodySize then
-      Exit(H1Refuse(413, 'Content-Length is over the body limit'));
+      Exit(H1Refuse(HttpStatusContentTooLarge, 'Content-Length is over the body limit'));
     if Len > 0 then
     begin
       AHead.Framing := bfLength;
@@ -532,16 +532,16 @@ begin
   if ARequest.Minor = 1 then
   begin
     if HostCount <> 1 then
-      Exit(H1Refuse(400, 'an HTTP/1.1 request needs exactly one Host field'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'an HTTP/1.1 request needs exactly one Host field'));
   end
   else if HostCount > 1 then
-    Exit(H1Refuse(400, 'more than one Host field'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'more than one Host field'));
   if HostCount = 1 then
   begin
     if (HostValue = '') and (ARequest.TargetAuthority = '') then
-      Exit(H1Refuse(400, 'the Host field is empty'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'the Host field is empty'));
     if (HostValue <> '') and not ValidHost(HostValue) then
-      Exit(H1Refuse(400, 'the Host field is not valid'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'the Host field is not valid'));
   end;
   if ARequest.TargetAuthority <> '' then
     AHead.Authority := ARequest.TargetAuthority
@@ -552,10 +552,10 @@ begin
   if (ExpectCount > 0) and (ARequest.Minor = 1) then
   begin
     for I := 0 to High(Fields) do
-      if Fields[I].Name = 'expect' then
+      if Fields[I].Name = HeaderExpect then
       begin
         if LowerRaw(Fields[I].Value) <> '100-continue' then
-          Exit(H1Refuse(417, 'an expectation other than 100-continue'));
+          Exit(H1Refuse(HttpStatusExpectationFailed, 'an expectation other than 100-continue'));
         AHead.Expect100 := True;
       end;
   end;
@@ -572,10 +572,10 @@ begin
   // the fields that a handler sees: the hop-by-hop fields stay with the server
   for I := 0 to High(Fields) do
   begin
-    Drop := (Fields[I].Name = 'connection') or (Fields[I].Name = 'keep-alive') or
-      (Fields[I].Name = 'proxy-connection') or (Fields[I].Name = 'transfer-encoding') or
-      (Fields[I].Name = 'upgrade') or (Fields[I].Name = 'host') or
-      (Fields[I].Name = 'expect');
+    Drop := (Fields[I].Name = HeaderConnection) or (Fields[I].Name = 'keep-alive') or
+      (Fields[I].Name = 'proxy-connection') or (Fields[I].Name = HeaderTransferEncoding) or
+      (Fields[I].Name = HeaderUpgrade) or (Fields[I].Name = HeaderHost) or
+      (Fields[I].Name = HeaderExpect);
     if Drop then
       Continue;
     J := Length(AHead.Fields);
@@ -630,7 +630,7 @@ begin
   // is an error, so a bare LF cannot hide inside a quoted string.
   for I := 1 to Length(ALine) do
     if ALine[I] in [#0, #10, #13] then
-      Exit(H1Refuse(400, 'a control byte in the chunk size line'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'a control byte in the chunk size line'));
   ASize := 0;
   N := 0;
   I := 1;
@@ -639,30 +639,30 @@ begin
     Inc(N);
     // 15 hex digits is far above any limit and still fits in 63 bits
     if N > 15 then
-      Exit(H1Refuse(413, 'the chunk size is too large'));
+      Exit(H1Refuse(HttpStatusContentTooLarge, 'the chunk size is too large'));
     ASize := ASize * 16 + HexVal(ALine[I]);
     Inc(I);
   end;
   if N = 0 then
-    Exit(H1Refuse(400, 'the chunk size line has no hex digits'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'the chunk size line has no hex digits'));
   if ASize > ALimits.MaxChunkSize then
-    Exit(H1Refuse(413, 'the chunk is over the chunk size limit'));
+    Exit(H1Refuse(HttpStatusContentTooLarge, 'the chunk is over the chunk size limit'));
   // the rest: BWS, then optional extensions
   A := I;
   SkipBws(A, ALine);
   if A > Length(ALine) then
     Exit(H1Ok);
   if ALine[A] <> ';' then
-    Exit(H1Refuse(400, 'garbage after the chunk size'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'garbage after the chunk size'));
   Ext := Copy(ALine, A, MaxInt);
   if Length(Ext) > ALimits.MaxChunkExtension then
-    Exit(H1Refuse(400, 'the chunk extension is too long'));
+    Exit(H1Refuse(HttpStatusBadRequest, 'the chunk extension is too long'));
   // chunk-ext = *( BWS ';' BWS name [ BWS '=' BWS ( token / quoted-string ) ] )
   I := A;
   while I <= Length(ALine) do
   begin
     if ALine[I] <> ';' then
-      Exit(H1Refuse(400, 'a malformed chunk extension'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'a malformed chunk extension'));
     Inc(I);
     SkipBws(I, ALine);
     Semi := I;
@@ -670,7 +670,7 @@ begin
       Inc(I);
     Name := Copy(ALine, Semi, I - Semi);
     if Name = '' then
-      Exit(H1Refuse(400, 'a chunk extension with no name'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'a chunk extension with no name'));
     A := I;
     SkipBws(A, ALine);
     if (A <= Length(ALine)) and (ALine[A] = '=') then
@@ -686,14 +686,14 @@ begin
           begin
             Inc(A);
             if (A <= Length(ALine)) and not IsQuotedPairChar(ALine[A]) then
-              Exit(H1Refuse(400, 'a control byte after a backslash in a chunk extension'));
+              Exit(H1Refuse(HttpStatusBadRequest, 'a control byte after a backslash in a chunk extension'));
           end
           else if not IsQdtext(ALine[A]) then
-            Exit(H1Refuse(400, 'a control byte in a quoted chunk extension'));
+            Exit(H1Refuse(HttpStatusBadRequest, 'a control byte in a quoted chunk extension'));
           Inc(A);
         end;
         if A > Length(ALine) then
-          Exit(H1Refuse(400, 'an unterminated quoted string in a chunk extension'));
+          Exit(H1Refuse(HttpStatusBadRequest, 'an unterminated quoted string in a chunk extension'));
         Inc(A);
         Val := 'q';
       end
@@ -705,14 +705,14 @@ begin
         Val := Copy(ALine, Semi, A - Semi);
       end;
       if Val = '' then
-        Exit(H1Refuse(400, 'a chunk extension with an empty value'));
+        Exit(H1Refuse(HttpStatusBadRequest, 'a chunk extension with an empty value'));
       I := A;
       SkipBws(I, ALine);
     end
     else
       I := A;
     if (I <= Length(ALine)) and (ALine[I] <> ';') then
-      Exit(H1Refuse(400, 'a malformed chunk extension'));
+      Exit(H1Refuse(HttpStatusBadRequest, 'a malformed chunk extension'));
   end;
   Result := H1Ok;
 end;
@@ -724,7 +724,7 @@ var
   Limits: THttp11Limits;
 begin
   if Length(ARaw) > ALimits.MaxTrailerOctets then
-    Exit(H1Refuse(431, 'the trailer section is too large'));
+    Exit(H1Refuse(HttpStatusRequestHeaderFieldsTooLarge, 'the trailer section is too large'));
   // the same field syntax as the header section; the fields are dropped
   Limits := ALimits.WithMaxHeaderOctets(ALimits.MaxTrailerOctets);
   Result := SplitFields(ARaw, Limits, Fields);
