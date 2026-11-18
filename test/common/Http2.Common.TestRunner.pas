@@ -36,7 +36,16 @@ uses
   Http2.Common.UnixPath.Test,
   Http2.Common.FrameDetails.Test,
   Http2.Common.Uri.Test,
-  Http2.Common.SpscRing.Test;
+  Http2.Common.SpscRing.Test,
+  Http2.Common.Body.Test,
+  Http2.Common.BodyReader.Test,
+  Http2.Common.Parameters.Test,
+  Http2.Common.Cookie.Test,
+  Http2.Common.Body.Streams.Test,
+  Http2.Common.Body.Formats.Test,
+  Http2.Common.Body.Large.Test,
+  Http2.Common.Body.Producers.Test,
+  Http2.Common.Names.Test;
 
 procedure RegisterTests;
 begin

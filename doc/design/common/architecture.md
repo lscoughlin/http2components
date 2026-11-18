@@ -47,7 +47,13 @@ common context interface.
 `Http2.Common.Headers` owns the shared header API. `Http2.Common.Hpack` owns
 the header compression codec and records. `Http2.Common.Frames` owns frame
 formats and shared settings operations. `Http2.Common.FlowControl` owns
-connection and stream credit operations.
+connection and stream credit operations. `Http2.Common.Body` owns the body writer
+interfaces `IBodyWriter` and `IBodyReader`, the buffer `TChunkBuffer`, and the helpers
+that read a body to its end; see [body](body.md). The interfaces `IBodyChunkSink`
+and `IBodyProducer` belong to the same unit. `Http2.Common.Body.Producers` owns the
+producer stream `TProducerStream`, the factories `BodyWriterFromStream` and
+`BodyWriterFromTextWriter`, and the body writer that runs a producer. The producers
+of XML and JSON use these factories, as [formats](formats.md) describes.
 
 The client and server retain separate transport, connection, HTTP/1.1,
 WebSocket, and event-stream behavior. Common owns `ITLSContext`,
@@ -56,8 +62,10 @@ metadata. OpenSSL and TlsLib implement the same common contract. A context can
 be shared by client and server roles and threads; every connection owns a
 separate serialized session. Client trust of a server is separate from server
 trust of a client. Session resumption and early data are disabled. Similar names do not make these role
-contracts identical. The client and server `IBodyWriter` contracts remain
-distinct. A consumer that uses both roles names the role-qualified type.
+contracts identical. The client and the server share one `IBodyWriter`
+interface, declared in `Http2.Common.Body`. Each role keeps its name as an alias,
+`Http2.Client.IBodyWriter` and `Http2.Server.IBodyWriter`, and both names denote
+the same type.
 
 The client Readers helpers remain optional. The core client package does not
 load JSON or XML reader dependencies.

@@ -25,8 +25,12 @@ source revisions. They do not report results for the combined TLS implementation
 | Document | Subject |
 | --- | --- |
 | [Architecture](design/common/architecture.md) | Common, role, and provider boundaries. |
+| [Body writer](design/common/body.md) | The shared body writer contract and its buffer. |
+| [Format helpers](design/common/formats.md) | The text, JSON and XML helpers over the body reader and writer, and their errors and memory. |
 | [Protocol](design/common/protocol.md) | The shared HTTP/2 protocol areas and their RFC references. |
 | [URI](design/common/uri.md) | The shared URI parser, host rules, reference resolution and origin helpers. |
+| [Header names and status codes](design/common/names.md) | The header-name constants and the status-code constants. |
+| [Cookies](design/common/cookies.md) | The cookie record, the Set-Cookie and Cookie helpers, and the case-sensitive parameter map. |
 
 ## Client design
 
@@ -106,6 +110,10 @@ that is still in progress.
 The [Unix socket record](verification/unix-sockets-2026-11-12.md) states the
 macOS and Linux results of the Unix domain socket feature and one open client
 defect.
+
+The [streamed bodies record](verification/body-reader-2026-11-18.md) states the
+Linux gate results and the load runs of the streamed bodies and messages, and two open
+defects of the HTTP/2 flow control.
 
 The [client compiler probes](verification/client-probes/README.md) are
 historical compiler evidence. The source validation and toolchain records

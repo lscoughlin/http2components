@@ -103,7 +103,16 @@ function WithXmlBody(const ARequest: THttpRequest;
 implementation
 
 uses
-  XMLRead, XMLWrite;
+  XMLRead, XMLWrite,
+  Http2.Common.Body, Http2.Common.Body.Json, Http2.Common.Body.Xml;
+
+{ the common format errors keep their text; the client adds the response prefix }
+
+/// the client error of a format error of the common units
+function ProtocolErrorOf(const AError: EBodyFormatError): EHttpProtocolError;
+begin
+  Result := EHttpProtocolError.Create('response ' + AError.Message, ecProtocolError);
+end;
 
 { TJsonObjectReader }
 
@@ -112,11 +121,10 @@ var
   D: TJSONData;
 begin
   try
-    D := GetJSON(AText);
+    D := Http2.Common.Body.Json.ParseJson(AText);
   except
-    on E: EJSONParser do
-      raise EHttpProtocolError.Create(
-        'response body is not valid JSON', ecProtocolError);
+    on E: EBodyFormatError do
+      raise ProtocolErrorOf(E);
   end;
   if not (D is TJSONObject) then
   begin
@@ -140,12 +148,12 @@ class function TJsonReader<T>.Parse(const AText: string): T;
 var
   D: TJSONData;
 begin
+  // the generic body converts the error itself: a generic cannot call an implementation routine
   try
-    D := GetJSON(AText);
+    D := ParseJson(AText);
   except
-    on E: EJSONParser do
-      raise EHttpProtocolError.Create(
-        'response body is not valid JSON', ecProtocolError);
+    on E: EBodyFormatError do
+      raise EHttpProtocolError.Create('response ' + E.Message, ecProtocolError);
   end;
   if not (D is T) then
   begin
@@ -165,105 +173,27 @@ end;
 
 { TXmlDocumentReader }
 
-/// case-insensitive index of ASub in S, searching from AStart (1-based);
-/// 0 when not found
-function IndexOfCI(const S: string; const AStart: Integer;
-  const ASub: string): Integer;
-var
-  I, J: Integer;
-begin
-  Result := 0;
-  if ASub = '' then
-    Exit;
-  for I := AStart to Length(S) - Length(ASub) + 1 do
-  begin
-    J := 1;
-    while (J <= Length(ASub)) and
-          (UpCase(S[I + J - 1]) = UpCase(ASub[J])) do
-      Inc(J);
-    if J > Length(ASub) then
-    begin
-      Result := I;
-      Exit;
-    end;
-  end;
-end;
-
-/// fcl-xml's XMLRead accepts utf-8 and iso-8859-1 but rejects `us-ascii` (and
-/// windows-1252/utf-16) as an unsupported encoding. US-ASCII is a strict
-/// subset of UTF-8, so rewriting an `us-ascii`/`ascii` declaration to `utf-8`
-/// is byte-safe and lets us parse the many documents that declare us-ascii
-/// (httpbin's /xml among them). The rewrite is deliberately bounded to that
-/// one case: a blind rewrite of windows-1252 or utf-16 (which carry high
-/// bytes or a BOM) would corrupt the input, so those still raise.
-function NormalizeXmlDeclarationEncoding(const AText: string): string;
-var
-  P, DeclEnd, EncPos, ValStart, ValEnd: Integer;
-  Quote: Char;
-  Value: string;
-begin
-  Result := AText;
-  P := 1;
-  // a UTF-8 BOM may precede the declaration
-  if (Length(AText) >= 3) and (AText[1] = #$EF) and (AText[2] = #$BB) and
-     (AText[3] = #$BF) then
-    P := 4;
-  if Copy(AText, P, 5) <> '<?xml' then
-    Exit;
-  DeclEnd := Pos('?>', AText);
-  if DeclEnd = 0 then
-    Exit;
-  EncPos := IndexOfCI(AText, P, 'encoding');
-  if (EncPos = 0) or (EncPos > DeclEnd) then
-    Exit;
-  Inc(EncPos, Length('encoding'));
-  while (EncPos <= DeclEnd) and (AText[EncPos] <= ' ') do
-    Inc(EncPos);
-  if (EncPos > DeclEnd) or (AText[EncPos] <> '=') then
-    Exit;
-  Inc(EncPos);
-  while (EncPos <= DeclEnd) and (AText[EncPos] <= ' ') do
-    Inc(EncPos);
-  if (EncPos > DeclEnd) or not (AText[EncPos] in ['''', '"']) then
-    Exit;
-  Quote := AText[EncPos];
-  ValStart := EncPos + 1;
-  ValEnd := ValStart;
-  while (ValEnd <= DeclEnd) and (AText[ValEnd] <> Quote) do
-    Inc(ValEnd);
-  if ValEnd > DeclEnd then
-    Exit;
-  Value := LowerCase(Copy(AText, ValStart, ValEnd - ValStart));
-  if (Value = 'us-ascii') or (Value = 'ascii') then
-    Result := Copy(AText, 1, ValStart - 1) + 'utf-8' +
-      Copy(AText, ValEnd, Length(AText) - ValEnd + 1);
-end;
-
 class function TXmlDocumentReader.Parse(const AText: string): TXMLDocument;
-var
-  S: TStringStream;
-  Doc: TXMLDocument;
 begin
-  S := TStringStream.Create(NormalizeXmlDeclarationEncoding(AText));
   try
-    try
-      ReadXMLFile(Doc, S);
-    except
-      on E: Exception do
-        raise EHttpProtocolError.CreateFmt(
-          'response body is not well-formed XML: %s', [E.Message]);
-    end;
-  finally
-    S.Free;
+    Result := Http2.Common.Body.Xml.ParseXml(AText);
+  except
+    on E: EBodyFormatError do
+      raise ProtocolErrorOf(E);
   end;
-  Result := Doc;
 end;
 
 function TXmlDocumentReader.Read(const AResponse: IHttpResponse): TXMLDocument;
 begin
   if AResponse = nil then
     raise EHttpProtocolError.Create('response is nil', ecInternalError);
-  Result := Parse(ReadText(AResponse));
+  // the document is parsed as the octets of the body arrive
+  try
+    Result := Http2.Common.Body.Xml.ReadXml(AResponse.Body);
+  except
+    on E: EBodyFormatError do
+      raise ProtocolErrorOf(E);
+  end;
 end;
 
 { module helpers }

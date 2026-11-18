@@ -27,7 +27,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
   mormot.core.os,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.Limits, Http2.Server.StreamPool, Http2.Server.Sse.Encoder,
   Http2.Server.Sse, Http2.Server.Sse.Test, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Utf8,
@@ -55,7 +55,7 @@ type
     FLeft, FSize: Integer;
   public
     constructor Create(const ACount, ASize: Integer);
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
   TWsHardeningTest = class(TTestCase)
@@ -92,7 +92,16 @@ type
     procedure TestReasonTruncationKeepsWholeCharacters;
     procedure TestOptionsAreCrossChecked;
     procedure TestFourMebibyteMessageEncodesInBoundedTime;
-    procedure TestSendStreamHasASizeCap;
+    procedure TestFragmentOfOneFrameWithFin;
+    procedure TestFragmentWithoutFinHasNoFinBit;
+    procedure TestFragmentSplitsByFrameSize;
+    procedure TestFragmentFinOnlyOnLastFrame;
+    procedure TestFragmentEmptyPayload;
+    procedure TestMessageEncodingIsUnchanged;
+    procedure TestSendStreamChunkOverTheLimitFails;
+  private
+    function StreamOut: Boolean;
+    function Close1011Out: Boolean;
   end;
 
   TSseHardeningTest = class(TTestCase)
@@ -163,15 +172,18 @@ begin
   FSize := ASize;
 end;
 
-function TChunkWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TChunkWriter.NextChunk(const ABuffer: TStream): Boolean;
+var
+  LChunk: TBytes;
 begin
-  ABuffer := nil;
   Result := FLeft > 0;
   if not Result then
     Exit;
   Dec(FLeft);
-  SetLength(ABuffer, FSize);
-  FillChar(ABuffer[0], FSize, Ord('x'));
+  SetLength(LChunk, FSize);
+  if FSize > 0 then
+    FillChar(LChunk[0], FSize, Ord('x'));
+  ChunkAppend(ABuffer, LChunk);
 end;
 
 { TWsHardeningTest }
@@ -458,19 +470,133 @@ begin
     Length(Data) + 4096 * 4, Length(Wire));
 end;
 
-procedure TWsHardeningTest.TestSendStreamHasASizeCap;
+procedure TWsHardeningTest.TestFragmentOfOneFrameWithFin;
 var
-  Raised: Boolean;
+  Data, Wire: TBytes;
+begin
+  SetLength(Data, 10);
+  FillChar(Data[0], Length(Data), 5);
+  Wire := WsEncodeFragment(WsOpBinary, True, Data[0], Length(Data), 100);
+  AssertEquals('one frame: 2 header octets and 10 payload octets', 12, Length(Wire));
+  AssertEquals('the opcode is binary and FIN is set', $82, Integer(Wire[0]));
+  AssertEquals('the payload length is 10', 10, Integer(Wire[1]));
+end;
+
+procedure TWsHardeningTest.TestFragmentWithoutFinHasNoFinBit;
+var
+  Data, Wire: TBytes;
+begin
+  SetLength(Data, 10);
+  FillChar(Data[0], Length(Data), 5);
+  Wire := WsEncodeFragment(WsOpText, False, Data[0], Length(Data), 100);
+  AssertEquals('one frame: 2 header octets and 10 payload octets', 12, Length(Wire));
+  AssertEquals('the opcode is text and FIN is not set', $01, Integer(Wire[0]));
+end;
+
+procedure TWsHardeningTest.TestFragmentSplitsByFrameSize;
+var
+  Data, Wire: TBytes;
+begin
+  SetLength(Data, 250);
+  FillChar(Data[0], Length(Data), 9);
+  Wire := WsEncodeFragment(WsOpText, False, Data[0], Length(Data), 100);
+  AssertEquals('three frames of 102, 102 and 52 octets', 256, Length(Wire));
+  AssertEquals('frame 1 opcode is text, no FIN', $01, Integer(Wire[0]));
+  AssertEquals('frame 1 payload length is 100', 100, Integer(Wire[1]));
+  AssertEquals('frame 2 opcode is continuation, no FIN', $00, Integer(Wire[102]));
+  AssertEquals('frame 2 payload length is 100', 100, Integer(Wire[103]));
+  AssertEquals('frame 3 opcode is continuation, no FIN', $00, Integer(Wire[204]));
+  AssertEquals('frame 3 payload length is 50', 50, Integer(Wire[205]));
+end;
+
+procedure TWsHardeningTest.TestFragmentFinOnlyOnLastFrame;
+var
+  Data, Wire: TBytes;
+begin
+  SetLength(Data, 250);
+  FillChar(Data[0], Length(Data), 9);
+  Wire := WsEncodeFragment(WsOpText, True, Data[0], Length(Data), 100);
+  AssertEquals('three frames of 102, 102 and 52 octets', 256, Length(Wire));
+  AssertEquals('frame 1 has no FIN bit', $01, Integer(Wire[0]));
+  AssertEquals('frame 2 has no FIN bit', $00, Integer(Wire[102]));
+  AssertEquals('frame 3 has the FIN bit', $80, Integer(Wire[204]));
+end;
+
+procedure TWsHardeningTest.TestFragmentEmptyPayload;
+var
+  Dummy: Byte;
+  Wire: TBytes;
+begin
+  Dummy := 0;
+  Wire := WsEncodeFragment(WsOpContinuation, True, Dummy, 0, 100);
+  AssertEquals('one empty frame', 2, Length(Wire));
+  AssertEquals('the FIN bit is set, the opcode is continuation', $80, Integer(Wire[0]));
+  AssertEquals('the payload length is 0', $00, Integer(Wire[1]));
+  Wire := WsEncodeFragment(WsOpContinuation, False, Dummy, 0, 100);
+  AssertEquals('one empty frame', 2, Length(Wire));
+  AssertEquals('no FIN bit, the opcode is continuation', $00, Integer(Wire[0]));
+  AssertEquals('the payload length is 0', $00, Integer(Wire[1]));
+end;
+
+procedure TWsHardeningTest.TestMessageEncodingIsUnchanged;
+var
+  Data, Whole, Fragment: TBytes;
+begin
+  SetLength(Data, 4096);
+  FillChar(Data[0], Length(Data), 3);
+  Whole := WsEncodeMessage(WsOpBinary, Data, 1024);
+  Fragment := WsEncodeFragment(WsOpBinary, True, Data[0], Length(Data), 1024);
+  AssertEquals('the same number of octets', Length(Whole), Length(Fragment));
+  AssertTrue('the same octets', CompareMem(@Whole[0], @Fragment[0], Length(Whole)));
+end;
+
+function TWsHardeningTest.StreamOut: Boolean;
+var
+  L: TStringList;
+  I: Integer;
+begin
+  // the reader joins the fragments: a binary message shows as one line
+  Result := False;
+  L := DecodeOutput(FChannel.SentBytes);
+  try
+    for I := 0 to L.Count - 1 do
+      if Copy(L[I], 1, 2) = 'B:' then
+        Result := True;
+  finally
+    L.Free;
+  end;
+end;
+
+function TWsHardeningTest.Close1011Out: Boolean;
+var
+  L: TStringList;
+  I: Integer;
+begin
+  Result := False;
+  L := DecodeOutput(FChannel.SentBytes);
+  try
+    for I := 0 to L.Count - 1 do
+      if Copy(L[I], 1, 7) = 'C:1011:' then
+        Result := True;
+  finally
+    L.Free;
+  end;
+end;
+
+procedure TWsHardeningTest.TestSendStreamChunkOverTheLimitFails;
 begin
   Build(Quick.WithMaxMessageSize(1000).WithMaxFrameSize(1000));
-  Raised := False;
-  try
-    FSession.SendStream(TChunkWriter.Create(5, 400), False);
-  except
-    on EHttpError do
-      Raised := True;
-  end;
-  AssertTrue('WS-7: SendStream refuses a message over the size limit', Raised);
+  // five chunks of 400 octets: the total is over the limit, but no chunk is
+  AssertTrue('the stream is queued',
+    FSession.SendStream(TChunkWriter.Create(5, 400), False) = srQueued);
+  AssertTrue('the message of 2000 octets completes', WaitUntil(StreamOut, 5000));
+  // one chunk of 1001 octets is over the limit: the stream fails
+  TearDown;
+  Build(Quick.WithMaxMessageSize(1000).WithMaxFrameSize(1000));
+  AssertTrue('the second stream is queued',
+    FSession.SendStream(TChunkWriter.Create(1, 1001), False) = srQueued);
+  AssertTrue('the handler hears Failed', WaitHandler('failed', 5000));
+  AssertTrue('the channel gets a Close frame with code 1011', WaitUntil(Close1011Out, 5000));
 end;
 
 { TSseHardeningTest }

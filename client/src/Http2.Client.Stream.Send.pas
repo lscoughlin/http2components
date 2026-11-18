@@ -18,7 +18,8 @@ interface
 uses
   SysUtils, Classes, Generics.Collections, SyncObjs,
   Http2.Client.Errors, Http2.Client.Connection, Http2.Client.Stream.Types,
-  Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack;
+  Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack,
+  Http2.Common.Body;
 
 function LeaseMaxFrameSize(const AConnection: TConnection): LongWord;
 function RequestIsBodyless(const AMethod: string): Boolean;
@@ -164,24 +165,27 @@ procedure EmitData(const AConnection: TConnection;
   const AOutbound: IBlockingQueue<TFrame>; const AWaitLock: TCriticalSection;
   const AStreamId: LongWord; const ATimeoutMs: Integer;
   const APeerDone, APeerReset: PLongInt; var AUploadStopped: Boolean;
-  var ABytesSent: Int64; const AData: TBytes; const AEndStream: Boolean);
+  var ABytesSent: Int64; const AData; const ACount: Integer;
+  const AEndStream: Boolean);
 var
   Offset, Count: Integer;
   Want: LongWord;
   Chunk: TBytes;
+  Src: PByte;
 begin
-  if Length(AData) = 0 then
+  if ACount = 0 then
   begin
     AOutbound.Push(BuildDataFrame(AStreamId, nil, AEndStream));
     Exit;
   end;
   if AUploadStopped then Exit;
-  Inc(ABytesSent, Length(AData));
+  Inc(ABytesSent, ACount);
+  Src := PByte(@AData);
   Offset := 0;
-  while Offset < Length(AData) do
+  while Offset < ACount do
   begin
     Want := FrameSize(AConnection);
-    Count := Length(AData) - Offset;
+    Count := ACount - Offset;
     if LongWord(Count) < Want then Want := LongWord(Count);
     Count := Integer(AcquireCredit(AConnection, AStreamId, Want, ATimeoutMs,
       AWaitLock, APeerDone));
@@ -192,11 +196,87 @@ begin
         AConnection.PostFrame(BuildRstStreamFrame(AStreamId, ecCancel));
       Exit;
     end;
-    Chunk := Copy(AData, Offset, Count);
+    // the frame owns its payload, so the octets are copied once (D25)
+    SetLength(Chunk, Count);
+    Move(Src^, Chunk[0], Count);
+    Inc(Src, Count);
     Inc(Offset, Count);
     AOutbound.Push(BuildDataFrame(AStreamId, Chunk,
-      AEndStream and (Offset >= Length(AData))));
+      AEndStream and (Offset >= ACount)));
   end;
+end;
+
+type
+  /// the sink of an HTTP/2 upload from a producer (D24, D25)
+  // - Chunk sends the octets as DATA frames through EmitData; it blocks for flow control
+  // - ALast True sends END_STREAM with the last DATA frame; ACount 0 sends an empty one
+  // - a cancelled token raises EHttpStreamError with ecCancel
+  // - when the peer ended or reset the upload, Chunk raises and StoppedByPeer is True;
+  //   the caller then reads the response, as the pull loop does
+  TUploadSink = class(TInterfacedObject, IBodyChunkSink)
+  private
+    FConnection: TConnection;
+    FOutbound: IBlockingQueue<TFrame>;
+    FWaitLock: TCriticalSection;
+    FStreamId: LongWord;
+    FTimeoutMs: Integer;
+    FPeerDone, FPeerReset: PLongInt;
+    FUploadStopped: PBoolean;
+    FBytesSent: PInt64;
+    FCancel: ICancellationToken;
+    FEnded: Boolean;
+    FStoppedByPeer: Boolean;
+  public
+    constructor Create(const AConnection: TConnection;
+      const AOutbound: IBlockingQueue<TFrame>; const AWaitLock: TCriticalSection;
+      const AStreamId: LongWord; const ATimeoutMs: Integer;
+      const APeerDone, APeerReset: PLongInt; const AUploadStopped: PBoolean;
+      const ABytesSent: PInt64; const ACancel: ICancellationToken);
+    procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+    /// True once the last chunk went to the sink
+    property Ended: Boolean read FEnded;
+    /// True when a Chunk found the upload stopped by the peer
+    property StoppedByPeer: Boolean read FStoppedByPeer;
+  end;
+
+constructor TUploadSink.Create(const AConnection: TConnection;
+  const AOutbound: IBlockingQueue<TFrame>; const AWaitLock: TCriticalSection;
+  const AStreamId: LongWord; const ATimeoutMs: Integer;
+  const APeerDone, APeerReset: PLongInt; const AUploadStopped: PBoolean;
+  const ABytesSent: PInt64; const ACancel: ICancellationToken);
+begin
+  inherited Create;
+  FConnection := AConnection;
+  FOutbound := AOutbound;
+  FWaitLock := AWaitLock;
+  FStreamId := AStreamId;
+  FTimeoutMs := ATimeoutMs;
+  FPeerDone := APeerDone;
+  FPeerReset := APeerReset;
+  FUploadStopped := AUploadStopped;
+  FBytesSent := ABytesSent;
+  FCancel := ACancel;
+  FEnded := False;
+  FStoppedByPeer := False;
+end;
+
+procedure TUploadSink.Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+begin
+  if (FCancel <> nil) and FCancel.IsCancelled then
+    raise EHttpStreamError.Create('request cancelled', FStreamId, ecCancel);
+  if FUploadStopped^ then
+  begin
+    // the peer ended or reset the upload: the producer stops at this write
+    FStoppedByPeer := True;
+    raise EHttpStreamError.Create('the upload stopped', FStreamId, ecStreamClosed);
+  end;
+  // a call without octets that is not the last one carries nothing
+  if (ACount = 0) and (not ALast) then
+    Exit;
+  EmitData(FConnection, FOutbound, FWaitLock, FStreamId, FTimeoutMs,
+    FPeerDone, FPeerReset, FUploadStopped^, FBytesSent^, ABuffer, ACount, ALast);
+  if ALast then
+    FEnded := True;
 end;
 
 procedure LeaseSendHeaders(const ARequest: TStreamRequest;
@@ -223,6 +303,8 @@ procedure LeaseSendData(const AConnection: TConnection;
   const APeerDone, APeerReset: PLongInt; var AUploadStopped: Boolean;
   var ABytesSent: Int64; var ALocalState: TLeaseLocalState;
   const AData: TBytes; const AEndStream: Boolean);
+var
+  NoData: Byte;
 begin
   if ALocalState = lsIdle then
     raise EHttpProtocolError.Create('cannot send DATA before HEADERS',
@@ -230,8 +312,15 @@ begin
   if ALocalState <> lsHeadersSent then
     raise EHttpProtocolError.Create(
       'cannot send DATA on a half-closed or closed stream', ecStreamClosed);
-  EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
-    APeerDone, APeerReset, AUploadStopped, ABytesSent, AData, AEndStream);
+  NoData := 0;
+  if Length(AData) > 0 then
+    EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+      APeerDone, APeerReset, AUploadStopped, ABytesSent, AData[0],
+      Length(AData), AEndStream)
+  else
+    EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+      APeerDone, APeerReset, AUploadStopped, ABytesSent, NoData, 0,
+      AEndStream);
   if AEndStream then ALocalState := lsLocalHalfClosed;
 end;
 
@@ -242,37 +331,124 @@ procedure LeaseSendBody(const AConnection: TConnection;
   var AUploadStopped: Boolean; var ABytesSent: Int64;
   var ALocalState: TLeaseLocalState);
 var
-  Chunk, Pending: TBytes;
-  PendingSet: Boolean;
+  Cur, Ahead, Swap: TChunkBuffer;
+  PendingSet, Ended, LastSent: Boolean;
+  NoData: Byte;
+  Body: TBytes;
+  Producer: IBodyProducer;
+  Sink: IBodyChunkSink;
+  Obj: TUploadSink;
 begin
-  Pending := nil;
   if ALocalState = lsIdle then
     raise EHttpProtocolError.Create('cannot send a body before HEADERS',
       ecProtocolError);
   if ALocalState <> lsHeadersSent then
     raise EHttpProtocolError.Create(
       'cannot send a body on a half-closed or closed stream', ecStreamClosed);
+  NoData := 0;
   if ARequest.Body.IsSet then
-    EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
-      APeerDone, APeerReset, AUploadStopped, ABytesSent, ARequest.Body.Data,
-      True)
-  else if ARequest.BodyWriter <> nil then
   begin
-    PendingSet := False;
-    while (not AUploadStopped) and ARequest.BodyWriter.NextChunk(Chunk) do
-    begin
-      if PendingSet then
-        EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
-          APeerDone, APeerReset, AUploadStopped, ABytesSent, Pending, False);
-      Pending := Chunk;
-      PendingSet := True;
-    end;
-    if PendingSet then
+    Body := ARequest.Body.Data;
+    if Length(Body) > 0 then
       EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
-        APeerDone, APeerReset, AUploadStopped, ABytesSent, Pending, True)
+        APeerDone, APeerReset, AUploadStopped, ABytesSent, Body[0],
+        Length(Body), True)
     else
       EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
-        APeerDone, APeerReset, AUploadStopped, ABytesSent, nil, True);
+        APeerDone, APeerReset, AUploadStopped, ABytesSent, NoData, 0, True);
+  end
+  else if (ARequest.BodyWriter <> nil) and
+    Supports(ARequest.BodyWriter, IBodyProducer, Producer) then
+  begin
+    // the producer runs on this thread and gives each chunk to the sink, which
+    // blocks for flow control as the pull loop does (D23, D25). A producer
+    // stream gives ALast, so the sink needs no look-ahead.
+    Obj := TUploadSink.Create(AConnection, AOutbound, AWaitLock, AStreamId,
+      ATimeoutMs, APeerDone, APeerReset, @AUploadStopped, @ABytesSent,
+      ARequest.CancelToken);
+    Sink := Obj;
+    try
+      Producer.Produce(Sink);
+      // a producer that ends without ALast still ends the body
+      if not Obj.Ended then
+        Sink.Chunk(NoData, 0, True);
+    except
+      on E: Exception do
+      begin
+        // the peer already ended or reset the upload: the response decides the call
+        if not Obj.StoppedByPeer then
+        begin
+          // a stream that the producer or the sink left open is reset, never orphaned
+          if (not AUploadStopped) and (InterlockedExchangeAdd(APeerReset^, 0) = 0) then
+            AConnection.PostFrame(BuildRstStreamFrame(AStreamId, ecCancel));
+          ALocalState := lsClosed;
+          raise;
+        end;
+      end;
+    end;
+  end
+  else if ARequest.BodyWriter <> nil then
+  begin
+    // Ahead holds the chunk that waits for the next one, so that the last
+    // DATA frame carries END_STREAM (D16). Cur receives the next chunk.
+    // The octets of the call that returns False are the last chunk (D22):
+    // they go out with END_STREAM, and Ahead goes out before them.
+    Cur := TChunkBuffer.Create;
+    Ahead := TChunkBuffer.Create;
+    try
+      PendingSet := False;
+      Ended := False;
+      LastSent := False;
+      while (not AUploadStopped) and (not Ended) do
+      begin
+        Cur.Reset;
+        if ARequest.BodyWriter.NextChunk(Cur) then
+        begin
+          // an empty chunk that a call returns with True is skipped (D4)
+          if Cur.Size > 0 then
+          begin
+            if PendingSet then
+              EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+                APeerDone, APeerReset, AUploadStopped, ABytesSent,
+                Ahead.Memory^, Ahead.Size, False);
+            Swap := Cur;
+            Cur := Ahead;
+            Ahead := Swap;
+            PendingSet := True;
+          end;
+        end
+        else
+        begin
+          Ended := True;
+          if Cur.Size > 0 then
+          begin
+            // Cur is the last chunk: Ahead goes before it, without END_STREAM
+            if PendingSet then
+              EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+                APeerDone, APeerReset, AUploadStopped, ABytesSent,
+                Ahead.Memory^, Ahead.Size, False);
+            EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+              APeerDone, APeerReset, AUploadStopped, ABytesSent,
+              Cur.Memory^, Cur.Size, True);
+            PendingSet := False;
+            LastSent := True;
+          end;
+        end;
+      end;
+      // no END_STREAM frame is sent yet when the upload stopped or the
+      // call that returned False carried no octets
+      if not LastSent then
+        if PendingSet then
+          EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+            APeerDone, APeerReset, AUploadStopped, ABytesSent,
+            Ahead.Memory^, Ahead.Size, True)
+        else
+          EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
+            APeerDone, APeerReset, AUploadStopped, ABytesSent, NoData, 0, True);
+    finally
+      Ahead.Free;
+      Cur.Free;
+    end;
   end
   else
     raise EHttpProtocolError.Create('SendBody called with no body',
@@ -285,14 +461,17 @@ procedure LeaseEndSend(const AConnection: TConnection;
   const AStreamId: LongWord; const ATimeoutMs: Integer;
   const APeerDone, APeerReset: PLongInt; var AUploadStopped: Boolean;
   var ABytesSent: Int64; var ALocalState: TLeaseLocalState);
+var
+  NoData: Byte;
 begin
   if ALocalState = lsIdle then
     raise EHttpProtocolError.Create('cannot end before HEADERS', ecProtocolError);
   if ALocalState = lsLocalHalfClosed then
     raise EHttpProtocolError.Create('local side already half-closed',
       ecStreamClosed);
+  NoData := 0;
   EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
-    APeerDone, APeerReset, AUploadStopped, ABytesSent, nil, True);
+    APeerDone, APeerReset, AUploadStopped, ABytesSent, NoData, 0, True);
   ALocalState := lsLocalHalfClosed;
 end;
 

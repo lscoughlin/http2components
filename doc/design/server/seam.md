@@ -7,6 +7,7 @@ notes:
   - The seam exists so that the connection core stays free of sockets and of
     the handler pool, and so that the protocol units never need to know how a
     handler blocks.
+  - IServerRequest inherits GetStream and GetStreamReader from IBodyReader. The classes that implement it give both methods.
   - Imported from http2server/doc/design/server/seam.md at the source commit recorded in the source inventory.
 scope: The handler-facing interfaces, the blocking waiter, the cancel workers and the per-stream buffers.
 primary_types:
@@ -26,11 +27,16 @@ primary_types:
   - IChannelSink
   - IChannelRegistry
   - THttp2StreamChannel
+  - IBodyReader
+  - IBodyProducer
+  - IBodyChunkSink
 db_tables: None.
 related_docs:
   - doc/design/server/protocol.md
   - doc/design/server/limits.md
+  - doc/design/common/body.md
 invariants:
+  - A ReadChunk call that returns True writes at least one octet, and its window update covers the octets that it writes.
   - The sequence of a stream wait has four members, and no other unit waits on a stream.
   - The wait result names a signal, a timeout or a cancellation, and never a mixture.
   - A handler call holds no lock across a wait.
@@ -50,10 +56,28 @@ The IO side owns a socket, the connection lock and every protocol structure.
 The handler side runs a synchronous handler that may block. The seam gives
 each side the small part of the other that it needs, and hides the rest.
 
+`IServerRequest` extends `IBodyReader`, the reader interface of `Http2.Common.Body`.
+`ReadChunk(const ABuffer: TStream): Boolean` comes from that interface. It appends
+the next buffered chunk to the caller's stream at its position. While the buffer is
+empty and the body has not ended, the call blocks, as `Read` does. When the read
+timeout of the stream expires first, the call raises `EHttpTimeout`. A True answer writes at least one octet. A False answer
+means that the body has ended, and it writes no octet. The end repeats: each later
+`ReadChunk` and `Read` answers the end again, with False and 0.
+
+`IServerRequest` also inherits `GetStream` and `GetStreamReader` from `IBodyReader`.
+They give a read-only `TStream` and a `TStreamReader` over the request body, and
+the caller owns both. Each server class that implements `IServerRequest` gives the
+two methods as one-line delegates to `BodyStream` and `BodyStreamReader`. Each
+delegate casts the object to `IServerRequest`, because a class that lists only
+`IServerRequest` does not give a cast to `IBodyReader`.
+
+The server sends `WINDOW_UPDATE` for the octets that a `ReadChunk` call takes, as
+`Read` does for the octets that it gives. The window update of a call covers those
+octets only, and an end sends no window update.
+
 ```pascal
-IServerRequest  = interface
+IServerRequest  = interface(IBodyReader)
   function  Read(var ABuffer; const ACount: Integer): Integer;
-  function  ReadChunk(out AChunk: TBytes): Boolean;
   function  BodyIsComplete: Boolean;
   function  IsCancelled: Boolean;
   function  StreamId: LongWord;
@@ -79,6 +103,50 @@ A `Read` answers the number of bytes that arrived, `0` at the end of the body,
 and an exception when the stream is cancelled or the read deadline passes. A
 `Read` that must wait calls the stream waiter and releases every lock first, so
 the connection lock stays available to the IO thread during a handler wait.
+
+## The body writer
+
+`IBodyWriter` is the pull writer of a response body. `SetBodyWriter` and the body
+that `Finish` pulls use it. The interface is declared in `Http2.Common.Body`, and
+the client shares it. `Http2.Server.IBodyWriter` is an alias of the common type
+(see [body](../common/body.md)).
+
+The library owns the stream that `NextChunk` fills. The library resets the stream
+before each call and passes the same stream for each call of one body. The writer
+fills the stream with one chunk, and it does not keep the stream after the call.
+The library reads the chunk through `Size`.
+
+The library pulls one chunk at a time. It writes the chunk to the response before it
+calls `NextChunk` again, so a body holds one chunk in the library at a time. A call
+of `NextChunk` can block. The library calls it on the handler thread that calls
+`SetBodyWriter` or `Finish`, and never on an IO thread.
+
+A call that returns False with octets written gives the last chunk. The library
+writes those octets, and then it ends the response. A call that returns True with
+no octets gives an empty chunk, and the library writes nothing for it.
+
+## A producer body
+
+A writer that also supports `IBodyProducer` is a producer body. The factories
+`BodyWriterFromStream` and `BodyWriterFromTextWriter` in `Http2.Common.Body.Producers`
+make one from code that writes a `TStream` or a `TStreamWriter`. The producer is
+described in [body](../common/body.md#producers).
+
+Before the library pulls a writer, it asks the writer for `IBodyProducer`. A producer
+body gets no chunk pulls. `Finish` calls `Produce` with a sink of the response, and the
+producer runs to its end on the handler thread that calls `Finish`. A writer that is not
+a producer is pulled with `NextChunk` as described above.
+
+The sink gives each chunk to the outbound buffer of the stream. The call of `Chunk`
+blocks while the buffer is full, so the producer waits at the same limit as a handler
+`Write`. The sink raises the exceptions of `Write`, for example `EStreamCancelled` when
+the stream is cancelled. The exception passes out of the producer, out of `Finish` and
+to the handler. The sink receives `ALast` True with the last call of the producer. The
+end of the body is the normal end of `Finish`, so the sink writes nothing more.
+
+On HTTP/2, `SetBodyWriter` stores the writer and `Finish` runs it. On HTTP/1.1,
+`SetBodyWriter` runs the writer and then ends the response, as described in
+[http1](http1.md).
 
 ## The waiter
 
@@ -176,6 +244,13 @@ The sink then hears `WriteDrained` once the buffer falls to the low-water mark
 default; an ordinary stream takes half of its limit). `srClosed` means that the channel is closed or the
 stream ended. A producer on any thread may call `Send`.
 
+The WebSocket session uses `WriteDrained` to wake a stream that waits for room in
+the channel (see [websocket](websocket.md)). A `srFull` from the held bytes of a
+channel that is not active yet does not reach the stream, so the stream gives no
+drain for it. The channel records the refusal, and it calls `WriteDrained` when
+`Activate` has moved the held bytes to the stream. A stream that waits on such a
+refusal also has a timer as a second recovery.
+
 **Receiving.** With a sink set, the IO thread delivers the DATA payload to the
 sink and keeps no copy in the inbound buffer of the stream. The data call runs on
 the IO thread while the connection lock is held, so the sink does its work
@@ -194,6 +269,21 @@ every stream. The stream window returns only when the owner calls
 `ReturnCredit`, which adds to the consumed counter of the stream and wakes the IO
 side, so a `WINDOW_UPDATE` leaves although the peer is silent while it waits. A
 consumer that is slow to call `ReturnCredit` slows its peer and no other stream.
+
+An HTTP/1.1 upgrade and a Unix socket give the same interface with no flow control. On
+those channels `ReturnCredit` does nothing, and the IO layer never pauses its reads, so a
+slow consumer does not slow its peer. A consumer that buffers the octets of such a channel
+bounds its own memory. The WebSocket session does this with the pipe of a streamed
+message: it credits the octets of a frame header and of a message in memory when they
+arrive, and the octets of a pipe when the handler reads them (see
+[websocket](websocket.md)). A call of `ReturnCredit` comes from the IO thread, which holds
+the channel lock, and from a pool thread, which takes the channel lock inside the call.
+A caller therefore holds no lock of its own that the IO thread can take while it holds the
+channel lock.
+
+The optional interface `IChannelFlow` (`ReturnsCredit`) tells a consumer which case a
+channel is. The HTTP/2 stream channel answers True. A channel without the interface counts
+as a channel that returns no credit.
 
 **Pending and active.** A handler that calls `Detach` before `SendHeaders`
 receives a pending channel. No response has left yet. `Send` holds the bytes in
@@ -297,10 +387,15 @@ offered no coding is never sent one. `HeaderValueOf(ARequest.Headers,
 - `CompressFor(Coding, Bytes)` codes a complete body, and
 `GzipCompress`/`DeflateCompress` code one directly.
 - `TCompressingBodyWriter` wraps another `IBodyWriter` and codes every
-chunk, so a large body is coded as it streams. It is handed to
-`IServerResponse.SetBodyWriter`. The gzip container is closed when the
-inner writer is exhausted, so the footer reaches the peer before the
+chunk, so a large body is coded as it streams. On the pull path it keeps one inner
+chunk at a time. When the coder gives no octets for an inner chunk, it pulls the next
+inner chunk. It is handed to `IServerResponse.SetBodyWriter`. The gzip container is
+closed when the inner writer is exhausted, so the footer reaches the peer before the
 response ends.
+- `TCompressingBodyWriter` is a producer too. When its inner writer is a producer,
+each inner chunk goes through the coder at once, and the coded octets go to the sink of
+the response. The last inner chunk closes the container, and its trailer goes out with
+`ALast` True. An empty inner body still gives a valid empty gzip container.
 
 The library never codes a body on its own. Auto-coding would fight the
 handler authority of the seam, and it cannot know the coded size for a

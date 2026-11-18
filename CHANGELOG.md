@@ -4,6 +4,439 @@
 
 - Version bump after the 0.32.0 source release. No other change yet.
 
+### WebSocket
+
+- **Breaking change of the API.** `IWsHandler.Message` takes an `IBodyReader` in place of
+  a `TBytes`: `procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
+  const AText: Boolean)`. A message can be larger than memory, and a handler reads it one
+  chunk at a time. A message that ends inside `InlineLimit` (65536 octets) is complete in
+  memory, and a read never waits. A longer message goes to the handler when it passes the
+  limit, and a bounded pipe carries the later octets. Every handler changes. A handler
+  that wants the whole message calls `ReadAllBody`.
+
+  Old shape of a handler:
+
+  ```pascal
+  procedure TEchoHandler.Message(const ASession: IWsSession; const AData: TBytes;
+    const AText: Boolean);
+  begin
+    ASession.Send(AData, AText);
+  end;
+  ```
+
+  New shape of the same handler, with the whole message in one call:
+
+  ```pascal
+  procedure TEchoHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
+    const AText: Boolean);
+  begin
+    ASession.Send(ReadAllBody(AMessage), AText);
+  end;
+  ```
+
+  New shape of a handler that reads one chunk at a time and keeps no whole message. The
+  octets of the call that answers False are the last chunk:
+
+  ```pascal
+  procedure TCountHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
+    const AText: Boolean);
+  var
+    Buf: TChunkBuffer;
+    More: Boolean;
+    Total: Int64;
+  begin
+    Total := 0;
+    Buf := TChunkBuffer.Create;
+    try
+      repeat
+        Buf.Reset;
+        More := AMessage.ReadChunk(Buf);
+        Inc(Total, Buf.Size);
+      until not More;
+    finally
+      Buf.Free;
+    end;
+  end;
+  ```
+
+- **Behavior change.** A text message is valid UTF-8 up to the last octet that the handler
+  has read. A bad octet after the handler has read part of a streamed message closes the
+  session with 1007, and the next read raises `EStreamCancelled`.
+- **Behavior change.** A handler that reads a streamed message holds one streaming pool
+  thread for the whole read. The default `StreamPoolSize` is 1, so one such handler
+  stops every other WebSocket session and event stream until it returns. An application
+  that reads long messages sets `StreamPoolSize` above the number of sessions that read at
+  the same time. The tick, a Pong, `Closed` and the steps of `SendStream` of the same
+  session wait until `Message` returns.
+- **Behavior change.** A handler that returns before the end of a message no longer holds
+  the message: the session drops the octets that wait and the octets that still arrive,
+  and it credits them to the channel.
+- New options of `TWsOptions`: `WithInlineLimit` (default 65536), `WithInboundPipeBytes`
+  (default 1048576) and `WithInboundStallMs` (default 30000). A read of a streamed
+  message that gets no octet for `InboundStallMs` closes the session with 1008 (reason
+  `the message stalled`). A streamed message that fills the pipe on a channel that has no
+  flow control (an HTTP/1.1 upgrade, a Unix socket) closes the session with 1009 (reason
+  `the handler reads too slowly`). On HTTP/2 the pipe has no cap: the credit of the
+  octets of a pipe returns as the handler reads them, so a slow handler slows its own
+  stream only. `Validate` requires `InboundPipeBytes` of at least `InlineLimit` plus
+  `MaxFrameSize`.
+- A streamed message counts once in `QueuedMessages` and in the message bucket, and it
+  charges `MaxWsQueuedBytes` with `InboundPipeBytes` from its start until its handler
+  returns. With the default 128 MiB budget about 128 streamed messages can run at once; a
+  program with more raises `MaxWsQueuedBytes` or lowers `InboundPipeBytes`. A program that
+  streams a message over 64 MiB raises `MaxFragments` with `MaxMessageSize`.
+- When a message starts to stream, the credit that the `QueuedMessages` hold rule kept for
+  its inline octets is given back. A streamed message whose pipe was aborted before its
+  handler started (a Close frame between its fragments) is no longer given to the handler.
+  `wcBytesIn` counts the octets of a streamed message as they arrive, so it agrees with
+  `wcMessagesIn` for a message that is aborted.
+- A read that waits when the last octet or the end arrives at the stall deadline no longer
+  reports the message as stalled.
+- The stall deadline covers a blocked `Read` only. A handler that blocks outside `Read`
+  holds its pool thread, and on a channel without flow control the session closes with
+  1009 when the pipe fills.
+- The end of a session aborts the pipe of a message that still arrives, before the
+  streaming pool stops.
+- **Behavior change.** `IWsSession.SendStream` sends each chunk of the writer as one
+  fragment of the message, and it returns at once. A full channel parks the stream
+  until the channel drains. While a stream runs, `Send` and `SendStream` return
+  `srFull`. `MaxMessageSize` limits one chunk, not the whole streamed message.
+- A `SendStream` that a pending channel refuses (for example from `Init`) wakes at once
+  when `Activate` has moved the held bytes. It no longer waits for the park timer.
+- `SendStream` releases a writer that it refuses with `srFull` or `srClosed`. Before,
+  a writer that the caller made in the call leaked.
+- `SendStream` runs a writer that supports `IBodyProducer`, for example the writer of
+  `BodyWriterFromStream`, with `Produce` on one streaming pool thread. Each chunk of the
+  producer is one fragment, and the last chunk has the FIN bit. A producer that writes
+  nothing sends one empty text or binary frame with FIN. When the channel is full, the
+  `Write` of the producer blocks until the channel drains, until a poll of 250
+  milliseconds finds room, or until the session ends. The end of the session raises
+  `EStreamCancelled` in the next `Write` that fills a chunk, or at the end of the
+  producer, and the handler gets no `Failed` for it. A producer that raises fails the
+  session once, with `Failed` and one Close frame with code 1011. A producer holds one
+  streaming pool thread while it runs, so an application that streams with producers sets
+  `StreamPoolSize` above the number of producers that can run at the same time. New unit:
+  `Http2.Server.WebSocket.Pump.Producer`.
+- New option `TWsOptions.WithOutboundStallMs` (default 30000, at least 1). When the channel
+  refuses one fragment of a producer for that time, the session closes with 1008 (reason
+  `the send stalled`) and the producer ends with `EStreamCancelled`. A peer that keeps its
+  connection open and reads nothing can no longer hold a streaming pool thread for ever.
+- While a producer runs, the replies to a Ping go out between its fragments, so a reply
+  that the IO thread deferred does not wait until the producer ends.
+- The sink of a producer keeps its first failure, and skips a call with no octets that is
+  not the last call. A producer that catches the failure of the sink and writes on can no
+  longer complete a message with a missing fragment: the session fails.
+
+  ```pascal
+  procedure TRows.WriteRows(const AOut: TStream);
+  begin
+    // each Write blocks while the channel is full
+    AOut.WriteBuffer(Row1[1], Length(Row1));
+    AOut.WriteBuffer(Row2[1], Length(Row2));
+  end;
+
+  ASession.SendStream(BodyWriterFromStream(Rows.WriteRows), True);
+  ```
+
+### Client
+
+- The reader helpers of `Http2.Client.Readers` (`ReadJsonObject`, `ReadJsonData`,
+  `ReadXmlDocument` and the classes `TJsonObjectReader`, `TJsonReader<T>` and
+  `TXmlDocumentReader`) and `ReadText` of `Http2.Client` are wrappers over the common
+  units of `Http2.Common.Body`. Their names and signatures do not change. A body that
+  does not parse still raises `EHttpProtocolError` with `ecProtocolError`, and the text
+  of the message does not change. `ReadXmlDocument` parses the body as it arrives. The
+  send helpers `WithJsonBody`, `WithJsonText` and `WithXmlBody` keep their behavior: the
+  body stays one text, so the request has a known length and a 307 or 308 redirect can
+  replay it. See `doc/design/common/formats.md`.
+- The HTTP/1.1 client sends a request body from an `IBodyWriter` chunk by chunk, with
+  chunked transfer coding. It no longer holds the whole body in memory. The other
+  `IBodyWriter` paths already stream: the server response, the server WebSocket stream
+  and the HTTP/2 client upload. This release adds tests for them.
+- The client sends a request body from a producer. `BodyWriterFromStream` in
+  `Http2.Common.Body.Producers` makes an `IBodyWriter` from a method that writes to a
+  `TStream`, and `BodyWriterFromTextWriter` does the same for a `TStreamWriter`. The
+  thread of the call runs the producer, on HTTP/2 and on HTTP/1.1. Each chunk goes out
+  when the producer writes it. A producer that raises ends the call with its exception:
+  the HTTP/2 stream is reset with `CANCEL`, and the HTTP/1.1 connection is not reused. A
+  cancelled call raises `EHttpStreamError` in the producer's `Write`. A request with a
+  producer body is not replayed on a 307 or 308 redirect. See
+  `doc/design/client/messages.md`.
+
+  ```pascal
+  Response := Client.Send(THttpRequest.Create(hmPost, Url)
+    .WithHeader('content-type', 'application/xml')
+    .WithBodyWriter(BodyWriterFromStream(Uploader.Write)));
+  ```
+- **Behavior change.** A read of a response body after its end returns 0. It no longer
+  raises `EHttpStreamError`. Every later read also returns 0. A read loop ends at the
+  first 0, as before. A caller that caught `EHttpStreamError` for this case gets no
+  exception now.
+
+  Old code, a second read after the end raised:
+
+  ```pascal
+  N := Body.Read(Buf, SizeOf(Buf));   // 0: the end
+  try
+    Body.Read(Buf, SizeOf(Buf));      // raised EHttpStreamError
+  except
+    on EHttpStreamError do ;
+  end;
+  ```
+
+  New code, both reads return 0:
+
+  ```pascal
+  N := Body.Read(Buf, SizeOf(Buf));   // 0: the end
+  N := Body.Read(Buf, SizeOf(Buf));   // 0, no exception
+  ```
+
+- **Breaking change of the API.** `IHttpBodyStream` extends `IBodyReader` and so has
+  `ReadChunk(const ABuffer: TStream): Boolean`. `Read` and `Eof` keep their shape. A unit
+  that implements `IHttpBodyStream` must give `ReadChunk` too. The easy way is to derive
+  its class from `TBodyReaderBase` in `Http2.Common.Body` and to mark its `Read` as
+  `override`.
+
+  Old shape of a body class:
+
+  ```pascal
+  TMyBody = class(TInterfacedObject, IHttpBodyStream)
+  public
+    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Eof: Boolean;
+  end;
+  ```
+
+  New shape of the same class:
+
+  ```pascal
+  TMyBody = class(TBodyReaderBase, IHttpBodyStream)
+  public
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
+    function Eof: Boolean;
+  end;
+  ```
+
+- New function `WithCookies(ARequest, ACookies: TParameters)` in the unit
+  `Http2.Client.Cookies`. It adds one `cookie` field with the pairs of the map. An empty
+  map adds no field. The client messages document has a section on cookies.
+
+### Server
+
+- **Breaking change of the API.** `IServerRequest.ReadChunk` takes a `TStream` in place
+  of an `out TBytes`: `function ReadChunk(const ABuffer: TStream): Boolean`. The request
+  now extends `IBodyReader`, which declares `ReadChunk`. `ReadChunk` appends the next
+  buffered chunk to the stream that the caller gives. It blocks while the buffer is
+  empty and the body has not ended, as `Read` does, and it raises `EHttpTimeout` at the
+  read timeout. Before, it answered True with no octet while the buffer was empty.
+  A False answer writes no octet, and the end repeats on each later call.
+
+  Old shape of a handler that reads the body in chunks:
+
+  ```pascal
+  procedure TEchoHandler.Handle(const ARequest: IServerRequest;
+    const AResponse: IServerResponse);
+  var
+    Chunk: TBytes;
+  begin
+    AResponse.SendHeaders(200, nil, False);
+    while ARequest.ReadChunk(Chunk) do
+      AResponse.Write(Chunk);
+    AResponse.Finish;
+  end;
+  ```
+
+  New shape of the same handler. The loop keeps the octets of a call that returns
+  False, because the last chunk can come with that answer. It sends each chunk at
+  once, so the handler never holds the whole body:
+
+  ```pascal
+  procedure TEchoHandler.Handle(const ARequest: IServerRequest;
+    const AResponse: IServerResponse);
+  var
+    Buf: TChunkBuffer;
+    More: Boolean;
+  begin
+    AResponse.SendHeaders(200, nil, False);
+    Buf := TChunkBuffer.Create;
+    try
+      repeat
+        Buf.Reset;
+        More := ARequest.ReadChunk(Buf);
+        if Buf.Size > 0 then
+          AResponse.Write(ChunkBytes(Buf));
+      until not More;
+    finally
+      Buf.Free;
+    end;
+    AResponse.Finish;
+  end;
+  ```
+
+  A handler that needs the whole body can call `Body := ReadAllBody(ARequest)`
+  instead.
+
+- **New.** A response body can be a producer. A producer writes to a `TStream`, and
+  `BodyWriterFromStream` (in `Http2.Common.Body.Producers`) makes the body from it. The
+  response runs the producer on the handler thread, when `Finish` runs (HTTP/2) or when
+  `SetBodyWriter` runs (HTTP/1.1). Each `Write` of the producer blocks while the outbound
+  buffer is full, so a producer writes a body of any size with bounded memory. An
+  exception of the producer passes to the handler. A writer that is not a producer works
+  as before. `TCompressingBodyWriter` over a producer is a producer too, so the coded body
+  streams. An example is `examples/server/xml_stream.pas`:
+
+  ```pascal
+  procedure TXmlHandler.Handle(const ARequest: IServerRequest;
+    const AResponse: IServerResponse);
+  var
+    Producer: TXmlDocumentProducer;
+  begin
+    Producer := TXmlDocumentProducer.Create(cItemCount);
+    try
+      AResponse.SendHeaders(200, ContentTypeHeaders('application/xml'), False);
+      AResponse.SetBodyWriter(BodyWriterFromStream(Producer.Write));
+      AResponse.Finish;
+    finally
+      Producer.Free;
+    end;
+  end;
+  ```
+
+### Common
+
+- New constants for header names and status codes. `Http2.Common.Headers` (and
+  `Http2.Common`) gain 29 header names, among them `HeaderEtag`, `HeaderVary`,
+  `HeaderDate`, `HeaderRange`, `HeaderOrigin`, `HeaderRetryAfter`, `HeaderUpgrade` and the
+  five `HeaderSecWebSocket*` fields. The new unit `Http2.Common.Status` names the HTTP
+  status codes (`HttpStatusOk`, `HttpStatusNotFound`, `HttpStatusServiceUnavailable` and
+  the others of RFC 9110 section 15, with 428, 429, 431, 451 and 511). The additions are
+  not breaking; no existing name changes.
+- New format helpers over `IBodyReader` and `IBodyWriter`, in four units. The units
+  `Http2.Common.Body.Text` (`ReadText`, `TextBodyWriter`), `Http2.Common.Body.Json`
+  (`ParseJson`, `ReadJson`, `ReadJsonObject`, `JsonBodyWriter`) and
+  `Http2.Common.Body.Xml` (`ParseXml`, `ReadXml`, `XmlBodyWriter`) read and write a
+  body. The unit `Http2.Common.Body.Streams` holds `TReaderStream`, a read-only stream
+  over a reader with a pushback, and the base class `TSerializedBodyWriter`. A format
+  error raises `EBodyFormatError`, declared in `Http2.Common.Body`. The JSON and XML
+  units are separate, so a program that does not use them does not link fcl-json or
+  fcl-xml. The XML reader parses the body as its octets arrive. The JSON reader reads
+  the whole body first, because fcl-json needs the whole text. See
+  `doc/design/common/formats.md`.
+- The server example `examples/server/json_echo.pas` reads a JSON request with
+  `ReadJson` and answers with `JsonBodyWriter`. The server library is unchanged.
+- A program that uses both `Http2.Client` and `Http2.Common.Body.Text` gets an
+  ambiguous `ReadText`. The program qualifies the name of one of them.
+- **Breaking change of the API.** `IBodyWriter.NextChunk` takes a `TStream` in place of
+  an `out TBytes`: `function NextChunk(const ABuffer: TStream): Boolean`. The library
+  passes one reusable `TChunkBuffer`, so a long body makes no allocation for each
+  chunk. The client and the server share this one interface, declared in
+  `Http2.Common.Body`. The names `Http2.Client.IBodyWriter` and
+  `Http2.Server.IBodyWriter` stay as aliases of it. A writer that has a `TBytes`
+  appends it with `ChunkAppend`. A call that returns False and writes octets sends
+  those octets as the last chunk, and then the body ends.
+
+  Old shape of a small writer:
+
+  ```pascal
+  function TGreeting.NextChunk(out ABuffer: TBytes): Boolean;
+  begin
+    Result := not FSent;
+    if Result then
+      ABuffer := BytesOf('hello');
+    FSent := True;
+  end;
+  ```
+
+  New shape of the same writer:
+
+  ```pascal
+  function TGreeting.NextChunk(const ABuffer: TStream): Boolean;
+  begin
+    Result := not FSent;
+    if Result then
+      ChunkAppend(ABuffer, BytesOf('hello'));
+    FSent := True;
+  end;
+  ```
+
+- New interface `IBodyReader` in `Http2.Common.Body`, the inbound partner of
+  `IBodyWriter`. `ReadChunk(const ABuffer: TStream): Boolean` appends the next chunk to
+  the buffer. `Read` gives the octets of the body. The end of a body repeats on each
+  later call. The base class `TBodyReaderBase` gives `ReadChunk` for a class that has
+  `Read`. The helpers `ReadAllBody` and `CopyBody` read a body to its end. The new
+  exceptions `EBodyTooLarge` and `EBodyFormatError` derive from `Exception`. The change
+  adds to the API only. No existing routine changes.
+- **Change of the interface `IBodyReader`.** `IBodyReader` gains two methods:
+  `GetStream: TStream` gives a read-only, non-seekable stream over the body, and
+  `GetStreamReader: TStreamReader` (the class of the FCL unit `streamex`) gives a text
+  reader over that stream. The caller owns both results and frees them. The stream is
+  for one pass, and it holds a reference to the reader. The class `TBodyReaderBase`
+  gives both methods, so a class that derives from it needs no change. A class that
+  implements `IBodyReader` without `TBodyReaderBase` adds the two methods, each as a
+  one-line delegate:
+
+  ```pascal
+  function TMyReader.GetStream: TStream;
+  begin
+    Result := BodyStream(Self);
+  end;
+
+  function TMyReader.GetStreamReader: TStreamReader;
+  begin
+    Result := BodyStreamReader(Self);
+  end;
+  ```
+
+  A class that lists a descendant interface, such as `IServerRequest`, casts itself to
+  that interface: `BodyStream(Self as IServerRequest)`. The class `TReaderStream` moved
+  to `Http2.Common.Body`. The unit `Http2.Common.Body.Streams` keeps the name as an
+  alias. The common library now uses the unit `streamex`, which the FCL package holds.
+
+- New cookie types and helpers in `Http2.Common.Cookie`: the advanced record
+  `THttpCookie` (`Parse`, `TryParse`, `ToString`, and the `With` methods that give a
+  changed copy), `GetCookies`, `GetSetCookies`, `ParseCookies`, `CookieHeaderValue`,
+  and `AddSetCookie`. `FormatHttpDate` and `TryParseHttpDate` give the HTTP-date
+  formats of RFC 9110 section 5.6.7. See the document `doc/design/common/cookies.md`.
+- New record `TParameters` in `Http2.Common.Parameters`: a case-sensitive map of a
+  name to its values, in insertion order. A copy of the record shares the map, and
+  `Copy` gives an independent map. The cookie helpers use it. The document describes the
+  sharing rule.
+- The rules of `THttpCookie.Parse`: an attribute with an unknown name or a malformed value
+  is ignored, as RFC 6265 section 5.2 says. A name that is not a token, or a value with
+  a forbidden octet, raises `EBodyFormatError`.
+- New producers: code that writes to a `TStream` or a `TStreamWriter` becomes the body of
+  an `IBodyWriter`. It streams, and it needs no thread of its own. The interfaces
+  `IBodyChunkSink` (the place that gets the chunks; a `Chunk` call blocks for backpressure)
+  and `IBodyProducer` (`Produce` runs the producer on the calling thread) are declared in
+  `Http2.Common.Body`. The new unit `Http2.Common.Body.Producers` holds the factories
+  `BodyWriterFromStream` and `BodyWriterFromTextWriter`, the producer stream
+  `TProducerStream`, and a buffered fallback for a caller that pulls the writer with
+  `NextChunk`. The stream keeps one chunk back, so the last chunk has `ALast` True. The
+  change adds to the API only. See `doc/design/common/body.md`, section "Producers".
+
+  Example of a stream producer:
+
+  ```pascal
+  procedure TReport.WriteBody(const AOut: TStream);
+  begin
+    WriteXML(FDocument, AOut);
+  end;
+
+  Writer := BodyWriterFromStream(Report.WriteBody);
+  ```
+
+  Example of a text producer. A nil encoding gives UTF-8 without a byte order mark:
+
+  ```pascal
+  procedure TGreeting.WriteBody(const AOut: TStreamWriter);
+  begin
+    AOut.WriteLine('hello');
+    AOut.Write('world');
+  end;
+
+  Writer := BodyWriterFromTextWriter(Greeting.WriteBody);
+  ```
+
 ## 0.32.0 — 2026-11-16 (source release)
 
 - This release is a source release. It has no binary artifacts.

@@ -35,7 +35,7 @@ uses
   SysUtils, Classes, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Tls, Http2.Client.Stream, Http2.Client.Messages,
   Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.Http1.Body,
-  Http2.Client.Tls.Types;
+  Http2.Client.Tls.Types, Http2.Common.Body;
 
 const
   /// ceiling for the whole response head (status line + all header fields),
@@ -114,7 +114,13 @@ type
     FHeaders: IHttpHeaders;
     FSendRequest: TStreamRequest;
     FSentBodyBytes: Int64;
-    procedure WriteAll(const ABytes: TBytes);
+    procedure WriteAll(const ABytes: TBytes); overload;
+    procedure WriteAll(const ABuffer; const ACount: Integer); overload;
+    /// pull the chunks of AWriter and write each one as it comes (D16, D18, D19)
+    // - a producer body (IBodyProducer) runs on this thread and writes each chunk
+    //   through a sink; ACancel is checked at each chunk
+    procedure WriteChunkedBody(const AWriter: IBodyWriter;
+      const ACancel: ICancellationToken);
     function GetReaderBuffered: Integer;
   public
     constructor Create(const ASocket: IHttp2Socket;
@@ -158,9 +164,15 @@ type
     property RequestCount: Integer read FRequestCount;
   end;
 
-/// build the wire bytes of ARequest: request line, exactly one Host header,
-/// the regular headers, a body framing header (content-length or chunked), and
-/// the body itself.
+/// build the head of ARequest: request line, exactly one Host header, the
+/// regular headers, a body framing header (content-length or chunked) and the
+/// blank line.  The body is not part of the result.
+function BuildHttp1Head(const ARequest: TStreamRequest): TBytes;
+
+/// build the whole wire bytes of ARequest: the head (BuildHttp1Head) and the
+/// body.  For a BodyWriter request the chunks are pulled into one array.
+// - this is for the tests only: production code does not call it for a
+//   BodyWriter request; THttp1Connection streams those chunks (WriteChunkedBody)
 function BuildHttp1Request(const ARequest: TStreamRequest): TBytes;
 
 /// parse "HTTP/1.1 200 OK" into version, 3-digit status code and reason (the
@@ -302,15 +314,21 @@ end;
 
 { request build / response parse }
 
-function BuildHttp1Request(const ARequest: TStreamRequest): TBytes;
+/// append the chunk framing of ABody to AWire at its position: the size line,
+/// the data and the CRLF.  ABody must not be empty (D18).
+procedure AppendChunk(const ABody, AWire: TChunkBuffer);
+begin
+  ChunkAppend(AWire, BytesOf(IntToHex(ABody.Size, 1) + cCrLf));
+  AWire.WriteBuffer(ABody.Memory^, ABody.Size);
+  ChunkAppend(AWire, BytesOf(cCrLf));
+end;
+
+function BuildHttp1Head(const ARequest: TStreamRequest): TBytes;
 var
   Head: string;
   Names, Vals: TArray<string>;
-  BodyBytes: TBytes;
   GenerateLength, GenerateChunked: Boolean;
-  Host, Value, Chunk: string;
-  Writer: IBodyWriter;
-  Ch, All: TBytes;
+  Host, Value: string;
   I, J: Integer;
 begin
   if not IsValidTargetPart(ARequest.Path) then
@@ -359,37 +377,45 @@ begin
     end;
   end;
 
-  All := nil;
   if GenerateLength then
-  begin
-    BodyBytes := ARequest.Body.Data;
-    Head := Head + 'Content-Length: ' + IntToStr(Length(BodyBytes)) + cCrLf;
-    Head := Head + cCrLf;
-    All := ConcatBytes(BytesOf(Head), BodyBytes);
-  end
+    Head := Head + 'Content-Length: ' + IntToStr(Length(ARequest.Body.Data)) +
+      cCrLf
   else if GenerateChunked then
-  begin
     Head := Head + 'Transfer-Encoding: chunked' + cCrLf;
-    Head := Head + cCrLf;
-    All := BytesOf(Head);
-    Writer := ARequest.BodyWriter;
-    while Writer.NextChunk(Ch) do
-    begin
-      if Length(Ch) = 0 then
-        Continue;   // a zero-length chunk would look like the terminator
-      Chunk := IntToHex(Integer(Length(Ch)), 1) + cCrLf;
-      All := ConcatBytes(All, BytesOf(Chunk));
-      All := ConcatBytes(All, Ch);
-      All := ConcatBytes(All, BytesOf(cCrLf));
-    end;
-    All := ConcatBytes(All, BytesOf('0' + cCrLf + cCrLf));
-  end
-  else
-  begin
-    Head := Head + cCrLf;
-    All := BytesOf(Head);
+  Head := Head + cCrLf;
+  Result := BytesOf(Head);
+end;
+
+function BuildHttp1Request(const ARequest: TStreamRequest): TBytes;
+var
+  Writer: IBodyWriter;
+  Body, Wire: TChunkBuffer;
+  More: Boolean;
+begin
+  Result := BuildHttp1Head(ARequest);
+  if ARequest.Body.IsSet then
+    Exit(ConcatBytes(Result, ARequest.Body.Data));
+  if ARequest.BodyWriter = nil then
+    Exit;
+  // a linear build: each chunk is appended to one buffer (no join per chunk)
+  Writer := ARequest.BodyWriter;
+  Body := TChunkBuffer.Create;
+  Wire := TChunkBuffer.Create;
+  try
+    ChunkAppend(Wire, Result);
+    repeat
+      Body.Reset;
+      // the octets of the call that returns False are the last chunk (D22)
+      More := Writer.NextChunk(Body);
+      if Body.Size > 0 then   // a zero-length chunk would look like the terminator
+        AppendChunk(Body, Wire);
+    until not More;
+    ChunkAppend(Wire, BytesOf('0' + cCrLf + cCrLf));
+    Result := ChunkBytes(Wire);
+  finally
+    Wire.Free;
+    Body.Free;
   end;
-  Result := All;
 end;
 
 procedure ParseStatusLine(const ALine: string; out AVersion: string;
@@ -529,24 +555,148 @@ begin
 end;
 
 procedure THttp1Connection.WriteAll(const ABytes: TBytes);
+begin
+  if Length(ABytes) > 0 then
+    WriteAll(ABytes[0], Length(ABytes));
+end;
+
+procedure THttp1Connection.WriteAll(const ABuffer; const ACount: Integer);
 var
   Ofs, N: Integer;
+  P: PByte;
 begin
+  P := @ABuffer;
   Ofs := 0;
-  while Ofs < Length(ABytes) do
+  while Ofs < ACount do
   begin
-    N := FSocket.Write(ABytes[Ofs], Length(ABytes) - Ofs);
+    N := FSocket.Write(P[Ofs], ACount - Ofs);
     if N <= 0 then
       raise EHttpConnectionClosed.Create('HTTP/1.1 request write failed');
     Inc(Ofs, N);
   end;
 end;
 
+/// the sink of an HTTP/1.1 upload from a producer (D24, D25)
+// - each Chunk is one chunked-coding frame: the size line, the data and the CRLF in one write
+// - ALast also writes the last-chunk marker and the empty trailer
+// - a cancelled token raises EHttpStreamError with ecCancel before the chunk is written
+type
+  THttp1UploadSink = class(TInterfacedObject, IBodyChunkSink)
+  private
+    FConn: THttp1Connection;
+    FCancel: ICancellationToken;
+    FWire: TChunkBuffer;
+    FEnded: Boolean;
+  public
+    constructor Create(const AConn: THttp1Connection; const ACancel: ICancellationToken);
+    destructor Destroy; override;
+    procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+    /// True once the last chunk went to the socket
+    property Ended: Boolean read FEnded;
+  end;
+
+constructor THttp1UploadSink.Create(const AConn: THttp1Connection;
+  const ACancel: ICancellationToken);
+begin
+  inherited Create;
+  FConn := AConn;
+  FCancel := ACancel;
+  FWire := TChunkBuffer.Create;
+  FEnded := False;
+end;
+
+destructor THttp1UploadSink.Destroy;
+begin
+  FWire.Free;
+  inherited Destroy;
+end;
+
+procedure THttp1UploadSink.Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+begin
+  if (FCancel <> nil) and FCancel.IsCancelled then
+    raise EHttpStreamError.Create('request cancelled', 0, ecCancel);
+  // a call without octets that is not the last one would look like the terminator (D18)
+  if ACount > 0 then
+  begin
+    FWire.Reset;
+    ChunkAppend(FWire, BytesOf(IntToHex(ACount, 1) + cCrLf));
+    FWire.WriteBuffer(ABuffer, ACount);
+    ChunkAppend(FWire, BytesOf(cCrLf));
+    FConn.WriteAll(FWire.Memory^, FWire.Size);
+    Inc(FConn.FSentBodyBytes, FWire.Size);
+  end;
+  if ALast then
+  begin
+    FConn.WriteAll(BytesOf('0' + cCrLf + cCrLf));
+    Inc(FConn.FSentBodyBytes, 5);
+    FEnded := True;
+  end;
+end;
+
+procedure THttp1Connection.WriteChunkedBody(const AWriter: IBodyWriter;
+  const ACancel: ICancellationToken);
+var
+  Body, Wire: TChunkBuffer;
+  More: Boolean;
+  Producer: IBodyProducer;
+  Sink: IBodyChunkSink;
+  Obj: THttp1UploadSink;
+  NoData: Byte;
+begin
+  if Supports(AWriter, IBodyProducer, Producer) then
+  begin
+    Obj := THttp1UploadSink.Create(Self, ACancel);
+    Sink := Obj;
+    try
+      Producer.Produce(Sink);
+      // a producer that ends without ALast still ends the body
+      if not Obj.Ended then
+      begin
+        NoData := 0;
+        Sink.Chunk(NoData, 0, True);
+      end;
+    except
+      // D19: a producer that raises leaves the chunked body open, so the connection is not reused
+      FReusable := False;
+      raise;
+    end;
+    Exit;
+  end;
+  Body := TChunkBuffer.Create;
+  Wire := TChunkBuffer.Create;
+  try
+    try
+      repeat
+        Body.Reset;
+        // the octets of the call that returns False are the last chunk (D22)
+        More := AWriter.NextChunk(Body);
+        if Body.Size > 0 then
+        begin
+          // the size line, the data and the CRLF leave in one write
+          Wire.Reset;
+          AppendChunk(Body, Wire);
+          WriteAll(Wire.Memory^, Wire.Size);
+          Inc(FSentBodyBytes, Wire.Size);
+        end;   // a zero-length chunk would look like the terminator (D18)
+      until not More;
+      WriteAll(BytesOf('0' + cCrLf + cCrLf));
+      Inc(FSentBodyBytes, 5);
+    except
+      // D19: a half-written body desynchronizes the connection, so it is not
+      // reused; the pool closes it when the exception reaches its Acquire
+      FReusable := False;
+      raise;
+    end;
+  finally
+    Wire.Free;
+    Body.Free;
+  end;
+end;
+
 function THttp1Connection.BeginResponse(const ARequest: TStreamRequest): Boolean;
 var
   Line: string;
-  Wire: TBytes;
-  I: Integer;
+  Body: TBytes;
 begin
   // one request in flight at a time: the previous body must be drained
   if (FLastBody <> nil) and (not FLastBody.Eof) then
@@ -557,21 +707,19 @@ begin
       'HTTP/1.1 connection cannot be reused (Connection: close or EOF body)',
       ecProtocolError);
 
-  Wire := BuildHttp1Request(ARequest);
-  WriteAll(Wire);
+  WriteAll(BuildHttp1Head(ARequest));
   FSentBodyBytes := 0;
-  if ARequest.Exchange <> nil then
+  if ARequest.Body.IsSet then
   begin
-    // the head ends at the first blank line; everything after it is body
-    for I := 0 to Length(Wire) - 4 do
-      if (Wire[I] = 13) and (Wire[I + 1] = 10) and (Wire[I + 2] = 13) and
-         (Wire[I + 3] = 10) then
-      begin
-        FSentBodyBytes := Length(Wire) - (I + 4);
-        Break;
-      end;
+    // the body is in memory by definition: one write
+    Body := ARequest.Body.Data;
+    WriteAll(Body);
+    FSentBodyBytes := Length(Body);
+  end
+  else if ARequest.BodyWriter <> nil then
+    WriteChunkedBody(ARequest.BodyWriter, ARequest.CancelToken);
+  if ARequest.Exchange <> nil then
     ARequest.Exchange.RequestWritten(FSentBodyBytes);
-  end;
   Inc(FRequestCount);
   FSendRequest := ARequest;
   FBeginDone := False;

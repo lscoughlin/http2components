@@ -25,7 +25,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, Generics.Collections,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.StreamPool, Http2.Server.Limits, Http2.Server.Observer,
   Http2.Server.WebSocket.Options, Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames,
   Http2.Server.WebSocket.Parser, Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Environment,
@@ -33,12 +33,14 @@ uses
 
 type
   /// a channel that records what the session does to it
-  TFakeWsChannel = class(TInterfacedObject, IDuplexChannel)
+  TFakeWsChannel = class(TInterfacedObject, IDuplexChannel, IChannelFlow)
   private
     FLock: TCriticalSection;
     FRegistry: IChannelRegistry;
     FHold: TBytes;
     FState: TChannelState;
+    /// the number of Send calls that still return srFull
+    FFullLeft: Integer;
     function SendLocked(const AData: TBytes): TSendResult;
   public
     Sent: TBytes;
@@ -53,10 +55,20 @@ type
     ClosedCount: Integer;
     /// when True, Send refuses and queues nothing
     Full: Boolean;
+    /// when True, Send refuses a data frame (opcode 0 to 2) and takes a control frame
+    FullForData: Boolean;
+    /// when set and not signaled, Send waits for it (10 seconds at most) before it acts;
+    /// SendBlocked counts the callers that waited
+    SendGate: TEvent;
+    SendBlocked: Integer;
+    /// what IChannelFlow answers: True stands for an HTTP/2 stream, whose window slows
+    /// the peer; False, the default, for a channel that returns no credit
+    FlowControl: Boolean;
     /// a lock that stands for the connection lock of a real channel
     // - Send takes it, and Deliver holds it while the sink runs, as the IO
     //   thread does. A test sets it to show a lock-order inversion
     ConnLock: TCriticalSection;
+    function ReturnsCredit: Boolean;
     constructor Create(const ARegistry: IChannelRegistry);
     destructor Destroy; override;
     function Send(const AData: TBytes): TSendResult;
@@ -79,6 +91,11 @@ type
     /// deliver client frames to the session, as an IO thread does
     procedure Deliver(const AData: TBytes);
     procedure DeliverPeerClosed(const AClean: Boolean);
+    /// clear Full, then call WriteDrained on the sink, as the IO thread does
+    // - the call holds ConnLock when it is set, and FLock is not held during the call
+    procedure Drain;
+    /// make the next N calls of Send return srFull, then return to normal
+    procedure SetFullCount(const N: Integer);
   end;
 
   TFakeHandshake = class(TInterfacedObject, IWsHandshake)
@@ -119,7 +136,7 @@ type
     destructor Destroy; override;
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
@@ -188,8 +205,19 @@ begin
   inherited Destroy;
 end;
 
+function TFakeWsChannel.ReturnsCredit: Boolean;
+begin
+  Result := FlowControl;
+end;
+
 function TFakeWsChannel.Send(const AData: TBytes): TSendResult;
 begin
+  // a test holds the caller here, so the send lock of the session stays busy
+  if (SendGate <> nil) and (SendGate.WaitFor(0) <> wrSignaled) then
+  begin
+    InterlockedIncrement(SendBlocked);
+    SendGate.WaitFor(10000);
+  end;
   // a real channel takes the connection lock to write the bytes into the stream
   if ConnLock <> nil then
     ConnLock.Acquire;
@@ -207,7 +235,15 @@ begin
   try
     if FState = csClosed then
       Exit(srClosed);
+    // a counted refusal comes first, then the Full flag
+    if FFullLeft > 0 then
+    begin
+      Dec(FFullLeft);
+      Exit(srFull);
+    end;
     if Full then
+      Exit(srFull);
+    if FullForData and (Length(AData) > 0) and ((AData[0] and $0F) <= WsOpBinary) then
       Exit(srFull);
     if Length(AData) = 0 then
       Exit(srQueued);
@@ -381,6 +417,37 @@ begin
   Sink.PeerClosed(AClean);
 end;
 
+procedure TFakeWsChannel.Drain;
+begin
+  FLock.Acquire;
+  try
+    Full := False;
+  finally
+    FLock.Release;
+  end;
+  if Sink = nil then
+    Exit;
+  // the IO thread of a real channel holds the connection lock while the sink runs
+  if ConnLock <> nil then
+    ConnLock.Acquire;
+  try
+    Sink.WriteDrained;
+  finally
+    if ConnLock <> nil then
+      ConnLock.Release;
+  end;
+end;
+
+procedure TFakeWsChannel.SetFullCount(const N: Integer);
+begin
+  FLock.Acquire;
+  try
+    FFullLeft := N;
+  finally
+    FLock.Release;
+  end;
+end;
+
 { TFakeHandshake }
 
 function TFakeHandshake.Activation(const ASubprotocol: string;
@@ -513,8 +580,10 @@ begin
   Result := InitResult;
 end;
 
-procedure TRecordingHandler.Message(const ASession: IWsSession; const AData: TBytes;
+procedure TRecordingHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
   const AText: Boolean);
+var
+  AData: TBytes;
 begin
   if Gate <> nil then
   begin
@@ -523,6 +592,7 @@ begin
   end;
   if OnMessageSleepMs > 0 then
     Sleep(OnMessageSleepMs);
+  AData := ReadAllBody(AMessage);
   if AText then
     Add('msg T ' + TextOf(AData))
   else
@@ -676,18 +746,38 @@ end;
 
 type
   TDecodeSink = class(TInterfacedObject, IWsReaderSink)
+  private
+    FText: Boolean;
+    FBuf: TBytes;
   public
     Items: TStringList;
-    procedure Message(const AText: Boolean; const AData: TBytes);
+    procedure MessageBegin(const AText: Boolean);
+    procedure MessageData(const AData; const ACount: Integer);
+    procedure MessageEnd;
     procedure Control(const AOpcode: Byte; const AData: TBytes);
   end;
 
-procedure TDecodeSink.Message(const AText: Boolean; const AData: TBytes);
+procedure TDecodeSink.MessageBegin(const AText: Boolean);
 begin
-  if AText then
-    Items.Add('T:' + TextOf(AData))
+  FText := AText;
+  FBuf := nil;
+end;
+
+procedure TDecodeSink.MessageData(const AData; const ACount: Integer);
+var
+  Len: Integer;
+begin
+  Len := Length(FBuf);
+  SetLength(FBuf, Len + ACount);
+  Move(AData, FBuf[Len], ACount);
+end;
+
+procedure TDecodeSink.MessageEnd;
+begin
+  if FText then
+    Items.Add('T:' + TextOf(FBuf))
   else
-    Items.Add('B:' + HexOf(AData));
+    Items.Add('B:' + HexOf(FBuf));
 end;
 
 procedure TDecodeSink.Control(const AOpcode: Byte; const AData: TBytes);

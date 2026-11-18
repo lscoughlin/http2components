@@ -218,6 +218,50 @@ messages. An empty bucket closes the session with 1008 and raises
 `seWsBucketTripped`. The capacities and the refill rates are in `TWsOptions` (see
 [websocket](websocket.md)). A Close frame costs no token.
 
+## WebSocket message sizes
+
+Four settings of `TWsOptions` bound the memory that one inbound message can hold (see
+[websocket](websocket.md)).
+
+| Setting | Default | What it bounds |
+|---|---|---|
+| `MaxMessageSize` | 1048576 | the whole inbound message, over all its fragments; a message over it closes the session with 1009 |
+| `MaxFragments` | 1024 | the frames of one message; with the default `MaxFrameSize` it caps a streamed message at 64 MiB |
+| `InlineLimit` | 65536 | the octets that the reader keeps in memory before it streams the message to the handler |
+| `InboundPipeBytes` | 1048576 | the unread octets of a streamed message on a channel that returns no credit; a push over it closes the session with 1009; at least `InlineLimit` plus `MaxFrameSize` |
+
+`MaxMessageSize` keeps its meaning for a streamed message: it limits the whole message,
+not the part that waits in memory. A program that streams a message larger than the
+default raises `MaxMessageSize`, and it raises `MaxFragments` as well when the message
+needs more than 1024 frames. The memory that one streamed message holds is at most
+`InboundPipeBytes` on a channel that returns no credit (an HTTP/1.1 upgrade, a unix
+socket), and at most the stream window plus `InlineLimit` on HTTP/2. `InboundStallMs`
+bounds the time that a read of a streamed message waits for an octet.
+
+A message that a producer writes with `SendStream` has different limits. `MaxMessageSize`
+limits one chunk of the producer, not the whole message, as it does for a pulled writer.
+The producer stream decides the size of its chunks (the argument `AChunkBytes` of
+`BodyWriterFromStream`, 16384 octets by default), so a chunk size above `MaxMessageSize`
+fails the session with 1011 at the first chunk. `MaxFragments` and the other inbound limits
+do not apply. The memory of the message is one chunk that the producer stream holds, one
+chunk that it holds back, and the encoded fragment that waits for the channel. A full
+channel blocks the `Write` of the producer, so a slow peer does not make the message grow
+in memory. The time that a producer waits for the channel is limited by `OutboundStallMs`
+(default 30000, at least 1): when the channel refuses one fragment for that time, the
+session closes with 1008 and the reason `the send stalled`, and the producer ends with
+`EStreamCancelled`. A drain that leaves the channel full does not restart the time, and a
+fragment that the channel accepts starts a new time for the next one. The producer holds
+one streaming pool thread while it runs (see [threading](threading.md)); the stall time
+bounds that hold when the peer reads nothing, which the tick of the session could not do.
+A producer that is slow in its own code is not limited.
+
+The server-wide budget `MaxWsQueuedBytes` (default 128 MiB) charges `InboundPipeBytes` for
+each streamed message from its start until its handler returns, on every channel kind,
+because the length of the message is not known at its start. With the defaults about 128
+streamed messages can run at the same time. The 129th closes its session with 1008 and the
+reason `the queued bytes of the server are full`. A program with more concurrent streamed
+messages raises `MaxWsQueuedBytes` or lowers `InboundPipeBytes`.
+
 ## Handshake refusals on HTTP/2
 
 A WebSocket handshake that fails a check of `AcceptWebSocket` is answered with an

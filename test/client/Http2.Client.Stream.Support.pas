@@ -31,7 +31,8 @@ interface
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack,
-  Http2.Client.Connection, Http2.Client.Stream, Http2.Client.ConnectionThread.Test;
+  Http2.Common.Body, Http2.Client.Connection, Http2.Client.Stream,
+  Http2.Client.ConnectionThread.Test;
 
 type
   /// pulls a fixed list of chunks then returns False (single-use writer)
@@ -41,7 +42,7 @@ type
     FIndex: Integer;
   public
     constructor Create(const AChunks: array of TBytes);
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
   /// one thread that repeatedly calls Next on a shared allocator
@@ -189,16 +190,14 @@ begin
   FIndex := 0;
 end;
 
-function TChunkWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TChunkWriter.NextChunk(const ABuffer: TStream): Boolean;
 begin
   Result := FIndex <= High(FChunks);
   if Result then
   begin
-    ABuffer := FChunks[FIndex];
+    ChunkAppend(ABuffer, FChunks[FIndex]);
     Inc(FIndex);
-  end
-  else
-    ABuffer := nil;
+  end;
 end;
 
 { TAllocWorker }

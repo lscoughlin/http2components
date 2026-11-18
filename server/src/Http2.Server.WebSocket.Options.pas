@@ -43,10 +43,15 @@ type
     FSubprotocols: TArray<string>;
     FWsEarlyBytes: Integer;
     FWsAllowedHosts: TArray<string>;
+    FInlineLimit: Integer;
+    FInboundPipeBytes: Integer;
+    FInboundStallMs: Integer;
+    FOutboundStallMs: Integer;
   public
     /// the defaults
     class function Create: TWsOptions; static;
-    /// the greatest message, summed over its fragments, in octets
+    /// the greatest message, summed over its fragments, in octets that the server
+    // receives; for a message that SendStream sends it is the greatest chunk
     function WithMaxMessageSize(const AValue: Int64): TWsOptions;
     /// the greatest payload of one frame that the server accepts, in octets
     function WithMaxFrameSize(const AValue: Int64): TWsOptions;
@@ -79,6 +84,19 @@ type
     /// the host names that the allow-list accepts; an empty list turns the
     /// host check off
     function WithWsAllowedHosts(const AValue: TArray<string>): TWsOptions;
+    /// the octets of a message that the server keeps in memory before it gives the
+    /// message to the handler; a message that ends inside the limit goes to the handler
+    /// whole, and a longer message goes to the handler at once and streams
+    function WithInlineLimit(const AValue: Integer): TWsOptions;
+    /// the octets of a streamed message that wait for the handler, at most; a push over
+    /// the limit closes the session with 1009
+    function WithInboundPipeBytes(const AValue: Integer): TWsOptions;
+    /// the time that a read of a streamed message waits for an octet; on expiry the
+    /// session closes with 1008
+    function WithInboundStallMs(const AValue: Integer): TWsOptions;
+    /// the time that a streamed message of SendStream with a producer waits for the channel
+    /// to take one fragment; on expiry the session closes with 1008 and the producer ends
+    function WithOutboundStallMs(const AValue: Integer): TWsOptions;
 
     /// add one text to AProblems for each setting that is not usable
     procedure Problems(var AProblems: TArray<string>);
@@ -99,6 +117,10 @@ type
     property Subprotocols: TArray<string> read FSubprotocols;
     property WsEarlyBytes: Integer read FWsEarlyBytes;
     property WsAllowedHosts: TArray<string> read FWsAllowedHosts;
+    property InlineLimit: Integer read FInlineLimit;
+    property InboundPipeBytes: Integer read FInboundPipeBytes;
+    property InboundStallMs: Integer read FInboundStallMs;
+    property OutboundStallMs: Integer read FOutboundStallMs;
   end;
 
 implementation
@@ -127,6 +149,10 @@ begin
   Result.FSubprotocols := nil;
   Result.FWsEarlyBytes := 262144;
   Result.FWsAllowedHosts := nil;
+  Result.FInlineLimit := 65536;
+  Result.FInboundPipeBytes := 1048576;
+  Result.FInboundStallMs := 30000;
+  Result.FOutboundStallMs := 30000;
 end;
 
 function TWsOptions.WithMaxMessageSize(const AValue: Int64): TWsOptions;
@@ -225,6 +251,30 @@ begin
   Result.FWsAllowedHosts := Copy(AValue);
 end;
 
+function TWsOptions.WithInlineLimit(const AValue: Integer): TWsOptions;
+begin
+  Result := Self;
+  Result.FInlineLimit := AValue;
+end;
+
+function TWsOptions.WithInboundPipeBytes(const AValue: Integer): TWsOptions;
+begin
+  Result := Self;
+  Result.FInboundPipeBytes := AValue;
+end;
+
+function TWsOptions.WithInboundStallMs(const AValue: Integer): TWsOptions;
+begin
+  Result := Self;
+  Result.FInboundStallMs := AValue;
+end;
+
+function TWsOptions.WithOutboundStallMs(const AValue: Integer): TWsOptions;
+begin
+  Result := Self;
+  Result.FOutboundStallMs := AValue;
+end;
+
 procedure TWsOptions.Problems(var AProblems: TArray<string>);
 var
   I, J: Integer;
@@ -269,6 +319,19 @@ begin
       Add('the WebSocket allowed origin "' + FAllowedOrigins[I] + '" is not scheme://host[:port]');
   if (FWsEarlyBytes < 4096) or (FWsEarlyBytes > 16777216) then
     Add('the WebSocket early bytes is outside the range 4096 to 16777216');
+  if (FInlineLimit < 1) or (FInlineLimit > 16777216) then
+    Add('the WebSocket inline limit is outside the range 1 to 16777216');
+  if FInboundPipeBytes < 1 then
+    Add('the WebSocket inbound pipe size is below 1');
+  // the octets that the reader kept move into the pipe when a message streams, and the
+  // first piece follows at once: both must fit before the handler has read an octet
+  if (FInlineLimit >= 1) and (FInboundPipeBytes >= 1) and (FMaxFrameSize >= 1) and
+     (Int64(FInlineLimit) + FMaxFrameSize > FInboundPipeBytes) then
+    Add('the WebSocket inbound pipe size is below the inline limit plus the frame size limit');
+  if FInboundStallMs < 1 then
+    Add('the WebSocket inbound stall time is below 1');
+  if FOutboundStallMs < 1 then
+    Add('the WebSocket outbound stall time is below 1');
   if (FOriginPolicy = opAllowListOnly) and (Length(FAllowedOrigins) = 0) then
     Add('the origin policy allow-list only needs at least one allowed origin');
   for I := 0 to High(FSubprotocols) do

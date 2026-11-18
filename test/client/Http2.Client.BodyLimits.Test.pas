@@ -15,61 +15,61 @@ unit Http2.Client.BodyLimits.Test;
 interface
 
 uses
-  SysUtils, fpcunit, testregistry,
+  SysUtils, SyncObjs, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Messages,
   Http2.Client.Stream, Http2.Client.Body.Limits, Http2.Client.Encoding,
   Http2.Client.BodyReader, Http2.Client.Pool.Types, Http2.Client.Pool.Http1,
   Http2.Client.Http1, Http2.Client.Http1.Test, Http2.Client,
-  Http2.Client.Redirects.Test;
+  Http2.Client.Redirects.Test, Http2.Common.Body;
 
 type
   /// a body of ASize bytes, each one $41 (no allocation of the whole body)
-  TFillBody = class(TInterfacedObject, IHttpBodyStream)
+  TFillBody = class(TBodyReaderBase, IHttpBodyStream)
   private
     FSize: Int64;
     FPos: Int64;
   public
     constructor Create(const ASize: Int64);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
   end;
 
   /// a body that serves a byte array
-  TBytesBody = class(TInterfacedObject, IHttpBodyStream)
+  TBytesBody = class(TBodyReaderBase, IHttpBodyStream)
   private
     FData: TBytes;
     FPos: Integer;
   public
     constructor Create(const AData: TBytes);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
   end;
 
   /// a body that reports a scripted count on each Read: the first Read reports
   /// AFirst and the later Reads report ASecond. The buffer is filled only up
   /// to the smaller of the count and ACount, so a huge count costs no memory.
-  TReportedCountBody = class(TInterfacedObject, IHttpBodyStream)
+  TReportedCountBody = class(TBodyReaderBase, IHttpBodyStream)
   private
     FFirst: LongInt;
     FSecond: LongInt;
     FCalls: Integer;
   public
     constructor Create(const AFirst, ASecond: LongInt);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
     function CallCount: Integer;
   end;
 
   /// a body of ASize bytes, each one $41, that counts its Read calls; each
   /// Read fills at most ACount bytes
-  TCountingBody = class(TInterfacedObject, IHttpBodyStream)
+  TCountingBody = class(TBodyReaderBase, IHttpBodyStream)
   private
     FSize: Int64;
     FPos: Int64;
     FCalls: Integer;
   public
     constructor Create(const ASize: Int64);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
     function CallCount: Integer;
   end;
@@ -111,6 +111,10 @@ type
     procedure TestRatioZeroTurnsTheCapOff;
     procedure TestUnsolicitedCodingIsLeftAlone;
     procedure TestSolicitedCodingIsDecoded;
+    procedure TestLimitedBodyReadChunkGivesTheBody;
+    procedure TestLimitedBodyReadChunkRaisesPastTheLimit;
+    procedure TestDecodingReadChunkGivesTheDecodedBody;
+    procedure TestGuardedBodyReadChunkGivesTheBody;
     procedure TestReadAllBodyBytesGrowsPastTheInitialBuffer;
     procedure TestReadAllBodyBytesRaisesPastTwoGiB;
     procedure TestTypedReaderPassesTheTwoGiBRaise;
@@ -746,6 +750,93 @@ begin
   ReadCount(R.Body, Rejected);
   AssertTrue('the request override applies on HTTP/2', Rejected);
   Client.Close;
+end;
+
+procedure TBodyLimitsTest.TestLimitedBodyReadChunkGivesTheBody;
+var
+  Body: IHttpBodyStream;
+  Chunk: TChunkBuffer;
+begin
+  Body := TLimitedBodyStream.Create(TBytesBody.Create(BytesOf('hello')), 0);
+  Chunk := TChunkBuffer.Create;
+  try
+    AssertTrue('the first chunk carries the body', Body.ReadChunk(Chunk));
+    AssertEquals('the chunk octets', 'hello', StrOf(ChunkBytes(Chunk)));
+    Chunk.Reset;
+    AssertFalse('the end gives False', Body.ReadChunk(Chunk));
+    Chunk.Reset;
+    AssertFalse('the end repeats', Body.ReadChunk(Chunk));
+  finally
+    Chunk.Free;
+  end;
+end;
+
+procedure TBodyLimitsTest.TestLimitedBodyReadChunkRaisesPastTheLimit;
+var
+  Body: IHttpBodyStream;
+  Chunk: TChunkBuffer;
+  Raised: Boolean;
+begin
+  Body := TLimitedBodyStream.Create(TBytesBody.Create(BytesOf('hello')), 4);
+  Chunk := TChunkBuffer.Create;
+  Raised := False;
+  try
+    try
+      Body.ReadChunk(Chunk);
+    except
+      on E: EHttpResponseTooLarge do
+        Raised := True;
+    end;
+    AssertTrue('a chunk past the limit raises', Raised);
+  finally
+    Chunk.Free;
+  end;
+end;
+
+procedure TBodyLimitsTest.TestDecodingReadChunkGivesTheDecodedBody;
+var
+  Body: IHttpBodyStream;
+  Chunk: TChunkBuffer;
+begin
+  Body := TDecodingBodyStream.Create(
+    TBytesBody.Create(GzipCompress(BytesOf('hello'))), ceGzip);
+  Chunk := TChunkBuffer.Create;
+  try
+    AssertTrue('the first chunk carries the decoded body', Body.ReadChunk(Chunk));
+    AssertEquals('the decoded octets', 'hello', StrOf(ChunkBytes(Chunk)));
+    Chunk.Reset;
+    AssertFalse('the end gives False', Body.ReadChunk(Chunk));
+    Chunk.Reset;
+    AssertFalse('the end repeats', Body.ReadChunk(Chunk));
+  finally
+    Chunk.Free;
+  end;
+end;
+
+procedure TBodyLimitsTest.TestGuardedBodyReadChunkGivesTheBody;
+var
+  Lock: TCriticalSection;
+  Body: IHttpBodyStream;
+  Chunk: TChunkBuffer;
+begin
+  Lock := TCriticalSection.Create;
+  try
+    Body := TGuardedBody.Create(TBytesBody.Create(BytesOf('hello')), Lock);
+    Chunk := TChunkBuffer.Create;
+    try
+      AssertTrue('the first chunk carries the body', Body.ReadChunk(Chunk));
+      AssertEquals('the chunk octets', 'hello', StrOf(ChunkBytes(Chunk)));
+      Chunk.Reset;
+      AssertFalse('the end gives False', Body.ReadChunk(Chunk));
+      Chunk.Reset;
+      AssertFalse('the end repeats', Body.ReadChunk(Chunk));
+    finally
+      Chunk.Free;
+    end;
+    Body := nil;
+  finally
+    Lock.Free;
+  end;
 end;
 
 procedure RegisterTests;

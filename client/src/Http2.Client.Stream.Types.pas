@@ -17,7 +17,7 @@ interface
 
 uses
   SysUtils, SyncObjs, Http2.Client.Tls, Http2.Common.Headers,
-  Http2.Common.Frames;
+  Http2.Common.Frames, Http2.Common.Body;
 
 type
   /// the HTTP methods this client sends. The token is uppercased on the
@@ -50,9 +50,8 @@ type
   /// a pulled request body: NextChunk is called until it returns False, at
   /// which point the last emitted DATA frame carries END_STREAM
   /// (doc/design/messages.md "Request and response streaming").
-  IBodyWriter = interface
-    function NextChunk(out ABuffer: TBytes): Boolean;
-  end;
+  // - the interface is declared once, in Http2.Common.Body, and shared with the server
+  IBodyWriter = Http2.Common.Body.IBodyWriter;
 
   /// an in-memory request body; IsSet distinguishes an empty body from none
   THttpBody = record
@@ -163,10 +162,10 @@ type
   end;
 
   /// a response body stream (matches doc/design/messages.md IHttpBodyStream)
-  IHttpBodyStream = interface
-    /// block until bytes are available or END_STREAM is seen. The first Read
-    /// that observes EOF returns 0; a Read after EOF raises EHttpStreamError.
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+  // - Read (inherited from IBodyReader) blocks until bytes are available or
+  //   END_STREAM is seen. The Read that observes EOF returns 0, and every later
+  //   Read returns 0 too (D2): no read after the end raises.
+  IHttpBodyStream = interface(IBodyReader)
     /// true once END_STREAM (or a bodyless response) is observed and buffered
     /// bytes are exhausted
     function Eof: Boolean;

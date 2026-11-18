@@ -105,6 +105,15 @@ function WsEncodeFrame(const AOpcode: Byte; const AFin: Boolean;
 function WsEncodeMessage(const AOpcode: Byte; const AData: TBytes;
   const AFrameSize: Integer): TBytes;
 
+/// the frames of one fragment of a message
+// - AOpcode is text or binary on the first fragment and WsOpContinuation after it
+// - AFin is True on the last fragment only
+// - the payload is split in frames of at most AFrameSize octets; only the last
+//   frame carries FIN, and only when AFin is True
+// - an empty payload gives one frame
+function WsEncodeFragment(const AOpcode: Byte; const AFin: Boolean;
+  const APayload; const ACount: Integer; const AFrameSize: Integer): TBytes;
+
 /// AText cut to at most AMaxOctets octets, on the boundary of a character
 // - a UTF-8 character is never cut in two, so a valid text stays valid
 function WsTruncateUtf8(const AText: RawByteString;
@@ -246,8 +255,8 @@ begin
     Move(Body[0], Result[Length(Head)], Length(Body));
 end;
 
-function WsEncodeMessage(const AOpcode: Byte; const AData: TBytes;
-  const AFrameSize: Integer): TBytes;
+function WsEncodeFragment(const AOpcode: Byte; const AFin: Boolean;
+  const APayload; const ACount: Integer; const AFrameSize: Integer): TBytes;
 var
   Key: TWsMaskKey;
   At, N, Op, Total, Pos: Integer;
@@ -255,11 +264,11 @@ var
   Last: Boolean;
 
   /// the octets of the frame header for a payload of N octets
-  function HeaderSize(const APayload: Integer): Integer;
+  function HeaderSize(const APayloadLength: Integer): Integer;
   begin
-    if APayload <= 125 then
+    if APayloadLength <= 125 then
       Result := 2
-    else if APayload <= 65535 then
+    else if APayloadLength <= 65535 then
       Result := 4
     else
       Result := 10;
@@ -270,15 +279,15 @@ begin
   Key := WsMaskKeyFromLongWord(0);
   if AFrameSize < 1 then
     raise EHttpError.Create('the WebSocket frame size is below 1');
-  if Length(AData) = 0 then
-    Exit(WsEncodeFrame(AOpcode, True, nil, False, Key));
+  if ACount = 0 then
+    Exit(WsEncodeFrame(AOpcode, AFin, nil, False, Key));
   // the size is known first, so the result is allocated once and each frame is
   // written in place: one copy of the payload, whatever the frame size
   Total := 0;
   At := 0;
-  while At < Length(AData) do
+  while At < ACount do
   begin
-    N := Length(AData) - At;
+    N := ACount - At;
     if N > AFrameSize then
       N := AFrameSize;
     Inc(Total, HeaderSize(N) + N);
@@ -287,23 +296,35 @@ begin
   SetLength(Result, Total);
   At := 0;
   Pos := 0;
-  while At < Length(AData) do
+  while At < ACount do
   begin
-    N := Length(AData) - At;
+    N := ACount - At;
     if N > AFrameSize then
       N := AFrameSize;
-    Last := At + N >= Length(AData);
+    Last := At + N >= ACount;
     if At = 0 then
       Op := AOpcode
     else
       Op := WsOpContinuation;
-    Head := WsEncodeHeader(Op, Last, N, False, Key);
+    Head := WsEncodeHeader(Op, Last and AFin, N, False, Key);
     Move(Head[0], Result[Pos], Length(Head));
     Inc(Pos, Length(Head));
-    Move(AData[At], Result[Pos], N);
+    Move((PByte(@APayload) + At)^, Result[Pos], N);
     Inc(Pos, N);
     Inc(At, N);
   end;
+end;
+
+function WsEncodeMessage(const AOpcode: Byte; const AData: TBytes;
+  const AFrameSize: Integer): TBytes;
+var
+  Dummy: Byte;
+begin
+  Dummy := 0;
+  if Length(AData) = 0 then
+    Result := WsEncodeFragment(AOpcode, True, Dummy, 0, AFrameSize)
+  else
+    Result := WsEncodeFragment(AOpcode, True, AData[0], Length(AData), AFrameSize);
 end;
 
 function WsTruncateUtf8(const AText: RawByteString;

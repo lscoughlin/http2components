@@ -30,7 +30,7 @@ interface
 
 uses
   SysUtils, Classes,
-  Http2.Common.Headers, Http2.Client.Messages, Http2.Client.Stream, Http2.Client.RequestObserver, zstream;
+  Http2.Common.Headers, Http2.Common.Body, Http2.Client.Messages, Http2.Client.Stream, Http2.Client.RequestObserver, zstream;
 
 type
   /// the content codings this client understands
@@ -79,7 +79,7 @@ function DeflateDecompress(const AData: TBytes): TBytes;
 // - the compressed bytes are pulled from the inner stream on demand, so a
 ///   large response never has to be held in memory
 type
-  TDecodingBodyStream = class(TInterfacedObject, IHttpBodyStream)
+  TDecodingBodyStream = class(TBodyReaderBase, IHttpBodyStream)
   private
     FInner: IHttpBodyStream;
     FSource: TStream;
@@ -98,7 +98,7 @@ type
       const ACoding: TContentEncoding; const AMaxRatio: Integer = 0;
       const ARatioFloor: Int64 = 1048576);
     destructor Destroy; override;
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
   end;
 
@@ -118,27 +118,14 @@ function WrapDecodingResponse(const AResponse: IHttpResponse;
 implementation
 
 uses
-  Http2.Client.Body.Limits, Http2.Client.Errors;
+  Http2.Client.Body.Limits, Http2.Client.Errors, Http2.Common.Body.Streams;
 
 type
-  /// a non-seekable TStream view of an IHttpBodyStream, with a pushback
-  /// buffer so a caller can inspect the first bytes and put them back
-  TBodyStreamAdapter = class(TStream)
-  private
-    FInner: IHttpBodyStream;
-    FPush: TBytes;
-    FPushPos: Integer;
-    FWireBytes: Int64;
-  public
-    constructor Create(const AInner: IHttpBodyStream);
-    /// the bytes read from the inner stream so far (pushback is not counted)
-    property WireBytes: Int64 read FWireBytes;
-    /// prepend AData to the bytes still to be served
-    // - called once, at construction, with the bytes an inspection consumed
-    procedure PushBack(const AData: TBytes);
-    function Read(var ABuffer; ACount: LongInt): LongInt; override;
-    function Seek(const Offset: Int64; Origin: TSeekOrigin): Int64; override;
-  end;
+  /// a non-seekable TStream view of an IBodyReader, with a pushback buffer
+  // - the class is the common TReaderStream (Http2.Common.Body.Streams)
+  // - the gzip decoder seeks to the footer to check the CRC; the seek is refused,
+  //   and the decoder skips the check, which is what FPC's TGZipDecompressionStream expects
+  TBodyStreamAdapter = TReaderStream;
 
   /// the response wrapper that decodes a body
   // - it forwards IAttemptProgress from the response it wraps, so
@@ -452,58 +439,6 @@ begin
     Result := InflateAll(AData, False, False)
   else
     Result := InflateAll(AData, False, True);
-end;
-
-{ TBodyStreamAdapter }
-
-constructor TBodyStreamAdapter.Create(const AInner: IHttpBodyStream);
-begin
-  inherited Create;
-  FInner := AInner;
-  FPushPos := 0;
-  FWireBytes := 0;
-end;
-
-procedure TBodyStreamAdapter.PushBack(const AData: TBytes);
-begin
-  FPush := Copy(AData, 0, Length(AData));
-  FPushPos := 0;
-end;
-
-function TBodyStreamAdapter.Read(var ABuffer; ACount: LongInt): LongInt;
-var
-  P: PByte;
-  Got, Take, Room: LongInt;
-begin
-  Result := 0;
-  if ACount <= 0 then
-    Exit;
-  P := @ABuffer;
-  // serve the pushback first
-  while (FPushPos < Length(FPush)) and (Result < ACount) do
-  begin
-    P[Result] := FPush[FPushPos];
-    Inc(FPushPos);
-    Inc(Result);
-  end;
-  if Result >= ACount then
-    Exit;
-  Take := ACount - Result;
-  Got := FInner.Read(P[Result], Take);
-  if Got > 0 then
-  begin
-    Inc(Result, Got);
-    Inc(FWireBytes, Got);
-  end;
-end;
-
-function TBodyStreamAdapter.Seek(const Offset: Int64;
-  Origin: TSeekOrigin): Int64;
-begin
-  // The gzip decoder seeks to the footer to check the CRC. A body is not
-  // seekable, so the seek is refused and the decoder skips the check, which
-  // is what FPC's TGZipDecompressionStream expects.
-  raise EStreamError.Create('the response body is not seekable');
 end;
 
 { TDecodingBodyStream }

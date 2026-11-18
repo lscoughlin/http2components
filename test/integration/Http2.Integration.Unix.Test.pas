@@ -28,7 +28,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, process, SyncObjs, fpcunit, testregistry,
-  Http2.Common, Http2.Client, Http2.Client.Sse, Http2.Server,
+  Http2.Common.Body, Http2.Common, Http2.Client, Http2.Client.Sse, Http2.Server,
   Http2.OpenSSL, Http2.Client.Messages, Http2.Client.Stream,
   Http2.Client.Tls, Http2.Server.Unix.TestKit;
 
@@ -74,7 +74,7 @@ type
   public
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
@@ -260,10 +260,10 @@ begin
   Result := TWsInitResult.AcceptedWith('echo');
 end;
 
-procedure TUnixEcho.Message(const ASession: IWsSession; const AData: TBytes;
+procedure TUnixEcho.Message(const ASession: IWsSession; const AMessage: IBodyReader;
   const AText: Boolean);
 begin
-  ASession.Send(AData, AText);
+  ASession.Send(ReadAllBody(AMessage), AText);
 end;
 
 procedure TUnixEcho.Pong(const ASession: IWsSession; const AData: TBytes);

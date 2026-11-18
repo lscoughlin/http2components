@@ -85,6 +85,13 @@ Body headers: a `303` redirect, and a `301` or `302` redirect for a method other
 than GET or HEAD, drop the body. Those hops also drop `content-length`,
 `content-type` and `content-encoding`.
 
+Replay: a `307` or `308` redirect replays the body. A body from an `IBodyWriter`
+cannot be replayed, and the client raises `EHttpNotReplayable`. A producer body is
+an `IBodyWriter`, so a request with a producer body raises `EHttpNotReplayable` on a
+`307` or `308` redirect too. The producer runs once. It does not run again for the
+redirect. A body held in memory (`WithBody`, `WithTextBody`, `WithJsonBody`,
+`WithXmlBody`) is replayed.
+
 The default policy is `rpAnyHost`. It follows a redirect to any host. The only
 protection in that default is the removal of the credential headers on a change
 of origin. A caller that sends secrets in another header selects
@@ -135,10 +142,33 @@ type
   `COMPRESSION_ERROR`, settings error) fail all in-flight leases.
 - **Stream errors** (`ftRstStream` or stream-level protocol error) fail only
   that lease.
+- **Read after the end:** a read of a response body after its end returns 0.
+  The read does not raise `EHttpStreamError`, and every later read also returns
+  0 (see [messages](messages.md)).
+- **Writer failures:** when `NextChunk` of an `IBodyWriter` raises during an
+  HTTP/1.1 upload, the connection closes. A chunked body that stops in the middle
+  leaves the connection out of step, so the connection is never reused. The
+  exception of the writer is raised to the caller of `Send`.
+- **Producer failures:** when a producer body (see [messages](messages.md),
+  "Request body from a producer") raises, the exception passes to the caller of
+  `Send` unchanged. On HTTP/2 the stream is reset with `RST_STREAM(CANCEL)`, and
+  the call ends. On HTTP/1.1 the connection is not reused, as for a writer.
+  When the peer ends or resets the upload first, the next `Write` of the producer
+  stops, and the call goes on to read the response. A peer reset then surfaces
+  from the response, as for a writer.
 - **Cancellation:** abandoning a `Send`/`Read` sends `RST_STREAM` with
   `CANCEL` and releases the lease. A request may carry an
   `ICancellationToken` (`THttpRequest.WithCancelToken`); cancelling it resets
   the stream in flight.
+  - A producer body checks the token each time it passes a chunk to the place
+    that sends it. A cancelled token makes the producer's `Write` raise
+    `EHttpStreamError` with `ecCancel`. On HTTP/2 the stream is reset with
+    `CANCEL`, and the call ends with that error. On HTTP/1.1 the connection is
+    not reused.
+  - A `Write` that already waits for flow-control credit does not wake for the
+    token. The wait ends when the credit arrives, and the next chunk sees the
+    token. The wait ends at the timeout of the call with `EHttpTimeout` if no
+    credit arrives first.
 - **Timeouts:** the factory sets three defaults — `WithConnectTimeout`,
   `WithHeaderTimeout`, `WithIdleTimeout` (milliseconds). The header timeout is
   overridable per request, through `THttpRequest.WithTimeout(ms)`

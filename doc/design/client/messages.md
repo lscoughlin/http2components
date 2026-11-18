@@ -16,7 +16,13 @@ related:
   - "[open-questions](open-questions.md)"
 updated: 2026-10-13
 notes:
+  - IHttpBodyStream inherits GetStream and GetStreamReader from IBodyReader.
   - Imported from http2client/doc/design/messages.md at the source commit recorded in the source inventory.
+  - A request body can come from a producer. The client runs the producer on the thread of the call.
+primary_types:
+  - IBodyProducer
+  - IBodyChunkSink
+  - BodyWriterFromStream
 ---
 
 # Messages
@@ -43,17 +49,27 @@ type
     property Body: IHttpBodyStream read GetBody;
   end;
 
-// client/src/Http2.Client.Stream.pas
+// client/src/Http2.Client.Stream.Types.pas
 type
-  IHttpBodyStream = interface
-    /// block until bytes are available or END_STREAM. The first Read that
-    /// observes EOF returns 0; a Read after EOF raises EHttpStreamError.
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+  IHttpBodyStream = interface(IBodyReader)
+    // Read (inherited) blocks until bytes are available or END_STREAM. The
+    // Read that observes EOF returns 0, and every later Read returns 0 too.
     /// true once END_STREAM (or a bodyless response) is observed and any
     /// buffered bytes are exhausted
     function Eof: Boolean;
   end;
 ```
+
+`IBodyReader` is declared in `Http2.Common.Body`. It gives `Read` and
+`ReadChunk(const ABuffer: TStream): Boolean`. `ReadChunk` appends the next chunk
+to the buffer and returns True. It returns False when the body has ended, and the
+octets of that last call are the last chunk. A chunk of `ReadChunk` is one `Read`
+of at most 16384 octets (see [body](../common/body.md)).
+
+`IHttpBodyStream` inherits `GetStream` and `GetStreamReader` from `IBodyReader`.
+The stream that `GetStream` gives is a read-only, non-seekable `TStream` over the
+body, and it is for one pass. The caller owns the result. The client body classes
+derive from `TBodyReaderBase`, so they give the two methods without more code.
 
 `Http2.Client.Messages` also re-exports `TClearTextPolicy`, `TNegotiatedProtocol`,
 and `ICleartextSocketFactory` as aliases of the types declared in
@@ -130,8 +146,9 @@ verified-facts table.
 - Pseudo-headers are **not** exposed in the public `Headers` map; they are
   surfaced through typed properties (`StatusCode`, etc.).
 - **Body consumption:** the body is a stream. `Read` blocks until enough
-  DATA bytes are available or `END_STREAM` is seen. A second read after EOF
-  raises deterministically rather than hanging.
+  DATA bytes are available or `END_STREAM` is seen. A read after EOF returns 0
+  and never raises `EHttpStreamError`. Every later read also returns 0, so a
+  read loop ends at the first 0.
 - The response object stays valid after `Send` returns even while other
   threads use the client.
 
@@ -142,8 +159,9 @@ type
   THttpMethod = (hmGet, hmHead, hmPost, hmPut, hmDelete, hmConnect,
     hmOptions, hmTrace, hmPatch);
 
+  // declared in Http2.Common.Body; Http2.Client.IBodyWriter is an alias of it
   IBodyWriter = interface
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
   THttpBody = record
@@ -308,11 +326,21 @@ flowchart TB
 
 ## Request and response streaming
 
-- **Request:** a `THttpBody` is sent in one or more `ftData` frames; an
-  `IBodyWriter` is pulled by the connection thread until
-  `NextChunk` returns `False`, then `END_STREAM` is set on the last DATA
-  frame (or on `HEADERS` when there is no body). A writer body is single-use
-  and non-replayable.
+- **Request:** a `THttpBody` is sent in one or more `ftData` frames. An
+  `IBodyWriter` is pulled on the thread of the client call that sends the
+  request. The library passes one `TChunkBuffer` and pulls the chunks until
+  `NextChunk` returns `False`. The interface is declared in `Http2.Common.Body`,
+  and the client name is an alias of it (see [body](../common/body.md)).
+  - The client pulls the next chunk before it sends the chunk in hand. That
+    look-ahead chunk tells the client which DATA frame is the last one.
+  - `END_STREAM` is set on the DATA frame of the last chunk. A writer that
+    returns its final octets with `False` sends those octets with `END_STREAM`.
+    When the body has no octets, `END_STREAM` is set on an empty DATA frame,
+    or on `HEADERS` when there is no body.
+  - A writer body is sent with chunked transfer coding on HTTP/1.1 (RFC 9112
+    section 7.1). Each chunk of the writer goes out as one HTTP chunk, and the
+    body is never held whole in memory.
+  - A writer body is single-use and non-replayable.
 - **Response:** `Send` returns after HEADERS. The caller reads `Body` until
   `Eof`. `END_STREAM` (or a bodyless `HEADERS`) ends the body;
   `ftRstStream` mid-body surfaces from `Read`, not from the already-returned
@@ -322,6 +350,62 @@ flowchart TB
 - Buffered vs. streamed is an explicit choice of reader: a buffering
   `IResponseReader<T>` reads to EOF then decodes; an incremental one decodes
   per chunk.
+
+### Request body from a producer
+
+A request body can also come from a producer: code that writes to a `TStream`.
+The factory `BodyWriterFromStream` in `Http2.Common.Body.Producers` turns a method
+of the application into an `IBodyWriter`. The client finds that the writer is a
+producer (`IBodyProducer`) and gives each chunk of the output to the sending place.
+The body streams. The client holds at most one chunk back, and the body is never
+held whole in memory.
+
+```pascal
+type
+  TXmlUploader = class
+  private
+    FDoc: TXMLDocument;
+  public
+    procedure Write(const AOut: TStream);
+  end;
+
+procedure TXmlUploader.Write(const AOut: TStream);
+begin
+  WriteXML(FDoc, AOut);
+end;
+
+Uploader := TXmlUploader.Create;
+try
+  Uploader.FDoc := Document;
+  Response := Client.Send(THttpRequest.Create(hmPost, 'https://api.example/upload')
+    .WithHeader('content-type', 'application/xml')
+    .WithBodyWriter(BodyWriterFromStream(Uploader.Write)));
+finally
+  Uploader.Free;
+end;
+```
+
+- The thread of the call runs the producer. `Send` returns when the response starts.
+  The producer runs inside `Send`, before the response is read. No thread is created.
+- The producer method has the type `TStreamProducer = procedure(const AOut: TStream)
+  of object`. The caller owns the object of the method, and the object lives until
+  `Send` returns.
+- The octets of the producer go out in chunks of `AChunkBytes` octets (default
+  `cReadChunkBytes`, 16384). A `Write` blocks while the place does not take the chunk.
+  On HTTP/2 the chunk waits for flow-control credit. On HTTP/1.1 the chunk waits for
+  the socket.
+- An empty producer sends an empty body. On HTTP/2 the body is one empty DATA frame
+  with `END_STREAM`. On HTTP/1.1 the body is the last-chunk marker and the empty trailer.
+- A producer that raises passes its exception to the caller of `Send`, unchanged. The
+  stream is reset with `CANCEL` on HTTP/2. The connection is not reused on HTTP/1.1.
+  See [errors-redirects](errors-redirects.md).
+- A producer body is an `IBodyWriter`. It has the same rules: it is single-use, it is not
+  retried when the peer refuses the stream, and a 307 or 308 redirect raises
+  `EHttpNotReplayable` for it.
+- The factory `BodyWriterFromTextWriter` gives the same body from a method that writes to
+  a `TStreamWriter`. The encoding of the writer gives the octets.
+- A place that pulls the writer with `NextChunk` gets the whole body in memory at the
+  first call. `BuildHttp1Request` pulls the writer that way, so it holds the whole body.
 
 ## Content coding
 
@@ -412,6 +496,8 @@ hand-rolled loop.
   the bytes **verbatim** — no charset sniffing, no transcoding. It is the
   string counterpart of reading the raw `TBytes`. `ReadText(AResponse, AMaxBytes)`
   adds a cap on the body bytes, as described in the response size limits.
+  The helper is a wrapper over `ReadText` of `Http2.Common.Body.Text`. The
+  wrapper turns an `EBodyTooLarge` of the common unit into `EHttpResponseTooLarge`.
 - `TResponseReader<T>` keeps its raw-passthrough semantics for byte strings,
   `TBytes`, and unmanaged fixed-size values. It does not support other managed
   types or dynamic arrays. A reader that wants interpretation must do it
@@ -429,12 +515,17 @@ in their `uses` clause.
 | `TJsonReader<T: TJSONData>` / `ReadJsonData` | `T` | any `TJSONData` descendant |
 | `TXmlDocumentReader` / `ReadXmlDocument` | `TXMLDocument` | accepts `us-ascii` declarations |
 
-- Every `Read` helper consumes the whole body to EOF.
+- The Read helpers are wrappers over the common units of
+  `Http2.Common.Body.Json` and `Http2.Common.Body.Xml`. `ReadXmlDocument` parses
+  the body as its octets arrive. `ReadJsonObject` and `ReadJsonData` read the
+  body to EOF before they parse it, because `fcl-json` needs the whole text.
+  See [formats](../common/formats.md).
 - The returned object is **caller-owned**; the helper never caches or frees
   it.
 - A body that does not parse raises `EHttpProtocolError`
-  (`ecProtocolError`); the underlying `EJSONParser` / `EXMLReadError` is
-  caught and re-raised, never leaked.
+  (`ecProtocolError`). The common units raise `EBodyFormatError`, and the
+  wrapper turns it into `EHttpProtocolError` with the text `response body is ...`.
+  No `fcl-json` or `fcl-xml` exception leaves the helper.
 - The class forms expose a `Parse(const AText: string)` static function and a
   `Read(const AResponse)` instance method, so the same reader works on a
   string payload in a test or on a live response.
@@ -455,8 +546,59 @@ touch the network:
 
 Each respects an explicitly set content-type.
 
+`WithJsonBody` and `WithXmlBody` keep the serialized text as one body
+(`WithTextBody`). The body has a known length, so HTTP/1.1 sends a
+`content-length`, and a redirect with status 307 or 308 can replay it. A writer
+body (`WithBodyWriter`, with `XmlBodyWriter` or `JsonBodyWriter` from the common
+units) has no known length, so HTTP/1.1 sends it with chunked coding, and it is
+not replayable. A caller that wants the document as a writer uses the
+common factories with `WithBodyWriter` directly.
+
+## Cookies
+
+The client sends cookies with `WithCookies(ARequest, ACookies: TParameters)` from
+`Http2.Client.Cookies`. The map holds the pairs of the `cookie` field, and
+`WithCookies` writes them as one field value, for example `a=1; a=3; b=2`. An empty
+map adds no field. A second call adds a second `cookie` field, which HTTP/2 allows.
+
+```pascal
+var
+  LCookies: TParameters;
+  LRequest: THttpRequest;
+begin
+  LCookies := TParameters.Create;
+  LCookies.Add('session', 'abc').Add('theme', 'dark');
+  LRequest := WithCookies(THttpRequest.Create(hmGet, 'https://example.test/home'), LCookies);
+end;
+```
+
+The client reads the cookies that a response sets with `GetSetCookies`, from
+`Http2.Common.Cookie`. The function parses each `set-cookie` field into a
+`THttpCookie`, in field order, and it raises `EBodyFormatError` when a field does not
+parse. A `THttpCookie` gives its name, its value and its attributes as properties.
+
+```pascal
+var
+  LCookies: TArray<THttpCookie>;
+  LCookie: THttpCookie;
+begin
+  LCookies := GetSetCookies(LResponse.Headers);
+  for LCookie in LCookies do
+    if LCookie.Name = 'session' then
+      LSession := LCookie.Value;
+end;
+```
+
+The record `TParameters` and the cookie types are described in
+[Cookies](../common/cookies.md). The cookie names are case-sensitive, and the
+values of one name keep their order.
+
 ## RFC references
 
+- [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265.html), checked 2026-11-18. The
+  cookie grammar and the user agent rules that the cookie helpers follow.
+- [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html), checked 2026-11-18 against
+  `doc/references/rfc9110.txt`. The HTTP-date formats (section 5.6.7).
 - [RFC 1950](https://www.rfc-editor.org/rfc/rfc1950.html), checked 2026-11-11.
 - [RFC 1952](https://www.rfc-editor.org/rfc/rfc1952.html), checked 2026-11-11.
 - [RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html), checked 2026-11-11.

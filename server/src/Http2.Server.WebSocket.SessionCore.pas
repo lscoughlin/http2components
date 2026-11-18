@@ -26,11 +26,12 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, Generics.Collections,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.Limits, Http2.Server.Observer, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Parser,
   Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.Utf8,
-  Http2.Server.ClientCert, Http2.Server.WebSocket.Budget;
+  Http2.Server.ClientCert, Http2.Server.WebSocket.Budget, Http2.Server.WebSocket.Pump,
+  Http2.Server.WebSocket.Snapshot, Http2.Server.WebSocket.Inbound;
 
 type
   TWsState = (wsInit, wsOpen, wsClosing, wsEnded);
@@ -48,35 +49,15 @@ type
     Opcode: Byte;
     /// wtReply: close the channel gracefully after the frame
     CloseAfter: Boolean;
+    /// wtMessage: what the handler reads; a memory reader or a pipe
+    Reader: IBodyReader;
+    /// wtMessage: the pipe of a streamed message; nil for a message in memory
+    Pipe: TWsMessagePipe;
+    /// wtMessage: the octets that the budget counted at the start of the message
+    Charge: Int64;
   end;
 
-  /// a read-only copy of the handshake request
-  TWsRequestSnapshot = class(TInterfacedObject, IServerRequest)
-  private
-    FMethod, FScheme, FAuthority, FPath: string;
-    FHeaders: THeaderBlock;
-    FCancelled: Boolean;
-    FPrincipal: string;
-    FClientCert: IClientCertificate;
-  public
-    constructor Create(const ARequest: IServerRequest);
-    procedure Cancel;
-    function GetPrincipal: string;
-    procedure SetPrincipal(const AValue: string);
-    function GetClientCertificate: IClientCertificate;
-    function Method: string;
-    function Scheme: string;
-    function Authority: string;
-    function Path: string;
-    function Headers: THeaderBlock;
-    function Read(var ABuffer; const ACount: Integer): Integer;
-    function ReadChunk(out AChunk: TBytes): Boolean;
-    function BodyIsComplete: Boolean;
-    function IsCancelled: Boolean;
-    function StreamId: LongWord;
-  end;
-
-  TWsSessionCore = class(TInterfacedObject, IWsSession)
+  TWsSessionCore = class(TInterfacedObject, IWsSession, IWsPumpHost)
   protected
     FEnv: IWsEnvironment;
     FOpts: TWsOptions;
@@ -121,10 +102,23 @@ type
     FControl, FMessages: TTokenBucket;
     FLastInboundMs, FPingSentMs, FCloseSentMs: QWord;
     FSelf: IInterface;
+    /// the pump of the stream that SendStream started; guarded by FLock
+    FPump: IWsPump;
+    /// a stream was accepted and its last fragment is not queued yet; guarded by FLock
+    FStreamActive: Boolean;
+    /// the pool runs one Step of the pump
+    procedure PumpEntry;
+    /// the pool runs the park timer of the pump
+    procedure PumpTimerEntry;
+    /// the stream is over: the pump stops and the reader is released
+    procedure DropPump;
     /// queue a task for the application and run it on the streaming pool
     procedure Post(const ATask: TWsTask); virtual; abstract;
     /// stop the time limit of Init
     procedure UnwatchInit; virtual; abstract;
+    /// the session has ended: the pipe of a message that still arrives is aborted, so a
+    /// handler that waits in Read wakes up
+    procedure AbortInbound; virtual; abstract;
     /// the session no longer closes its channel when the server stops
     procedure DropCloser; virtual; abstract;
     procedure DoTick;
@@ -144,9 +138,17 @@ type
     //   the lock is busy, or an earlier reply waits, the reply goes to the pool
     procedure IoSend(const AOpcode: Byte; const APayload: TBytes;
       const ACloseAfter: Boolean);
+    /// send a reply that the IO thread deferred; the pool or a producer thread runs it
+    procedure ReplyTask(const ATask: TWsTask);
     /// the messages that wait are dropped from now on
     procedure DropPending;
     procedure ReleaseCredit(const AMessageDone: Boolean);
+    /// give back all the credit that the hold rule keeps; a streamed message starts, so
+    /// its inline octets must not wait for the queue to fall
+    procedure FlushHeldCredit;
+    /// the cap of the pipe of a streamed message: InboundPipeBytes on a channel that
+    /// returns no credit, and none on a channel whose window bounds the unread octets
+    function PipeCap: Integer;
     /// give back the octets of a message that left the queue; never more than the
     /// session still holds
     procedure ReleaseQueued(const ABytes: Int64);
@@ -176,94 +178,19 @@ type
     function Id: Int64;
     function Context: IInterface;
     procedure SetContext(const AValue: IInterface);
+
+    // IWsPumpHost
+    function PumpWrite(const AWire: TBytes; const AFin: Boolean): TSendResult;
+    procedure PumpCount(const APayload: Integer);
+    function PumpSchedule: Boolean;
+    function PumpScheduleAfter(const ADelayMs: Integer): Boolean;
+    procedure PumpEnded(const AFailure: Exception);
+    procedure PumpDefect(const AText: string);
+    /// IWsProducerHost of TWsSession: send the deferred replies on the calling thread
+    procedure PumpReplies;
   end;
 
 implementation
-
-{ TWsRequestSnapshot }
-
-constructor TWsRequestSnapshot.Create(const ARequest: IServerRequest);
-begin
-  inherited Create;
-  FMethod := ARequest.Method;
-  FScheme := ARequest.Scheme;
-  FAuthority := ARequest.Authority;
-  FPath := ARequest.Path;
-  FHeaders := Copy(ARequest.Headers);
-  FPrincipal := ARequest.Principal;
-  FClientCert := ARequest.ClientCertificate;
-end;
-
-function TWsRequestSnapshot.GetClientCertificate: IClientCertificate;
-begin
-  Result := FClientCert;
-end;
-
-function TWsRequestSnapshot.GetPrincipal: string;
-begin
-  Result := FPrincipal;
-end;
-
-procedure TWsRequestSnapshot.SetPrincipal(const AValue: string);
-begin
-  FPrincipal := AValue;
-end;
-
-procedure TWsRequestSnapshot.Cancel;
-begin
-  FCancelled := True;
-end;
-
-function TWsRequestSnapshot.Method: string;
-begin
-  Result := FMethod;
-end;
-
-function TWsRequestSnapshot.Scheme: string;
-begin
-  Result := FScheme;
-end;
-
-function TWsRequestSnapshot.Authority: string;
-begin
-  Result := FAuthority;
-end;
-
-function TWsRequestSnapshot.Path: string;
-begin
-  Result := FPath;
-end;
-
-function TWsRequestSnapshot.Headers: THeaderBlock;
-begin
-  Result := FHeaders;
-end;
-
-function TWsRequestSnapshot.Read(var ABuffer; const ACount: Integer): Integer;
-begin
-  Result := 0;
-end;
-
-function TWsRequestSnapshot.ReadChunk(out AChunk: TBytes): Boolean;
-begin
-  AChunk := nil;
-  Result := False;
-end;
-
-function TWsRequestSnapshot.BodyIsComplete: Boolean;
-begin
-  Result := True;
-end;
-
-function TWsRequestSnapshot.IsCancelled: Boolean;
-begin
-  Result := FCancelled;
-end;
-
-function TWsRequestSnapshot.StreamId: LongWord;
-begin
-  Result := 0;
-end;
 
 { TWsSessionCore }
 
@@ -293,7 +220,7 @@ begin
   Limits.MaxFrameSize := FOpts.MaxFrameSize;
   Limits.MaxMessageSize := FOpts.MaxMessageSize;
   Limits.MaxFragments := FOpts.MaxFragments;
-  FReader := TWsReader.Create(Limits, {ARequireMasked=}True);
+  FReader := TWsReader.Create(Limits, {ARequireMasked=}True, FOpts.InlineLimit);
   FControl := TTokenBucket.Create(AEnv.Clock, FOpts.ControlBucket);
   FMessages := TTokenBucket.Create(AEnv.Clock, FOpts.MessageBucket);
   FLastInboundMs := GetTickCount64;
@@ -302,6 +229,7 @@ end;
 
 destructor TWsSessionCore.Destroy;
 begin
+  DropPump;
   ReleaseSessionSlot;
   FReader.Free;
   FControl.Free;
@@ -326,10 +254,32 @@ begin
   if not Result then
     Exit;
   UnwatchInit;
+  // before the pool stops: a handler that waits in Read must be able to return
+  AbortInbound;
   if FCounted then
     FEnv.SessionClosed;
   ReleaseSessionSlot;
   FSnapshot.Cancel;
+  // the session has ended: the stream stops and its reader is released
+  DropPump;
+end;
+
+procedure TWsSessionCore.DropPump;
+var
+  P: IWsPump;
+begin
+  FLock.Acquire;
+  try
+    P := FPump;
+    FPump := nil;
+    FStreamActive := False;
+  finally
+    FLock.Release;
+  end;
+  // Stop can release the writer here, on the IO thread: its destructor must not
+  // block and must not take a lock that a caller of Send can hold
+  if P <> nil then
+    P.Stop;
 end;
 
 /// the session ends and the application hears Closed
@@ -466,6 +416,32 @@ begin
   end;
   if Give > 0 then
     FChannel.ReturnCredit(Give);
+end;
+
+procedure TWsSessionCore.FlushHeldCredit;
+var
+  Give: Int64;
+begin
+  FLock.Acquire;
+  try
+    Give := FHeldCredit;
+    FHeldCredit := 0;
+  finally
+    FLock.Release;
+  end;
+  if Give > 0 then
+    FChannel.ReturnCredit(Give);
+end;
+
+function TWsSessionCore.PipeCap: Integer;
+var
+  Flow: IChannelFlow;
+begin
+  // on a channel that returns credit, the stream window bounds the unread octets
+  if Supports(FChannel, IChannelFlow, Flow) and Flow.ReturnsCredit then
+    Result := MaxInt
+  else
+    Result := FOpts.InboundPipeBytes;
 end;
 
 { the timer }
@@ -641,12 +617,15 @@ function TWsSessionCore.Send(const AData: TBytes; const AText: Boolean): TSendRe
 var
   Op: Byte;
   Wire: TBytes;
-  Closed: Boolean;
+  Closed, Streaming: Boolean;
 begin
   FLock.Acquire;
   try
     if (FState = wsEnded) or FOutputClosed then
       Exit(srClosed);
+    // a stream runs: no other message may go out between its fragments
+    if FStreamActive then
+      Exit(srFull);
   finally
     FLock.Release;
   end;
@@ -664,11 +643,16 @@ begin
     FLock.Acquire;
     try
       Closed := (FState = wsEnded) or FOutputClosed;
+      // a stream that started while this message waited for the lock owns the
+      // channel: this check is under the send lock, so no message can split it
+      Streaming := FStreamActive;
     finally
       FLock.Release;
     end;
     if Closed then
       Exit(srClosed);
+    if Streaming then
+      Exit(srFull);
     Result := FChannel.Send(Wire);
   finally
     FSendLock.Release;
@@ -684,21 +668,190 @@ end;
 
 function TWsSessionCore.SendStream(const AReader: IBodyWriter; const AText: Boolean): TSendResult;
 var
-  All, Chunk: TBytes;
-  At: Integer;
+  Old: IWsPump;
+  Hold: IBodyWriter;
 begin
-  All := nil;
-  while AReader.NextChunk(Chunk) do
-  begin
-    At := Length(All);
-    // the whole message is built in memory, so its size has a cap
-    if Int64(At) + Length(Chunk) > FOpts.MaxMessageSize then
-      raise EHttpError.Create('a message to send is over the size limit');
-    SetLength(All, At + Length(Chunk));
-    if Length(Chunk) > 0 then
-      Move(Chunk[0], All[At], Length(Chunk));
+  if AReader = nil then
+    raise EHttpError.Create('SendStream needs a writer');
+  Hold := AReader; // a const parameter takes no reference: a refused writer would leak
+  FLock.Acquire;
+  try
+    if (FState = wsEnded) or FOutputClosed then
+      Exit(srClosed);
+    if FStreamActive then
+      Exit(srFull);
+    FStreamActive := True;
+    Old := FPump;
+    FPump := TWsStreamPump.Create(AReader, AText, FOpts.FrameSize,
+      FOpts.MaxMessageSize, WsPumpStepChunks, Self);
+  finally
+    FLock.Release;
   end;
-  Result := Send(All, AText);
+  Old := nil;
+  if not PumpSchedule then
+  begin
+    EndQuietly;
+    Exit(srClosed);
+  end;
+  Result := srQueued;
+end;
+
+function TWsSessionCore.PumpWrite(const AWire: TBytes; const AFin: Boolean): TSendResult;
+var
+  Closed: Boolean;
+begin
+  FSendLock.Acquire;
+  try
+    FLock.Acquire;
+    try
+      Closed := (FState = wsEnded) or FOutputClosed;
+    finally
+      FLock.Release;
+    end;
+    // RFC 6455 section 5.5.1: no data frame follows a Close frame. This srClosed is
+    // quiet: the application closed, and the closing handshake goes on
+    if Closed then
+      Exit(srClosed);
+    Result := FChannel.Send(AWire);
+    if (Result = srQueued) and AFin then
+    begin
+      // the last fragment is queued: a Send that waits for the send lock may go
+      FLock.Acquire;
+      FStreamActive := False;
+      FLock.Release;
+    end;
+  finally
+    FSendLock.Release;
+  end;
+  if (Result = srQueued) and AFin then
+    FEnv.Count(wcMessagesOut, 1)
+  else if Result = srClosed then
+    // only the channel answers srClosed here: the transport is gone
+    EndWithClosed(WsCloseAbnormal, 'the channel is closed', False);
+end;
+
+procedure TWsSessionCore.PumpCount(const APayload: Integer);
+begin
+  FEnv.Count(wcBytesOut, APayload);
+end;
+
+procedure TWsSessionCore.PumpDefect(const AText: string);
+begin
+  FEnv.Report(seHandlerException, 0, AText);
+end;
+
+procedure TWsSessionCore.ReplyTask(const ATask: TWsTask);
+begin
+  // the IO thread could not take the send lock, so this thread sends the frame
+  try
+    SendControl(ATask.Opcode, ATask.Data);
+  except
+    ;   // the channel ended; the closing code below runs all the same
+  end;
+  FLock.Acquire;
+  try
+    if FDeferred > 0 then
+      Dec(FDeferred);
+  finally
+    FLock.Release;
+  end;
+  if ATask.CloseAfter then
+    FChannel.Close(ccGraceful);
+end;
+
+procedure TWsSessionCore.PumpReplies;
+var
+  T: TWsTask;
+  I: Integer;
+  Found: Boolean;
+begin
+  // RFC 6455 section 5.4: control frames may go between the fragments of a message. A
+  // producer holds the pool thread, so the replies that wait for it go out from here, in
+  // order. The task that was posted for a reply finds the queue shorter and ends at once
+  repeat
+    Found := False;
+    FLock.Acquire;
+    try
+      for I := 0 to FTasks.Count - 1 do
+        if FTasks[I].Kind = wtReply then
+        begin
+          T := FTasks[I];
+          FTasks.Delete(I);
+          Found := True;
+          Break;
+        end;
+    finally
+      FLock.Release;
+    end;
+    if Found then
+      ReplyTask(T);
+  until not Found;
+end;
+
+
+function TWsSessionCore.PumpSchedule: Boolean;
+begin
+  Result := FSource.Post(PumpEntry);
+end;
+
+function TWsSessionCore.PumpScheduleAfter(const ADelayMs: Integer): Boolean;
+begin
+  Result := FSource.PostAfter(ADelayMs, PumpTimerEntry);
+end;
+
+procedure TWsSessionCore.PumpEntry;
+var
+  Keep: IInterface;
+  P: IWsPump;
+begin
+  // The pool runs one task of a session at a time (one source for each session;
+  // StreamPool.pas: PostTask, NextTask, FinishTask; S00). A stale schedule acts on
+  // the current pump: this is harmless only because of that rule. The FInStep
+  // guard in Enter still prevents a double write
+  Keep := Self;
+  Http2AssertStreamThread('TWsSessionCore.PumpEntry');
+  FLock.Acquire;
+  P := FPump;
+  FLock.Release;
+  if P <> nil then
+    P.Step;
+end;
+
+procedure TWsSessionCore.PumpTimerEntry;
+var
+  Keep: IInterface;
+  P: IWsPump;
+begin
+  Keep := Self;
+  Http2AssertStreamThread('TWsSessionCore.PumpTimerEntry');
+  FLock.Acquire;
+  P := FPump;
+  FLock.Release;
+  // A stale timer acts on the current pump and wakes a later park early at worst.
+  // This is harmless because the pool runs one task of a session at a time (S00;
+  // StreamPool.pas); the FInStep guard in Enter still prevents a double write
+  if P <> nil then
+    P.TimerFired;
+end;
+
+procedure TWsSessionCore.PumpEnded(const AFailure: Exception);
+var
+  Old: IWsPump;
+begin
+  if AFailure <> nil then
+  begin
+    // The stream stays active until the session ends, so no Send can split it.
+    // Fail goes to TryEnd, and TryEnd calls DropPump, which clears the fields
+    Fail(AFailure);
+    Exit;
+  end;
+  // a normal end: this breaks the cycle of the pump and the session
+  FLock.Acquire;
+  FStreamActive := False;
+  Old := FPump;
+  FPump := nil;
+  FLock.Release;
+  Old := nil;
 end;
 
 procedure TWsSessionCore.Ping(const AData: TBytes);
@@ -742,6 +895,8 @@ begin
     FLock.Release;
   end;
   SendCloseFrame(ACode, AReason);
+  // the Close frame is out: the stream is over and its message stays incomplete
+  DropPump;
   if Finish then
     // the peer closed first: both Close frames are out
     FChannel.Close(ccGraceful)

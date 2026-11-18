@@ -130,7 +130,16 @@ cut response or a handler exception ends the connection after the response. Afte
 `Connection: close` the server serves no later pipelined request.
 
 A response that the handler gave a `Content-Length` is sent with that length. Any
-other response to an HTTP/1.1 request is chunked. A client of HTTP/1.0 gets a
+other response to an HTTP/1.1 request is chunked. A body writer of a chunked
+response writes each non-empty chunk as one chunk of the response. The write waits
+for room in the outbound buffer before the next chunk is pulled. The octets that the
+last call returns with `False` are written as the last chunk.
+
+A producer body (see [seam](seam.md)) gives its chunks through the same path. `SetBodyWriter`
+runs the producer on the handler thread. Each non-empty chunk that the sink receives is
+written as one chunk of the response, with the same wait for room. When the producer
+returns, the response ends with the last-chunk marker, and the marker is written once.
+A producer with no octets gives a response whose only chunk is the last-chunk marker. A client of HTTP/1.0 gets a
 response that ends with the close of the connection. A response to `HEAD` and a 204
 or 304 response have no body; octets that a handler writes for them are dropped. The
 handler never sets `Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade` or
@@ -220,6 +229,10 @@ a close. A connection that has sent no octet closes silently at the idle timeout
 The request body is held in memory until the handler reads it. The parser checks the
 body limit before it delivers any octet, so the memory of one request is bounded by
 `MaxBodySize`. A request body is not streamed past that limit.
+
+The request implements `IBodyReader`. That interface does not change this limit:
+`ReadChunk` takes its octets from the buffer that the parser has filled, and one call
+gives at most `cReadChunkBytes` (16384) octets of it.
 
 HTTP/2 bounds the unread request body with flow control, because the server sends
 `WINDOW_UPDATE` only when the handler reads. HTTP/1.1 has no such mechanism in this

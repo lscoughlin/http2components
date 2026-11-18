@@ -21,10 +21,11 @@ unit Http2.Server.StreamAdapters;
 interface
 
 uses
-  SysUtils, Classes,
+  SysUtils, Classes, streamex,
   Http2.Server.Errors,
   Http2.Common.Hpack,
   Http2.Common.Headers,
+  Http2.Common.Body,
   Http2.Server.Seam,
   Http2.Server.ClientCert,
   Http2.Server.AccessLog,
@@ -72,7 +73,9 @@ type
     function Path: string;
     function Headers: THeaderBlock;
     function Read(var ABuffer; const ACount: Integer): Integer;
-    function ReadChunk(out AChunk: TBytes): Boolean;
+    function ReadChunk(const ABuffer: TStream): Boolean;
+    function GetStream: TStream;
+    function GetStreamReader: TStreamReader;
     function BodyIsComplete: Boolean;
     function IsCancelled: Boolean;
     function StreamId: LongWord;
@@ -129,6 +132,36 @@ type
   end;
 
 implementation
+
+type
+  /// the sink that a producer body of an HTTP/2 response gives its chunks to
+  // - a chunk with octets goes to the outbound buffer of the stream; Write blocks
+  //   while the buffer is full, so the producer waits (backpressure)
+  // - the last call ends nothing: Finish ends the body after Produce returns
+  TH2BodySink = class(TInterfacedObject, IBodyChunkSink)
+  private
+    FResponse: TServerStreamResponse;
+  public
+    constructor Create(const AResponse: TServerStreamResponse);
+    procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+  end;
+
+{ TH2BodySink }
+
+constructor TH2BodySink.Create(const AResponse: TServerStreamResponse);
+begin
+  inherited Create;
+  FResponse := AResponse;
+end;
+
+procedure TH2BodySink.Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+begin
+  if ACount > 0 then
+  begin
+    FResponse.FStream.Write(ABuffer, ACount);
+    Inc(FResponse.FBodyOctets, ACount);
+  end;
+end;
 
 { TServerStreamRequest }
 
@@ -215,9 +248,19 @@ begin
   Result := FStream.Read(ABuffer, ACount);
 end;
 
-function TServerStreamRequest.ReadChunk(out AChunk: TBytes): Boolean;
+function TServerStreamRequest.ReadChunk(const ABuffer: TStream): Boolean;
 begin
-  Result := FStream.ReadChunk(AChunk);
+  Result := FStream.ReadChunk(ABuffer);
+end;
+
+function TServerStreamRequest.GetStream: TStream;
+begin
+  Result := BodyStream(Self as IServerRequest);
+end;
+
+function TServerStreamRequest.GetStreamReader: TStreamReader;
+begin
+  Result := BodyStreamReader(Self as IServerRequest);
 end;
 
 function TServerStreamRequest.BodyIsComplete: Boolean;
@@ -326,15 +369,39 @@ end;
 
 procedure TServerStreamResponse.Finish;
 var
-  Chunk: TBytes;
+  Buf: TChunkBuffer;
+  More: Boolean;
+  Producer: IBodyProducer;
 begin
   CheckNotDetached;
   if FBodyWriter <> nil then
-    while FBodyWriter.NextChunk(Chunk) do
+  begin
+    // a producer runs on this thread and blocks in its sink while the outbound
+    // buffer is full (D25, D28); a pulled writer is run by the loop below
+    if Supports(FBodyWriter, IBodyProducer, Producer) then
+      Producer.Produce(TH2BodySink.Create(Self))
+    else
     begin
-      FStream.Write(Chunk);
-      Inc(FBodyOctets, Length(Chunk));
+      Buf := TChunkBuffer.Create;
+      try
+        repeat
+          Buf.Reset;
+          // the octets of the call that returns False are the last chunk (D22)
+          More := FBodyWriter.NextChunk(Buf);
+          // TServerStream.DoWrite copies the octets into its outbound buffer
+          // before it returns (Http2.Server.Stream.pas lines 653 to 655), so the
+          // buffer is free for the next chunk after the call
+          if Buf.Size > 0 then
+          begin
+            FStream.Write(Buf.Memory^, Buf.Size);
+            Inc(FBodyOctets, Buf.Size);
+          end;
+        until not More;
+      finally
+        Buf.Free;
+      end;
     end;
+  end;
   FStream.RequestFinish;
   FEnded := True;
 end;

@@ -32,7 +32,7 @@ type
   /// an IBodyWriter that never yields a chunk (single-use, empty)
   TNullWriter = class(TInterfacedObject, IBodyWriter)
   public
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
   end;
 
   TRequestTest = class(TTestCase)
@@ -51,9 +51,8 @@ type
 
 implementation
 
-function TNullWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TNullWriter.NextChunk(const ABuffer: TStream): Boolean;
 begin
-  ABuffer := nil;
   Result := False;
 end;
 

@@ -34,7 +34,7 @@ uses
 
 type
   /// the channel of one detached HTTP/2 stream
-  THttp2StreamChannel = class(TInterfacedObject, IDuplexChannel, IChannelSink)
+  THttp2StreamChannel = class(TInterfacedObject, IDuplexChannel, IChannelSink, IChannelFlow)
   private
     FStream: TServerStream;
     FRegistry: IChannelRegistry;
@@ -48,6 +48,8 @@ type
     FEarlyClean: Boolean;
     /// outbound bytes held while the channel is pending
     FHold: TBytes;
+    /// Send answered srFull from the hold; the stream gave no drain callback for it
+    FHoldRefused: Boolean;
     /// the peer ended its half with END_STREAM
     FPeerEnded: Boolean;
     /// Close ran: the local half is ending
@@ -84,6 +86,8 @@ type
     function Registry: IChannelRegistry;
     procedure SetSink(const ASink: IChannelSink);
     procedure ReturnCredit(const ACount: Int64);
+    // IChannelFlow: the stream window slows the peer
+    function ReturnsCredit: Boolean;
     procedure Complete(const AStatus: Integer; const AHeaders: THeaderBlock;
       const ABody: TBytes);
     procedure Activate(const AStatus: Integer; const AHeaders: THeaderBlock);
@@ -197,7 +201,11 @@ begin
       // no DATA may leave before HEADERS, so a pending channel holds the bytes
       if (StreamOutboundLimit > 0) and (Length(FHold) > 0) and
          (Length(FHold) + Length(AData) > StreamOutboundLimit) then
+      begin
+        // the stream is not asked, so it calls no drain: FlushHold tells the sink
+        FHoldRefused := True;
         Exit(srFull);
+      end;
       SetLength(FHold, Length(FHold) + Length(AData));
       Move(AData[0], FHold[Length(FHold) - Length(AData)], Length(AData));
       Held := True;
@@ -327,6 +335,11 @@ begin
   end;
 end;
 
+function THttp2StreamChannel.ReturnsCredit: Boolean;
+begin
+  Result := True;
+end;
+
 procedure THttp2StreamChannel.ReturnCredit(const ACount: Int64);
 var
   Ended: Boolean;
@@ -422,6 +435,13 @@ begin
         // nothing is held: later sends go straight to the stream, after all earlier bytes
         FState := csActive;
         FActivating := False;
+        // the sink sees the room that the refused hold now has, under the channel
+        // lock like WriteDrained
+        if FHoldRefused and (FAppSink <> nil) then
+        begin
+          FHoldRefused := False;
+          FAppSink.WriteDrained;
+        end;
         Exit;
       end;
       FFlushing := True;

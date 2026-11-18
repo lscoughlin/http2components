@@ -1,19 +1,26 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: websocket, session, frame codec, close handshake, heartbeat, origin policy, init, streaming pool, rfc 6455
+keywords: websocket, session, frame codec, close handshake, heartbeat, origin policy, init, streaming pool, rfc 6455, inbound message, body reader, pipe, inline limit, producer, body producer, chunk sink
 notes:
   - This document describes the WebSocket part of the server, which serves a WebSocket on any detached channel, over HTTP/1.1 and over HTTP/2.
   - RFC 6455 (the WebSocket protocol) is the main source. It was checked on 2026-10-22 at https://www.rfc-editor.org/info/rfc6455. The plain-text copy is doc/references/rfc6455.txt. RFC 6454 (the web origin) was checked on the same date at https://www.rfc-editor.org/info/rfc6454.
   - The IANA registry of close codes was checked on 2026-10-22. The copy is doc/references/iana-websocket-registry.xml.
+  - RFC 6455 sections 5.4 (fragmentation), 5.5 (control frames) and 5.5.1 (close) were read in the plain-text copy and checked on 2026-11-17 at https://www.rfc-editor.org/info/rfc6455. The streamed message of `SendStream` follows section 5.4.
   - Imported from http2server/doc/design/server/websocket.md at the source commit recorded in the source inventory.
-scope: The frame codec, the session contract, the receive path, the closing handshake, the heartbeat, the limits, the origin policy, the Init hook and the settings.
+scope: The frame codec, the session contract, the inbound message and its reader, the receive path, the closing handshake, the heartbeat, the limits, the origin policy, the Init hook and the settings.
 primary_types:
   - IWsSession
   - IWsHandler
+  - IBodyReader
   - TWsInitResult
   - TWsOptions
   - TWsReader
+  - TWsMessagePipe
+  - TWsMemoryReader
+  - IBodyProducer
+  - IBodyChunkSink
+  - IWsProducerPort
 related_docs:
   - seam.md
   - threading.md
@@ -22,12 +29,18 @@ related_docs:
   - configuration.md
   - lifecycle.md
   - limits.md
+  - ../common/body.md
 invariants:
   - A session runs on any IDuplexChannel and does not know the protocol under it.
   - The handler is called on a thread of the streaming pool, one call at a time for a session, in the order of the events, and never on an IO thread.
+  - A message that ends inside the inline limit reaches the handler as a reader over memory, and a read never waits. A longer message reaches the handler when it passes the limit, and a bounded pipe carries the later octets.
+  - The IO thread never waits for the handler. A push into the pipe never blocks, and the lock of the pipe is a leaf lock.
+  - The credit of the octets of a pipe returns as the handler reads them. The credit of the inline octets and of every frame header returns when they arrive.
+  - The end of the session aborts every pipe whose message still arrives, before the streaming pool stops.
   - Exactly one of Closed or Failed ends the conversation, unless the application calls Abort.
   - The server never puts the close codes 1005, 1006 or 1015 on the wire.
-  - A message is sent with one write to the channel, so the frames of two messages never mix.
+  - A producer that SendStream runs holds one streaming pool thread until it ends. When the channel is full, the sink waits on that thread and holds no lock, and the drain, the end of the session and a poll of 250 ms end the wait. The sink sends the deferred control replies between fragments, and a fragment that the channel refuses for `OutboundStallMs` closes the session with 1008.
+  - A message that Send sends is written with one call of the channel, so the frames of two messages never mix. A streamed message is written one fragment at a time, and no other data message is written while its stream runs.
 ---
 
 # WebSocket
@@ -40,14 +53,17 @@ document describes the parts that do not depend on it.
 
 ## The frame codec
 
-Four units hold the codec. They have no socket and no thread.
+Four units hold the codec. They have no socket and no thread. Two more units serve the
+inbound message of a session.
 
 | Unit | Content |
 | --- | --- |
 | `Ws.Frames` | the opcodes, the close codes, the mask, the frame encoder, the fragmenting message encoder and the Close payload helpers |
 | `Ws.Utf8` | a UTF-8 validator with three bytes of state, so a character split across fragments needs no buffer |
 | `Ws.Parser` | the resumable frame parser; it pushes the unmasked payload of a data frame to a sink and buffers no data frame |
-| `Ws.Reader` | the assembly of frames into messages with the size, fragment and UTF-8 checks |
+| `Ws.Reader` | the assembly of frames into messages with the size, fragment and UTF-8 checks; it keeps the first `InlineLimit` octets of a message and then gives the octets to its sink one piece at a time |
+| `Ws.Inbound` | `TWsMessagePipe` and `TWsMemoryReader`, the two `IBodyReader` classes that give a message to the handler |
+| `Ws.Snapshot` | `TWsRequestSnapshot`, the read-only copy of the handshake request |
 
 The parser enforces the rules of RFC 6455 sections 5.2 to 5.5 that one frame and the
 order of the frames allow: reserved bits and opcodes, masking in the right direction,
@@ -55,6 +71,15 @@ the shortest form of the length, control frames of at most 125 octets and with F
 and the order of a fragmented message. The reader checks the message size before it
 buffers a byte, so a peer that declares a large frame and sends nothing costs no
 memory. A text message is checked for UTF-8 while the octets arrive.
+
+The sink of the reader has three calls for a data message: `MessageBegin(AText)`,
+`MessageData(P, Count)` and `MessageEnd`. A message that ends inside the inline limit
+gives the three calls at its end, with one `MessageData` call for its octets. A longer
+message gives `MessageBegin` when the octet after the limit arrives, then one
+`MessageData` call for the octets that the reader kept (the property `Replaying` is True
+during this call), then one `MessageData` call for each later piece, and `MessageEnd` at
+its end. The property `Streaming` tells the sink which of the two cases it is in. After
+the stream starts, the reader keeps no octet of the message.
 
 The tests of the codec check the frames of RFC 6455 section 5.7, every rule with its
 close code, split delivery (whole, one octet at a time and in random pieces) and a
@@ -73,9 +98,9 @@ except 1010, which is a client code.
 | 1001 | the server stops (`Stop`) |
 | 1002 | a protocol error: a bad frame, a Close payload that RFC 6455 section 5.5.1 forbids, a data frame after a Close frame |
 | 1003 | available to an application |
-| 1007 | a text message or a Close reason that is not UTF-8 |
-| 1008 | a policy limit: a token bucket is empty, or too many messages wait for the application |
-| 1009 | a message or a frame is over its limit |
+| 1007 | a text message or a Close reason that is not UTF-8, also when the handler has read part of the message already |
+| 1008 | a policy limit: a token bucket is empty, too many messages wait for the application, a read of a streamed message waited for `InboundStallMs` (reason `the message stalled`), or the channel refused one fragment of a producer for `OutboundStallMs` (reason `the send stalled`) |
+| 1009 | a message or a frame is over its limit, or a streamed message fills the pipe on a channel that returns no credit (reason `the handler reads too slowly`) |
 | 1011 | a callback raised, or the Pong did not come |
 | 1006 | reported to the application only: the connection ended without a Close frame, or the peer did not answer the Close frame in time |
 | 1005 | reported to the application only: the Close frame had no status |
@@ -91,7 +116,7 @@ one at a time, in the order of the events. A callback can call `Send`, `Ping`,
 | Call | Meaning |
 | --- | --- |
 | `Init` | the first call; it authorises, chooses the subprotocol and may send a greeting |
-| `Message` | a whole message; a text message is valid UTF-8 |
+| `Message` | a message, as an `IBodyReader`; a text message is valid UTF-8 up to the last octet that the handler has read (see [The inbound message](#the-inbound-message)) |
 | `Pong` | a Pong arrived |
 | `Closed` | the session ended; the code, the reason and whether the closing handshake completed |
 | `Failed` | a callback raised an exception; the session closes with 1011 |
@@ -99,10 +124,12 @@ one at a time, in the order of the events. A callback can call `Send`, `Ping`,
 `Send` is legal from any thread at any time. It never blocks. It writes all frames of
 the message with one call of the channel, so a refusal leaves nothing half written
 and the frames of two messages never mix. It answers `srFull` when the outbound queue
-is over `ChannelQueueLimit`, and `srClosed` after the session has ended or the Close
-frame has gone out. The session does not drop a message by itself. The sender
-splits a message into frames of `FrameSize` octets. A Pong and a Close echo are
-separate writes, so they do not wait behind a message that is being built.
+is over `ChannelQueueLimit` or while a streamed message runs, and `srClosed` after the
+session has ended or the Close frame has gone out. The session does not drop a message
+by itself. The sender splits a message into frames of `FrameSize` octets. A Pong and a
+Close echo are separate writes, so they do not wait behind a message that is being
+built. `SendStream` sends a message that a writer gives in pieces (see
+[Streaming a message](#streaming-a-message)).
 
 **The send lock.** One send lock keeps the frames of two writers apart. A writer
 encodes its message before it takes the lock, then checks under the lock that the
@@ -118,14 +145,320 @@ reply (a Pong, a Close echo or the Close frame of a protocol error) goes to the
 streaming pool as a task. The pool sends the replies in order, and a reply that must
 close the channel closes it after the frame.
 
-**The size of a sent message.** `SendStream` builds the message in memory, so the
-message is limited by `MaxMessageSize`. `MaxMessageSize` is at most 2147483647, and
-`MaxFrameSize` is at most `MaxMessageSize`. A close reason must be UTF-8, and the
-server cuts a reason that it builds itself on the boundary of a character.
+**The size of a sent message.** `Send` builds the message in memory, so the message is
+limited by `MaxMessageSize`. `MaxMessageSize` is at most 2147483647, and `MaxFrameSize`
+is at most `MaxMessageSize`. A close reason must be UTF-8, and the server cuts a reason
+that it builds itself on the boundary of a character.
+
+A streamed message has no such limit on its total size. `MaxMessageSize` limits one
+chunk of the writer. The rules are in [Streaming a message](#streaming-a-message).
 
 `Abort` closes the channel at once, with no Close frame and no later callback.
 `SetContext` and `Context` keep a value of the application for the life of the
 session; the session releases it at the end.
+
+## The inbound message
+
+`IWsHandler.Message(ASession, AMessage, AText)` gives the message as an `IBodyReader`
+(see [body](../common/body.md)). `ReadAllBody(AMessage)` gives the whole message as a
+`TBytes` in one call. A loop of `AMessage.ReadChunk(Buffer)` gives one chunk at a time, so
+a handler that stores or hashes a message does not hold it in memory. The end of the
+message is a `Read` that returns 0 or a `ReadChunk` that returns False, and both answers
+repeat.
+
+```pascal
+// an echo handler that holds the whole message
+procedure TMyHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
+  const AText: Boolean);
+begin
+  ASession.Send(ReadAllBody(AMessage), AText);
+end;
+```
+
+**The contract.**
+
+- The reader is valid during the call of `Message` only. When the call returns, the
+  session releases the reader: a handler that keeps it gets `EStreamCancelled` on a later
+  read.
+- A handler need not read the whole message. When `Message` returns early, the session
+  drops the octets of the message that wait and the octets that still arrive, and it
+  credits them to the channel. The session goes on with the next message.
+- A read raises `EStreamCancelled` when the session ends, when a Close frame arrives
+  before the message ends, when the message fails (a bad UTF-8 octet, a size limit) and
+  when the read stalls. The session catches `EStreamCancelled` that `Message` lets pass,
+  and it does not call `Failed`.
+- A text message is valid UTF-8 up to the last octet that the handler has read. For a
+  message in memory this is the whole message, as before. For a streamed message the
+  reader checks the octets as they arrive. A bad octet after the handler has read part of
+  the message closes the session with 1007, and the next read raises `EStreamCancelled`.
+
+**Two paths.** The assembler keeps a message in memory until it ends or until it passes
+`InlineLimit` (default 65536 octets).
+
+- A message that ends first goes to the handler as a `TWsMemoryReader` over the octets.
+  The session starts the handler task when the message ends. No pipe exists, and a read
+  never waits.
+- A message that passes the limit goes to the handler at once. The session starts the
+  handler task when the octet after the limit arrives, and a `TWsMessagePipe` carries the
+  octets that the reader kept and all the later octets. The handler reads while the
+  message arrives.
+
+**The pipe.** One IO thread writes into the pipe with `Push`, `Finish` and `Abort`. One
+handler thread reads.
+
+- `Push` copies the octets into a buffer and never waits. The lock of the pipe is a leaf
+  lock: code that holds it takes no other lock, and no call back runs while it is held.
+  The IO thread therefore needs no pool task to deliver a fragment.
+- `Read` waits on an event with no lock held. `ReadChunk` gives the next chunk as it was
+  pushed, or the rest of a chunk that a `Read` began.
+- On a channel that returns no credit (an HTTP/1.1 upgrade, a unix socket) the pipe holds
+  at most `InboundPipeBytes` octets (default 1 MiB). A push that takes the buffer over the
+  cap drops the buffer, aborts the pipe, and the session closes with 1009 and the reason
+  `the handler reads too slowly`. On HTTP/2 the pipe has no cap: the credit rule below
+  keeps the unread octets at the stream window plus `InlineLimit`, so the window is the
+  bound, and a handler that waits before its first read never costs the session. The
+  channel tells the session which case it is through the optional interface
+  `IChannelFlow`; a channel without it counts as a channel that returns no credit.
+- A read that gets no octet for `InboundStallMs` (default 30000) aborts the pipe, raises
+  `EStreamCancelled`, and the session closes with 1008 and the reason `the message
+  stalled`.
+
+**The credit.** The octets that the session returns as credit to the channel follow these
+rules.
+
+- The frame headers and the mask keys of every frame, and the octets that the reader
+  keeps inside `InlineLimit`, are credited when they arrive. A message of up to the
+  stream window therefore never waits for a credit that only its own end can bring.
+- The octets that go to a pipe are credited when the handler reads them. The octets that
+  the pipe drops (an abort, an early return of the handler) are credited at the drop.
+- The octets that the reader kept before the stream started were credited on arrival, and
+  they go into the pipe marked as paid, so the handler's read of them returns no second
+  credit. The sum of the credit of a message equals the octets that arrived for it.
+- On HTTP/2 a slow handler holds back the credit of its own stream only. The stream
+  window is not refilled, so the peer stops when the window is full. Other streams and
+  the connection window are not affected, because the connection window is credited when
+  a frame arrives.
+- An HTTP/1.1 upgrade and a unix socket have no flow control: `ReturnCredit` does nothing
+  and the IO layer never pauses its reads. A slow handler does not slow its peer on such a
+  channel. The pipe cap bounds the memory, and a handler that falls behind by more than
+  the cap loses its session with 1009. The memory bound of a streamed message is
+  `InboundPipeBytes` on these channels and the stream window plus `InlineLimit` on HTTP/2.
+  The slowing of the peer exists on HTTP/2 only.
+- The credit that the queue rule holds back (`QueuedMessages` half full) is given back when
+  a message starts to stream, so the inline octets of a streamed message never wait for a
+  handler that is busy with an earlier message.
+- The frame headers of a message that is open never wait under the rule of
+  `QueuedMessages` (see [The receive path](#the-receive-path)).
+
+**Counting.** A streamed message counts once, when it starts: it takes one token of the
+message bucket, it counts once in `QueuedMessages`, and it charges the server budget
+`MaxWsQueuedBytes` with `InboundPipeBytes`, because its length is not known then. The task
+keeps the same number, so the release is equal. A message in memory charges its length
+when it ends. `wcMessagesIn` counts at the same moment. `wcBytesIn` counts the octets of a
+streamed message as they arrive, so a message that ends by an abort, a Close frame, a stall
+or an overflow counts the octets that came before it. A streamed message whose pipe was
+aborted before its handler started (a Close frame between its fragments, for example) is
+not given to the handler: the session drops it and releases its credit, its count and its
+charge.
+
+**Limits.** `MaxMessageSize` limits the whole message, as before, and a message over it
+closes the session with 1009. A program that streams larger messages raises it. The
+assembler limit `MaxFragments` (default 1024) stays and limits the frames of one message.
+With the default `MaxFrameSize` it caps a streamed message at 64 MiB, so a program that
+streams a larger message raises `MaxFragments` together with `MaxMessageSize`.
+`Problems` requires `InboundPipeBytes` of at least `InlineLimit` plus `MaxFrameSize`,
+because the kept octets move into the pipe when a message starts to stream and the first
+piece follows at once, before the handler has read an octet.
+
+**The threads.**
+
+- A handler that reads a message holds one streaming pool thread for the whole read.
+  Unlike a step of a stream writer, a blocked `Read` does not give the thread back
+  between chunks.
+- The pool runs one task of a session at a time. While `Message` runs, the tick (ping,
+  pong timeout, close timeout), a Pong for the handler, `Closed`, the deferred replies
+  and the steps of `SendStream` of the same session wait. The IO thread does not wait: it
+  parses, checks UTF-8, pushes, credits, answers Ping and Close when the send lock is
+  free, and ends the session.
+- The default pool has one thread (`StreamPoolSize`, see [threading](threading.md)). An
+  application that reads long messages sets `StreamPoolSize` above the number of sessions
+  that read at the same time.
+- A handler that reads a message and also sends a reply with `Send` does not wait for the
+  pool. A reply with `SendStream` starts when `Message` returns.
+- The ping timer cannot close a session while the handler reads, because the tick waits
+  for `Message`. The stall time of the pipe is the deadline that covers this case.
+- The stall deadline covers only a blocked `Read`. A handler that blocks outside `Read`
+  holds its pool thread until it returns. On a channel without flow control the pipe then
+  fills, and the session closes with 1009.
+- The hold rule of `QueuedMessages` exempts the headers of the frames of a receive call
+  that carries a streamed message (its start, its pieces or its end). When one receive
+  call also carries a whole small message after the end of a streamed message, the credit
+  of that message is not held in that call. The effect is a window that is larger than
+  the rule intends for one receive call. No credit is lost.
+
+**The end of the session.** `TryEnd` is the one place that every end of a session passes:
+a Close frame, a protocol error, a lost transport, an abort, a failure of a callback and
+the stop of the server. It aborts the pipe of a message that still arrives, so a read
+that waits raises `EStreamCancelled`. The abort comes before the streaming pool stops,
+because the stop of the pool waits for the running tasks. A pipe that has its end (the
+message arrived whole) is not aborted: a message that arrived before a Close frame is
+still delivered, as the receive path describes.
+
+## Streaming a message
+
+`SendStream` sends one message whose octets come from an `IBodyWriter` (see
+[body](../common/body.md)). It returns `srQueued` at once. It returns `srClosed` when
+the session has ended or the Close frame has gone out, and `srFull` when another stream
+of the session runs. It raises `EHttpError` when the writer is nil.
+
+Each chunk of the writer is one fragment of the message (RFC 6455 section 5.4). A chunk
+that is longer than `FrameSize` is split into frames of `FrameSize` octets, as a whole
+message is. The first fragment has the opcode text or binary. Each later fragment has
+the continuation opcode. Only the last fragment has the FIN bit.
+
+The last call of the writer ends the message. When that call returns False with octets,
+those octets form the last fragment, and that fragment has the FIN bit. When the last
+call returns False with no octets, the session sends one empty continuation frame with
+FIN. When the writer gives no chunk at all, the session sends one empty frame with the
+opcode and FIN. A call that returns True with no octets is an empty chunk, and the
+session skips it.
+
+The streaming pool reads the chunks. One step reads at most 16 chunks. The step then
+ends, and the next step waits at the end of the queue of the session. The writer runs
+on a streaming pool thread and never on an IO thread. A writer can block. A blocking
+writer holds one pool thread, and it delays the other tasks of the session. For example,
+a cancel message from the client waits until the writer returns.
+
+When the channel refuses a fragment, the stream keeps the encoded fragment and parks. The
+drain of the channel wakes the stream. A parked stream also arms a timer of 250
+milliseconds. A refusal in the held bytes of a channel that is not active yet, for
+example from a `SendStream` that the `Init` callback starts, gives no drain from the
+stream. The channel records the refusal. When `Activate` has moved the held bytes to the
+stream, the channel calls `WriteDrained`, and the stream wakes at once. The timer checks
+the channel again, so a lost drain signal delays the stream by at most one poll after
+room appears.
+
+`SendStream` takes its own reference to the writer. A writer that the caller makes in
+the call, and does not keep, is therefore released when `SendStream` refuses it with
+`srFull` or `srClosed`.
+
+While a streamed message runs, `Send` and `SendStream` return `srFull`. Ping, Pong and
+Close frames can go out between the fragments (RFC 6455 section 5.5). The session never
+sends a data frame after a Close frame.
+
+When a Close frame goes out, the session ends, or the session aborts, the stream stops at
+its next step. The message then stays incomplete, and no FIN frame follows (RFC 6455
+section 5.5.1). The writer is released.
+
+When the writer raises, or when a chunk is longer than `MaxMessageSize`, the session
+calls `Fail`. The handler receives `Failed`, and a Close frame with code 1011 follows.
+The session ends before any other data frame can go out, so no whole message follows an
+unfinished fragment.
+
+The session releases the writer when the stream ends. When the peer closes the session or
+a protocol error ends it, the release runs on the thread that ends the session, which can
+be an IO thread. The destructor of a writer does not block, and it does not take a lock
+that a caller of `Send` can hold.
+
+The counter of payload octets out grows by the payload of each fragment that the channel
+takes. The counter of messages out grows by one when the FIN fragment is queued.
+
+The server does not check the UTF-8 of a streamed text message. A text chunk can end
+inside a character, and the receiver checks the whole message.
+
+A stream suits one large message. A browser WebSocket gives the page the whole message
+only at its end, so a stream does not deliver the pieces to the page one at a time. For
+a series of messages, such as rows that are ready one at a time, the application sends
+one message for each batch with `Send`.
+
+### SendStream with a producer
+
+A writer that supports `IBodyProducer` (see [body](../common/body.md)), for example the
+writer of `BodyWriterFromStream`, is not pulled with `NextChunk`. One pump step runs the
+producer with `Produce` on one streaming pool thread. The producer writes to a stream, and
+the stream gives each chunk to the sink of the pump. The thread belongs to the producer
+until `Produce` returns. The step limit of 16 chunks does not apply, and the pump does
+not give the thread back between chunks.
+
+The sink turns each chunk into one fragment and writes it with the same write path as
+the pulled stream. The first fragment has the message opcode. Each later fragment has the
+continuation opcode. The call of the sink that is the last one gives its fragment the FIN
+bit. A chunk is not encoded twice: the sink keeps the encoded fragment until the channel
+takes it. The producer stream holds one chunk back, so the last chunk of the body is
+known when the producer ends, and no empty frame follows it. A producer that writes
+octets therefore ends the message with the FIN bit on its last fragment. A producer that
+writes nothing sends one empty frame with the message opcode and the FIN bit, as a writer
+that gives no chunk does. A last call with no octets after earlier fragments sends one
+empty continuation frame with FIN.
+
+When the channel refuses a fragment, the sink waits. The wait blocks the pool thread of
+the producer, so the `Write` of the producer on the stream does not return, and the
+producer produces no more octets. The wait holds no lock of the pump and no lock of the
+session. Five events end the wait:
+
+- The channel drains. `WriteDrained` wakes the pump, and the pump sets the event of the
+  sink.
+- The end of the wait of 250 milliseconds passes. The sink then sends the same fragment
+  again, so a lost drain signal delays the stream by at most one poll. The sink does not
+  use the park timer of the pulled stream here, because the timer is a task of the
+  session, and the pool runs one task of a session at a time: the timer task would wait
+  behind the blocked producer.
+- The session ends, or the Close frame of the application goes out. `TryEnd` and `Close`
+  stop the pump, and the stop sets the event.
+- The channel answers `srClosed`.
+- The channel refuses the same fragment for `OutboundStallMs` (default 30000). The session
+  then closes with 1008 and the reason `the send stalled`, and the sink raises
+  `EStreamCancelled`. The time starts at the first refusal of a fragment. A drain that
+  leaves the channel full does not restart it, and a fragment that the channel accepts
+  starts a new time for the next fragment. The Close frame goes out when the channel takes
+  it. When the channel takes no frame at all, the close timeout of the session ends the
+  session, and the pool thread of the producer is free at once. Without this deadline a
+  peer that keeps its connection open and reads no octet would hold the pool thread for
+  ever, because the tick of the session is a task behind the producer.
+
+After the end of the session, after `srClosed` or after a stall, the next call of the sink
+raises `EStreamCancelled`. The producer stream calls the sink only when a chunk is full
+and at the end of the body, so the `Write` that fills the next chunk, or the end of the
+producer, raises it. A `Write` that only fills part of a chunk returns normally, and a
+producer that waits in its own code sees no cancel. A producer that does not catch the
+exception ends, and the session sends no more frames. This end is quiet: the handler gets
+no `Failed`. A Close by the application keeps the rule of the pulled stream: the message
+stays incomplete, no data frame follows the Close frame, and the closing handshake goes on
+with the code that the application gave.
+
+The sink keeps its first failure. When it has raised (a chunk over `MaxMessageSize`, a host
+error, a cancel), every later call raises the same failure, so a producer that catches the
+exception and writes on cannot complete the message with a missing fragment. When such a
+producer ends, the session fails. A call with no octets that is not the last call is
+skipped, as the pulled stream skips an empty chunk.
+
+The other rules of the pulled stream stay. While the producer runs, `Send` and
+`SendStream` return `srFull`. `MaxMessageSize` limits one chunk of the producer. When the
+producer raises, or when a chunk is longer than `MaxMessageSize`, the session calls
+`Fail`: the handler receives `Failed` once, and one Close frame with code 1011 goes out.
+The pump releases the writer when `Produce` returns or raises, on the pool thread that ran
+the producer. A stop that comes before the pump step has entered has no producer to wait
+for: the thread that ends the session (an IO thread, for a peer that closes or resets the
+stream) releases the writer, as it does for a pulled stream. The destructor of a writer
+therefore must not block, and must not take a lock that a caller of `Send` can hold.
+
+A Ping that arrives while the producer runs is answered. The IO thread sends the Pong at
+once when the send lock is free. When a fragment write holds the send lock, the IO thread
+defers the reply to the session queue, and the queue waits behind the producer. Before it
+writes each fragment, and at each wake while it waits, the sink sends the deferred replies
+on its own thread, in order. RFC 6455 section 5.4 permits control frames between the
+fragments, and no message of `Send` can split the stream. The peer therefore gets its Pong
+while the message runs, and a pong timeout of the peer does not close the connection.
+
+A producer holds one streaming pool thread while it runs, and while it waits for room in
+the channel. The tick, `Closed` and the messages of the same session wait until `Produce`
+returns, and so does the inbound handler of a message that is larger than `InlineLimit`.
+A producer that waits for an event that a later inbound `Message` of the same session sets
+never gets it, because the `Message` call waits behind the producer. With the default
+`StreamPoolSize` of 1, one producer that waits for a slow peer stops every other WebSocket
+session and event stream for at most `OutboundStallMs`. An application that streams with
+producers sets `StreamPoolSize` above the number of producers that can run at the same
+time (see [threading](threading.md)).
 
 ## The Init hook
 
@@ -161,12 +494,20 @@ whole request, including `Cookie` and `Authorization`, and may access a database
 The IO thread that delivers octets parses the frames. It answers control frames at
 once, under the rule of the send lock above: a Ping is answered with a Pong that has
 the same payload, and a Close frame is echoed with the same code. It puts each data
-message on the queue of its session.
+message on the queue of its session. A message that ends inside `InlineLimit` goes on the
+queue when it ends. A longer message goes on the queue when it passes the limit, and the
+IO thread pushes its later octets into a pipe (see [The inbound
+message](#the-inbound-message)).
 
-- **Credit.** Every octet is credited to the channel once, when it is consumed, so a
-  message larger than the HTTP/2 window can arrive and a control frame in pieces cannot
-  raise the window above what the server consumed. When the queue of a session is half
-  full, the credit waits until the application has taken messages.
+- **Credit.** Every octet is credited to the channel once. The octets of a frame header,
+  of a control frame and of a message in memory are credited when they arrive. The octets
+  of a streamed message are credited when the handler reads them, or when the session
+  drops them. A message of up to the HTTP/2 window can therefore arrive, and a control
+  frame in pieces cannot raise the window above what the server consumed. When the
+  queue of a session is half full, the credit of the octets that the rule credits on
+  arrival waits until the application has taken messages. The headers of a streamed
+  message that is open do not wait, so a small `QueuedMessages` cannot stall the peer in
+  the middle of a message.
 - **Delivery at the end.** The messages that arrived before a Close frame are delivered
   to `Message`, in order, and `Closed` follows the last of them. An abort, a failure of
   a callback and a protocol error drop the messages that still wait. A lost connection
@@ -175,7 +516,9 @@ message on the queue of its session.
   application. A peer that sends more, because it ignores the window or because the
   protocol has no window, is closed with 1008.
 - **The byte budget.** The octets of the queued messages of all sessions of a server
-  count in one budget, `MaxWsQueuedBytes`. A message that would pass the budget closes
+  count in one budget, `MaxWsQueuedBytes`. A message in memory counts its length. A
+  streamed message counts `InboundPipeBytes` from its start, because its length is not
+  known then. A message that would pass the budget closes
   its session with 1008, as a message past `QueuedMessages` does. The session gives
   back its octets when a message leaves the queue and when the session ends, so the
   count returns to zero when the sessions have ended.
@@ -215,7 +558,9 @@ A value of 0 for the interval turns the Ping off. The decision is a pure functio
 timeout for the replies. A session that is still open then is aborted, and the
 application hears `Closed(1001, AClean = false)` on the thread that stops the server,
 because the pool is going away. A session that waits for `Init` closes with 1001 as
-soon as `Init` accepts.
+soon as `Init` accepts. The abort of a session aborts the pipe of a message that still
+arrives, and this happens before the pool stops. A handler that waits in a read therefore
+returns, and the stop of the pool does not wait for it.
 
 ## The origin policy
 
@@ -312,7 +657,10 @@ upgraded connection (as described in [lifecycle](lifecycle.md)).
 - **No flow control.** HTTP/1.1 has no window. A client that sends a burst of
   messages faster than the application takes them fills the queue of the session,
   and the session closes with 1008 when the queue passes `QueuedMessages`. An
-  application that expects bursts sets a larger queue.
+  application that expects bursts sets a larger queue. A client that sends one large
+  message faster than the handler reads it fills the pipe of the message, and the session
+  closes with 1009 when the unread octets pass `InboundPipeBytes`. This cap exists on a
+  channel that returns no credit only; on HTTP/2 the stream window bounds the pipe.
 
 
 ## The HTTP/2 handshake
@@ -366,9 +714,12 @@ The HTTP/2 connection stays open in each row except the last two.
 ### Flow control
 
 The `DATA` frames of a WebSocket stream use the usual windows of the stream and of the
-connection. The session returns credit to the stream when the parser takes the octets,
-and it holds the credit back while its queue is full. An outbound message waits in the
-channel queue, and `Send` answers `srFull` when the queue is full.
+connection. The connection window is credited when a frame arrives. The session returns
+credit to the stream when the parser takes the octets of a frame header, of a control
+frame and of a message in memory. For a streamed message it returns the credit of the
+payload octets as the handler reads them, so a slow handler slows its own stream and no
+other. The session holds the credit back while its queue is full. An outbound message
+waits in the channel queue, and `Send` answers `srFull` when the queue is full.
 
 ### The maximum age
 
@@ -412,7 +763,7 @@ defaults live in `Create`.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `MaxMessageSize` | 1048576 | the greatest message, in octets, over all fragments |
+| `MaxMessageSize` | 1048576 | the greatest message that the server receives, in octets, over all fragments; for a message that `SendStream` sends, the greatest chunk, in octets |
 | `MaxFrameSize` | 65536 | the greatest payload of one frame that the server accepts |
 | `MaxFragments` | 1024 | the greatest number of frames of one message |
 | `QueuedMessages` | 16 | the greatest number of messages that wait for the application |
@@ -424,6 +775,10 @@ defaults live in `Create`.
 | `ControlBucket` | 100 tokens, 10 a second | Ping and Pong frames that arrive |
 | `MessageBucket` | 10000 tokens, 10000 a second | data messages that arrive |
 | `WsEarlyBytes` | 262144 | the octets that the channel holds before the session takes it |
+| `InlineLimit` | 65536 | the octets of a message that the server keeps in memory before it gives the message to the handler; a message that ends inside the limit goes to the handler whole, and a longer message streams; from 1 to 16777216 |
+| `InboundPipeBytes` | 1048576 | the greatest count of unread octets of a streamed message on a channel that returns no credit; a push over it closes the session with 1009; at least `InlineLimit` plus `MaxFrameSize`; also the budget charge of every streamed message |
+| `InboundStallMs` | 30000 | the time that a read of a streamed message waits for an octet; on expiry the session closes with 1008 |
+| `OutboundStallMs` | 30000 | the time that the channel may refuse one fragment of a producer that `SendStream` runs; on expiry the session closes with 1008 and the producer ends |
 | `OriginPolicy` | `opSameOrAbsent` | as described in above |
 | `AllowedOrigins` | none | the allow-list, each entry `scheme://host[:port]` |
 | `WsAllowedHosts` | none | the host allow-list, each entry `host[:port]`; an empty list turns the check off |
@@ -445,5 +800,6 @@ missing Pong. The observer gets `seWsOpened`, `seWsRejected` (with the status),
 
 - [RFC 6454](https://www.rfc-editor.org/rfc/rfc6454.html), checked 2026-11-11.
 - [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html), checked 2026-11-11.
+- [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html) section 5.4 (fragmentation), section 5.5 (control frames) and section 5.5.1 (close), checked 2026-11-17. The plain-text copy is `doc/references/rfc6455.txt`.
 - [RFC 7936](https://www.rfc-editor.org/rfc/rfc7936.html), checked 2026-11-11.
 - [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441.html), checked 2026-11-11.

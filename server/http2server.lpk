@@ -25,7 +25,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="81">
+    <Files Count="86">
       <Item1>
         <Filename Value="src/Http2.Server.AccessLog.Handler.pas" />
         <UnitName Value="Http2.Server.AccessLog.Handler" />
@@ -350,6 +350,26 @@
         <Filename Value="src/Http2.Server.Async.Flight.pas" />
         <UnitName Value="Http2.Server.Async.Flight" />
       </Item81>
+      <Item82>
+        <Filename Value="src/Http2.Server.WebSocket.Pump.pas" />
+        <UnitName Value="Http2.Server.WebSocket.Pump" />
+      </Item82>
+      <Item83>
+        <Filename Value="src/Http2.Server.Http1.Exchange.Frames.pas" />
+        <UnitName Value="Http2.Server.Http1.Exchange.Frames" />
+      </Item83>
+      <Item84>
+        <Filename Value="src/Http2.Server.WebSocket.Snapshot.pas" />
+        <UnitName Value="Http2.Server.WebSocket.Snapshot" />
+      </Item84>
+      <Item85>
+        <Filename Value="src/Http2.Server.WebSocket.Inbound.pas" />
+        <UnitName Value="Http2.Server.WebSocket.Inbound" />
+      </Item85>
+      <Item86>
+        <Filename Value="src/Http2.Server.WebSocket.Pump.Producer.pas" />
+        <UnitName Value="Http2.Server.WebSocket.Pump.Producer" />
+      </Item86>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>

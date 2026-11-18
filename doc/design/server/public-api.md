@@ -89,6 +89,12 @@ The handler runs on a handler-pool thread. A handler that runs on an IO thread
 would hold the connection lock and stall the pool, so the pool checks the rule
 at dispatch (`server/src/Http2.Server.Admission.pas`).
 
+The request is an `IBodyReader` (`Http2.Common.Body`). A handler reads its body with
+`Read`, with `ReadChunk` into a `TChunkBuffer`, or with `ReadAllBody`, which reads
+the body to its end. `ReadChunk(const ABuffer: TStream): Boolean` appends the next
+chunk to the stream that the caller gives, and it answers False at the end of the
+body. The end repeats on every later call. See `doc/design/server/seam.md`.
+
 The request carries a read-write `Principal` property. Code that authenticates a
 request sets it, and the access log writes it. The factory takes an
 `IAccessLogWriter` through `WithAccessLogWriter`; the default is no writer. The
@@ -103,6 +109,47 @@ the subject DN, or the common name. The TLS context policy uses common
 `TTlsClientAuthMode` values `tlsAuthNone`, `tlsAuthRequest`, and
 `tlsAuthRequire`. `IServerRequest` exposes no native certificate handle.
 [mtls](mtls.md) describes the feature.
+
+## Cookies
+
+`IServerRequest.Headers` gives a `THeaderBlock`, an array of `Name` and `Value`
+pairs. The cookie helpers of `Http2.Common.Cookie` take that block, or an
+`IHttpHeaders` map. `GetCookies` gives every pair of every `cookie` field, in order,
+as a `TParameters`. Names are case-sensitive.
+
+```pascal
+var
+  LCookies: TParameters;
+begin
+  LCookies := GetCookies(ARequest.Headers);
+  // LCookies.GetFirst('session') gives the first value, or ''
+end;
+```
+
+A handler sets a cookie by adding a `set-cookie` field to the response header block. The
+value of the field is `THttpCookie.ToString`. The attributes are the properties of
+`THttpCookie`, and each `With` method gives a changed copy:
+
+```pascal
+var
+  LHeaders: THeaderBlock;
+begin
+  SetLength(LHeaders, 2);
+  LHeaders[0].Name := 'content-type';
+  LHeaders[0].Value := 'text/plain';
+  LHeaders[1].Name := 'set-cookie';
+  LHeaders[1].Value := THttpCookie.Create('session', 'abc')
+    .WithPath('/')
+    .WithSecure
+    .WithHttpOnly
+    .WithSameSite(ssLax)
+    .ToString;
+  AResponse.SendHeaders(200, LHeaders, False);
+end;
+```
+
+`ToString` raises `EBodyFormatError` when the name or the value holds a forbidden octet.
+The description of the cookie types is in [cookies](../common/cookies.md).
 
 ## Detached streams
 
@@ -122,9 +169,15 @@ server holds `MaxDetachedStreams` channels. The facade `Http2.Server` re-exports
 
 An application serves a WebSocket with an `IWsHandler`. The handler gets an
 `IWsSession` and is called on a thread of the streaming pool. `Init` authorises the
-upgrade, `Message` gets a whole message, `Pong` and `Closed` report the rest, and
-`Failed` reports a callback that raised. `WithWebSockets` sets the limits, the
-timers, the origin policy and the subprotocols (`TWsOptions`). The facade
+upgrade, `Message` gets a message as an `IBodyReader`, `Pong` and `Closed` report the
+rest, and `Failed` reports a callback that raised. A handler reads the message with
+`ReadAllBody(AMessage)`, which gives a `TBytes`, or with a loop of
+`AMessage.ReadChunk(Buffer)`, which gives one chunk at a time and holds no whole message.
+A message that is larger than `InlineLimit` streams, and the handler holds one pool
+thread while it reads. The reader is valid during the call, and a read raises
+`EStreamCancelled` when the session ends. `WithWebSockets` sets the limits, the
+timers, the origin policy, the subprotocols and the inbound settings `InlineLimit`,
+`InboundPipeBytes` and `InboundStallMs` (`TWsOptions`). The facade
 `Http2.Server` re-exports `TWsOptions`, `TWsOriginPolicy`, `IWsSession`,
 `IWsHandler`, `TWsInitResult`, the origin policies, the close codes that a server
 sends and the observer events `seWsOpened`, `seWsRejected`, `seWsClosed`,

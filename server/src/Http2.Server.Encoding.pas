@@ -30,7 +30,7 @@ interface
 
 uses
   SysUtils, Classes,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, zstream;
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, zstream;
 
 type
   /// the content codings this server can produce
@@ -105,9 +105,14 @@ type
   /// reaches the peer before the response ends. `content-length` must not be
   /// sent with a coded body, because the coded size is unknown before the
   /// stream ends; HTTP/2 delimits the body by END_STREAM.
-  TCompressingBodyWriter = class(TInterfacedObject, IBodyWriter)
+  // - the writer is a producer too (IBodyProducer): Produce runs the inner producer
+  //   when the inner writer is one, and pulls the inner writer otherwise
+  // - the coded octets of each inner chunk go to the place at once; the last
+  //   coded chunk, with the trailer, comes with ALast True
+  TCompressingBodyWriter = class(TInterfacedObject, IBodyWriter, IBodyProducer)
   private
     FInner: IBodyWriter;
+    FInnerBuf: TChunkBuffer;
     FCoding: TContentEncoding;
     FSink: TMemoryStream;
     FCoder: TStream;
@@ -116,11 +121,18 @@ type
     procedure StartCoder;
     /// the bytes the coder produced since the last take
     function Take: TBytes;
+    /// code one inner chunk and give the coded octets to AOut
+    // - ALast closes the coder and sends its trailer with ALast True
+    procedure CodeChunk(const ABuffer; const ACount: Integer; const ALast: Boolean;
+      const AOut: IBodyChunkSink);
   public
     constructor Create(const AInner: IBodyWriter;
       const ACoding: TContentEncoding);
     destructor Destroy; override;
-    function NextChunk(out ABuffer: TBytes): Boolean;
+    function NextChunk(const ABuffer: TStream): Boolean;
+    /// run the inner body and give the coded octets to ASink
+    // - a second run, or a run after NextChunk, raises EBodyFormatError
+    procedure Produce(const ASink: IBodyChunkSink);
   end;
 
 implementation
@@ -438,6 +450,33 @@ begin
   end;
 end;
 
+type
+  /// the sink that the inner producer of a compressing writer gives its chunks to
+  // - each chunk goes through the coder of the owner; the coded octets go to FOut
+  TCodingSink = class(TInterfacedObject, IBodyChunkSink)
+  private
+    FOwner: TCompressingBodyWriter;
+    FOut: IBodyChunkSink;
+  public
+    constructor Create(const AOwner: TCompressingBodyWriter; const AOut: IBodyChunkSink);
+    procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+  end;
+
+{ TCodingSink }
+
+constructor TCodingSink.Create(const AOwner: TCompressingBodyWriter;
+  const AOut: IBodyChunkSink);
+begin
+  inherited Create;
+  FOwner := AOwner;
+  FOut := AOut;
+end;
+
+procedure TCodingSink.Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+begin
+  FOwner.CodeChunk(ABuffer, ACount, ALast, FOut);
+end;
+
 { TCompressingBodyWriter }
 
 constructor TCompressingBodyWriter.Create(const AInner: IBodyWriter;
@@ -445,6 +484,7 @@ constructor TCompressingBodyWriter.Create(const AInner: IBodyWriter;
 begin
   inherited Create;
   FInner := AInner;
+  FInnerBuf := TChunkBuffer.Create;
   FCoding := ACoding;
   FSink := TMemoryStream.Create;
   FDone := False;
@@ -455,6 +495,7 @@ destructor TCompressingBodyWriter.Destroy;
 begin
   FCoder.Free;
   FSink.Free;
+  FInnerBuf.Free;
   inherited Destroy;
 end;
 
@@ -487,31 +528,104 @@ begin
   FSink.Position := 0;
 end;
 
-function TCompressingBodyWriter.NextChunk(out ABuffer: TBytes): Boolean;
+function TCompressingBodyWriter.NextChunk(const ABuffer: TStream): Boolean;
 var
-  Inner: TBytes;
+  Coded: TBytes;
+  More: Boolean;
 begin
-  SetLength(ABuffer, 0);
   if FDone then
     Exit(False);
   StartCoder;
   while True do
   begin
-    if not FInner.NextChunk(Inner) then
+    // the inner chunk is fed to the coder at once, so FInnerBuf is reused
+    // for the next inner call
+    FInnerBuf.Reset;
+    // the octets of the inner call that returns False are the last inner
+    // chunk, so they are coded too (D22)
+    More := FInner.NextChunk(FInnerBuf);
+    if FInnerBuf.Size > 0 then
+      FCoder.Write(FInnerBuf.Memory^, FInnerBuf.Size);
+    if not More then
     begin
       // the inner writer is exhausted: close the container so the footer
-      // reaches the peer, then emit whatever is left
+      // reaches the peer. The coded octets that the close gives are the
+      // last chunk, so they go out in this call with False.
       FCoder.Free;
       FCoder := nil;
       FDone := True;
-      ABuffer := Take;
-      Exit(Length(ABuffer) > 0);
+      Coded := Take;
+      ChunkAppend(ABuffer, Coded);
+      Exit(False);
     end;
-    if Length(Inner) > 0 then
-      FCoder.Write(Inner[0], Length(Inner));
-    ABuffer := Take;
-    if Length(ABuffer) > 0 then
+    Coded := Take;
+    if Length(Coded) > 0 then
+    begin
+      ChunkAppend(ABuffer, Coded);
       Exit(True);
+    end;
+  end;
+end;
+
+procedure TCompressingBodyWriter.CodeChunk(const ABuffer; const ACount: Integer;
+  const ALast: Boolean; const AOut: IBodyChunkSink);
+var
+  Coded: TBytes;
+  LNone: Byte;
+begin
+  LNone := 0;
+  if ACount > 0 then
+    FCoder.Write(ABuffer, ACount);
+  if ALast then
+  begin
+    // the inner body is over: the container closes, and its footer is the last chunk
+    FCoder.Free;
+    FCoder := nil;
+    FDone := True;
+    Coded := Take;
+    if Length(Coded) > 0 then
+      AOut.Chunk(Coded[0], Length(Coded), True)
+    else
+      AOut.Chunk(LNone, 0, True);
+    Exit;
+  end;
+  // a call that codes no octet sends nothing: the coder holds its input
+  Coded := Take;
+  if Length(Coded) > 0 then
+    AOut.Chunk(Coded[0], Length(Coded), False);
+end;
+
+procedure TCompressingBodyWriter.Produce(const ASink: IBodyChunkSink);
+var
+  LProducer: IBodyProducer;
+  LBuf: TChunkBuffer;
+  LCoded: TBytes;
+  LNone: Byte;
+  More: Boolean;
+begin
+  if FStarted or FDone then
+    raise EBodyFormatError.Create('a compressing body is used once');
+  if Supports(FInner, IBodyProducer, LProducer) then
+  begin
+    StartCoder;
+    LProducer.Produce(TCodingSink.Create(Self, ASink));
+    Exit;
+  end;
+  // the inner writer is pulled: each call of NextChunk gives coded octets for the sink
+  LNone := 0;
+  LBuf := TChunkBuffer.Create;
+  try
+    repeat
+      LBuf.Reset;
+      More := NextChunk(LBuf);
+      LCoded := ChunkBytes(LBuf);
+      if Length(LCoded) > 0 then
+        ASink.Chunk(LCoded[0], Length(LCoded), not More)
+      else
+        ASink.Chunk(LNone, 0, not More);
+    until not More;
+  finally
+    LBuf.Free;
   end;
 end;
 

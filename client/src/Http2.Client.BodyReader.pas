@@ -40,7 +40,7 @@ function ReadText(const AResponse: IHttpResponse;
 implementation
 
 uses
-  Http2.Client.Errors;
+  Http2.Client.Errors, Http2.Common.Body, Http2.Common.Body.Text;
 
 function ReadAllBodyBytes(const ABody: IHttpBodyStream): TBytes;
 begin
@@ -99,14 +99,21 @@ end;
 function ReadText(const AResponse: IHttpResponse;
   const AMaxBytes: Int64): string;
 var
-  Raw: TBytes;
+  Limit: Int64;
 begin
   if AResponse = nil then
     raise EHttpProtocolError.Create('response is nil', ecInternalError);
-  Raw := ReadAllBodyBytes(AResponse.Body, AMaxBytes);
-  SetLength(Result, Length(Raw));
-  if Length(Raw) > 0 then
-    Move(Raw[0], Result[1], Length(Raw));
+  // the common reader takes the limit as a count; High(Integer) stands for no cap
+  Limit := AMaxBytes;
+  if Limit <= 0 then
+    Limit := High(Integer);
+  try
+    Result := Http2.Common.Body.Text.ReadText(AResponse.Body, Limit);
+  except
+    on E: EBodyTooLarge do
+      raise EHttpResponseTooLarge.CreateFmt(
+        'response body passes %d bytes', [Limit]);
+  end;
 end;
 
 end.

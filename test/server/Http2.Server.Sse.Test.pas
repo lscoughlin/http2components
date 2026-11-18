@@ -10,6 +10,7 @@ notes:
     reset happen at a chosen instant. The pool is a real streaming pool of one
     thread.
   - The waits are bounded polls and never a fixed sleep that decides a result.
+  - The unit also tests the body stream of a request double (TRequestBodyStreamTest).
 ---
 }
 /// Unit tests for Http2.Server.Sse
@@ -23,8 +24,8 @@ interface
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry, streamex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.StreamPool, Http2.Server.Sse.Encoder, Http2.Server.Sse,
   Http2.Server.ClientCert;
 
@@ -85,6 +86,10 @@ type
   public
     Header: THeaderBlock;
     Who: string;
+    /// the body that Read and ReadChunk give; empty by default
+    Body: TBytes;
+    /// the number of octets of Body that are given so far
+    BodyPos: Integer;
     function GetPrincipal: string;
     procedure SetPrincipal(const AValue: string);
     function GetClientCertificate: IClientCertificate;
@@ -94,10 +99,18 @@ type
     function Path: string;
     function Headers: THeaderBlock;
     function Read(var ABuffer; const ACount: Integer): Integer;
-    function ReadChunk(out AChunk: TBytes): Boolean;
+    function ReadChunk(const ABuffer: TStream): Boolean;
+    function GetStream: TStream;
+    function GetStreamReader: TStreamReader;
     function BodyIsComplete: Boolean;
     function IsCancelled: Boolean;
     function StreamId: LongWord;
+  end;
+
+  /// the body stream of a request double; this class needs no SSE fixture
+  TRequestBodyStreamTest = class(TTestCase)
+  published
+    procedure TestGetStreamReadsBody;
   end;
 
   TSseStreamTest = class(TTestCase)
@@ -386,13 +399,36 @@ end;
 
 function TFakeRequest.Read(var ABuffer; const ACount: Integer): Integer;
 begin
-  Result := 0;
+  Result := Length(Body) - BodyPos;
+  if Result > ACount then
+    Result := ACount;
+  if Result > 0 then
+  begin
+    Move(Body[BodyPos], ABuffer, Result);
+    Inc(BodyPos, Result);
+  end
+  else
+    Result := 0;
 end;
 
-function TFakeRequest.ReadChunk(out AChunk: TBytes): Boolean;
+function TFakeRequest.ReadChunk(const ABuffer: TStream): Boolean;
 begin
-  AChunk := nil;
-  Result := False;
+  Result := BodyPos < Length(Body);
+  if Result then
+  begin
+    ABuffer.WriteBuffer(Body[BodyPos], Length(Body) - BodyPos);
+    BodyPos := Length(Body);
+  end;
+end;
+
+function TFakeRequest.GetStream: TStream;
+begin
+  Result := BodyStream(Self as IServerRequest);
+end;
+
+function TFakeRequest.GetStreamReader: TStreamReader;
+begin
+  Result := BodyStreamReader(Self as IServerRequest);
 end;
 
 function TFakeRequest.BodyIsComplete: Boolean;
@@ -848,7 +884,31 @@ begin
   AssertFalse(S.IsOpen);
 end;
 
+procedure TRequestBodyStreamTest.TestGetStreamReadsBody;
+var
+  LFake: TFakeRequest;
+  LRequest: IServerRequest;
+  LStream: TStream;
+  LBuf: array[0..3] of Byte;
+begin
+  LFake := TFakeRequest.Create;
+  LRequest := LFake;
+  SetLength(LFake.Body, 3);
+  LFake.Body[0] := Ord('a');
+  LFake.Body[1] := Ord('b');
+  LFake.Body[2] := Ord('c');
+  LStream := LRequest.GetStream;
+  try
+    AssertEquals('the stream gives the three octets of the body', 3, LStream.Read(LBuf[0], SizeOf(LBuf)));
+    AssertTrue('the octets are the body', (LBuf[0] = Ord('a')) and (LBuf[2] = Ord('c')));
+    AssertEquals('the end of the body gives 0', 0, LStream.Read(LBuf[0], SizeOf(LBuf)));
+  finally
+    LStream.Free;
+  end;
+end;
+
 initialization
   RegisterTest(TSseStreamTest);
+  RegisterTest(TRequestBodyStreamTest);
 
 end.

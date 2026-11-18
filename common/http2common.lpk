@@ -22,63 +22,99 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="14">
+    <Files Count="23">
       <Item1>
-        <Filename Value="src/Http2.Common.Errors.pas" />
-        <UnitName Value="Http2.Common.Errors" />
+        <Filename Value="src/Http2.Common.Body.pas" />
+        <UnitName Value="Http2.Common.Body" />
       </Item1>
       <Item2>
-        <Filename Value="src/Http2.Common.FlowControl.pas" />
-        <UnitName Value="Http2.Common.FlowControl" />
+        <Filename Value="src/Http2.Common.Errors.pas" />
+        <UnitName Value="Http2.Common.Errors" />
       </Item2>
       <Item3>
-        <Filename Value="src/Http2.Common.Frames.pas" />
-        <UnitName Value="Http2.Common.Frames" />
+        <Filename Value="src/Http2.Common.FlowControl.pas" />
+        <UnitName Value="Http2.Common.FlowControl" />
       </Item3>
       <Item4>
-        <Filename Value="src/Http2.Common.Headers.pas" />
-        <UnitName Value="Http2.Common.Headers" />
+        <Filename Value="src/Http2.Common.Frames.pas" />
+        <UnitName Value="Http2.Common.Frames" />
       </Item4>
       <Item5>
-        <Filename Value="src/Http2.Common.Hpack.pas" />
-        <UnitName Value="Http2.Common.Hpack" />
+        <Filename Value="src/Http2.Common.Headers.pas" />
+        <UnitName Value="Http2.Common.Headers" />
       </Item5>
       <Item6>
-        <Filename Value="src/Http2.Common.Tls.Context.pas" />
-        <UnitName Value="Http2.Common.Tls.Context" />
+        <Filename Value="src/Http2.Common.Hpack.pas" />
+        <UnitName Value="Http2.Common.Hpack" />
       </Item6>
       <Item7>
-        <Filename Value="src/Http2.Common.Tls.Identity.pas" />
-        <UnitName Value="Http2.Common.Tls.Identity" />
+        <Filename Value="src/Http2.Common.Tls.Context.pas" />
+        <UnitName Value="Http2.Common.Tls.Context" />
       </Item7>
       <Item8>
-        <Filename Value="src/Http2.Common.Tls.Policy.pas" />
-        <UnitName Value="Http2.Common.Tls.Policy" />
+        <Filename Value="src/Http2.Common.Tls.Identity.pas" />
+        <UnitName Value="Http2.Common.Tls.Identity" />
       </Item8>
       <Item9>
-        <Filename Value="src/Http2.Common.Tls.Session.pas" />
-        <UnitName Value="Http2.Common.Tls.Session" />
+        <Filename Value="src/Http2.Common.Tls.Policy.pas" />
+        <UnitName Value="Http2.Common.Tls.Policy" />
       </Item9>
       <Item10>
-        <Filename Value="src/Http2.Common.Tls.Types.pas" />
-        <UnitName Value="Http2.Common.Tls.Types" />
+        <Filename Value="src/Http2.Common.Tls.Session.pas" />
+        <UnitName Value="Http2.Common.Tls.Session" />
       </Item10>
       <Item11>
-        <Filename Value="src/Http2.Common.UnixPath.pas" />
-        <UnitName Value="Http2.Common.UnixPath" />
+        <Filename Value="src/Http2.Common.Tls.Types.pas" />
+        <UnitName Value="Http2.Common.Tls.Types" />
       </Item11>
       <Item12>
-        <Filename Value="src/Http2.Common.Uri.pas" />
-        <UnitName Value="Http2.Common.Uri" />
+        <Filename Value="src/Http2.Common.UnixPath.pas" />
+        <UnitName Value="Http2.Common.UnixPath" />
       </Item12>
       <Item13>
-        <Filename Value="src/Http2.Common.pas" />
-        <UnitName Value="Http2.Common" />
+        <Filename Value="src/Http2.Common.Uri.pas" />
+        <UnitName Value="Http2.Common.Uri" />
       </Item13>
       <Item14>
+        <Filename Value="src/Http2.Common.pas" />
+        <UnitName Value="Http2.Common" />
+      </Item14>
+      <Item15>
         <Filename Value="src/Http2.Common.SpscRing.pas" />
         <UnitName Value="Http2.Common.SpscRing" />
-      </Item14>
+      </Item15>
+      <Item16>
+        <Filename Value="src/Http2.Common.Parameters.pas" />
+        <UnitName Value="Http2.Common.Parameters" />
+      </Item16>
+      <Item17>
+        <Filename Value="src/Http2.Common.Cookie.pas" />
+        <UnitName Value="Http2.Common.Cookie" />
+      </Item17>
+      <Item18>
+        <Filename Value="src/Http2.Common.Body.Streams.pas" />
+        <UnitName Value="Http2.Common.Body.Streams" />
+      </Item18>
+      <Item19>
+        <Filename Value="src/Http2.Common.Body.Text.pas" />
+        <UnitName Value="Http2.Common.Body.Text" />
+      </Item19>
+      <Item20>
+        <Filename Value="src/Http2.Common.Body.Json.pas" />
+        <UnitName Value="Http2.Common.Body.Json" />
+      </Item20>
+      <Item21>
+        <Filename Value="src/Http2.Common.Body.Xml.pas" />
+        <UnitName Value="Http2.Common.Body.Xml" />
+      </Item21>
+      <Item22>
+        <Filename Value="src/Http2.Common.Status.pas" />
+        <UnitName Value="Http2.Common.Status" />
+      </Item22>
+      <Item23>
+        <Filename Value="src/Http2.Common.Body.Producers.pas" />
+        <UnitName Value="Http2.Common.Body.Producers" />
+      </Item23>
     </Files>
     <RequiredPkgs Count="1">
       <Item1>
