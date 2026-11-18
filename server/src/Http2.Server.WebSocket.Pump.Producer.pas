@@ -70,13 +70,19 @@ type
     FStarted: Boolean;
     FFinSent: Boolean;
     FCancelled: Boolean;
+    /// the sink raised once: every later call raises the same failure
+    FFailed: Boolean;
+    FFailText: string;
     procedure Cancel;
+    procedure SendChunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
   public
     constructor Create(const APort: IWsProducerPort; const AText: Boolean;
       const AFrameSize: Integer; const AMaxChunk: Int64);
     procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
     property FinSent: Boolean read FFinSent;
     property Cancelled: Boolean read FCancelled;
+    property Failed: Boolean read FFailed;
+    property FailText: string read FFailText;
   end;
 
 constructor TWsProducerSink.Create(const APort: IWsProducerPort; const AText: Boolean;
@@ -96,14 +102,40 @@ begin
 end;
 
 procedure TWsProducerSink.Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+begin
+  // a failure of the sink is final: a producer that catches the exception and writes on
+  // gets the same failure again, so no message can complete with a missing fragment
+  if FFailed then
+  begin
+    if FCancelled then
+      raise EStreamCancelled.Create(FFailText);
+    raise EHttpError.Create(FFailText);
+  end;
+  if FFinSent then
+    raise EHttpError.Create('a producer wrote after its last chunk');
+  // an empty chunk that is not the last one is skipped, as the pulled stream skips it
+  if (ACount = 0) and not ALast then
+    Exit;
+  try
+    SendChunk(ABuffer, ACount, ALast);
+  except
+    on E: Exception do
+    begin
+      FFailed := True;
+      FFailText := E.Message;
+      raise;
+    end;
+  end;
+end;
+
+procedure TWsProducerSink.SendChunk(const ABuffer; const ACount: Integer;
+  const ALast: Boolean);
 var
   Op: Byte;
   Wire: TBytes;
   Gate: TEvent;
   Done: Boolean;
 begin
-  if FFinSent then
-    raise EHttpError.Create('a producer wrote after its last chunk');
   if FPort.Ended then
     Cancel;
   if ACount > FMaxChunk then
@@ -154,6 +186,9 @@ begin
   None := 0;
   try
     AProducer.Produce(SinkRef);
+    // a producer that caught the failure of the sink and ended: the session fails
+    if Sink.Failed and not Sink.Cancelled then
+      raise EHttpError.Create(Sink.FailText);
     if not Sink.Cancelled and not Sink.FinSent then
       // a producer that ended without its last chunk: the message ends with an empty frame
       SinkRef.Chunk(None, 0, True);

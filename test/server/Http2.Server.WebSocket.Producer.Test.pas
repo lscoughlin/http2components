@@ -38,6 +38,9 @@ type
   private
     FRows: TArray<TBytes>;
     FRaiseAfter: Integer;
+    FHoldAfter: Integer;
+    FReached: TEvent;
+    FHold: TEvent;
     FRunning: Integer;
     FFinished: Integer;
     FErrorClass: string;
@@ -51,6 +54,11 @@ type
     /// write nothing
     procedure WriteNothing(const AOut: TStream);
     property RaiseAfter: Integer read FRaiseAfter write FRaiseAfter;
+    /// after the Write of this row (1 based) the producer sets Reached and then waits on
+    /// Hold (at most 10 seconds); it holds the producer in its own code
+    property HoldAfter: Integer read FHoldAfter write FHoldAfter;
+    property Reached: TEvent read FReached write FReached;
+    property Hold: TEvent read FHold write FHold;
     /// the class name of the exception that a Write raised; empty when none
     property ErrorClass: string read FErrorClass;
     /// 1 when the producer method has left
@@ -70,9 +78,9 @@ type
     procedure Produce(const ASink: IBodyChunkSink);
   end;
 
-  /// the session tests of SendStream with a producer
-  TWsProducerTest = class(TWsStreamBase)
-  private
+  /// the helpers of the session tests of SendStream with a producer; no tests of its own
+  TWsProducerBase = class(TWsStreamBase)
+  protected
     FFixture: TRowProducer;
     function Rows3: TRowProducer;
     /// SendStream with a producer writer of AFixture; no reference to the writer stays in the test
@@ -82,8 +90,11 @@ type
     function FailedLines: Integer;
     function FrameCountReached: Boolean;
     procedure ParkOnFull;
-  protected
     procedure TearDown; override;
+  end;
+
+  /// the session tests of SendStream with a producer
+  TWsProducerTest = class(TWsProducerBase)
   published
     procedure TestRowsArriveAsFragmentsWithFin;
     procedure TestFullParksTheThreadAndDrainResumes;
@@ -97,8 +108,7 @@ type
   end;
 
 /// a body writer for AFixture: one chunk of ARowBytes octets for each row
-function RowWriter(const AFixture: TRowProducer; const ARowBytes: Integer;
-  const AText: Boolean = True): IBodyWriter;
+function RowWriter(const AFixture: TRowProducer; const ARowBytes: Integer): IBodyWriter;
 
 implementation
 
@@ -129,6 +139,13 @@ begin
         end;
       end;
       InterlockedIncrement(GWriterCalls);
+      if (FHoldAfter > 0) and (I + 1 = FHoldAfter) then
+      begin
+        if FReached <> nil then
+          FReached.SetEvent;
+        if FHold <> nil then
+          FHold.WaitFor(10000);
+      end;
       if (FRaiseAfter > 0) and (I + 1 = FRaiseAfter) then
         raise Exception.Create('boom');
     end;
@@ -172,15 +189,14 @@ begin
   P.Produce(ASink);
 end;
 
-function RowWriter(const AFixture: TRowProducer; const ARowBytes: Integer;
-  const AText: Boolean): IBodyWriter;
+function RowWriter(const AFixture: TRowProducer; const ARowBytes: Integer): IBodyWriter;
 begin
   Result := TProbeWriter.Create(BodyWriterFromStream(AFixture.WriteRows, ARowBytes));
 end;
 
-{ TWsProducerTest }
+{ TWsProducerBase }
 
-procedure TWsProducerTest.TearDown;
+procedure TWsProducerBase.TearDown;
 var
   Waited: Integer;
 begin
@@ -198,13 +214,13 @@ begin
   FFixture := nil;
 end;
 
-function TWsProducerTest.Rows3: TRowProducer;
+function TWsProducerBase.Rows3: TRowProducer;
 begin
   FFixture := TRowProducer.Create(TextChunks(['row1;', 'row2;', 'row3;']));
   Result := FFixture;
 end;
 
-function TWsProducerTest.StreamFixture(const AFixture: TRowProducer): TSendResult;
+function TWsProducerBase.StreamFixture(const AFixture: TRowProducer): TSendResult;
 var
   W: IBodyWriter;
 begin
@@ -215,12 +231,12 @@ begin
   W := nil;
 end;
 
-function TWsProducerTest.FixtureFinished: Boolean;
+function TWsProducerBase.FixtureFinished: Boolean;
 begin
   Result := FFixture.Finished >= 1;
 end;
 
-function TWsProducerTest.CloseFrames: Integer;
+function TWsProducerBase.CloseFrames: Integer;
 var
   L: TArray<TRawFrame>;
   I: Integer;
@@ -232,7 +248,7 @@ begin
       Inc(Result);
 end;
 
-function TWsProducerTest.FailedLines: Integer;
+function TWsProducerBase.FailedLines: Integer;
 var
   I: Integer;
 begin
@@ -242,12 +258,12 @@ begin
       Inc(Result);
 end;
 
-function TWsProducerTest.FrameCountReached: Boolean;
+function TWsProducerBase.FrameCountReached: Boolean;
 begin
   Result := Length(OutFrames) >= FWantCount;
 end;
 
-procedure TWsProducerTest.ParkOnFull;
+procedure TWsProducerBase.ParkOnFull;
 begin
   // the first row is held back, and the write of the second row refuses: the sink waits
   FChannel.Full := True;
@@ -258,6 +274,8 @@ begin
   // the second Write blocks in the sink, so the count stays at 1
   Sleep(100);
 end;
+
+{ TWsProducerTest }
 
 procedure TWsProducerTest.TestRowsArriveAsFragmentsWithFin;
 var
