@@ -141,6 +141,12 @@ type
     /// the messages that wait are dropped from now on
     procedure DropPending;
     procedure ReleaseCredit(const AMessageDone: Boolean);
+    /// give back all the credit that the hold rule keeps; a streamed message starts, so
+    /// its inline octets must not wait for the queue to fall
+    procedure FlushHeldCredit;
+    /// the cap of the pipe of a streamed message: InboundPipeBytes on a channel that
+    /// returns no credit, and none on a channel whose window bounds the unread octets
+    function PipeCap: Integer;
     /// give back the octets of a message that left the queue; never more than the
     /// session still holds
     procedure ReleaseQueued(const ABytes: Int64);
@@ -406,6 +412,32 @@ begin
   end;
   if Give > 0 then
     FChannel.ReturnCredit(Give);
+end;
+
+procedure TWsSessionCore.FlushHeldCredit;
+var
+  Give: Int64;
+begin
+  FLock.Acquire;
+  try
+    Give := FHeldCredit;
+    FHeldCredit := 0;
+  finally
+    FLock.Release;
+  end;
+  if Give > 0 then
+    FChannel.ReturnCredit(Give);
+end;
+
+function TWsSessionCore.PipeCap: Integer;
+var
+  Flow: IChannelFlow;
+begin
+  // on a channel that returns credit, the stream window bounds the unread octets
+  if Supports(FChannel, IChannelFlow, Flow) and Flow.ReturnsCredit then
+    Result := MaxInt
+  else
+    Result := FOpts.InboundPipeBytes;
 end;
 
 { the timer }

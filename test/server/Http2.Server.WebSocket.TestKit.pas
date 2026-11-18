@@ -33,7 +33,7 @@ uses
 
 type
   /// a channel that records what the session does to it
-  TFakeWsChannel = class(TInterfacedObject, IDuplexChannel)
+  TFakeWsChannel = class(TInterfacedObject, IDuplexChannel, IChannelFlow)
   private
     FLock: TCriticalSection;
     FRegistry: IChannelRegistry;
@@ -55,10 +55,14 @@ type
     ClosedCount: Integer;
     /// when True, Send refuses and queues nothing
     Full: Boolean;
+    /// what IChannelFlow answers: True stands for an HTTP/2 stream, whose window slows
+    /// the peer; False, the default, for a channel that returns no credit
+    FlowControl: Boolean;
     /// a lock that stands for the connection lock of a real channel
     // - Send takes it, and Deliver holds it while the sink runs, as the IO
     //   thread does. A test sets it to show a lock-order inversion
     ConnLock: TCriticalSection;
+    function ReturnsCredit: Boolean;
     constructor Create(const ARegistry: IChannelRegistry);
     destructor Destroy; override;
     function Send(const AData: TBytes): TSendResult;
@@ -193,6 +197,11 @@ destructor TFakeWsChannel.Destroy;
 begin
   FLock.Free;
   inherited Destroy;
+end;
+
+function TFakeWsChannel.ReturnsCredit: Boolean;
+begin
+  Result := FlowControl;
 end;
 
 function TFakeWsChannel.Send(const AData: TBytes): TSendResult;

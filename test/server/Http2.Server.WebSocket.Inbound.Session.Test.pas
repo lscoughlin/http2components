@@ -23,7 +23,7 @@ interface
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Classes, SyncObjs, fpcunit, testregistry,
+  SysUtils, StrUtils, Classes, SyncObjs, fpcunit, testregistry,
   Http2.Common.Body, Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam,
   Http2.Server.Duplex, Http2.Server.Limits, Http2.Server.Observer, Http2.Server.Sse.Test,
   Http2.Server.WebSocket.Options, Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames,
@@ -113,6 +113,10 @@ type
     procedure TestMessageOfTheWindowSize;
     procedure TestMessageOfTheWindowSizePlusOne;
     procedure TestQueuedMessagesOneDoesNotStallAStreamedMessage;
+    procedure TestHttp2PipeIsNotCappedWhileTheHandlerWaits;
+    procedure TestHeldInlineCreditIsReleasedWhenTheMessageStreams;
+    procedure TestAbortedQueuedStreamIsNotDeliveredToTheHandler;
+    procedure TestBytesInCountsAnAbortedStreamedMessage;
     procedure TestReaderStartsTheStreamAtTheInlineLimit;
     procedure TestReaderGivesTheSameMessageWithAnyInlineLimit;
   end;
@@ -727,6 +731,106 @@ begin
   FHandler.Resume.SetEvent;
   AssertTrue(WaitHandler('got 400'));
   AssertTrue(CreditEqualsDelivered(Total));
+end;
+
+procedure TWsInboundSessionTest.TestHttp2PipeIsNotCappedWhileTheHandlerWaits;
+var
+  Frames: TArray<TBytes>;
+  I: Integer;
+begin
+  // the channel stands for an HTTP/2 stream: its window bounds the unread octets, so the
+  // cap of the pipe does not apply, and a handler that waits before its first read
+  // does not cost the session
+  FHandler := TInboundHandler.Create;
+  FHandlerRef := FHandler;
+  FHandler.Mode := imPartial;
+  FHandler.PartialBytes := 0;
+  Build(Quick.WithInlineLimit(50).WithInboundPipeBytes(300));
+  FChannel.FlowControl := True;
+  Frames := MessageFrames(WsOpBinary, 5000, 100);
+  FChannel.Deliver(Frames[0]);
+  AssertTrue(FHandler.PartReached.WaitFor(5000) = wrSignaled);
+  for I := 1 to High(Frames) do
+    FChannel.Deliver(Frames[I]);
+  AssertFalse('no close', FHandler.Has('closed'));
+  FHandler.Resume.SetEvent;
+  AssertTrue(WaitHandler('got 5000'));
+  AssertTrue(SamePattern(FHandler.Received));
+end;
+
+procedure TWsInboundSessionTest.TestHeldInlineCreditIsReleasedWhenTheMessageStreams;
+var
+  Frames: TArray<TBytes>;
+  I: Integer;
+begin
+  // a queue of two, with one message in its handler: the hold rule is on. The inline
+  // octets of the next message are held, and they come back when it starts to stream
+  FHandler := TInboundHandler.Create;
+  FHandlerRef := FHandler;
+  FHandler.Mode := imPartial;
+  FHandler.PartialBytes := 0;
+  Build(Quick.WithInlineLimit(100).WithQueuedMessages(2));
+  FChannel.Deliver(ClientFrame(WsOpBinary, True, PatternOf(10)));
+  AssertTrue(FHandler.PartReached.WaitFor(5000) = wrSignaled);
+  Frames := MessageFrames(WsOpBinary, 180, 60);
+  for I := 0 to High(Frames) do
+    FChannel.Deliver(Frames[I]);
+  // 16 + 3 * 66 octets arrived. 120 octets went to the pipe, which credits them on read
+  AssertEquals(16 + 3 * 66 - 120, FChannel.CreditSoFar);
+end;
+
+function CountOf(const AText, ANeedle: string): Integer;
+var
+  At: Integer;
+begin
+  Result := 0;
+  At := Pos(ANeedle, AText);
+  while At > 0 do
+  begin
+    Inc(Result);
+    At := PosEx(ANeedle, AText, At + 1);
+  end;
+end;
+
+procedure TWsInboundSessionTest.TestAbortedQueuedStreamIsNotDeliveredToTheHandler;
+var
+  Frames: TArray<TBytes>;
+begin
+  FHandler := TInboundHandler.Create;
+  FHandlerRef := FHandler;
+  FHandler.Mode := imPartial;
+  FHandler.PartialBytes := 0;
+  Build(Quick.WithInlineLimit(16).WithQueuedMessages(4));
+  FChannel.Deliver(ClientFrame(WsOpBinary, True, PatternOf(10)));
+  AssertTrue(FHandler.PartReached.WaitFor(5000) = wrSignaled);
+  // the second message streams and queues behind the first, and a Close frame ends it
+  Frames := MessageFrames(WsOpBinary, 100, 50);
+  FChannel.Deliver(Frames[0]);
+  FChannel.Deliver(ClientClose(1000));
+  FHandler.Resume.SetEvent;
+  AssertTrue(WaitHandler('closed 1000'));
+  AssertEquals('only the first message reached the handler', 1,
+    CountOf(FHandler.Text, 'begin B'));
+end;
+
+procedure TWsInboundSessionTest.TestBytesInCountsAnAbortedStreamedMessage;
+var
+  Frames: TArray<TBytes>;
+  Stats: TServerStats;
+begin
+  FHandler := TInboundHandler.Create;
+  FHandlerRef := FHandler;
+  FHandler.Mode := imPartial;
+  FHandler.PartialBytes := 10;
+  Build(Quick.WithInlineLimit(16));
+  Frames := MessageFrames(WsOpBinary, 100, 50);
+  FChannel.Deliver(Frames[0]);
+  AssertTrue(FHandler.PartReached.WaitFor(5000) = wrSignaled);
+  FChannel.Deliver(ClientClose(1000));
+  Stats := Default(TServerStats);
+  FRig.Env.FillStats(Stats);
+  AssertEquals(Int64(1), Stats.WsMessagesIn);
+  AssertEquals('the octets that arrived are counted', Int64(50), Stats.WsBytesIn);
 end;
 
 type

@@ -311,9 +311,11 @@ begin
     Add('the WebSocket inline limit is outside the range 1 to 16777216');
   if FInboundPipeBytes < 1 then
     Add('the WebSocket inbound pipe size is below 1');
-  // the octets that the reader kept move into the pipe when a message streams
-  if (FInlineLimit >= 1) and (FInboundPipeBytes >= 1) and (FInlineLimit > FInboundPipeBytes) then
-    Add('the WebSocket inline limit is above the inbound pipe size');
+  // the octets that the reader kept move into the pipe when a message streams, and the
+  // first piece follows at once: both must fit before the handler has read an octet
+  if (FInlineLimit >= 1) and (FInboundPipeBytes >= 1) and (FMaxFrameSize >= 1) and
+     (Int64(FInlineLimit) + FMaxFrameSize > FInboundPipeBytes) then
+    Add('the WebSocket inbound pipe size is below the inline limit plus the frame size limit');
   if FInboundStallMs < 1 then
     Add('the WebSocket inbound stall time is below 1');
   if (FOriginPolicy = opAllowListOnly) and (Length(FAllowedOrigins) = 0) then

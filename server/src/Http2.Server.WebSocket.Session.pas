@@ -69,8 +69,6 @@ type
     /// the message that ends inside the inline limit, as the reader gives it
     FInline: TBytes;
     FInlineText: Boolean;
-    /// the octets of the streamed message so far
-    FStreamTotal: Int64;
     /// the octets that this BytesReceived call gave to a pipe: the pipe credits them
     FPushed: Integer;
     /// this BytesReceived call belonged to a streamed message, which may have ended in it
@@ -380,7 +378,8 @@ begin
   // a message that arrived before a Close frame is delivered, whatever the state
   // of the session now. An abort, a failure of the session or a protocol error
   // drops the messages that wait
-  if Dropping then
+  // a streamed message whose pipe was aborted before the handler started is dropped too
+  if Dropping or ((ATask.Pipe <> nil) and ATask.Pipe.Aborted) then
   begin
     if ATask.Pipe <> nil then
       ATask.Pipe.Release;
@@ -602,10 +601,10 @@ begin
   // a streamed message counts once, here, with the size of the pipe as its charge
   if not Admit(FOpts.InboundPipeBytes) then
     Exit;
-  Pipe := TWsMessagePipe.Create(FOpts.InboundPipeBytes, FOpts.InboundStallMs,
-    PipeTaken, PipeStalled);
+  Pipe := TWsMessagePipe.Create(PipeCap, FOpts.InboundStallMs, PipeTaken, PipeStalled);
   Ref := Pipe;
-  FStreamTotal := 0;
+  // the inline octets of this message may be held by the queue rule: give them back
+  FlushHeldCredit;
   FLock.Acquire;
   try
     // the state is read under the lock that TryEnd takes before it aborts the pipe, so
@@ -666,7 +665,7 @@ begin
   // and they are credited when they arrive
   if P = nil then
     Exit;
-  Inc(FStreamTotal, ACount);
+  FEnv.Count(wcBytesIn, ACount);
   if FReader.Replaying then
     // the octets that the reader kept were credited when they arrived
     Taken := P.PushPrepaid(AData, ACount)
@@ -701,7 +700,6 @@ begin
     end;
     if P = nil then
       Exit;
-    FEnv.Count(wcBytesIn, FStreamTotal);
     P.Finish;
     Exit;
   end;

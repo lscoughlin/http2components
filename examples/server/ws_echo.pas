@@ -194,7 +194,7 @@ begin
   if (ParamCount >= 3) and (ParamStr(3) = 'big') then
     Options := Options.WithMaxMessageSize(33554432).WithMaxFrameSize(33554432)
       .WithMaxFragments(100000).WithPingIntervalMs(0)
-      .WithInboundPipeBytes(33554432)
+      .WithInboundPipeBytes(67108864)
       .WithMessageBucket(TTokenBucketOptions.Create.WithCapacity(1000000)
         .WithRefillPerSecond(1000000));
   Server := THttp2ServerFactory.Create
