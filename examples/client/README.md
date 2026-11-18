@@ -46,8 +46,8 @@ make measure-observer
 |---|---|
 | `basic_get.pas` | The factory, one GET, `StatusCode`, `Headers`, `ReadText`. |
 | `post_text.pas` | `WithTextBody` attaches a text body and defaults the content-type. |
-| `json_request.pas` | `WithJsonBody` sends JSON; `ReadJsonObject` reads `TJSONObject` directly. |
-| `xml_request.pas` | `WithXmlBody` / `ReadXmlDocument` for XML. |
+| `json_request.pas` | `WithJsonBody` sends JSON; `ReadJsonObject` reads `TJSONObject` directly. Both are wrappers over the common JSON helpers (`Http2.Common.Body.Json`). |
+| `xml_request.pas` | `WithXmlBody` / `ReadXmlDocument` for XML. `ReadXmlDocument` parses the body as it arrives, through the common XML helper (`Http2.Common.Body.Xml`). |
 | `threaded_get.pas` | Eight threads sharing one client and its connection pool. |
 | `sse_stream.pas` | `SseRequest` + `TSseReconnectLoop`: read an event stream and resume from `last-event-id`. |
 | `websocket_echo.pas` | `TWebSocketRequest` + a `TWebSocketListener` descendant: open a WebSocket, `Request` demand, send a message, close. |

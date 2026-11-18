@@ -22,7 +22,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="17">
+    <Files Count="21">
       <Item1>
         <Filename Value="src/Http2.Common.Body.pas" />
         <UnitName Value="Http2.Common.Body" />
@@ -91,6 +91,22 @@
         <Filename Value="src/Http2.Common.Cookie.pas" />
         <UnitName Value="Http2.Common.Cookie" />
       </Item17>
+      <Item18>
+        <Filename Value="src/Http2.Common.Body.Streams.pas" />
+        <UnitName Value="Http2.Common.Body.Streams" />
+      </Item18>
+      <Item19>
+        <Filename Value="src/Http2.Common.Body.Text.pas" />
+        <UnitName Value="Http2.Common.Body.Text" />
+      </Item19>
+      <Item20>
+        <Filename Value="src/Http2.Common.Body.Json.pas" />
+        <UnitName Value="Http2.Common.Body.Json" />
+      </Item20>
+      <Item21>
+        <Filename Value="src/Http2.Common.Body.Xml.pas" />
+        <UnitName Value="Http2.Common.Body.Xml" />
+      </Item21>
     </Files>
     <RequiredPkgs Count="1">
       <Item1>
