@@ -5,21 +5,26 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: websocket, rfc 6455, message assembly, utf-8, limits, reader
 notes:
   - This unit assembles the frames of Http2.Server.WebSocket.Parser into messages. A
-    caller feeds bytes and receives whole messages and whole control frames.
+    caller feeds bytes and receives messages and whole control frames.
   - A message grows as its bytes arrive and never as its declared length says,
     so a peer that declares a huge frame and sends nothing costs no memory. The
     reader refuses a frame whose declared length would pass the message limit
     before it buffers a byte.
+  - The reader keeps the first InlineLimit octets of a message. A message that ends
+    inside the limit reaches the sink as MessageBegin, one MessageData and MessageEnd,
+    all at its end. A longer message reaches the sink as MessageBegin when it passes the
+    limit, then MessageData with the kept octets (Replaying is True), then MessageData for
+    each later piece, and MessageEnd at its end. The reader then keeps nothing.
   - A text message is checked for UTF-8 as the bytes arrive, so a bad prefix fails
     before the message ends, and a character split across fragments is legal.
   - A Close frame is checked here. One octet, a code that is not on the wire, and
     a reason that is not UTF-8 fail the connection (RFC 6455 sections 5.5.1, 7.4).
   - The assembly rules follow the client unit Http2.WebSocket of ../http2client
-    at revision dd45cdd. This unit accumulates a whole message where the client
-    unit delivers each fragment.
+    at revision dd45cdd. This unit accumulates a message up to the inline limit where
+    the client unit delivers each fragment.
 ---
 }
-/// Whole WebSocket messages from a stream of bytes (RFC 6455 sections 5.4, 6.2, 8.1)
+/// WebSocket messages from a stream of bytes (RFC 6455 sections 5.4, 6.2, 8.1)
 unit Http2.Server.WebSocket.Reader;
 
 {$mode delphi}{$H+}
@@ -35,8 +40,17 @@ type
   /// The receiver of the reader.
   IWsReaderSink = interface
     ['{7E1F0C11-0062-4A11-9C72-000000000902}']
-    /// a whole message; the text of a text message is valid UTF-8
-    procedure Message(const AText: Boolean; const AData: TBytes);
+    /// a message starts for the sink: it ended inside the inline limit, or it has just
+    /// passed the limit (Streaming tells which); the reader gives the octets next
+    procedure MessageBegin(const AText: Boolean);
+    /// octets of the message, in order; the text of a text message is valid UTF-8 up to
+    /// the last octet that was given
+    // - the memory is valid for the call only
+    // - Replaying is True while the reader gives the octets that it kept before the
+    //   message passed the limit
+    procedure MessageData(const AData; const ACount: Integer);
+    /// the last octet of the message was given
+    procedure MessageEnd;
     /// a whole Ping, Pong or Close frame; a Close payload passed the checks
     procedure Control(const AOpcode: Byte; const AData: TBytes);
   end;
@@ -58,6 +72,9 @@ type
     FUtf8: TWsUtf8Validator;
     FFailure: TWsFailure;
     FFailed: Boolean;
+    FInlineLimit: Integer;
+    FStreaming: Boolean;
+    FReplaying: Boolean;
     function Fail(const ACode: Word; const AReason: string): Boolean;
     // IUnknown without a count
     function QueryInterface(constref IID: TGuid; out Obj): LongInt;
@@ -74,7 +91,9 @@ type
     function GetFailure: TWsFailure;
   public
     /// ARequireMasked is True for the reader of a server (client frames)
-    constructor Create(const ALimits: TWsLimits; const ARequireMasked: Boolean);
+    // - AInlineLimit is the count of octets that the reader keeps before it streams
+    constructor Create(const ALimits: TWsLimits; const ARequireMasked: Boolean;
+      const AInlineLimit: Integer = 65536);
     destructor Destroy; override;
     /// consume ACount octets; the sink receives the messages that complete
     // - answers False once a rule is broken; Failure holds the close code and a
@@ -83,15 +102,22 @@ type
       const ASink: IWsReaderSink): Boolean;
     property Failed: Boolean read GetFailed;
     property Failure: TWsFailure read GetFailure;
+    /// the message in progress has passed the inline limit; True from the sink call
+    /// MessageBegin of such a message to the end of its MessageEnd call
+    property Streaming: Boolean read FStreaming;
+    /// True while the reader gives the octets that it kept; the sink got them as
+    /// arrived octets before
+    property Replaying: Boolean read FReplaying;
   end;
 
 implementation
 
 constructor TWsReader.Create(const ALimits: TWsLimits;
-  const ARequireMasked: Boolean);
+  const ARequireMasked: Boolean; const AInlineLimit: Integer);
 begin
   inherited Create;
   FLimits := ALimits;
+  FInlineLimit := AInlineLimit;
   FParser := TWsParser.Create(ALimits, ARequireMasked);
   FUtf8.Reset;
 end;
@@ -175,6 +201,7 @@ begin
     FLen := 0;
     FFragments := 0;
     FTotal := 0;
+    FStreaming := False;
     FUtf8.Reset;
   end;
   Inc(FFragments);
@@ -199,6 +226,33 @@ begin
     Fail(WsCloseBadData, 'a text message that is not valid UTF-8');
     Exit;
   end;
+  if FStreaming then
+  begin
+    Inc(FTotal, ACount);
+    FSink.MessageData(APayload, ACount);
+    Exit;
+  end;
+  if FTotal + UInt64(ACount) > UInt64(FInlineLimit) then
+  begin
+    // the message passes the inline limit: the sink starts the stream, and gets the
+    // octets that were kept, then the octets of this piece
+    FStreaming := True;
+    FSink.MessageBegin(FText);
+    if FLen > 0 then
+    begin
+      FReplaying := True;
+      try
+        FSink.MessageData(FBuf[0], FLen);
+      finally
+        FReplaying := False;
+      end;
+    end;
+    FLen := 0;
+    FBuf := nil;
+    Inc(FTotal, ACount);
+    FSink.MessageData(APayload, ACount);
+    Exit;
+  end;
   Need := FLen + ACount;
   if Need > Length(FBuf) then
   begin
@@ -214,8 +268,6 @@ begin
 end;
 
 procedure TWsReader.DataEnd;
-var
-  Whole: TBytes;
 begin
   if FFailed then
     Exit;
@@ -227,14 +279,21 @@ begin
     Fail(WsCloseBadData, 'a text message that ends inside a character');
     Exit;
   end;
-  SetLength(Whole, FLen);
+  if FStreaming then
+  begin
+    FSink.MessageEnd;
+    FStreaming := False;
+    Exit;
+  end;
+  // a message that ended inside the inline limit reaches the sink all at once
+  FSink.MessageBegin(FText);
   if FLen > 0 then
-    Move(FBuf[0], Whole[0], FLen);
+    FSink.MessageData(FBuf[0], FLen);
   // release a big buffer after a big message, so an idle connection holds little
   if Length(FBuf) > 65536 then
     FBuf := nil;
   FLen := 0;
-  FSink.Message(FText, Whole);
+  FSink.MessageEnd;
 end;
 
 procedure TWsReader.Control(const AOpcode: Byte; const APayload;

@@ -31,7 +31,7 @@ uses
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Parser,
   Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.Utf8,
   Http2.Server.ClientCert, Http2.Server.WebSocket.Budget, Http2.Server.WebSocket.Pump,
-  Http2.Server.WebSocket.Snapshot;
+  Http2.Server.WebSocket.Snapshot, Http2.Server.WebSocket.Inbound;
 
 type
   TWsState = (wsInit, wsOpen, wsClosing, wsEnded);
@@ -49,6 +49,12 @@ type
     Opcode: Byte;
     /// wtReply: close the channel gracefully after the frame
     CloseAfter: Boolean;
+    /// wtMessage: what the handler reads; a memory reader or a pipe
+    Reader: IBodyReader;
+    /// wtMessage: the pipe of a streamed message; nil for a message in memory
+    Pipe: TWsMessagePipe;
+    /// wtMessage: the octets that the budget counted at the start of the message
+    Charge: Int64;
   end;
 
   TWsSessionCore = class(TInterfacedObject, IWsSession, IWsPumpHost)
@@ -110,6 +116,9 @@ type
     procedure Post(const ATask: TWsTask); virtual; abstract;
     /// stop the time limit of Init
     procedure UnwatchInit; virtual; abstract;
+    /// the session has ended: the pipe of a message that still arrives is aborted, so a
+    /// handler that waits in Read wakes up
+    procedure AbortInbound; virtual; abstract;
     /// the session no longer closes its channel when the server stops
     procedure DropCloser; virtual; abstract;
     procedure DoTick;
@@ -201,7 +210,7 @@ begin
   Limits.MaxFrameSize := FOpts.MaxFrameSize;
   Limits.MaxMessageSize := FOpts.MaxMessageSize;
   Limits.MaxFragments := FOpts.MaxFragments;
-  FReader := TWsReader.Create(Limits, {ARequireMasked=}True);
+  FReader := TWsReader.Create(Limits, {ARequireMasked=}True, FOpts.InlineLimit);
   FControl := TTokenBucket.Create(AEnv.Clock, FOpts.ControlBucket);
   FMessages := TTokenBucket.Create(AEnv.Clock, FOpts.MessageBucket);
   FLastInboundMs := GetTickCount64;
@@ -235,6 +244,8 @@ begin
   if not Result then
     Exit;
   UnwatchInit;
+  // before the pool stops: a handler that waits in Read must be able to return
+  AbortInbound;
   if FCounted then
     FEnv.SessionClosed;
   ReleaseSessionSlot;

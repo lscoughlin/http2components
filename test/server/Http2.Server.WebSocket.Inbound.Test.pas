@@ -77,6 +77,10 @@ type
     procedure TestWriterThreadAndReaderThread;
     procedure TestAbortWakesABlockedReader;
     procedure TestReadChunkOnAThread;
+    procedure TestPrepaidOctetsGiveNoCreditOnRead;
+    procedure TestPrepaidOctetsAreNotCreditedWhenDropped;
+    procedure TestReleaseDropsAFinishedBufferAndCredits;
+    procedure TestReleaseCreditsLaterPushesUntilFinish;
   end;
 
 implementation
@@ -601,6 +605,77 @@ begin
   finally
     W.Free;
   end;
+end;
+
+procedure TWsInboundPipeTest.TestPrepaidOctetsGiveNoCreditOnRead;
+var
+  P: TWsMessagePipe;
+  R: IBodyReader;
+  B: TBytes;
+begin
+  P := NewPipe;
+  R := P;
+  B := TBytes.Create(1, 2, 3, 4);
+  P.PushPrepaid(B[0], 4);
+  P.Push(B[0], 2);
+  ReadCount(R, 3);
+  AssertEquals('three prepaid octets', 0, FTaken);
+  ReadCount(R, 3);
+  AssertEquals('one prepaid and two new octets: two credits', 2, FTaken);
+end;
+
+procedure TWsInboundPipeTest.TestPrepaidOctetsAreNotCreditedWhenDropped;
+var
+  P: TWsMessagePipe;
+  B: TBytes;
+begin
+  P := NewPipe;
+  B := TBytes.Create(1, 2, 3, 4);
+  P.PushPrepaid(B[0], 4);
+  P.Push(B[0], 3);
+  P.Abort;
+  AssertEquals(3, FTaken);
+  P.Free;
+end;
+
+procedure TWsInboundPipeTest.TestReleaseDropsAFinishedBufferAndCredits;
+var
+  P: TWsMessagePipe;
+  R: IBodyReader;
+  B: TBytes;
+  Raised: Boolean;
+begin
+  P := NewPipe;
+  R := P;
+  B := TBytes.Create(1, 2, 3);
+  P.Push(B[0], 3);
+  P.Finish;
+  P.Release;
+  AssertEquals(3, FTaken);
+  Raised := False;
+  try
+    ReadCount(R, 4);
+  except
+    on EStreamCancelled do
+      Raised := True;
+  end;
+  AssertTrue('a read after Release raises', Raised);
+end;
+
+procedure TWsInboundPipeTest.TestReleaseCreditsLaterPushesUntilFinish;
+var
+  P: TWsMessagePipe;
+  B: TBytes;
+begin
+  P := NewPipe;
+  B := TBytes.Create(1, 2, 3);
+  P.Release;
+  AssertTrue(P.Push(B[0], 3));
+  AssertEquals('a push after Release is dropped and credited', 3, FTaken);
+  P.Finish;
+  P.Push(B[0], 3);
+  AssertEquals('no call back after Finish', 3, FTaken);
+  P.Free;
 end;
 
 initialization

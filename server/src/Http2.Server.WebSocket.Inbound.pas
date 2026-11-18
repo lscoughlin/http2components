@@ -60,6 +60,8 @@ type
     FChunks: TQueue<TBytes>;
     FHeadOffset: Integer;
     FBuffered: Integer;
+    /// the octets at the head of the buffer that the owner credited when they arrived
+    FPrepaid: Integer;
     FCap: Integer;
     FStallMs: Integer;
     FFinished: Boolean;
@@ -77,6 +79,8 @@ type
     function Fetch(const ABuffer: Pointer; const ACount: Integer;
       out AChunk: TBytes): Integer;
     procedure Stall;
+    function DoPush(const AData; const ACount: Integer; const APrepaid: Boolean): Boolean;
+    function DropBufferLocked: Integer;
   public
     /// ACap is the greatest count of buffered octets; AStallMs is the time that a read
     /// waits for an octet before it gives up (0 waits for ever)
@@ -86,11 +90,19 @@ type
     /// append the octets; never waits; False when the octets did not fit under the cap:
     /// the pipe is then aborted and the octets are dropped
     function Push(const AData; const ACount: Integer): Boolean;
+    /// the same, for octets that the owner has credited already; the owner calls it
+    // for the octets that it kept before the pipe existed, and the call back does not
+    // count them again when the handler reads them
+    function PushPrepaid(const AData; const ACount: Integer): Boolean;
     /// the message is complete: a read gives the octets that remain and then the end
     procedure Finish;
     /// the message will not complete: a read raises EStreamCancelled; the buffered
     // octets are dropped; a finished pipe ignores the call
     procedure Abort;
+    /// the handler no longer reads: the buffer is dropped, a later read raises
+    // EStreamCancelled, and the octets that still arrive are dropped and credited; unlike
+    // Abort it also acts on a finished pipe
+    procedure Release;
     /// the owner no longer takes calls; the pipe stays valid for a reader that holds it
     procedure Detach;
     function Read(var ABuffer; const ACount: Integer): Integer; override;
@@ -201,31 +213,34 @@ begin
   end;
 end;
 
-function TWsMessagePipe.Push(const AData; const ACount: Integer): Boolean;
+function TWsMessagePipe.DoPush(const AData; const ACount: Integer;
+  const APrepaid: Boolean): Boolean;
 var
   Chunk: TBytes;
   Taken: TWsPipeTaken;
-  Drop: Integer;
+  Credit: Integer;
 begin
   Result := True;
   if ACount <= 0 then
     Exit;
-  Drop := 0;
+  Credit := 0;
   FLock.Acquire;
   try
     Taken := FOnTaken;
     if FAborted or FFinished then
-      Drop := ACount
+    begin
+      if not APrepaid then
+        Credit := ACount;
+    end
     else if Int64(FBuffered) + ACount > FCap then
     begin
       // the handler reads too slowly for a channel that cannot slow its peer
       FOverflowed := True;
       FAborted := True;
-      Drop := FBuffered + ACount;
-      FBuffered := 0;
-      FHeadOffset := 0;
-      FChunks.Clear;
       Result := False;
+      Credit := DropBufferLocked;
+      if not APrepaid then
+        Inc(Credit, ACount);
     end
     else
     begin
@@ -233,14 +248,38 @@ begin
       Move(AData, Chunk[0], ACount);
       FChunks.Enqueue(Chunk);
       Inc(FBuffered, ACount);
+      if APrepaid then
+        Inc(FPrepaid, ACount);
     end;
   finally
     FLock.Release;
   end;
   RTLEventSetEvent(FEvent);
   // a dropped octet is credited at once, so the peer is not slowed for it
-  if (Drop > 0) and Assigned(Taken) then
-    Taken(Drop);
+  if (Credit > 0) and Assigned(Taken) then
+    Taken(Credit);
+end;
+
+function TWsMessagePipe.Push(const AData; const ACount: Integer): Boolean;
+begin
+  Result := DoPush(AData, ACount, False);
+end;
+
+function TWsMessagePipe.PushPrepaid(const AData; const ACount: Integer): Boolean;
+begin
+  Result := DoPush(AData, ACount, True);
+end;
+
+/// empty the buffer; answers the octets that still need credit; the caller holds FLock
+function TWsMessagePipe.DropBufferLocked: Integer;
+begin
+  Result := FBuffered - FPrepaid;
+  if Result < 0 then
+    Result := 0;
+  FBuffered := 0;
+  FPrepaid := 0;
+  FHeadOffset := 0;
+  FChunks.Clear;
 end;
 
 procedure TWsMessagePipe.Finish;
@@ -248,6 +287,9 @@ begin
   FLock.Acquire;
   try
     FFinished := True;
+    // a released or aborted pipe gets no push after this call, so no call back follows
+    if FAborted then
+      FOnTaken := nil;
   finally
     FLock.Release;
   end;
@@ -256,10 +298,9 @@ end;
 
 procedure TWsMessagePipe.Abort;
 var
-  Dropped: Integer;
+  Credit: Integer;
   Taken: TWsPipeTaken;
 begin
-  Dropped := 0;
   FLock.Acquire;
   try
     Taken := FOnTaken;
@@ -267,16 +308,34 @@ begin
     if FFinished or FAborted then
       Exit;
     FAborted := True;
-    Dropped := FBuffered;
-    FBuffered := 0;
-    FHeadOffset := 0;
-    FChunks.Clear;
+    Credit := DropBufferLocked;
   finally
     FLock.Release;
   end;
   RTLEventSetEvent(FEvent);
-  if (Dropped > 0) and Assigned(Taken) then
-    Taken(Dropped);
+  if (Credit > 0) and Assigned(Taken) then
+    Taken(Credit);
+end;
+
+procedure TWsMessagePipe.Release;
+var
+  Credit: Integer;
+  Taken: TWsPipeTaken;
+begin
+  FLock.Acquire;
+  try
+    Taken := FOnTaken;
+    FAborted := True;
+    Credit := DropBufferLocked;
+    // a finished pipe gets no push, so no call back follows
+    if FFinished then
+      FOnTaken := nil;
+  finally
+    FLock.Release;
+  end;
+  RTLEventSetEvent(FEvent);
+  if (Credit > 0) and Assigned(Taken) then
+    Taken(Credit);
 end;
 
 procedure TWsMessagePipe.Detach;
@@ -313,13 +372,14 @@ var
   Taken: TWsPipeTaken;
   Start, Waited: QWord;
   Chunk: TBytes;
-  Avail: Integer;
+  Avail, Credit, Skip: Integer;
 begin
   AChunk := nil;
   Start := GetTickCount64;
   while True do
   begin
     Result := 0;
+    Credit := 0;
     Taken := nil;
     FLock.Acquire;
     try
@@ -354,6 +414,17 @@ begin
         Dec(FBuffered, Avail);
         Taken := FOnTaken;
         Result := Avail;
+        // the octets that were credited on arrival give no credit again
+        Credit := Avail;
+        if FPrepaid > 0 then
+        begin
+          if FPrepaid > Credit then
+            Skip := Credit
+          else
+            Skip := FPrepaid;
+          Dec(FPrepaid, Skip);
+          Dec(Credit, Skip);
+        end;
       end
       else if FFinished then
         Exit(0);
@@ -364,8 +435,8 @@ begin
     begin
       // the credit goes out with no lock held: the IO thread holds the channel lock
       // and takes the lock of the pipe, so this thread must not do the reverse
-      if Assigned(Taken) then
-        Taken(Result);
+      if (Credit > 0) and Assigned(Taken) then
+        Taken(Credit);
       Exit;
     end;
     if FStallMs > 0 then
