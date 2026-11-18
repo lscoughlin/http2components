@@ -18,7 +18,7 @@ interface
 
 uses
   SysUtils, SyncObjs, Generics.Collections, Http2.Common.Frames,
-  Http2.Common.Hpack;
+  Http2.Common.Hpack, Http2.Client.Tls.Types;
 
 const
   /// the most control frames that wait for the writer (as the server OutboundBudget)
@@ -41,11 +41,15 @@ type
     FLock: TCriticalSection;
     FItems: TQueue<TFrame>;
     FOverflowed: Boolean;
+    FWake: IReadInterrupt;
   public
     constructor Create;
     destructor Destroy; override;
     /// queue AFrame; False when cControlQueueLimit frames already wait
+    // - the connection thread ends a blocked read at once, to write the frame
     function TryPost(const AFrame: TFrame): Boolean;
+    /// the wake channel of the writer thread; set once, before the thread starts
+    property Wake: IReadInterrupt read FWake write FWake;
     /// take the oldest frame, if any (never blocks)
     function TryPop(out AFrame: TFrame): Boolean;
     /// frames currently waiting
@@ -131,6 +135,8 @@ begin
   finally
     FLock.Release;
   end;
+  if Result and (FWake <> nil) then
+    FWake.InterruptRead;
 end;
 
 function TControlFrameQueue.TryPop(out AFrame: TFrame): Boolean;

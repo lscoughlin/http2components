@@ -155,6 +155,20 @@ type
     function HasPendingInput: Boolean;
   end;
 
+  /// implemented by a socket whose blocked read another thread can end early
+  // - the connection thread blocks in a read for one poll interval. A frame that
+  //   another thread queues in that time would wait for the end of the interval,
+  //   so the thread that queues it calls InterruptRead. A socket without this
+  //   contract keeps the timed read
+  IReadInterrupt = interface
+    ['{4E0B7A36-2C51-4D8F-9B64-7A13C5E8F0D2}']
+    /// prepare the wake channel; the caller calls it once, before any read
+    procedure EnableInterrupt;
+    /// end a blocked or the next read at once with EHttpTimeout, as an idle
+    // poll ends; callable from any thread and a no-op before EnableInterrupt
+    procedure InterruptRead;
+  end;
+
   /// implemented by a socket factory that dials through a per-request proxy
   /// (doc/design/proxy.md).  A factory that lacks it is dialled without a
   /// proxy, as before.

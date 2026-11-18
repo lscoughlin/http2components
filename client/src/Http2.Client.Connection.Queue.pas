@@ -16,7 +16,7 @@ unit Http2.Client.Connection.Queue;
 interface
 
 uses
-  SysUtils, SyncObjs, Generics.Collections;
+  SysUtils, SyncObjs, Generics.Collections, Http2.Client.Tls.Types;
 
 const
   cDefaultQueueCapacity = 128;
@@ -31,9 +31,13 @@ type
     FCapacity: Integer;
     FShutdown: Boolean;
     FWaitersParked: Integer;
+    FWake: IReadInterrupt;
   public
     constructor Create(const ACapacity: Integer = cDefaultQueueCapacity);
     destructor Destroy; override;
+    /// the wake channel of a consumer that blocks in a socket read, not in Pop;
+    // set once, before the consumer starts. Push calls it after the item is queued
+    property Wake: IReadInterrupt read FWake write FWake;
     procedure Push(const AItem: T);
     function Pop(out AItem: T): Boolean;
     function TryPop(out AItem: T): Boolean;
@@ -100,6 +104,8 @@ begin
   if WokenByShutdown then
     RTLEventSetEvent(FNotFull);
   RTLEventSetEvent(FNotEmpty);
+  if (not WokenByShutdown) and (FWake <> nil) then
+    FWake.InterruptRead;
 end;
 
 function TBlockingQueueState<T>.Pop(out AItem: T): Boolean;

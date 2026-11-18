@@ -77,6 +77,7 @@ type
     procedure TestPriorityResetsAreChargedToTheLimiter;
     procedure TestWindowUpdateOverflowResetsOnceAndClosesTheStream;
     procedure TestHandlerWriteToAPeerThatDoesNotReadTimesOut;
+    procedure TestHandlerReadWakesTheWriterOutsideTheLock;
   end;
 
 implementation
@@ -238,6 +239,39 @@ begin
   AssertEquals('the waker ran', 1, Waker.Signals);
   AssertFalse('H2-8: the waker ran with the connection lock held', Waker.LockHeld);
   FPeer.Core.SetWriteWaker(nil);
+end;
+
+procedure TH2LocksTest.TestHandlerReadWakesTheWriterOutsideTheLock;
+var
+  Waker: TLockProbeWaker;
+  WakerRef: IWriteWaker;
+  Buf: array[0..39999] of Byte;
+  N: Integer;
+begin
+  Start(TPeerOptions.Default);
+  FPeer.SendPostHead(1);
+  FPeer.SendData(1, 16000);
+  FPeer.SendData(1, 16000);
+  FPeer.SendData(1, 8000);
+  FPeer.Pump;
+  Waker :=TLockProbeWaker.Create(FPeer.Core);
+  WakerRef := Waker;
+  FPeer.Core.SetWriteWaker(WakerRef);
+  // the octets are already in the stream buffer, so no client byte follows.
+  // The read is the only event that can lead to the WINDOW_UPDATE, so the read
+  // has to wake the IO thread, and it has to do so without the connection lock
+  N := FPeer.Core.StreamById(1).Read(Buf, SizeOf(Buf));
+  Waker.Join;
+  AssertEquals('the read returned the octets', 40000, N);
+  AssertEquals('the read woke the writer', 1, Waker.Signals);
+  AssertFalse('the waker ran with the connection lock held', Waker.LockHeld);
+  FPeer.Core.SetWriteWaker(nil);
+  // the IO thread runs the flush that the wake asks for
+  FPeer.Core.DrainPending;
+  FPeer.Pump;
+  AssertEquals('the stream credit equals the consumed octets', 40000,
+    FPeer.WindowUpdateSum(1));
+  AssertEquals('the peer saw no violation', 0, FPeer.Violations.Count);
 end;
 
 procedure TH2LocksTest.TestOutputQueueCapAbortsTheConnection;

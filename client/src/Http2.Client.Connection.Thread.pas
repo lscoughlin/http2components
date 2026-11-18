@@ -18,7 +18,8 @@ interface
 uses
   SysUtils, Classes, SyncObjs,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls,
-  Http2.Client.Connection, Http2.Client.Connection.Control;
+  Http2.Client.Tls.Types, Http2.Client.Connection,
+  Http2.Client.Connection.Control;
 
 type
   /// one background thread per connection; it is the sole writer to the
@@ -32,7 +33,8 @@ type
     FControl: TControlFrameQueue;      // control frames, drained first
     FRates: TPeerRateLimits;           // limits on the peer's PING, SETTINGS, RST_STREAM
     FSocket: IHttp2Socket;
-    FSockStream: TStream;              // IHttp2Socket -> TStream adapter
+    FWake: IReadInterrupt;             // nil when the socket has no wake channel
+    FSockStream: TStream;             // IHttp2Socket -> TStream adapter
     FLocalSettings: TConnectionSettings;
     FReadPollMs: Integer;
     FPendingPing: Boolean;
@@ -94,6 +96,12 @@ type
 
 destructor TConnectionWorker.Destroy;
 begin
+  if FWake <> nil then
+  begin
+    // the queues outlive the worker, and the socket may close first
+    FControl.Wake := nil;
+    FOutbound.SetWake(nil);
+  end;
   FSockStream.Free;
   inherited Destroy;
 end;
@@ -174,6 +182,15 @@ begin
   FRates.Init(GetTickCount64);
   FLocalSettings := AConn.LocalSettings;
   FReadPollMs := AConn.ReadPollMs;
+  // a frame that a stream thread queues while this thread waits in a read must
+  // not wait for the end of the poll: each queue wakes the read. The worker is
+  // built before its thread starts, so no frame is queued during the wiring
+  if Supports(FSocket, IReadInterrupt, FWake) then
+  begin
+    FWake.EnableInterrupt;
+    FControl.Wake := FWake;
+    FOutbound.SetWake(FWake);
+  end;
   FPendingPing := False;
   FSockStream := TSocketStream.Create(FSocket);
 end;

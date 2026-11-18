@@ -209,6 +209,17 @@
   end;
   ```
 
+- Fix: a flow-control round trip cost one poll interval of 20 ms. The connection thread
+  reads and writes in one loop, and it blocked in a read for the full interval when it
+  had no input. A `WINDOW_UPDATE` or a `DATA` frame that a stream thread queued in that
+  time waited for the end of the interval. A peer that waits for credit sends no octet,
+  so each window of a body cost 20 ms: a download read in steps of 64 KiB, and an
+  upload, were bound by the poll and not by the loopback. A queued frame now ends the
+  blocked read at once. The new interface `IReadInterrupt` (unit
+  `Http2.Client.Tls.Types`) gives a socket this wake channel. `TPlainSocket` uses a
+  pipe, and `TTlsSocket` passes the call to its transport. A custom `IHttp2Socket`
+  without the interface keeps the timed read, as before. The window rules are the same.
+
 - New function `WithCookies(ARequest, ACookies: TParameters)` in the unit
   `Http2.Client.Cookies`. It adds one `cookie` field with the pairs of the map. An empty
   map adds no field. The client messages document has a section on cookies.
@@ -293,6 +304,14 @@
     end;
   end;
   ```
+
+- Fix: a request body larger than the stream window stalled. A handler that read a body
+  of more than 65535 octets (the first window) could wait at the read timeout and end
+  with `EHttpTimeout` and status 500. A handler read returned credit to the stream, but
+  nothing woke the IO thread, so the `WINDOW_UPDATE` stayed in the buffer of the stream
+  until some other event ran the flush. A client that waited for credit sent no event.
+  A read now asks the write waker to signal the IO thread, outside the connection lock.
+  The flow-control rules are the same: the credit is for octets that the handler read.
 
 ### Common
 

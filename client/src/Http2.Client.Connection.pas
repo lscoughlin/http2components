@@ -19,7 +19,7 @@ interface
 
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections,
-  Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls, Http2.Client.Observer, Http2.Common.FlowControl,
+  Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls, Http2.Client.Tls.Types, Http2.Client.Observer, Http2.Common.FlowControl,
   Http2.Client.Clock, Http2.Common.Hpack, Http2.Client.Connection.Observer,
   Http2.Client.Connection.Queue, Http2.Client.Connection.SendCredit,
   Http2.Client.Connection.Credit, Http2.Client.Connection.HeaderBlock,
@@ -49,6 +49,8 @@ type
     function TryPop(out AItem: T): Boolean;
     /// wake every blocked waiter; pending and future operations fail fast
     procedure Shutdown;
+    /// a consumer that blocks in a socket read gets a wake after each Push
+    procedure SetWake(const AWake: IReadInterrupt);
   end;
 
   /// the public generic queue contract. State and wait logic live in the
@@ -59,6 +61,7 @@ type
   public
     constructor Create(const ACapacity: Integer = cDefaultQueueCapacity);
     destructor Destroy; override;
+    procedure SetWake(const AWake: IReadInterrupt);
     procedure Push(const AItem: T);
     function Pop(out AItem: T): Boolean;
     function TryPop(out AItem: T): Boolean;
@@ -153,11 +156,6 @@ type
     function GetObserver: IHttp2Observer;
     procedure SetObserver(const AValue: IHttp2Observer);
     procedure SetHeaderDecoder(const AValue: THpackCodec);
-    /// account for received DATA and return window credit to the peer when
-    /// enough has accrued (RFC 7540 section 6.9). Called for every inbound
-    /// DATA frame, stream-scoped or not.
-    /// apply an inbound WINDOW_UPDATE to SEND-side credit (RFC 9113 section
-    /// 6.9) and wake any sender starved on this window
   public
     /// internal state operations used by the connection worker
     procedure SetState(const AValue: TConnectionState);
@@ -311,6 +309,9 @@ begin
   FState.Free;
   inherited Destroy;
 end;
+
+procedure TBlockingQueue<T>.SetWake(const AWake: IReadInterrupt);
+begin FState.Wake := AWake; end;
 
 procedure TBlockingQueue<T>.Push(const AItem: T);
 begin FState.Push(AItem); end;
