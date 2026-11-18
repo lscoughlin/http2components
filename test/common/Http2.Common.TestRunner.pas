@@ -37,7 +37,8 @@ uses
   Http2.Common.FrameDetails.Test,
   Http2.Common.Uri.Test,
   Http2.Common.SpscRing.Test,
-  Http2.Common.Body.Test;
+  Http2.Common.Body.Test,
+  Http2.Common.BodyReader.Test;
 
 procedure RegisterTests;
 begin

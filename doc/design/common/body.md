@@ -1,14 +1,16 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: body_writer, chunk, TChunkBuffer, streaming, upload, response body
+keywords: body_writer, body_reader, chunk, TChunkBuffer, streaming, upload, response body, ReadAllBody, CopyBody
 notes:
   - This document describes the body writer contract that the server and the client share.
+  - The reader contract is the inbound partner of the writer contract. See the section Reader.
   - RFC 9112 section 7.1 (chunked transfer coding) was checked on 2026-11-17 at https://www.rfc-editor.org/rfc/rfc9112.html. The plain-text copy is doc/references/rfc9112.txt.
   - RFC 6455 section 5.4 (fragmentation) was checked on 2026-11-17 at https://www.rfc-editor.org/rfc/rfc6455.html. The plain-text copy is doc/references/rfc6455.txt.
-scope: The shared interface IBodyWriter, the buffer TChunkBuffer, the helper routines, the end of a body, and the threads and memory of each place that pulls a writer.
+scope: The shared interfaces IBodyWriter and IBodyReader, the buffer TChunkBuffer, the helper routines, the end of a body, and the threads and memory of each place that pulls a writer or reads a body.
 primary_types:
   - IBodyWriter
+  - IBodyReader
   - TChunkBuffer
 related_docs:
   - ../server/seam.md
@@ -19,6 +21,8 @@ invariants:
   - A writer does not keep the buffer after the call returns.
   - The library never calls NextChunk on an IO thread.
   - The library sends the octets of the last call before it ends the body.
+  - A reader returns True only with at least one octet written.
+  - The end of a body repeats on every later call of a reader.
 ---
 
 # Body writer
@@ -140,6 +144,78 @@ body. Each place marks the end in its own protocol:
   empty trailer (RFC 9112 section 7.1).
 - The HTTP/2 client sets END_STREAM on the DATA frame of the last chunk. When the
   body has no octets, the client sets END_STREAM on an empty DATA frame.
+
+## Reader
+
+An `IBodyReader` gives a body to its caller in pieces. It is the inbound partner
+of `IBodyWriter`. A caller reads a body that is larger than the memory of the
+process one chunk at a time. The interface is declared in the unit
+`Http2.Common.Body`, with the same shared unit as the writer.
+
+```pascal
+IBodyReader = interface
+  function Read(var ABuffer; const ACount: Integer): Integer;
+  function ReadChunk(const ABuffer: TStream): Boolean;
+end;
+```
+
+### The contract of ReadChunk
+
+- `ReadChunk` appends the next chunk to the buffer at its current position. The
+  call does not clear the buffer.
+- A call that returns True writes at least one octet. A chunk is never empty.
+- A call that returns False ends the body. The octets that this call writes are
+  the last chunk of the body, and they are part of the body.
+- Every later call returns False and writes no octet.
+- The reader does not keep the buffer after the call returns. The caller owns
+  the buffer and can reuse it for the next call.
+- The reader does not seek to a place before the position where the call began.
+
+### The contract of Read
+
+- `Read` gives at most `ACount` octets into `ABuffer`, and it answers the count
+  that it wrote.
+- `Read` blocks until one octet arrives or the body ends. A count below `ACount`
+  is a short read. It is not the end.
+- A count of 0 means that the body has ended. Every later call answers 0 too.
+
+### The base class
+
+`TBodyReaderBase` implements `IBodyReader`. A descendant implements `Read`. The
+inherited `ReadChunk` makes one `Read` call of at most `cReadChunkBytes` (16384
+octets). It appends the octets that the call wrote. A reader that has natural
+chunks overrides `ReadChunk` and keeps the same contract.
+
+### The helpers
+
+| Routine | Meaning |
+| --- | --- |
+| `ReadAllBody(AReader, AMax)` | reads the body to its end and gives all its octets as a new array; with `AMax` above 0, a longer body raises `EBodyTooLarge` |
+| `CopyBody(AReader, ADest)` | copies the body to `ADest` one chunk at a time, with `WriteBuffer` only |
+
+The limit of `ReadAllBody` applies after each chunk. A longer body therefore stops
+at the first chunk over the limit. The octets of the last call count toward the
+limit too.
+
+`CopyBody` does not seek or size the destination. The destination can be a stream
+that cannot seek.
+
+### Threads and memory
+
+- A reader is not thread safe. One thread reads one body at a time.
+- A call of a reader can block the thread that makes it, until an octet arrives
+  or the body ends.
+- The base `ReadChunk` allocates the array of one `Read` call and frees it when the
+  call returns. The buffer of the caller holds the chunk.
+- `ReadAllBody` holds the whole body in one buffer. `CopyBody` holds one chunk at
+  a time, and the buffer keeps its memory for the next chunk.
+
+### The end of a body
+
+The end of a body is a `Read` that answers 0, or a `ReadChunk` that returns False.
+Both answers repeat on every later call. A reader that fails raises an exception
+from `Read` or `ReadChunk`, and the exception passes to the caller. A reader that
+answers a count outside of its range raises `EBodyFormatError`.
 
 ## RFC references
 
