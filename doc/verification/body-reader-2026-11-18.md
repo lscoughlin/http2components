@@ -39,10 +39,6 @@ approval.
 | `TWsInboundThreadTest` | 15 runs, no failure |
 | `TWsProducerThreadTest` | 800 runs, no failure |
 
-One full run of `test:server` stopped at the time limit of 1200 s on an earlier tree. A second
-full run of that tree finished in 6 minutes 38 seconds. The cause of the first stop is not
-known. Each test class passed when it ran alone.
-
 ## Load runs
 
 The load program starts a server and clients in one process, on the loopback interface, and
