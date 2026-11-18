@@ -28,7 +28,7 @@ uses
   Http2.Server, Http2.Server.Seam, Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Headers,
   Http2.Server.Http1.RawClient, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Origin, Http2.Server.WebSocket.Http1.Test,
-  Http2.Server.WebSocket.Http2.Test, Http2.Server.WebSocket.TestKit;
+  Http2.Server.WebSocket.Http2.Test, Http2.Server.WebSocket.TestKit, Http2.Server.WebSocket.H2Client;
 
 type
   TWsHostTest = class(TTestCase)
