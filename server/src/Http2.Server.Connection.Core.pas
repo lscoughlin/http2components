@@ -377,10 +377,19 @@ end;
 
 procedure TCoreStreamHost.WindowUpdatePending(const AStreamId: LongWord;
   const AIncrement: LongWord);
+var
+  Core: TConnectionCoreBase;
 begin
-  // the connection sums the consumed credit and emits one WINDOW_UPDATE; the
-  // sum happens under the connection lock inside FlushStreamCredits, which
-  // reads the stream counter directly, so no work is needed here
+  // FlushStreamCredits sums the consumed credit on the IO thread. That thread
+  // can wait in its poll while a peer waits for credit, so the read wakes it
+  Core := Enter;
+  if Core = nil then
+    Exit;
+  try
+    Core.NotifyWantsWrite;
+  finally
+    Leave;
+  end;
 end;
 
 procedure TCoreStreamHost.OutputPending(const AStreamId: LongWord);

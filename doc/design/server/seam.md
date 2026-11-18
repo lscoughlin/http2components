@@ -373,6 +373,17 @@ the consumed count. The connection owns the credit, so the handler reports what
 it consumed and the IO thread decides when to emit `WINDOW_UPDATE`. The
 consumed count is cleared by `ClearConsumed` after the frame goes out.
 
+The IO thread flushes the credit only when it runs. A peer that has spent the
+stream window sends no more octets, so no input event follows, and the IO thread
+can wait in its poll with no end. The host callback therefore also asks the write
+waker to signal the IO thread, as `ReturnCredit` does. The call is made outside the
+connection lock, and the wake flag joins the signals of reads that follow each other
+into one. The flush then sends one `WINDOW_UPDATE` for the sum of the consumed octets
+when the sum reaches the stream update threshold. A request body that is larger than
+the stream window (65535 octets by default) depends on this wake: before it, the
+upload waited until some other event woke the IO thread, and a handler read ended
+with `EHttpTimeout` at the read timeout.
+
 ## Content coding
 
 The seam carries bytes and never inspects them, so a content coding is the

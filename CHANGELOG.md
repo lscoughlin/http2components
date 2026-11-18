@@ -302,6 +302,14 @@
   end;
   ```
 
+- Fix: a request body larger than the stream window stalled. A handler that read a body
+  of more than 65535 octets (the first window) could wait at the read timeout and end
+  with `EHttpTimeout` and status 500. A handler read returned credit to the stream, but
+  nothing woke the IO thread, so the `WINDOW_UPDATE` stayed in the buffer of the stream
+  until some other event ran the flush. A client that waited for credit sent no event.
+  A read now asks the write waker to signal the IO thread, outside the connection lock.
+  The flow-control rules are the same: the credit is for octets that the handler read.
+
 ### Common
 
 - New constants for header names and status codes. `Http2.Common.Headers` (and
