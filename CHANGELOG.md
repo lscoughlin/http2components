@@ -306,6 +306,38 @@
 - The rules of `THttpCookie.Parse`: an attribute with an unknown name or a malformed value
   is ignored, as RFC 6265 section 5.2 says. A name that is not a token, or a value with
   a forbidden octet, raises `EBodyFormatError`.
+- New producers: code that writes to a `TStream` or a `TStreamWriter` becomes the body of
+  an `IBodyWriter`. It streams, and it needs no thread of its own. The interfaces
+  `IBodyChunkSink` (the place that gets the chunks; a `Chunk` call blocks for backpressure)
+  and `IBodyProducer` (`Produce` runs the producer on the calling thread) are declared in
+  `Http2.Common.Body`. The new unit `Http2.Common.Body.Producers` holds the factories
+  `BodyWriterFromStream` and `BodyWriterFromTextWriter`, the producer stream
+  `TProducerStream`, and a buffered fallback for a caller that pulls the writer with
+  `NextChunk`. The stream keeps one chunk back, so the last chunk has `ALast` True. The
+  change adds to the API only. See `doc/design/common/body.md`, section "Producers".
+
+  Example of a stream producer:
+
+  ```pascal
+  procedure TReport.WriteBody(const AOut: TStream);
+  begin
+    WriteXML(FDocument, AOut);
+  end;
+
+  Writer := BodyWriterFromStream(Report.WriteBody);
+  ```
+
+  Example of a text producer. A nil encoding gives UTF-8 without a byte order mark:
+
+  ```pascal
+  procedure TGreeting.WriteBody(const AOut: TStreamWriter);
+  begin
+    AOut.WriteLine('hello');
+    AOut.Write('world');
+  end;
+
+  Writer := BodyWriterFromTextWriter(Greeting.WriteBody);
+  ```
 
 ## 0.32.0 — 2026-11-16 (source release)
 

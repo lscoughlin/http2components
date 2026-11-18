@@ -1,17 +1,20 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: body_writer, body_reader, chunk, TChunkBuffer, streaming, upload, response body, ReadAllBody, CopyBody
+keywords: body_writer, body_reader, chunk, TChunkBuffer, streaming, upload, response body, ReadAllBody, CopyBody, producer, IBodyProducer, IBodyChunkSink, TProducerStream, BodyWriterFromStream, BodyWriterFromTextWriter, look-ahead, ALast
 notes:
   - This document describes the body writer contract that the server and the client share.
   - The reader contract is the inbound partner of the writer contract. See the section Reader.
   - RFC 9112 section 7.1 (chunked transfer coding) was checked on 2026-11-17 at https://www.rfc-editor.org/rfc/rfc9112.html. The plain-text copy is doc/references/rfc9112.txt.
   - RFC 6455 section 5.4 (fragmentation) was checked on 2026-11-17 at https://www.rfc-editor.org/rfc/rfc6455.html. The plain-text copy is doc/references/rfc6455.txt.
-scope: The shared interfaces IBodyWriter and IBodyReader, the buffer TChunkBuffer, the helper routines, the end of a body, and the threads and memory of each place that pulls a writer or reads a body.
+scope: The shared interfaces IBodyWriter, IBodyReader, IBodyChunkSink and IBodyProducer, the buffer TChunkBuffer, the producer stream, the helper routines, the end of a body, and the threads and memory of each place that pulls a writer, runs a producer or reads a body.
 primary_types:
   - IBodyWriter
   - IBodyReader
+  - IBodyChunkSink
+  - IBodyProducer
   - TChunkBuffer
+  - TProducerStream
 related_docs:
   - ../server/seam.md
   - ../server/websocket.md
@@ -23,6 +26,11 @@ invariants:
   - The library sends the octets of the last call before it ends the body.
   - A reader returns True only with at least one octet written.
   - The end of a body repeats on every later call of a reader.
+  - A producer writes its chunks to a sink. The producer stream keeps one chunk back, so the call that ends the body has ALast True.
+  - A sink call with ALast False has at least one octet.
+  - A producer body runs once. A second run raises EBodyFormatError.
+  - A producer that raises sends no last chunk.
+  - A Write of a producer stream blocks while the sink blocks.
 ---
 
 # Body writer
@@ -144,6 +152,127 @@ body. Each place marks the end in its own protocol:
   empty trailer (RFC 9112 section 7.1).
 - The HTTP/2 client sets END_STREAM on the DATA frame of the last chunk. When the
   body has no octets, the client sets END_STREAM on an empty DATA frame.
+
+## Producers
+
+A producer is code that writes its body to a `TStream` or to a `TStreamWriter`.
+The unit `Http2.Common.Body.Producers` turns such code into the body of an
+`IBodyWriter`. The body streams, and the producer runs on the thread of the place
+that sends the body. The unit creates no thread.
+
+### The interfaces
+
+Both interfaces are declared in `Http2.Common.Body`.
+
+```pascal
+IBodyChunkSink = interface
+  procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+end;
+
+IBodyProducer = interface
+  procedure Produce(const ASink: IBodyChunkSink);
+end;
+```
+
+- `IBodyChunkSink` is the place that receives the chunks. A call of `Chunk` blocks
+  until the place accepts the chunk. This is the backpressure. `Chunk` raises when the
+  body can not go on, for example when the peer resets the stream.
+- A call of `Chunk` with `ALast` False has `ACount` above 0.
+- The last call has `ALast` True. The last call can have `ACount` of 0. Then the call
+  only ends the body.
+- `IBodyProducer` runs the producer to its end on the calling thread. `Produce`
+  gives each chunk to the sink. An exception of the producer or of the sink passes to
+  the caller.
+- A writer made by the factories supports `IBodyProducer`. A place that supports
+  producers asks the writer for `IBodyProducer`, and it calls `Produce` with its own
+  sink. A place that does not support producers pulls the writer with `NextChunk`.
+
+### The factories
+
+| Factory | Producer method | Encoding |
+| --- | --- | --- |
+| `BodyWriterFromStream(AProducer, AChunkBytes)` | `TStreamProducer = procedure(const AOut: TStream) of object` | none; the octets of the producer are the octets of the body |
+| `BodyWriterFromTextWriter(AProducer, AEncoding, AChunkBytes)` | `TTextProducer = procedure(const AOut: TStreamWriter) of object` | `AEncoding`; nil means UTF-8 without a byte order mark |
+
+`AChunkBytes` is the largest chunk. Its default is `cReadChunkBytes` (16384). A nil
+producer raises `EBodyFormatError`. The producer is a method pointer, because FPC 3.2.4
+has no anonymous methods.
+
+The caller owns the object of the producer. The caller keeps it until the body
+ends. The text factory does not free `AEncoding`. The caller keeps the encoding
+until the body ends.
+
+### The producer stream
+
+`TProducerStream` is a write-only `TStream` that the factories give to the
+producer. Its behavior is as follows.
+
+- `Write` appends the octets to the current chunk. A chunk never holds more than
+  `AChunkBytes` octets. A write of more octets gives several chunks.
+- A full chunk becomes the pending chunk. When another chunk becomes full, the
+  pending chunk goes to the sink with `ALast` False. The stream therefore keeps one
+  chunk back. When the producer ends, the stream knows which chunk is the last one.
+- `Finish` sends the octets that the stream holds. The last call that holds octets
+  carries `ALast` True. When the body ends on a chunk boundary, the pending chunk is that
+  call, and no empty call follows. When no octet was written at all, `Finish` sends one
+  empty call with `ALast` True.
+- A call of the sink blocks, so a `Write` blocks while the place does not accept the
+  chunk. This is the rule of `IServerResponse.Write`. A producer that writes faster
+  than the place sends waits.
+- `Read`, `SetSize` and `Seek` raise `EStreamError`. `Seek(0, soCurrent)` gives the
+  count of the octets written.
+- A second call of `Finish` does nothing. A `Write` after `Finish` raises `EStreamError`.
+- After a sink failure, a `Write` drops its octets, and `Finish` raises
+  `EStreamError`. The factories never send a last chunk after a producer failure.
+- `Destroy` never calls the sink.
+
+The text factory writes through a `TStreamWriter` over the producer stream. The
+writer flushes its buffered octets before the last chunk is sent. The writer writes
+no preamble. The unit uses a subclass of `TStreamWriter`, because the `Flush` of
+FPC 3.2.4 passes the array of its buffer to `WriteBuffer`. The octets that reach the
+stream are then the bytes of the array reference, not the text. The subclass
+writes its buffered octets itself.
+
+### The end of a producer body
+
+The body ends with the last call of the sink, with `ALast` True. A producer that
+raises an exception passes it to the caller unchanged. The factory sends no last
+chunk after that exception. The chunks that the sink already got stay sent, with
+`ALast` False. A place that receives such a body therefore sees a body without a
+last chunk. The place reports that body as failed, in the protocol that it uses.
+
+A sink that raises an exception in `Chunk` passes that exception out of the `Write`
+of the producer. When the producer does not catch it, the exception passes out of
+`Produce`.
+
+### The threads that run a producer
+
+`Produce` runs the producer on the calling thread. The place that calls `Produce`
+decides that thread, and the producer blocks that thread when the sink blocks. The
+unit does not start a thread.
+
+### The buffered fallback
+
+A writer that a place pulls with `NextChunk` runs the producer on the first call.
+The producer writes into one `TMemoryStream`. Then each call gives at most
+`cReadChunkBytes` octets of that memory. The call that gives the last octets returns
+False. The memory is freed when the body ends. A body without octets gives False at
+once. A later call gives False with no octet.
+
+This path holds the whole body in memory. A place that supports producers calls
+`Produce` and does not use this path.
+
+### Single use
+
+A producer body runs once. The first `Produce`, or the first `NextChunk`, starts the
+run. These calls raise `EBodyFormatError`:
+
+- a second `Produce`;
+- a `NextChunk` after a `Produce`;
+- a `Produce` after a `NextChunk`.
+
+A producer that raised leaves its body in a failed state. A later call raises
+`EBodyFormatError` too.
 
 ## Reader
 

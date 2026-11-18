@@ -89,6 +89,28 @@ type
   /// or when a body reader answers a count that is out of range
   EBodyFormatError = class(Exception);
 
+  /// the place that receives the chunks of a body that a producer writes
+  // - Chunk gives one chunk of the body; it blocks until the place accepts the chunk (backpressure)
+  // - a call with ALast False has ACount > 0
+  // - the last call has ALast True; it can have ACount = 0, and then it only ends the body
+  // - Chunk raises when the body can not go on, for example when the peer resets the stream
+  IBodyChunkSink = interface
+    ['{7E1F0C11-00F4-4A11-9C72-000000003301}']
+    /// give one chunk of the body to the place
+    procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+  end;
+
+  /// a body that a producer writes; a place that supports it runs the producer
+  // - Produce runs the producer to its end on the calling thread
+  // - Produce gives each chunk to ASink; the last chunk comes with ALast True
+  // - an exception of the producer or of the sink passes to the caller
+  // - a producer body is used once: a second Produce or NextChunk raises EBodyFormatError
+  IBodyProducer = interface
+    ['{7E1F0C11-00F4-4A11-9C72-000000003302}']
+    /// run the producer to its end and give each chunk to ASink
+    procedure Produce(const ASink: IBodyChunkSink);
+  end;
+
 /// append AData to ABuffer at its position
 // - an empty array writes nothing
 procedure ChunkAppend(const ABuffer: TStream; const AData: TBytes);

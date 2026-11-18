@@ -1,7 +1,7 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: text, JSON, XML, body reader, body writer, TReaderStream, EBodyFormatError, fcl-json, fcl-xml, us-ascii, pushback
+keywords: text, JSON, XML, body reader, body writer, TReaderStream, EBodyFormatError, fcl-json, fcl-xml, us-ascii, pushback, producer, WriteXML
 notes:
   - The text, JSON and XML helpers are in the common units. The client readers and body helpers are wrappers over them.
   - fcl-json parses a whole text. ReadJson reads the whole body into memory before it parses.
@@ -152,6 +152,42 @@ request.
 The caller owns the value or the document that a writer refers to. The caller keeps
 it until the library ends the body. For a response, that is the return of `Finish`.
 For a request, that is the end of the send.
+
+## Producers
+
+A producer can write XML or JSON to the body. The producer method writes the
+document into the stream that the factory gives it, and the place that sends the body
+receives the octets as the producer writes them. The producer contract is in
+[body](body.md#producers).
+
+An XML document is written to a `TStream`, so the factory for streams applies:
+
+```pascal
+procedure TOrderPage.WriteBody(const AOut: TStream);
+begin
+  WriteXML(FDocument, AOut);
+end;
+
+Writer := BodyWriterFromStream(OrderPage.WriteBody);
+```
+
+A JSON text is written through a `TStreamWriter`, so the factory for text applies.
+The writer encodes the text with its encoding. A nil encoding gives UTF-8 without a
+byte order mark. The call of `AsJSON` builds the whole text before the writer sends
+its first chunk.
+
+```pascal
+procedure TOrderPage.WriteJson(const AOut: TStreamWriter);
+begin
+  AOut.Write(FData.AsJSON);
+end;
+
+Writer := BodyWriterFromTextWriter(OrderPage.WriteJson);
+```
+
+The producer writes the document as the serializer produces it. The unit adds no
+copy of the document, so the memory of a body from `WriteXML` depends on the
+serializer.
 
 ## Errors
 
