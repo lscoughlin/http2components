@@ -24,7 +24,7 @@ unit Http2.Server.WebSocket.Types;
 interface
 
 uses
-  SysUtils, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  SysUtils, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.Limits, Http2.Server.Observer, Http2.Server.WebSocket.Options;
 
 type
@@ -93,8 +93,15 @@ type
     // - Send, Ping and Close are legal here; their frames follow the response
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    /// a whole message; a text message is valid UTF-8
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    /// a message; AMessage gives its octets
+    // - a message that ends inside the inline limit is complete in memory, and a read
+    //   never waits; a larger message streams, and a read waits for the next octets
+    // - the reader is valid for this call only; the session aborts it when the call returns
+    // - a text message is valid UTF-8 up to the last octet that the reader gave
+    // - a read raises EStreamCancelled when the session ends, or when the message fails
+    //   (a bad UTF-8 octet, 1007) or stalls (1008)
+    // - the call holds one streaming pool thread until it returns
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     /// the session ended; AClean tells whether the closing handshake completed

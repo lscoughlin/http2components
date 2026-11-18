@@ -81,6 +81,15 @@ type
 
   IChannelRegistry = interface;
 
+  /// an optional interface of a channel that tells whether ReturnCredit slows the peer
+  // - an HTTP/2 stream channel answers True: the stream window bounds the unread octets
+  // - a channel without this interface, an HTTP/1.1 upgrade and a unix raw channel
+  //   return no credit, and the peer is never slowed
+  IChannelFlow = interface
+    ['{7E1F0C11-0053-4A11-9C72-000000000803}']
+    function ReturnsCredit: Boolean;
+  end;
+
   /// a layer that wants to close its channel by its own rules when the server stops
   // - a WebSocket session sends Close 1001 and waits for the reply
   IChannelCloser = interface

@@ -22,7 +22,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
-  Http2.Server, Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam,
+  Http2.Server, Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam,
   Http2.Server.WebSocket.Handshake, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Types,
   Http2.Server.Http1.RawClient, Http2.Server.WebSocket.TestKit, Http2.Server.Config.Limits;
 
@@ -69,7 +69,7 @@ type
     destructor Destroy; override;
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
@@ -288,10 +288,10 @@ begin
   Result := FInner.Init(ARequest, AOffered, ASession);
 end;
 
-procedure TWsGatedHandler.Message(const ASession: IWsSession; const AData: TBytes;
+procedure TWsGatedHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
   const AText: Boolean);
 begin
-  FInner.Message(ASession, AData, AText);
+  FInner.Message(ASession, AMessage, AText);
 end;
 
 procedure TWsGatedHandler.Pong(const ASession: IWsSession; const AData: TBytes);

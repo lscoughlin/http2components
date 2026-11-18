@@ -52,6 +52,7 @@ type
     procedure TestMaxWsSessionsRange;
     procedure TestWsEarlyBytesRange;
     procedure TestWsAllowedHostsDefaultsEmpty;
+    procedure TestWsInboundOptions;
   end;
 
 implementation
@@ -284,6 +285,38 @@ begin
   AssertTrue('the default is valid', Base.Validate(Problems));
   AssertTrue('a host list is valid', Base.WithWebSockets(
     TWsOptions.Create.WithWsAllowedHosts(['example.com'])).Validate(Problems));
+end;
+
+procedure TConfigRangesTest.TestWsInboundOptions;
+var
+  Problems: TArray<string>;
+begin
+  AssertEquals(65536, TWsOptions.Create.InlineLimit);
+  AssertEquals(1048576, TWsOptions.Create.InboundPipeBytes);
+  AssertEquals(30000, TWsOptions.Create.InboundStallMs);
+  AssertTrue('the defaults are valid', Base.Validate(Problems));
+  AssertTrue('a small inline limit is valid', Base.WithWebSockets(
+    TWsOptions.Create.WithInlineLimit(1)).Validate(Problems));
+  AssertTrue('an inline limit of 0 is rejected', Rejects(Base.WithWebSockets(
+    TWsOptions.Create.WithInlineLimit(0)),
+    'the WebSocket inline limit is outside the range'));
+  AssertTrue('an inline limit over 16 MiB is rejected', Rejects(Base.WithWebSockets(
+    TWsOptions.Create.WithInlineLimit(16777217)),
+    'the WebSocket inline limit is outside the range'));
+  AssertTrue('a pipe of 0 is rejected', Rejects(Base.WithWebSockets(
+    TWsOptions.Create.WithInboundPipeBytes(0)),
+    'the WebSocket inbound pipe size is below 1'));
+  AssertTrue('an inline limit over the pipe is rejected', Rejects(Base.WithWebSockets(
+    TWsOptions.Create.WithInlineLimit(2048).WithInboundPipeBytes(1024)),
+    'the WebSocket inbound pipe size is below the inline limit plus the frame size limit'));
+  AssertTrue('an inline limit equal to the pipe is rejected', Rejects(Base.WithWebSockets(
+    TWsOptions.Create.WithInlineLimit(1048576).WithInboundPipeBytes(1048576)),
+    'the WebSocket inbound pipe size is below the inline limit plus the frame size limit'));
+  AssertTrue('a pipe of the inline limit plus a frame is valid', Base.WithWebSockets(
+    TWsOptions.Create.WithInlineLimit(65536).WithInboundPipeBytes(131072)).Validate(Problems));
+  AssertTrue('a stall time of 0 is rejected', Rejects(Base.WithWebSockets(
+    TWsOptions.Create.WithInboundStallMs(0)),
+    'the WebSocket inbound stall time is below 1'));
 end;
 
 initialization

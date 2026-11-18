@@ -44,12 +44,19 @@ type
   end;
 
   /// a reader sink that writes one text line for each message or control frame
+  // - the sink joins MessageData calls into one line, so a message gives the same line
+  //   whatever the inline limit is
   TMessageSink = class(TInterfacedObject, IWsReaderSink)
+  private
+    FText: Boolean;
+    FBuf: TBytes;
   public
     Lines: TStringList;
     constructor Create;
     destructor Destroy; override;
-    procedure Message(const AText: Boolean; const AData: TBytes);
+    procedure MessageBegin(const AText: Boolean);
+    procedure MessageData(const AData; const ACount: Integer);
+    procedure MessageEnd;
     procedure Control(const AOpcode: Byte; const AData: TBytes);
   end;
 
@@ -162,15 +169,30 @@ begin
   inherited Destroy;
 end;
 
-procedure TMessageSink.Message(const AText: Boolean; const AData: TBytes);
+procedure TMessageSink.MessageBegin(const AText: Boolean);
+begin
+  FText := AText;
+  FBuf := nil;
+end;
+
+procedure TMessageSink.MessageData(const AData; const ACount: Integer);
+var
+  Len: Integer;
+begin
+  Len := Length(FBuf);
+  SetLength(FBuf, Len + ACount);
+  Move(AData, FBuf[Len], ACount);
+end;
+
+procedure TMessageSink.MessageEnd;
 var
   S: string;
   I: Integer;
 begin
   S := '';
-  for I := 0 to High(AData) do
-    S := S + IntToHex(AData[I], 2);
-  Lines.Add(Format('%s:%s', [BoolToStr(AText, 'T', 'B'), S]));
+  for I := 0 to High(FBuf) do
+    S := S + IntToHex(FBuf[I], 2);
+  Lines.Add(Format('%s:%s', [BoolToStr(FText, 'T', 'B'), S]));
 end;
 
 procedure TMessageSink.Control(const AOpcode: Byte; const AData: TBytes);

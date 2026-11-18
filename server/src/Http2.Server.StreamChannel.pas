@@ -34,7 +34,7 @@ uses
 
 type
   /// the channel of one detached HTTP/2 stream
-  THttp2StreamChannel = class(TInterfacedObject, IDuplexChannel, IChannelSink)
+  THttp2StreamChannel = class(TInterfacedObject, IDuplexChannel, IChannelSink, IChannelFlow)
   private
     FStream: TServerStream;
     FRegistry: IChannelRegistry;
@@ -86,6 +86,8 @@ type
     function Registry: IChannelRegistry;
     procedure SetSink(const ASink: IChannelSink);
     procedure ReturnCredit(const ACount: Int64);
+    // IChannelFlow: the stream window slows the peer
+    function ReturnsCredit: Boolean;
     procedure Complete(const AStatus: Integer; const AHeaders: THeaderBlock;
       const ABody: TBytes);
     procedure Activate(const AStatus: Integer; const AHeaders: THeaderBlock);
@@ -331,6 +333,11 @@ begin
   finally
     FLock.Release;
   end;
+end;
+
+function THttp2StreamChannel.ReturnsCredit: Boolean;
+begin
+  Result := True;
 end;
 
 procedure THttp2StreamChannel.ReturnCredit(const ACount: Int64);

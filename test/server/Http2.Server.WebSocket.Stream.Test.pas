@@ -31,7 +31,8 @@ uses
   Http2.Server.Observer, Http2.Server.Sse.Test, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames,
   Http2.Server.WebSocket.Pump, Http2.Server.WebSocket.Session,
-  Http2.Server.WsHardening.Test, Http2.Server.WebSocket.TestKit;
+  Http2.Server.WsHardening.Test, Http2.Server.WebSocket.TestKit,
+  Http2.Server.WebSocket.Inbound;
 
 type
   /// one frame of the server output, as the server wrote it
@@ -87,7 +88,7 @@ type
     constructor Create(const AInner: TRecordingHandler; const AChannel: TFakeWsChannel);
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
@@ -250,10 +251,14 @@ begin
   end;
 end;
 
-procedure TStreamProbeHandler.Message(const ASession: IWsSession; const AData: TBytes;
+procedure TStreamProbeHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
   const AText: Boolean);
+var
+  AData: TBytes;
 begin
-  FInner.Message(ASession, AData, AText);
+  // the probe reads the message, and the inner handler gets it from memory
+  AData := ReadAllBody(AMessage);
+  FInner.Message(ASession, TWsMemoryReader.Create(AData), AText);
   if (CloseOn <> '') and AText and (TextOf(AData) = CloseOn) then
     ASession.Close(1000, '');
 end;

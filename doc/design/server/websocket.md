@@ -1,20 +1,23 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: websocket, session, frame codec, close handshake, heartbeat, origin policy, init, streaming pool, rfc 6455
+keywords: websocket, session, frame codec, close handshake, heartbeat, origin policy, init, streaming pool, rfc 6455, inbound message, body reader, pipe, inline limit
 notes:
   - This document describes the WebSocket part of the server, which serves a WebSocket on any detached channel, over HTTP/1.1 and over HTTP/2.
   - RFC 6455 (the WebSocket protocol) is the main source. It was checked on 2026-10-22 at https://www.rfc-editor.org/info/rfc6455. The plain-text copy is doc/references/rfc6455.txt. RFC 6454 (the web origin) was checked on the same date at https://www.rfc-editor.org/info/rfc6454.
   - The IANA registry of close codes was checked on 2026-10-22. The copy is doc/references/iana-websocket-registry.xml.
   - RFC 6455 sections 5.4 (fragmentation), 5.5 (control frames) and 5.5.1 (close) were read in the plain-text copy and checked on 2026-11-17 at https://www.rfc-editor.org/info/rfc6455. The streamed message of `SendStream` follows section 5.4.
   - Imported from http2server/doc/design/server/websocket.md at the source commit recorded in the source inventory.
-scope: The frame codec, the session contract, the receive path, the closing handshake, the heartbeat, the limits, the origin policy, the Init hook and the settings.
+scope: The frame codec, the session contract, the inbound message and its reader, the receive path, the closing handshake, the heartbeat, the limits, the origin policy, the Init hook and the settings.
 primary_types:
   - IWsSession
   - IWsHandler
+  - IBodyReader
   - TWsInitResult
   - TWsOptions
   - TWsReader
+  - TWsMessagePipe
+  - TWsMemoryReader
 related_docs:
   - seam.md
   - threading.md
@@ -23,9 +26,14 @@ related_docs:
   - configuration.md
   - lifecycle.md
   - limits.md
+  - ../common/body.md
 invariants:
   - A session runs on any IDuplexChannel and does not know the protocol under it.
   - The handler is called on a thread of the streaming pool, one call at a time for a session, in the order of the events, and never on an IO thread.
+  - A message that ends inside the inline limit reaches the handler as a reader over memory, and a read never waits. A longer message reaches the handler when it passes the limit, and a bounded pipe carries the later octets.
+  - The IO thread never waits for the handler. A push into the pipe never blocks, and the lock of the pipe is a leaf lock.
+  - The credit of the octets of a pipe returns as the handler reads them. The credit of the inline octets and of every frame header returns when they arrive.
+  - The end of the session aborts every pipe whose message still arrives, before the streaming pool stops.
   - Exactly one of Closed or Failed ends the conversation, unless the application calls Abort.
   - The server never puts the close codes 1005, 1006 or 1015 on the wire.
   - A message that Send sends is written with one call of the channel, so the frames of two messages never mix. A streamed message is written one fragment at a time, and no other data message is written while its stream runs.
@@ -41,14 +49,17 @@ document describes the parts that do not depend on it.
 
 ## The frame codec
 
-Four units hold the codec. They have no socket and no thread.
+Four units hold the codec. They have no socket and no thread. Two more units serve the
+inbound message of a session.
 
 | Unit | Content |
 | --- | --- |
 | `Ws.Frames` | the opcodes, the close codes, the mask, the frame encoder, the fragmenting message encoder and the Close payload helpers |
 | `Ws.Utf8` | a UTF-8 validator with three bytes of state, so a character split across fragments needs no buffer |
 | `Ws.Parser` | the resumable frame parser; it pushes the unmasked payload of a data frame to a sink and buffers no data frame |
-| `Ws.Reader` | the assembly of frames into messages with the size, fragment and UTF-8 checks |
+| `Ws.Reader` | the assembly of frames into messages with the size, fragment and UTF-8 checks; it keeps the first `InlineLimit` octets of a message and then gives the octets to its sink one piece at a time |
+| `Ws.Inbound` | `TWsMessagePipe` and `TWsMemoryReader`, the two `IBodyReader` classes that give a message to the handler |
+| `Ws.Snapshot` | `TWsRequestSnapshot`, the read-only copy of the handshake request |
 
 The parser enforces the rules of RFC 6455 sections 5.2 to 5.5 that one frame and the
 order of the frames allow: reserved bits and opcodes, masking in the right direction,
@@ -56,6 +67,15 @@ the shortest form of the length, control frames of at most 125 octets and with F
 and the order of a fragmented message. The reader checks the message size before it
 buffers a byte, so a peer that declares a large frame and sends nothing costs no
 memory. A text message is checked for UTF-8 while the octets arrive.
+
+The sink of the reader has three calls for a data message: `MessageBegin(AText)`,
+`MessageData(P, Count)` and `MessageEnd`. A message that ends inside the inline limit
+gives the three calls at its end, with one `MessageData` call for its octets. A longer
+message gives `MessageBegin` when the octet after the limit arrives, then one
+`MessageData` call for the octets that the reader kept (the property `Replaying` is True
+during this call), then one `MessageData` call for each later piece, and `MessageEnd` at
+its end. The property `Streaming` tells the sink which of the two cases it is in. After
+the stream starts, the reader keeps no octet of the message.
 
 The tests of the codec check the frames of RFC 6455 section 5.7, every rule with its
 close code, split delivery (whole, one octet at a time and in random pieces) and a
@@ -74,9 +94,9 @@ except 1010, which is a client code.
 | 1001 | the server stops (`Stop`) |
 | 1002 | a protocol error: a bad frame, a Close payload that RFC 6455 section 5.5.1 forbids, a data frame after a Close frame |
 | 1003 | available to an application |
-| 1007 | a text message or a Close reason that is not UTF-8 |
-| 1008 | a policy limit: a token bucket is empty, or too many messages wait for the application |
-| 1009 | a message or a frame is over its limit |
+| 1007 | a text message or a Close reason that is not UTF-8, also when the handler has read part of the message already |
+| 1008 | a policy limit: a token bucket is empty, too many messages wait for the application, or a read of a streamed message waited for `InboundStallMs` (reason `the message stalled`) |
+| 1009 | a message or a frame is over its limit, or a streamed message fills the pipe on a channel that returns no credit (reason `the handler reads too slowly`) |
 | 1011 | a callback raised, or the Pong did not come |
 | 1006 | reported to the application only: the connection ended without a Close frame, or the peer did not answer the Close frame in time |
 | 1005 | reported to the application only: the Close frame had no status |
@@ -92,7 +112,7 @@ one at a time, in the order of the events. A callback can call `Send`, `Ping`,
 | Call | Meaning |
 | --- | --- |
 | `Init` | the first call; it authorises, chooses the subprotocol and may send a greeting |
-| `Message` | a whole message; a text message is valid UTF-8 |
+| `Message` | a message, as an `IBodyReader`; a text message is valid UTF-8 up to the last octet that the handler has read (see [The inbound message](#the-inbound-message)) |
 | `Pong` | a Pong arrived |
 | `Closed` | the session ended; the code, the reason and whether the closing handshake completed |
 | `Failed` | a callback raised an exception; the session closes with 1011 |
@@ -132,6 +152,160 @@ chunk of the writer. The rules are in [Streaming a message](#streaming-a-message
 `Abort` closes the channel at once, with no Close frame and no later callback.
 `SetContext` and `Context` keep a value of the application for the life of the
 session; the session releases it at the end.
+
+## The inbound message
+
+`IWsHandler.Message(ASession, AMessage, AText)` gives the message as an `IBodyReader`
+(see [body](../common/body.md)). `ReadAllBody(AMessage)` gives the whole message as a
+`TBytes` in one call. A loop of `AMessage.ReadChunk(Buffer)` gives one chunk at a time, so
+a handler that stores or hashes a message does not hold it in memory. The end of the
+message is a `Read` that returns 0 or a `ReadChunk` that returns False, and both answers
+repeat.
+
+```pascal
+// before: the whole message came in a TBytes
+procedure TMyHandler.Message(const ASession: IWsSession; const AData: TBytes;
+  const AText: Boolean);
+begin
+  ASession.Send(AData, AText);
+end;
+
+// now: the message is a reader
+procedure TMyHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
+  const AText: Boolean);
+begin
+  ASession.Send(ReadAllBody(AMessage), AText);
+end;
+```
+
+**The contract.**
+
+- The reader is valid during the call of `Message` only. When the call returns, the
+  session releases the reader: a handler that keeps it gets `EStreamCancelled` on a later
+  read.
+- A handler need not read the whole message. When `Message` returns early, the session
+  drops the octets of the message that wait and the octets that still arrive, and it
+  credits them to the channel. The session goes on with the next message.
+- A read raises `EStreamCancelled` when the session ends, when a Close frame arrives
+  before the message ends, when the message fails (a bad UTF-8 octet, a size limit) and
+  when the read stalls. The session catches `EStreamCancelled` that `Message` lets pass,
+  and it does not call `Failed`.
+- A text message is valid UTF-8 up to the last octet that the handler has read. For a
+  message in memory this is the whole message, as before. For a streamed message the
+  reader checks the octets as they arrive. A bad octet after the handler has read part of
+  the message closes the session with 1007, and the next read raises `EStreamCancelled`.
+
+**Two paths.** The assembler keeps a message in memory until it ends or until it passes
+`InlineLimit` (default 65536 octets).
+
+- A message that ends first goes to the handler as a `TWsMemoryReader` over the octets.
+  The session starts the handler task when the message ends. No pipe exists, and a read
+  never waits.
+- A message that passes the limit goes to the handler at once. The session starts the
+  handler task when the octet after the limit arrives, and a `TWsMessagePipe` carries the
+  octets that the reader kept and all the later octets. The handler reads while the
+  message arrives.
+
+**The pipe.** One IO thread writes into the pipe with `Push`, `Finish` and `Abort`. One
+handler thread reads.
+
+- `Push` copies the octets into a buffer and never waits. The lock of the pipe is a leaf
+  lock: code that holds it takes no other lock, and no call back runs while it is held.
+  The IO thread therefore needs no pool task to deliver a fragment.
+- `Read` waits on an event with no lock held. `ReadChunk` gives the next chunk as it was
+  pushed, or the rest of a chunk that a `Read` began.
+- On a channel that returns no credit (an HTTP/1.1 upgrade, a unix socket) the pipe holds
+  at most `InboundPipeBytes` octets (default 1 MiB). A push that takes the buffer over the
+  cap drops the buffer, aborts the pipe, and the session closes with 1009 and the reason
+  `the handler reads too slowly`. On HTTP/2 the pipe has no cap: the credit rule below
+  keeps the unread octets at the stream window plus `InlineLimit`, so the window is the
+  bound, and a handler that waits before its first read never costs the session. The
+  channel tells the session which case it is through the optional interface
+  `IChannelFlow`; a channel without it counts as a channel that returns no credit.
+- A read that gets no octet for `InboundStallMs` (default 30000) aborts the pipe, raises
+  `EStreamCancelled`, and the session closes with 1008 and the reason `the message
+  stalled`.
+
+**The credit.** The octets that the session returns as credit to the channel follow these
+rules.
+
+- The frame headers and the mask keys of every frame, and the octets that the reader
+  keeps inside `InlineLimit`, are credited when they arrive. A message of up to the
+  stream window therefore never waits for a credit that only its own end can bring.
+- The octets that go to a pipe are credited when the handler reads them. The octets that
+  the pipe drops (an abort, an early return of the handler) are credited at the drop.
+- The octets that the reader kept before the stream started were credited on arrival, and
+  they go into the pipe marked as paid, so the handler's read of them returns no second
+  credit. The sum of the credit of a message equals the octets that arrived for it.
+- On HTTP/2 a slow handler holds back the credit of its own stream only. The stream
+  window is not refilled, so the peer stops when the window is full. Other streams and
+  the connection window are not affected, because the connection window is credited when
+  a frame arrives.
+- An HTTP/1.1 upgrade and a unix socket have no flow control: `ReturnCredit` does nothing
+  and the IO layer never pauses its reads. A slow handler does not slow its peer on such a
+  channel. The pipe cap bounds the memory, and a handler that falls behind by more than
+  the cap loses its session with 1009. The memory bound of a streamed message is
+  `InboundPipeBytes` on these channels and the stream window plus `InlineLimit` on HTTP/2.
+  The slowing of the peer exists on HTTP/2 only.
+- The credit that the queue rule holds back (`QueuedMessages` half full) is given back when
+  a message starts to stream, so the inline octets of a streamed message never wait for a
+  handler that is busy with an earlier message.
+- The frame headers of a message that is open never wait under the rule of
+  `QueuedMessages` (see [The receive path](#the-receive-path)).
+
+**Counting.** A streamed message counts once, when it starts: it takes one token of the
+message bucket, it counts once in `QueuedMessages`, and it charges the server budget
+`MaxWsQueuedBytes` with `InboundPipeBytes`, because its length is not known then. The task
+keeps the same number, so the release is equal. A message in memory charges its length
+when it ends. `wcMessagesIn` counts at the same moment. `wcBytesIn` counts the octets of a
+streamed message as they arrive, so a message that ends by an abort, a Close frame, a stall
+or an overflow counts the octets that came before it. A streamed message whose pipe was
+aborted before its handler started (a Close frame between its fragments, for example) is
+not given to the handler: the session drops it and releases its credit, its count and its
+charge.
+
+**Limits.** `MaxMessageSize` limits the whole message, as before, and a message over it
+closes the session with 1009. A program that streams larger messages raises it. The
+assembler limit `MaxFragments` (default 1024) stays and limits the frames of one message.
+With the default `MaxFrameSize` it caps a streamed message at 64 MiB, so a program that
+streams a larger message raises `MaxFragments` together with `MaxMessageSize`.
+`Problems` requires `InboundPipeBytes` of at least `InlineLimit` plus `MaxFrameSize`,
+because the kept octets move into the pipe when a message starts to stream and the first
+piece follows at once, before the handler has read an octet.
+
+**The threads.**
+
+- A handler that reads a message holds one streaming pool thread for the whole read.
+  Unlike a step of a stream writer, a blocked `Read` does not give the thread back
+  between chunks.
+- The pool runs one task of a session at a time. While `Message` runs, the tick (ping,
+  pong timeout, close timeout), a Pong for the handler, `Closed`, the deferred replies
+  and the steps of `SendStream` of the same session wait. The IO thread does not wait: it
+  parses, checks UTF-8, pushes, credits, answers Ping and Close when the send lock is
+  free, and ends the session.
+- The default pool has one thread (`StreamPoolSize`, see [threading](threading.md)). An
+  application that reads long messages sets `StreamPoolSize` above the number of sessions
+  that read at the same time.
+- A handler that reads a message and also sends a reply with `Send` does not wait for the
+  pool. A reply with `SendStream` starts when `Message` returns.
+- The ping timer cannot close a session while the handler reads, because the tick waits
+  for `Message`. The stall time of the pipe is the deadline that covers this case.
+- The stall deadline covers only a blocked `Read`. A handler that blocks outside `Read`
+  holds its pool thread until it returns. On a channel without flow control the pipe then
+  fills, and the session closes with 1009.
+- The hold rule of `QueuedMessages` exempts the headers of the frames of a receive call
+  that carries a streamed message (its start, its pieces or its end). When one receive
+  call also carries a whole small message after the end of a streamed message, the credit
+  of that message is not held in that call. The effect is a window that is larger than
+  the rule intends for one receive call. No credit is lost.
+
+**The end of the session.** `TryEnd` is the one place that every end of a session passes:
+a Close frame, a protocol error, a lost transport, an abort, a failure of a callback and
+the stop of the server. It aborts the pipe of a message that still arrives, so a read
+that waits raises `EStreamCancelled`. The abort comes before the streaming pool stops,
+because the stop of the pool waits for the running tasks. A pipe that has its end (the
+message arrived whole) is not aborted: a message that arrived before a Close frame is
+still delivered, as the receive path describes.
 
 ## Streaming a message
 
@@ -234,12 +408,20 @@ whole request, including `Cookie` and `Authorization`, and may access a database
 The IO thread that delivers octets parses the frames. It answers control frames at
 once, under the rule of the send lock above: a Ping is answered with a Pong that has
 the same payload, and a Close frame is echoed with the same code. It puts each data
-message on the queue of its session.
+message on the queue of its session. A message that ends inside `InlineLimit` goes on the
+queue when it ends. A longer message goes on the queue when it passes the limit, and the
+IO thread pushes its later octets into a pipe (see [The inbound
+message](#the-inbound-message)).
 
-- **Credit.** Every octet is credited to the channel once, when it is consumed, so a
-  message larger than the HTTP/2 window can arrive and a control frame in pieces cannot
-  raise the window above what the server consumed. When the queue of a session is half
-  full, the credit waits until the application has taken messages.
+- **Credit.** Every octet is credited to the channel once. The octets of a frame header,
+  of a control frame and of a message in memory are credited when they arrive. The octets
+  of a streamed message are credited when the handler reads them, or when the session
+  drops them. A message of up to the HTTP/2 window can therefore arrive, and a control
+  frame in pieces cannot raise the window above what the server consumed. When the
+  queue of a session is half full, the credit of the octets that the rule credits on
+  arrival waits until the application has taken messages. The headers of a streamed
+  message that is open do not wait, so a small `QueuedMessages` cannot stall the peer in
+  the middle of a message.
 - **Delivery at the end.** The messages that arrived before a Close frame are delivered
   to `Message`, in order, and `Closed` follows the last of them. An abort, a failure of
   a callback and a protocol error drop the messages that still wait. A lost connection
@@ -248,7 +430,9 @@ message on the queue of its session.
   application. A peer that sends more, because it ignores the window or because the
   protocol has no window, is closed with 1008.
 - **The byte budget.** The octets of the queued messages of all sessions of a server
-  count in one budget, `MaxWsQueuedBytes`. A message that would pass the budget closes
+  count in one budget, `MaxWsQueuedBytes`. A message in memory counts its length. A
+  streamed message counts `InboundPipeBytes` from its start, because its length is not
+  known then. A message that would pass the budget closes
   its session with 1008, as a message past `QueuedMessages` does. The session gives
   back its octets when a message leaves the queue and when the session ends, so the
   count returns to zero when the sessions have ended.
@@ -288,7 +472,9 @@ A value of 0 for the interval turns the Ping off. The decision is a pure functio
 timeout for the replies. A session that is still open then is aborted, and the
 application hears `Closed(1001, AClean = false)` on the thread that stops the server,
 because the pool is going away. A session that waits for `Init` closes with 1001 as
-soon as `Init` accepts.
+soon as `Init` accepts. The abort of a session aborts the pipe of a message that still
+arrives, and this happens before the pool stops. A handler that waits in a read therefore
+returns, and the stop of the pool does not wait for it.
 
 ## The origin policy
 
@@ -385,7 +571,10 @@ upgraded connection (as described in [lifecycle](lifecycle.md)).
 - **No flow control.** HTTP/1.1 has no window. A client that sends a burst of
   messages faster than the application takes them fills the queue of the session,
   and the session closes with 1008 when the queue passes `QueuedMessages`. An
-  application that expects bursts sets a larger queue.
+  application that expects bursts sets a larger queue. A client that sends one large
+  message faster than the handler reads it fills the pipe of the message, and the session
+  closes with 1009 when the unread octets pass `InboundPipeBytes`. This cap exists on a
+  channel that returns no credit only; on HTTP/2 the stream window bounds the pipe.
 
 
 ## The HTTP/2 handshake
@@ -439,9 +628,12 @@ The HTTP/2 connection stays open in each row except the last two.
 ### Flow control
 
 The `DATA` frames of a WebSocket stream use the usual windows of the stream and of the
-connection. The session returns credit to the stream when the parser takes the octets,
-and it holds the credit back while its queue is full. An outbound message waits in the
-channel queue, and `Send` answers `srFull` when the queue is full.
+connection. The connection window is credited when a frame arrives. The session returns
+credit to the stream when the parser takes the octets of a frame header, of a control
+frame and of a message in memory. For a streamed message it returns the credit of the
+payload octets as the handler reads them, so a slow handler slows its own stream and no
+other. The session holds the credit back while its queue is full. An outbound message
+waits in the channel queue, and `Send` answers `srFull` when the queue is full.
 
 ### The maximum age
 
@@ -497,6 +689,9 @@ defaults live in `Create`.
 | `ControlBucket` | 100 tokens, 10 a second | Ping and Pong frames that arrive |
 | `MessageBucket` | 10000 tokens, 10000 a second | data messages that arrive |
 | `WsEarlyBytes` | 262144 | the octets that the channel holds before the session takes it |
+| `InlineLimit` | 65536 | the octets of a message that the server keeps in memory before it gives the message to the handler; a message that ends inside the limit goes to the handler whole, and a longer message streams; from 1 to 16777216 |
+| `InboundPipeBytes` | 1048576 | the greatest count of unread octets of a streamed message on a channel that returns no credit; a push over it closes the session with 1009; at least `InlineLimit` plus `MaxFrameSize`; also the budget charge of every streamed message |
+| `InboundStallMs` | 30000 | the time that a read of a streamed message waits for an octet; on expiry the session closes with 1008 |
 | `OriginPolicy` | `opSameOrAbsent` | as described in above |
 | `AllowedOrigins` | none | the allow-list, each entry `scheme://host[:port]` |
 | `WsAllowedHosts` | none | the host allow-list, each entry `host[:port]`; an empty list turns the check off |

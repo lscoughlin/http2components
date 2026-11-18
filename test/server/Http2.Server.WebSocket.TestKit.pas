@@ -25,7 +25,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, Generics.Collections,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.StreamPool, Http2.Server.Limits, Http2.Server.Observer,
   Http2.Server.WebSocket.Options, Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames,
   Http2.Server.WebSocket.Parser, Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Environment,
@@ -33,7 +33,7 @@ uses
 
 type
   /// a channel that records what the session does to it
-  TFakeWsChannel = class(TInterfacedObject, IDuplexChannel)
+  TFakeWsChannel = class(TInterfacedObject, IDuplexChannel, IChannelFlow)
   private
     FLock: TCriticalSection;
     FRegistry: IChannelRegistry;
@@ -55,10 +55,14 @@ type
     ClosedCount: Integer;
     /// when True, Send refuses and queues nothing
     Full: Boolean;
+    /// what IChannelFlow answers: True stands for an HTTP/2 stream, whose window slows
+    /// the peer; False, the default, for a channel that returns no credit
+    FlowControl: Boolean;
     /// a lock that stands for the connection lock of a real channel
     // - Send takes it, and Deliver holds it while the sink runs, as the IO
     //   thread does. A test sets it to show a lock-order inversion
     ConnLock: TCriticalSection;
+    function ReturnsCredit: Boolean;
     constructor Create(const ARegistry: IChannelRegistry);
     destructor Destroy; override;
     function Send(const AData: TBytes): TSendResult;
@@ -126,7 +130,7 @@ type
     destructor Destroy; override;
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
@@ -193,6 +197,11 @@ destructor TFakeWsChannel.Destroy;
 begin
   FLock.Free;
   inherited Destroy;
+end;
+
+function TFakeWsChannel.ReturnsCredit: Boolean;
+begin
+  Result := FlowControl;
 end;
 
 function TFakeWsChannel.Send(const AData: TBytes): TSendResult;
@@ -557,8 +566,10 @@ begin
   Result := InitResult;
 end;
 
-procedure TRecordingHandler.Message(const ASession: IWsSession; const AData: TBytes;
+procedure TRecordingHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
   const AText: Boolean);
+var
+  AData: TBytes;
 begin
   if Gate <> nil then
   begin
@@ -567,6 +578,7 @@ begin
   end;
   if OnMessageSleepMs > 0 then
     Sleep(OnMessageSleepMs);
+  AData := ReadAllBody(AMessage);
   if AText then
     Add('msg T ' + TextOf(AData))
   else
@@ -720,18 +732,38 @@ end;
 
 type
   TDecodeSink = class(TInterfacedObject, IWsReaderSink)
+  private
+    FText: Boolean;
+    FBuf: TBytes;
   public
     Items: TStringList;
-    procedure Message(const AText: Boolean; const AData: TBytes);
+    procedure MessageBegin(const AText: Boolean);
+    procedure MessageData(const AData; const ACount: Integer);
+    procedure MessageEnd;
     procedure Control(const AOpcode: Byte; const AData: TBytes);
   end;
 
-procedure TDecodeSink.Message(const AText: Boolean; const AData: TBytes);
+procedure TDecodeSink.MessageBegin(const AText: Boolean);
 begin
-  if AText then
-    Items.Add('T:' + TextOf(AData))
+  FText := AText;
+  FBuf := nil;
+end;
+
+procedure TDecodeSink.MessageData(const AData; const ACount: Integer);
+var
+  Len: Integer;
+begin
+  Len := Length(FBuf);
+  SetLength(FBuf, Len + ACount);
+  Move(AData, FBuf[Len], ACount);
+end;
+
+procedure TDecodeSink.MessageEnd;
+begin
+  if FText then
+    Items.Add('T:' + TextOf(FBuf))
   else
-    Items.Add('B:' + HexOf(AData));
+    Items.Add('B:' + HexOf(FBuf));
 end;
 
 procedure TDecodeSink.Control(const AOpcode: Byte; const AData: TBytes);

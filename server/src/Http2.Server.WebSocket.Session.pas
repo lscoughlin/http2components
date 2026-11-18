@@ -11,11 +11,19 @@ notes:
     once, and queues each data message. The streaming pool runs the callbacks of the
     handler, one at a time for a session and in the order of the events. The
     handler never runs on an IO thread.
-  - The credit of the octets of a message goes back to the channel while the message
-    is assembled, so a message larger than the HTTP/2 window can arrive. When
-    the queue of a session is half full, the credit of the data octets is held until
-    the handler has taken messages, and a queue over its cap closes the session
-    with 1008.
+  - A message that ends inside the inline limit goes to the handler as a memory reader
+    when it ends. A longer message goes to the handler when it passes the limit, and a
+    pipe (Http2.Server.WebSocket.Inbound) carries the octets that follow. The IO thread
+    only pushes into the pipe and never waits.
+  - The credit of the octets of a message in memory, and of every frame header, goes back
+    to the channel when the octets arrive, so a message of up to the HTTP/2 window can
+    arrive. The credit of the octets of a pipe goes back as the handler reads them, so a
+    slow handler slows its own stream only. When the queue of a session is half full, the
+    credit of the data octets is held until the handler has taken messages, and a queue
+    over its cap closes the session with 1008. The headers of a streamed message that is
+    open are never held.
+  - The end of the session aborts the pipe of a message that still arrives, before the
+    pool stops, so a handler that waits in Read returns.
   - The state, the sender, the closing handshake and the timers are in
     Http2.Server.WebSocket.SessionCore.
 ---
@@ -37,7 +45,7 @@ uses
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Parser,
   Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.SessionCore,
   Http2.Server.WebSocket.Environment, Http2.Server.WebSocket.Budget,
-  Http2.Server.WebSocket.Pump;
+  Http2.Server.WebSocket.Pump, Http2.Common.Body, Http2.Server.WebSocket.Inbound;
 
 /// start a session on AChannel, which is detached and pending
 // - ARequest is the upgrade request; the session keeps a copy of what it needs
@@ -53,9 +61,30 @@ implementation
 type
   TWsSession = class(TWsSessionCore, IChannelSink, IWsReaderSink, IChannelCloser,
     IWsInitWatch)
+  private
+    /// the pipe of the streamed message that still arrives, and the reference that
+    /// keeps it alive; FLock guards both
+    FPipe: TWsMessagePipe;
+    FPipeRef: IBodyReader;
+    /// the message that ends inside the inline limit, as the reader gives it
+    FInline: TBytes;
+    FInlineText: Boolean;
+    /// the octets that this BytesReceived call gave to a pipe: the pipe credits them
+    FPushed: Integer;
+    /// this BytesReceived call belonged to a streamed message, which may have ended in it
+    FStreamFeed: Boolean;
+    /// the message bucket, the queue, the closed state and the budget; False when the
+    /// session failed or ended and the message does not go on
+    function Admit(const ACharge: Int64): Boolean;
+    procedure StartStream(const AText: Boolean);
+    /// the handler read octets of a pipe, or the pipe dropped them
+    procedure PipeTaken(const ACount: Integer);
+    /// a read of the handler waited too long
+    procedure PipeStalled;
   protected
     procedure Post(const ATask: TWsTask); override;
     procedure UnwatchInit; override;
+    procedure AbortInbound; override;
     procedure DropCloser; override;
     procedure RunTask;
     function Dropping: Boolean;
@@ -75,7 +104,9 @@ type
     procedure WriteDrained;
 
     // IWsReaderSink: called from BytesReceived
-    procedure Message(const AText: Boolean; const AData: TBytes);
+    procedure MessageBegin(const AText: Boolean);
+    procedure MessageData(const AData; const ACount: Integer);
+    procedure MessageEnd;
     procedure Control(const AOpcode: Byte; const AData: TBytes);
 
     // IChannelCloser, IWsInitWatch
@@ -88,6 +119,45 @@ type
 procedure TWsSession.UnwatchInit;
 begin
   FEnv.UnwatchInit(Self);
+end;
+
+procedure TWsSession.AbortInbound;
+var
+  P: TWsMessagePipe;
+  Ref: IBodyReader;
+begin
+  FLock.Acquire;
+  try
+    P := FPipe;
+    Ref := FPipeRef;
+    FPipe := nil;
+    FPipeRef := nil;
+  finally
+    FLock.Release;
+  end;
+  // a finished pipe is not here: it stays readable for a message that arrived whole
+  if P <> nil then
+  begin
+    P.Abort;
+    P.Detach;
+  end;
+  Ref := nil;
+end;
+
+procedure TWsSession.PipeTaken(const ACount: Integer);
+begin
+  // no hold rule: the pipe holds at most what the window and the cap allow
+  FChannel.ReturnCredit(ACount);
+end;
+
+procedure TWsSession.PipeStalled;
+begin
+  // the handler thread runs here. The pipe is aborted already, and the read raises
+  try
+    Close(WsClosePolicy, 'the message stalled');
+  except
+    ;   // the session ended in the meantime
+  end;
 end;
 
 procedure TWsSession.DropCloser;
@@ -308,22 +378,29 @@ begin
   // a message that arrived before a Close frame is delivered, whatever the state
   // of the session now. An abort, a failure of the session or a protocol error
   // drops the messages that wait
-  if Dropping then
+  // a streamed message whose pipe was aborted before the handler started is dropped too
+  if Dropping or ((ATask.Pipe <> nil) and ATask.Pipe.Aborted) then
   begin
+    if ATask.Pipe <> nil then
+      ATask.Pipe.Release;
     ReleaseCredit(True);
-    ReleaseQueued(Length(ATask.Data));
+    ReleaseQueued(ATask.Charge);
     Exit;
   end;
   try
-    FHandler.Message(Self, ATask.Data, ATask.Text);
+    FHandler.Message(Self, ATask.Reader, ATask.Text);
   except
     on EStreamCancelled do
       ;
     on E: Exception do
       Fail(E);
   end;
+  // the handler reads no more: the octets that wait and the octets that still arrive
+  // are dropped, and the pipe returns their credit, so the peer is not held back
+  if ATask.Pipe <> nil then
+    ATask.Pipe.Release;
   ReleaseCredit(True);
-  ReleaseQueued(Length(ATask.Data));
+  ReleaseQueued(ATask.Charge);
 end;
 
 procedure TWsSession.DoPong(const ATask: TWsTask);
@@ -393,22 +470,27 @@ begin
       FChannel.Close(ccAbort);
       Exit;
     end;
+    FPushed := 0;
+    FStreamFeed := False;
     Ok := FReader.Feed(AData, ACount, Self);
     // every octet is credited once, when it is consumed: the octets of a frame
     // that arrives in pieces are credited piece by piece, so a control frame in
-    // pieces cannot raise the window above what the server consumed. The credit
+    // pieces cannot raise the window above what the server consumed. The octets that
+    // went to a pipe are credited by the pipe, when the handler reads them. The credit
     // waits when the queue of the session is half full, until the handler has
-    // taken messages
-    Data := ACount;
+    // taken messages; the headers of a streamed message that is open never wait, or a
+    // small queue limit could stall the peer inside a message
+    Data := ACount - FPushed;
     FLock.Acquire;
     try
-      Hold := FQueuedMsgs * 2 >= FOpts.QueuedMessages;
+      Hold := (FQueuedMsgs * 2 >= FOpts.QueuedMessages) and (FPipe = nil) and
+        not FStreamFeed;
       if Hold then
         Inc(FHeldCredit, Data);
     finally
       FLock.Release;
     end;
-    if not Hold then
+    if not Hold and (Data > 0) then
       FChannel.ReturnCredit(Data);
     if not Ok then
     begin
@@ -454,19 +536,17 @@ begin
   end;
 end;
 
-procedure TWsSession.Message(const AText: Boolean; const AData: TBytes);
+function TWsSession.Admit(const ACharge: Int64): Boolean;
 var
-  T: TWsTask;
   TooMany, AfterClose, OverBudget: Boolean;
-  Octets: Int64;
 begin
+  Result := False;
   if not FMessages.TryTake(1) then
   begin
     FEnv.Report(seWsBucketTripped, 0, 'the message bucket is empty');
     ProtocolFail(WsClosePolicy, 'too many messages');
     Exit;
   end;
-  Octets := Length(AData);
   FLock.Acquire;
   try
     if FState = wsEnded then
@@ -476,15 +556,17 @@ begin
     OverBudget := False;
     if not (AfterClose or TooMany) then
     begin
-      // the server-wide budget counts the octets of the queue; a message that
-      // would pass it closes the session like a message past the queue limit
+      // the server-wide budget counts the octets that the message can hold: its length
+      // for a message in memory, the size of the pipe for a streamed message. The
+      // release gives back the same number. A message that would pass the budget closes
+      // the session like a message past the queue limit
       if FBudget <> nil then
-        OverBudget := not FBudget.TryAddBytes(Octets);
+        OverBudget := not FBudget.TryAddBytes(ACharge);
       if not OverBudget then
       begin
         Inc(FQueuedMsgs);
         if FBudget <> nil then
-          Inc(FQueuedBytes, Octets);
+          Inc(FQueuedBytes, ACharge);
       end;
     end;
   finally
@@ -506,11 +588,134 @@ begin
     Exit;
   end;
   FEnv.Count(wcMessagesIn, 1);
-  FEnv.Count(wcBytesIn, Length(AData));
+  Result := True;
+end;
+
+procedure TWsSession.StartStream(const AText: Boolean);
+var
+  T: TWsTask;
+  Pipe: TWsMessagePipe;
+  Ref: IBodyReader;
+  Ended: Boolean;
+begin
+  // a streamed message counts once, here, with the size of the pipe as its charge
+  if not Admit(FOpts.InboundPipeBytes) then
+    Exit;
+  Pipe := TWsMessagePipe.Create(PipeCap, FOpts.InboundStallMs, PipeTaken, PipeStalled);
+  Ref := Pipe;
+  // the inline octets of this message may be held by the queue rule: give them back
+  FlushHeldCredit;
+  FLock.Acquire;
+  try
+    // the state is read under the lock that TryEnd takes before it aborts the pipe, so
+    // a pipe that this call installs is either aborted by TryEnd or never installed
+    Ended := FState = wsEnded;
+    if not Ended then
+    begin
+      FPipe := Pipe;
+      FPipeRef := Ref;
+    end;
+  finally
+    FLock.Release;
+  end;
+  if Ended then
+    Exit;
   T := Default(TWsTask);
   T.Kind := wtMessage;
   T.Text := AText;
-  T.Data := AData;
+  T.Reader := Ref;
+  T.Pipe := Pipe;
+  T.Charge := FOpts.InboundPipeBytes;
+  Post(T);
+end;
+
+procedure TWsSession.MessageBegin(const AText: Boolean);
+begin
+  FInline := nil;
+  FInlineText := AText;
+  if FReader.Streaming then
+  begin
+    FStreamFeed := True;
+    StartStream(AText);
+  end;
+end;
+
+procedure TWsSession.MessageData(const AData; const ACount: Integer);
+var
+  P: TWsMessagePipe;
+  Ref: IBodyReader;
+  Len: Integer;
+  Taken: Boolean;
+begin
+  if not FReader.Streaming then
+  begin
+    Len := Length(FInline);
+    SetLength(FInline, Len + ACount);
+    Move(AData, FInline[Len], ACount);
+    Exit;
+  end;
+  FLock.Acquire;
+  try
+    P := FPipe;
+    Ref := FPipeRef;
+  finally
+    FLock.Release;
+  end;
+  // no pipe: the message was refused or the session ended. The octets are dropped,
+  // and they are credited when they arrive
+  if P = nil then
+    Exit;
+  FEnv.Count(wcBytesIn, ACount);
+  if FReader.Replaying then
+    // the octets that the reader kept were credited when they arrived
+    Taken := P.PushPrepaid(AData, ACount)
+  else
+  begin
+    Inc(FPushed, ACount);
+    Taken := P.Push(AData, ACount);
+  end;
+  if not Taken then
+    // a channel that cannot slow its peer: the handler reads too slowly
+    ProtocolFail(WsCloseTooBig, 'the handler reads too slowly');
+end;
+
+procedure TWsSession.MessageEnd;
+var
+  T: TWsTask;
+  P: TWsMessagePipe;
+  Ref: IBodyReader;
+begin
+  if FReader.Streaming then
+  begin
+    // the headers of the last frame belong to the message that is open: no hold
+    FStreamFeed := True;
+    FLock.Acquire;
+    try
+      P := FPipe;
+      Ref := FPipeRef;
+      FPipe := nil;
+      FPipeRef := nil;
+    finally
+      FLock.Release;
+    end;
+    if P = nil then
+      Exit;
+    P.Finish;
+    Exit;
+  end;
+  // a message that ended inside the inline limit goes to the handler now
+  if not Admit(Length(FInline)) then
+  begin
+    FInline := nil;
+    Exit;
+  end;
+  FEnv.Count(wcBytesIn, Length(FInline));
+  T := Default(TWsTask);
+  T.Kind := wtMessage;
+  T.Text := FInlineText;
+  T.Reader := TWsMemoryReader.Create(FInline);
+  T.Charge := Length(FInline);
+  FInline := nil;
   Post(T);
 end;
 

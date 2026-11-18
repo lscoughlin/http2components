@@ -48,7 +48,7 @@ type
       const AResponse: IServerResponse);
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
@@ -90,14 +90,15 @@ end;
 function TRouter.Init(const ARequest: IServerRequest; const AOffered: TArray<string>; const ASession: IWsSession): TWsInitResult;
 begin Result := TWsInitResult.Accepted; end;
 
-procedure TRouter.Message(const ASession: IWsSession; const AData: TBytes;
+procedure TRouter.Message(const ASession: IWsSession; const AMessage: IBodyReader;
   const AText: Boolean);
 var
   Writer: IBodyWriter;
 begin
   if not AText then
     Exit;
-  if TEncoding.UTF8.GetString(AData) = 'query' then
+  // the messages of this example are short: ReadAllBody gives the whole message
+  if TEncoding.UTF8.GetString(ReadAllBody(AMessage)) = 'query' then
   begin
     // a refused stream means that another stream of the session runs
     Writer := TRowWriter.Create;

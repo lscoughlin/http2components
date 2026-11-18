@@ -30,7 +30,8 @@ uses
   Http2.Server.Limits, Http2.Server.Observer, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Parser,
   Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.Utf8,
-  Http2.Server.ClientCert, Http2.Server.WebSocket.Budget, Http2.Server.WebSocket.Pump;
+  Http2.Server.ClientCert, Http2.Server.WebSocket.Budget, Http2.Server.WebSocket.Pump,
+  Http2.Server.WebSocket.Snapshot, Http2.Server.WebSocket.Inbound;
 
 type
   TWsState = (wsInit, wsOpen, wsClosing, wsEnded);
@@ -48,32 +49,12 @@ type
     Opcode: Byte;
     /// wtReply: close the channel gracefully after the frame
     CloseAfter: Boolean;
-  end;
-
-  /// a read-only copy of the handshake request
-  TWsRequestSnapshot = class(TInterfacedObject, IServerRequest)
-  private
-    FMethod, FScheme, FAuthority, FPath: string;
-    FHeaders: THeaderBlock;
-    FCancelled: Boolean;
-    FPrincipal: string;
-    FClientCert: IClientCertificate;
-  public
-    constructor Create(const ARequest: IServerRequest);
-    procedure Cancel;
-    function GetPrincipal: string;
-    procedure SetPrincipal(const AValue: string);
-    function GetClientCertificate: IClientCertificate;
-    function Method: string;
-    function Scheme: string;
-    function Authority: string;
-    function Path: string;
-    function Headers: THeaderBlock;
-    function Read(var ABuffer; const ACount: Integer): Integer;
-    function ReadChunk(const ABuffer: TStream): Boolean;
-    function BodyIsComplete: Boolean;
-    function IsCancelled: Boolean;
-    function StreamId: LongWord;
+    /// wtMessage: what the handler reads; a memory reader or a pipe
+    Reader: IBodyReader;
+    /// wtMessage: the pipe of a streamed message; nil for a message in memory
+    Pipe: TWsMessagePipe;
+    /// wtMessage: the octets that the budget counted at the start of the message
+    Charge: Int64;
   end;
 
   TWsSessionCore = class(TInterfacedObject, IWsSession, IWsPumpHost)
@@ -135,6 +116,9 @@ type
     procedure Post(const ATask: TWsTask); virtual; abstract;
     /// stop the time limit of Init
     procedure UnwatchInit; virtual; abstract;
+    /// the session has ended: the pipe of a message that still arrives is aborted, so a
+    /// handler that waits in Read wakes up
+    procedure AbortInbound; virtual; abstract;
     /// the session no longer closes its channel when the server stops
     procedure DropCloser; virtual; abstract;
     procedure DoTick;
@@ -157,6 +141,12 @@ type
     /// the messages that wait are dropped from now on
     procedure DropPending;
     procedure ReleaseCredit(const AMessageDone: Boolean);
+    /// give back all the credit that the hold rule keeps; a streamed message starts, so
+    /// its inline octets must not wait for the queue to fall
+    procedure FlushHeldCredit;
+    /// the cap of the pipe of a streamed message: InboundPipeBytes on a channel that
+    /// returns no credit, and none on a channel whose window bounds the unread octets
+    function PipeCap: Integer;
     /// give back the octets of a message that left the queue; never more than the
     /// session still holds
     procedure ReleaseQueued(const ABytes: Int64);
@@ -198,90 +188,6 @@ type
 
 implementation
 
-{ TWsRequestSnapshot }
-
-constructor TWsRequestSnapshot.Create(const ARequest: IServerRequest);
-begin
-  inherited Create;
-  FMethod := ARequest.Method;
-  FScheme := ARequest.Scheme;
-  FAuthority := ARequest.Authority;
-  FPath := ARequest.Path;
-  FHeaders := Copy(ARequest.Headers);
-  FPrincipal := ARequest.Principal;
-  FClientCert := ARequest.ClientCertificate;
-end;
-
-function TWsRequestSnapshot.GetClientCertificate: IClientCertificate;
-begin
-  Result := FClientCert;
-end;
-
-function TWsRequestSnapshot.GetPrincipal: string;
-begin
-  Result := FPrincipal;
-end;
-
-procedure TWsRequestSnapshot.SetPrincipal(const AValue: string);
-begin
-  FPrincipal := AValue;
-end;
-
-procedure TWsRequestSnapshot.Cancel;
-begin
-  FCancelled := True;
-end;
-
-function TWsRequestSnapshot.Method: string;
-begin
-  Result := FMethod;
-end;
-
-function TWsRequestSnapshot.Scheme: string;
-begin
-  Result := FScheme;
-end;
-
-function TWsRequestSnapshot.Authority: string;
-begin
-  Result := FAuthority;
-end;
-
-function TWsRequestSnapshot.Path: string;
-begin
-  Result := FPath;
-end;
-
-function TWsRequestSnapshot.Headers: THeaderBlock;
-begin
-  Result := FHeaders;
-end;
-
-function TWsRequestSnapshot.Read(var ABuffer; const ACount: Integer): Integer;
-begin
-  Result := 0;
-end;
-
-function TWsRequestSnapshot.ReadChunk(const ABuffer: TStream): Boolean;
-begin
-  Result := False;
-end;
-
-function TWsRequestSnapshot.BodyIsComplete: Boolean;
-begin
-  Result := True;
-end;
-
-function TWsRequestSnapshot.IsCancelled: Boolean;
-begin
-  Result := FCancelled;
-end;
-
-function TWsRequestSnapshot.StreamId: LongWord;
-begin
-  Result := 0;
-end;
-
 { TWsSessionCore }
 
 constructor TWsSessionCore.Create(const AEnv: IWsEnvironment;
@@ -310,7 +216,7 @@ begin
   Limits.MaxFrameSize := FOpts.MaxFrameSize;
   Limits.MaxMessageSize := FOpts.MaxMessageSize;
   Limits.MaxFragments := FOpts.MaxFragments;
-  FReader := TWsReader.Create(Limits, {ARequireMasked=}True);
+  FReader := TWsReader.Create(Limits, {ARequireMasked=}True, FOpts.InlineLimit);
   FControl := TTokenBucket.Create(AEnv.Clock, FOpts.ControlBucket);
   FMessages := TTokenBucket.Create(AEnv.Clock, FOpts.MessageBucket);
   FLastInboundMs := GetTickCount64;
@@ -344,6 +250,8 @@ begin
   if not Result then
     Exit;
   UnwatchInit;
+  // before the pool stops: a handler that waits in Read must be able to return
+  AbortInbound;
   if FCounted then
     FEnv.SessionClosed;
   ReleaseSessionSlot;
@@ -504,6 +412,32 @@ begin
   end;
   if Give > 0 then
     FChannel.ReturnCredit(Give);
+end;
+
+procedure TWsSessionCore.FlushHeldCredit;
+var
+  Give: Int64;
+begin
+  FLock.Acquire;
+  try
+    Give := FHeldCredit;
+    FHeldCredit := 0;
+  finally
+    FLock.Release;
+  end;
+  if Give > 0 then
+    FChannel.ReturnCredit(Give);
+end;
+
+function TWsSessionCore.PipeCap: Integer;
+var
+  Flow: IChannelFlow;
+begin
+  // on a channel that returns credit, the stream window bounds the unread octets
+  if Supports(FChannel, IChannelFlow, Flow) and Flow.ReturnsCredit then
+    Result := MaxInt
+  else
+    Result := FOpts.InboundPipeBytes;
 end;
 
 { the timer }

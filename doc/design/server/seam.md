@@ -237,6 +237,21 @@ every stream. The stream window returns only when the owner calls
 side, so a `WINDOW_UPDATE` leaves although the peer is silent while it waits. A
 consumer that is slow to call `ReturnCredit` slows its peer and no other stream.
 
+An HTTP/1.1 upgrade and a Unix socket give the same interface with no flow control. On
+those channels `ReturnCredit` does nothing, and the IO layer never pauses its reads, so a
+slow consumer does not slow its peer. A consumer that buffers the octets of such a channel
+bounds its own memory. The WebSocket session does this with the pipe of a streamed
+message: it credits the octets of a frame header and of a message in memory when they
+arrive, and the octets of a pipe when the handler reads them (see
+[websocket](websocket.md)). A call of `ReturnCredit` comes from the IO thread, which holds
+the channel lock, and from a pool thread, which takes the channel lock inside the call.
+A caller therefore holds no lock of its own that the IO thread can take while it holds the
+channel lock.
+
+The optional interface `IChannelFlow` (`ReturnsCredit`) tells a consumer which case a
+channel is. The HTTP/2 stream channel answers True. A channel without the interface counts
+as a channel that returns no credit.
+
 **Pending and active.** A handler that calls `Detach` before `SendHeaders`
 receives a pending channel. No response has left yet. `Send` holds the bytes in
 the channel, so no DATA frame can leave before the HEADERS frame. `Activate`
