@@ -18,6 +18,11 @@ updated: 2026-10-13
 notes:
   - IHttpBodyStream inherits GetStream and GetStreamReader from IBodyReader.
   - Imported from http2client/doc/design/messages.md at the source commit recorded in the source inventory.
+  - A request body can come from a producer. The client runs the producer on the thread of the call.
+primary_types:
+  - IBodyProducer
+  - IBodyChunkSink
+  - BodyWriterFromStream
 ---
 
 # Messages
@@ -345,6 +350,62 @@ flowchart TB
 - Buffered vs. streamed is an explicit choice of reader: a buffering
   `IResponseReader<T>` reads to EOF then decodes; an incremental one decodes
   per chunk.
+
+### Request body from a producer
+
+A request body can also come from a producer: code that writes to a `TStream`.
+The factory `BodyWriterFromStream` in `Http2.Common.Body.Producers` turns a method
+of the application into an `IBodyWriter`. The client finds that the writer is a
+producer (`IBodyProducer`) and gives each chunk of the output to the sending place.
+The body streams. The client holds at most one chunk back, and the body is never
+held whole in memory.
+
+```pascal
+type
+  TXmlUploader = class
+  private
+    FDoc: TXMLDocument;
+  public
+    procedure Write(const AOut: TStream);
+  end;
+
+procedure TXmlUploader.Write(const AOut: TStream);
+begin
+  WriteXML(FDoc, AOut);
+end;
+
+Uploader := TXmlUploader.Create;
+try
+  Uploader.FDoc := Document;
+  Response := Client.Send(THttpRequest.Create(hmPost, 'https://api.example/upload')
+    .WithHeader('content-type', 'application/xml')
+    .WithBodyWriter(BodyWriterFromStream(Uploader.Write)));
+finally
+  Uploader.Free;
+end;
+```
+
+- The thread of the call runs the producer. `Send` returns when the response starts.
+  The producer runs inside `Send`, before the response is read. No thread is created.
+- The producer method has the type `TStreamProducer = procedure(const AOut: TStream)
+  of object`. The caller owns the object of the method, and the object lives until
+  `Send` returns.
+- The octets of the producer go out in chunks of `AChunkBytes` octets (default
+  `cReadChunkBytes`, 16384). A `Write` blocks while the place does not take the chunk.
+  On HTTP/2 the chunk waits for flow-control credit. On HTTP/1.1 the chunk waits for
+  the socket.
+- An empty producer sends an empty body. On HTTP/2 the body is one empty DATA frame
+  with `END_STREAM`. On HTTP/1.1 the body is the last-chunk marker and the empty trailer.
+- A producer that raises passes its exception to the caller of `Send`, unchanged. The
+  stream is reset with `CANCEL` on HTTP/2. The connection is not reused on HTTP/1.1.
+  See [errors-redirects](errors-redirects.md).
+- A producer body is an `IBodyWriter`. It has the same rules: it is single-use, it is not
+  retried when the peer refuses the stream, and a 307 or 308 redirect raises
+  `EHttpNotReplayable` for it.
+- The factory `BodyWriterFromTextWriter` gives the same body from a method that writes to
+  a `TStreamWriter`. The encoding of the writer gives the octets.
+- A place that pulls the writer with `NextChunk` gets the whole body in memory at the
+  first call. `BuildHttp1Request` pulls the writer that way, so it holds the whole body.
 
 ## Content coding
 

@@ -10,7 +10,7 @@ notes:
     grants credit.
 ---
 }
-/// Pull-rate test of the client request body writer
+/// Pull-rate test of the client request body writer, and the producer upload tests
 unit Http2.Client.BodyWriterStreaming.Test;
 
 {$mode delphi}{$H+}
@@ -22,11 +22,15 @@ interface
 
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
-  Http2.Common.Frames, Http2.Common.Body, Http2.Client.MockSocket.Frames,
+  Http2.Common.Frames, Http2.Common.Body, Http2.Common.Body.Producers,
+  Http2.Client.MockSocket.Frames, Http2.Client.Errors,
   Http2.Client.Messages, Http2.Client.Stream, Http2.Client,
   Http2.Client.MockSocket.Support;
 
 type
+  /// the error that a test producer raises after its first octets
+  EScriptedProducerFailure = class(Exception);
+
   /// a body writer that yields N chunks of S octets and counts them
   // - the call after the last chunk returns False and writes no octets
   TCountingWriter = class(TInterfacedObject, IBodyWriter)
@@ -90,6 +94,48 @@ type
     /// with a 65535-octet window and no WINDOW_UPDATE, the upload writer
     // yields at most 65535 div 1024 + 3 chunks; the rest follows the credit
     procedure TestH2UploadWriterIsPulledAtTheSpeedOfTheWindow;
+  end;
+
+  /// HTTP/2 uploads from a producer: the octets, END_STREAM, the failures and the cancel
+  // - the mock socket answers 200 with END_STREAM, so each call returns once the body is sent
+  // - the frames that the client wrote are read from the mock after the call
+  TProducerUploadTest = class(TTestCase)
+  private
+    FFactory: IHttp2SocketFactory;
+    FClient: IHttpClient;
+    FSocket: TMockSocket;
+    FToken: ICancellationToken;
+    FPayload: TBytes;
+    FSizes: TArray<Integer>;
+    FErrorClass: string;
+    FErrorText: string;
+    FErrorCode: THttp2ErrorCode;
+    FProducerClass: string;
+    FProducerCode: THttp2ErrorCode;
+    FProducerSawError: Boolean;
+    procedure OnDial(const ASocket: TMockSocket);
+    procedure Upload(const AWriter: IBodyWriter; const AToken: ICancellationToken);
+    function DataFrames: TArray<TFrame>;
+    function FrameOfType(const AType: TFrameType; out AFrame: TFrame): Boolean;
+    function WaitForFrame(const AType: TFrameType; const AEndStream: Boolean): Boolean;
+    function BodyOfDataFrames: TBytes;
+    procedure WriteInPieces(const AOut: TStream);
+    procedure WriteNothing(const AOut: TStream);
+    procedure WriteThenFail(const AOut: TStream);
+    procedure WriteThenCancel(const AOut: TStream);
+  protected
+    procedure TearDown; override;
+  published
+    /// odd write sizes arrive complete, and only the last DATA frame has END_STREAM
+    procedure TestH2ProducerUploadArrivesComplete;
+    /// a body that ends on a chunk boundary sends no empty END_STREAM frame
+    procedure TestH2ProducerUploadOnChunkBoundaryEndsOnce;
+    /// a producer that writes nothing sends one empty DATA frame with END_STREAM
+    procedure TestH2EmptyProducerSendsEmptyEndStreamFrame;
+    /// a producer that raises resets the stream with CANCEL and the call raises its exception
+    procedure TestH2ProducerRaisingResetsTheStream;
+    /// a cancelled call raises EHttpStreamError (ecCancel) in the producer's Write
+    procedure TestH2CancelledCallRaisesInProducerWrite;
   end;
 
 implementation
@@ -310,6 +356,314 @@ begin
   end;
 end;
 
+/// a pattern of octets that is not periodic in short runs
+function MakeOctets(const ACount: Integer): TBytes;
+var
+  I: Integer;
+begin
+  SetLength(Result, ACount);
+  for I := 0 to ACount - 1 do
+    Result[I] := Byte(I * 31 + (I shr 8));
+end;
+
+/// True when both arrays hold the same octets
+function SameOctets(const A, B: TBytes): Boolean;
+begin
+  Result := Length(A) = Length(B);
+  if Result and (Length(A) > 0) then
+    Result := CompareMem(@A[0], @B[0], Length(A));
+end;
+
+{ TProducerUploadTest }
+
+procedure TProducerUploadTest.OnDial(const ASocket: TMockSocket);
+begin
+  FSocket := ASocket;
+end;
+
+procedure TProducerUploadTest.Upload(const AWriter: IBodyWriter;
+  const AToken: ICancellationToken);
+var
+  Req: THttpRequest;
+begin
+  FErrorClass := '';
+  FErrorText := '';
+  FFactory := TMockSocketFactory.Create;
+  (FFactory as TMockSocketFactory).SetResponse('200', nil, True);
+  (FFactory as TMockSocketFactory).OnDial := OnDial;
+  FClient := THttpClientFactory.Create.WithSocketFactory(FFactory).Build;
+  if AToken = nil then
+    Req := THttpRequest.Create(hmPost, 'https://upload.example/x').WithBodyWriter(AWriter)
+  else
+    Req := THttpRequest.Create(hmPost, 'https://upload.example/x').WithBodyWriter(AWriter)
+      .WithCancelToken(AToken);
+  try
+    FClient.Send(Req);
+  except
+    on E: EHttpStreamError do
+    begin
+      FErrorClass := E.ClassName;
+      FErrorText := E.Message;
+      FErrorCode := E.ErrorCode;
+    end;
+    on E: Exception do
+    begin
+      FErrorClass := E.ClassName;
+      FErrorText := E.Message;
+    end;
+  end;
+end;
+
+function TProducerUploadTest.DataFrames: TArray<TFrame>;
+var
+  All: TArray<TFrame>;
+  I, N: Integer;
+begin
+  All := FSocket.OutboundFrames(True);
+  SetLength(Result, 0);
+  for I := 0 to High(All) do
+    if All[I].Header.FrameType = ftData then
+    begin
+      N := Length(Result);
+      SetLength(Result, N + 1);
+      Result[N] := All[I];
+    end;
+end;
+
+function TProducerUploadTest.FrameOfType(const AType: TFrameType;
+  out AFrame: TFrame): Boolean;
+var
+  All: TArray<TFrame>;
+  I: Integer;
+begin
+  All := FSocket.OutboundFrames(True);
+  for I := 0 to High(All) do
+    if All[I].Header.FrameType = AType then
+    begin
+      AFrame := All[I];
+      Exit(True);
+    end;
+  Result := False;
+end;
+
+function TProducerUploadTest.WaitForFrame(const AType: TFrameType;
+  const AEndStream: Boolean): Boolean;
+var
+  Deadline: QWord;
+  All: TArray<TFrame>;
+  I: Integer;
+begin
+  Deadline := GetTickCount64 + cWaitMs;
+  repeat
+    All := FSocket.OutboundFrames(True);
+    for I := 0 to High(All) do
+      if (All[I].Header.FrameType = AType) and
+         ((not AEndStream) or All[I].IsEndStream) then
+        Exit(True);
+    Sleep(5);
+  until GetTickCount64 >= Deadline;
+  Result := False;
+end;
+
+function TProducerUploadTest.BodyOfDataFrames: TBytes;
+var
+  Frames: TArray<TFrame>;
+  I, Pos, Len: Integer;
+begin
+  Frames := DataFrames;
+  Len := 0;
+  for I := 0 to High(Frames) do
+    Inc(Len, Length(Frames[I].Payload));
+  SetLength(Result, Len);
+  Pos := 0;
+  for I := 0 to High(Frames) do
+  begin
+    if Length(Frames[I].Payload) > 0 then
+      Move(Frames[I].Payload[0], Result[Pos], Length(Frames[I].Payload));
+    Inc(Pos, Length(Frames[I].Payload));
+  end;
+end;
+
+procedure TProducerUploadTest.WriteInPieces(const AOut: TStream);
+var
+  Sent, Step, Index: Integer;
+begin
+  // the write sizes cycle through FSizes; the last write takes what is left
+  Sent := 0;
+  Index := 0;
+  while Sent < Length(FPayload) do
+  begin
+    Step := FSizes[Index mod Length(FSizes)];
+    if Step > Length(FPayload) - Sent then
+      Step := Length(FPayload) - Sent;
+    AOut.WriteBuffer(FPayload[Sent], Step);
+    Inc(Sent, Step);
+    Inc(Index);
+  end;
+end;
+
+procedure TProducerUploadTest.WriteNothing(const AOut: TStream);
+begin
+  // the body is empty
+end;
+
+procedure TProducerUploadTest.WriteThenFail(const AOut: TStream);
+var
+  Piece: array[0..9] of Byte;
+begin
+  FillChar(Piece, SizeOf(Piece), 7);
+  AOut.WriteBuffer(Piece, SizeOf(Piece));
+  raise EScriptedProducerFailure.Create('scripted producer failure');
+end;
+
+procedure TProducerUploadTest.WriteThenCancel(const AOut: TStream);
+var
+  First, Second: array[0..3] of Byte;
+begin
+  // with a chunk of 4 octets, the second write sends the first chunk to the sink
+  FillChar(First, SizeOf(First), 1);
+  FillChar(Second, SizeOf(Second), 2);
+  AOut.WriteBuffer(First, SizeOf(First));
+  (FToken as TCancellationToken).Cancel;
+  try
+    AOut.WriteBuffer(Second, SizeOf(Second));
+  except
+    on E: EHttpStreamError do
+    begin
+      FProducerSawError := True;
+      FProducerClass := E.ClassName;
+      FProducerCode := E.ErrorCode;
+      raise;
+    end;
+  end;
+end;
+
+procedure TProducerUploadTest.TearDown;
+begin
+  if FClient <> nil then
+    FClient.Close;
+  FClient := nil;
+  FSocket := nil;
+  FFactory := nil;
+  FToken := nil;
+  inherited TearDown;
+end;
+
+procedure TProducerUploadTest.TestH2ProducerUploadArrivesComplete;
+var
+  Writer: IBodyWriter;
+  Frames: TArray<TFrame>;
+  I, Ends: Integer;
+  LastIsEnd: Boolean;
+begin
+  FPayload := MakeOctets(30011);
+  SetLength(FSizes, 7);
+  FSizes[0] := 1;
+  FSizes[1] := 7;
+  FSizes[2] := 1000;
+  FSizes[3] := 3;
+  FSizes[4] := 5000;
+  FSizes[5] := 2;
+  FSizes[6] := 9000;
+  Writer := BodyWriterFromStream(WriteInPieces, 4096);
+  Upload(Writer, nil);
+  AssertEquals('no error: ' + FErrorText, '', FErrorClass);
+  AssertTrue('the peer saw END_STREAM', WaitForFrame(ftData, True));
+  Sleep(50);
+  Frames := DataFrames;
+  Ends := 0;
+  LastIsEnd := False;
+  for I := 0 to High(Frames) do
+  begin
+    if Frames[I].IsEndStream then
+      Inc(Ends);
+    LastIsEnd := Frames[I].IsEndStream;
+  end;
+  AssertEquals('END_STREAM is on exactly one DATA frame', 1, Ends);
+  AssertTrue('the END_STREAM frame is the last DATA frame', LastIsEnd);
+  AssertTrue('the peer got every octet, in order',
+    SameOctets(FPayload, BodyOfDataFrames));
+end;
+
+procedure TProducerUploadTest.TestH2ProducerUploadOnChunkBoundaryEndsOnce;
+var
+  Writer: IBodyWriter;
+  Frames: TArray<TFrame>;
+begin
+  // 8192 octets in chunks of 4096: the body ends on a chunk boundary
+  FPayload := MakeOctets(8192);
+  SetLength(FSizes, 1);
+  FSizes[0] := 4096;
+  Writer := BodyWriterFromStream(WriteInPieces, 4096);
+  Upload(Writer, nil);
+  AssertEquals('no error: ' + FErrorText, '', FErrorClass);
+  AssertTrue('the peer saw END_STREAM', WaitForFrame(ftData, True));
+  Sleep(50);
+  Frames := DataFrames;
+  AssertEquals('two DATA frames and no empty END_STREAM frame', 2, Length(Frames));
+  AssertFalse('the first DATA frame does not end the stream', Frames[0].IsEndStream);
+  AssertTrue('the second DATA frame ends the stream', Frames[1].IsEndStream);
+  AssertTrue('the peer got every octet', SameOctets(FPayload, BodyOfDataFrames));
+end;
+
+procedure TProducerUploadTest.TestH2EmptyProducerSendsEmptyEndStreamFrame;
+var
+  Writer: IBodyWriter;
+  Frames: TArray<TFrame>;
+begin
+  Writer := BodyWriterFromStream(WriteNothing, 4096);
+  Upload(Writer, nil);
+  AssertEquals('no error: ' + FErrorText, '', FErrorClass);
+  AssertTrue('the peer saw END_STREAM', WaitForFrame(ftData, True));
+  Sleep(50);
+  Frames := DataFrames;
+  AssertEquals('one DATA frame', 1, Length(Frames));
+  AssertEquals('it is empty', 0, Integer(Frames[0].DataLength));
+  AssertTrue('it carries END_STREAM', Frames[0].IsEndStream);
+end;
+
+procedure TProducerUploadTest.TestH2ProducerRaisingResetsTheStream;
+var
+  Writer: IBodyWriter;
+  Frames: TArray<TFrame>;
+  Headers, Reset: TFrame;
+  I: Integer;
+begin
+  Writer := BodyWriterFromStream(WriteThenFail, 4096);
+  Upload(Writer, nil);
+  AssertEquals('the producer exception ends the call', 'EScriptedProducerFailure', FErrorClass);
+  AssertEquals('with its own message', 'scripted producer failure', FErrorText);
+  AssertTrue('the stream is reset', WaitForFrame(ftRstStream, False));
+  AssertTrue('the request HEADERS went out', FrameOfType(ftHeaders, Headers));
+  AssertTrue('an RST_STREAM went out', FrameOfType(ftRstStream, Reset));
+  AssertEquals('the reset is on the request stream',
+    Integer(Headers.Header.StreamId), Integer(Reset.Header.StreamId));
+  AssertTrue('the reset carries CANCEL',
+    SameOctets(BuildRstStreamFrame(Headers.Header.StreamId, ecCancel).Payload,
+      Reset.Payload));
+  Frames := DataFrames;
+  for I := 0 to High(Frames) do
+    AssertFalse('no DATA frame ends the body', Frames[I].IsEndStream);
+end;
+
+procedure TProducerUploadTest.TestH2CancelledCallRaisesInProducerWrite;
+var
+  Writer: IBodyWriter;
+begin
+  FToken := TCancellationToken.Create;
+  FProducerSawError := False;
+  FProducerClass := '';
+  Writer := BodyWriterFromStream(WriteThenCancel, 4);
+  Upload(Writer, FToken);
+  AssertTrue('the producer Write raised', FProducerSawError);
+  AssertEquals('the producer Write raised EHttpStreamError', 'EHttpStreamError', FProducerClass);
+  AssertTrue('the producer error is the cancel error', FProducerCode = ecCancel);
+  AssertEquals('the call raised EHttpStreamError', 'EHttpStreamError', FErrorClass);
+  AssertTrue('the call ends with the cancel error', FErrorCode = ecCancel);
+  AssertTrue('the stream is reset with CANCEL', WaitForFrame(ftRstStream, False));
+end;
+
 initialization
   RegisterTest(TBodyWriterStreamingTest);
+  RegisterTest(TProducerUploadTest);
 end.
