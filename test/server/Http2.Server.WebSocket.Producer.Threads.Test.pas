@@ -70,11 +70,14 @@ end;
 procedure TWsProducerThreadTest.DrainLoop;
 begin
   // refuse the next write, wait a moment, and drain: the sink waits and wakes again
-  // - the refusal and the drain take turns, so the sink always finds room after a drain
+  // - a drain makes room, so the refusal ends before the drain wakes the sink. A refusal
+  //   that is still armed at the drain refuses the write after the wake as well, and the
+  //   next cycle arms it again while the sink waits: the sink then never gets room
   while InterlockedCompareExchange(FStop, 0, 0) = 0 do
   begin
     FChannel.SetFullCount(1);
     Sleep(1);
+    FChannel.SetFullCount(0);
     FChannel.Drain;
     Sleep(2);
   end;
