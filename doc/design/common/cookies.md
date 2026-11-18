@@ -215,8 +215,8 @@ A record is not thread safe. One thread writes to one map at a time.
 | Routine | Meaning |
 | --- | --- |
 | `ParseCookies(AValue)` | parses one `Cookie` field value (`a=1; b=2; a=3`) into a `TParameters` in order |
-| `GetCookies(AHeaders)` | reads every `cookie` field of an `IHttpHeaders` and merges the pairs into one map |
-| `GetSetCookies(AHeaders)` | parses each `set-cookie` field into a `THttpCookie`, in field order |
+| `GetCookies(AHeaders)` | reads every `cookie` field of an `IHttpHeaders` or a `THeaderBlock` (the form of a server request) and merges the pairs into one map |
+| `GetSetCookies(AHeaders)` | parses each `set-cookie` field of an `IHttpHeaders` or a `THeaderBlock` into a `THttpCookie`, in field order |
 | `CookieHeaderValue(ACookies)` | joins the pairs of a map into one `cookie` value, for example `a=1; a=3; b=2` |
 | `AddSetCookie(AHeaders, ACookie)` | adds one `set-cookie` field with the value of `ACookie.ToString` |
 

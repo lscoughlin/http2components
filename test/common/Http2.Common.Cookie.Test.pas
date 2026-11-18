@@ -17,7 +17,7 @@ interface
 
 uses
   SysUtils, fpcunit, testregistry, Http2.Common.Body, Http2.Common.Headers,
-  Http2.Common.Parameters, Http2.Common.Cookie;
+  Http2.Common.Hpack, Http2.Common.Parameters, Http2.Common.Cookie;
 
 type
   TCookieTest = class(TTestCase)
@@ -53,6 +53,7 @@ type
     procedure TestParseCookiesSpacesAndQuotes;
     procedure TestParseCookiesCaseIsSignificant;
     procedure TestGetCookiesReadsTwoFields;
+    procedure TestHeaderBlockOverloadsReadTheFields;
     procedure TestGetSetCookiesIsNotJoined;
     procedure TestGetSetCookiesRefusesBadField;
     procedure TestCookieHeaderValue;
@@ -458,6 +459,30 @@ begin
   AssertEquals('the second value of a is from the second field', '4', LParams['a'][1]);
   AssertEquals('the value of c', '3', LParams.GetFirst('c'));
   AssertEquals('no headers give no cookies', 0, GetCookies(NewHttpHeaders).Count);
+end;
+
+procedure TCookieTest.TestHeaderBlockOverloadsReadTheFields;
+var
+  LBlock: THeaderBlock;
+  LParams: TParameters;
+  LCookies: TArray<THttpCookie>;
+begin
+  SetLength(LBlock, 4);
+  LBlock[0].Name := 'Cookie';
+  LBlock[0].Value := 'a=1; b=2';
+  LBlock[1].Name := 'cookie';
+  LBlock[1].Value := 'a=3';
+  LBlock[2].Name := 'set-cookie';
+  LBlock[2].Value := 'x=1; Path=/';
+  LBlock[3].Name := 'set-cookie';
+  LBlock[3].Value := 'y=2; HttpOnly';
+  LParams := GetCookies(LBlock);
+  AssertEquals('two names', 2, LParams.Count);
+  AssertEquals('the second value of a is from the second field', '3', LParams['a'][1]);
+  LCookies := GetSetCookies(LBlock);
+  AssertEquals('two set-cookie fields', 2, Length(LCookies));
+  AssertEquals('the second name', 'y', LCookies[1].Name);
+  AssertEquals('an empty block gives no cookies', 0, GetCookies(THeaderBlock(nil)).Count);
 end;
 
 procedure TCookieTest.TestGetSetCookiesIsNotJoined;

@@ -113,23 +113,15 @@ the subject DN, or the common name. The TLS context policy uses common
 ## Cookies
 
 `IServerRequest.Headers` gives a `THeaderBlock`, an array of `Name` and `Value`
-pairs. The cookie helpers of `Http2.Common.Cookie` take an `IHttpHeaders` map. A
-handler therefore copies the fields into a map, and then calls `GetCookies`. The map
-gives every pair of every `cookie` field, in order, as a `TParameters`. Names are
-case-sensitive.
+pairs. The cookie helpers of `Http2.Common.Cookie` take that block, or an
+`IHttpHeaders` map. `GetCookies` gives every pair of every `cookie` field, in order,
+as a `TParameters`. Names are case-sensitive.
 
 ```pascal
 var
-  LFields: THeaderBlock;
-  LMap: IHttpHeaders;
   LCookies: TParameters;
-  I: Integer;
 begin
-  LFields := ARequest.Headers;
-  LMap := NewHttpHeaders;
-  for I := 0 to High(LFields) do
-    LMap.Add(LFields[I].Name, LFields[I].Value);
-  LCookies := GetCookies(LMap);
+  LCookies := GetCookies(ARequest.Headers);
   // LCookies.GetFirst('session') gives the first value, or ''
 end;
 ```

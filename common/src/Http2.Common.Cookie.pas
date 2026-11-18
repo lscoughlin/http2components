@@ -19,7 +19,8 @@ unit Http2.Common.Cookie;
 interface
 
 uses
-  SysUtils, Http2.Common.Body, Http2.Common.Headers, Http2.Common.Parameters;
+  SysUtils, Http2.Common.Body, Http2.Common.Hpack, Http2.Common.Headers,
+  Http2.Common.Parameters;
 
 type
   /// the value of the SameSite attribute; ssUnset means that the attribute is absent
@@ -110,12 +111,18 @@ function ParseCookies(const AValue: string): TParameters;
 
 /// the cookies of every cookie field of AHeaders, in one map
 // - HTTP/2 can send more than one cookie field (RFC 9113 section 8.2.3); all are read
-function GetCookies(const AHeaders: IHttpHeaders): TParameters;
+function GetCookies(const AHeaders: IHttpHeaders): TParameters; overload;
 
 /// the cookies of every set-cookie field of AHeaders, in field order
 // - a set-cookie field is never joined with another one
 // - raises EBodyFormatError when a field is not valid
-function GetSetCookies(const AHeaders: IHttpHeaders): TArray<THttpCookie>;
+function GetSetCookies(const AHeaders: IHttpHeaders): TArray<THttpCookie>; overload;
+
+/// the cookies of every cookie field of a decoded header list, as a server request gives it
+function GetCookies(const AHeaders: THeaderBlock): TParameters; overload;
+
+/// the cookies of every set-cookie field of a decoded header list
+function GetSetCookies(const AHeaders: THeaderBlock): TArray<THttpCookie>; overload;
 
 /// the value of one cookie field that holds every pair of ACookies (for example 'a=1; b=2')
 // - the pairs keep the order of the map; a name with more values gives more pairs
@@ -597,17 +604,29 @@ begin
   end;
 end;
 
-function GetCookies(const AHeaders: IHttpHeaders): TParameters;
+/// the values of every field named AName (lower case) in ABlock, in field order
+function BlockValues(const ABlock: THeaderBlock; const AName: string): TArray<string>;
 var
-  LFields: TArray<string>;
+  I: Integer;
+begin
+  Result := nil;
+  for I := 0 to High(ABlock) do
+    if LowerCase(ABlock[I].Name) = AName then
+    begin
+      SetLength(Result, Length(Result) + 1);
+      Result[High(Result)] := ABlock[I].Value;
+    end;
+end;
+
+function CookiesOfFields(const AFields: TArray<string>): TParameters;
+var
   LField: string;
   LPairs: TParameters;
   LName: string;
   LValue: string;
 begin
   Result := TParameters.Create;
-  LFields := AHeaders.GetValues(HeaderCookie);
-  for LField in LFields do
+  for LField in AFields do
   begin
     LPairs := ParseCookies(LField);
     for LName in LPairs.Names do
@@ -616,16 +635,34 @@ begin
   end;
 end;
 
-function GetSetCookies(const AHeaders: IHttpHeaders): TArray<THttpCookie>;
+function SetCookiesOfFields(const AFields: TArray<string>): TArray<THttpCookie>;
 var
-  LFields: TArray<string>;
   I: Integer;
 begin
   Result := nil;
-  LFields := AHeaders.GetValues(HeaderSetCookie);
-  SetLength(Result, Length(LFields));
-  for I := 0 to High(LFields) do
-    Result[I] := THttpCookie.Parse(LFields[I]);
+  SetLength(Result, Length(AFields));
+  for I := 0 to High(AFields) do
+    Result[I] := THttpCookie.Parse(AFields[I]);
+end;
+
+function GetCookies(const AHeaders: THeaderBlock): TParameters;
+begin
+  Result := CookiesOfFields(BlockValues(AHeaders, HeaderCookie));
+end;
+
+function GetSetCookies(const AHeaders: THeaderBlock): TArray<THttpCookie>;
+begin
+  Result := SetCookiesOfFields(BlockValues(AHeaders, HeaderSetCookie));
+end;
+
+function GetCookies(const AHeaders: IHttpHeaders): TParameters;
+begin
+  Result := CookiesOfFields(AHeaders.GetValues(HeaderCookie));
+end;
+
+function GetSetCookies(const AHeaders: IHttpHeaders): TArray<THttpCookie>;
+begin
+  Result := SetCookiesOfFields(AHeaders.GetValues(HeaderSetCookie));
 end;
 
 function CookieHeaderValue(const ACookies: TParameters): string;
