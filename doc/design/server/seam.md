@@ -28,6 +28,8 @@ primary_types:
   - IChannelRegistry
   - THttp2StreamChannel
   - IBodyReader
+  - IBodyProducer
+  - IBodyChunkSink
 db_tables: None.
 related_docs:
   - doc/design/server/protocol.md
@@ -122,6 +124,29 @@ of `NextChunk` can block. The library calls it on the handler thread that calls
 A call that returns False with octets written gives the last chunk. The library
 writes those octets, and then it ends the response. A call that returns True with
 no octets gives an empty chunk, and the library writes nothing for it.
+
+## A producer body
+
+A writer that also supports `IBodyProducer` is a producer body. The factories
+`BodyWriterFromStream` and `BodyWriterFromTextWriter` in `Http2.Common.Body.Producers`
+make one from code that writes a `TStream` or a `TStreamWriter`. The producer is
+described in [body](../common/body.md#producers).
+
+Before the library pulls a writer, it asks the writer for `IBodyProducer`. A producer
+body gets no chunk pulls. `Finish` calls `Produce` with a sink of the response, and the
+producer runs to its end on the handler thread that calls `Finish`. A writer that is not
+a producer is pulled with `NextChunk` as described above.
+
+The sink gives each chunk to the outbound buffer of the stream. The call of `Chunk`
+blocks while the buffer is full, so the producer waits at the same limit as a handler
+`Write`. The sink raises the exceptions of `Write`, for example `EStreamCancelled` when
+the stream is cancelled. The exception passes out of the producer, out of `Finish` and
+to the handler. The sink receives `ALast` True with the last call of the producer. The
+end of the body is the normal end of `Finish`, so the sink writes nothing more.
+
+On HTTP/2, `SetBodyWriter` stores the writer and `Finish` runs it. On HTTP/1.1,
+`SetBodyWriter` runs the writer and then ends the response, as described in
+[http1](http1.md).
 
 ## The waiter
 
@@ -362,12 +387,15 @@ offered no coding is never sent one. `HeaderValueOf(ARequest.Headers,
 - `CompressFor(Coding, Bytes)` codes a complete body, and
 `GzipCompress`/`DeflateCompress` code one directly.
 - `TCompressingBodyWriter` wraps another `IBodyWriter` and codes every
-chunk, so a large body is coded as it streams. It keeps one inner chunk at a
-time. When the coder gives no octets for an inner chunk, it pulls the next inner
-chunk. It is handed to
-`IServerResponse.SetBodyWriter`. The gzip container is closed when the
-inner writer is exhausted, so the footer reaches the peer before the
+chunk, so a large body is coded as it streams. On the pull path it keeps one inner
+chunk at a time. When the coder gives no octets for an inner chunk, it pulls the next
+inner chunk. It is handed to `IServerResponse.SetBodyWriter`. The gzip container is
+closed when the inner writer is exhausted, so the footer reaches the peer before the
 response ends.
+- `TCompressingBodyWriter` is a producer too. When its inner writer is a producer,
+each inner chunk goes through the coder at once, and the coded octets go to the sink of
+the response. The last inner chunk closes the container, and its trailer goes out with
+`ALast` True. An empty inner body still gives a valid empty gzip container.
 
 The library never codes a body on its own. Auto-coding would fight the
 handler authority of the seam, and it cannot know the coded size for a

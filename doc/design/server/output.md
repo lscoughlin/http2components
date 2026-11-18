@@ -90,6 +90,12 @@ of the writer, and the write waits in the same way. The library pulls the next
 chunk only after the write returns. The octets that the last call returns with
 `False` are written as the last chunk, and then the stream ends.
 
+A producer body (see [seam](seam.md)) writes through the same wait. Its sink gives
+each chunk to the outbound buffer of the stream, and the sink blocks while the buffer is
+full. The drain takes the octets in the same order and with the same frames as for a
+pulled body. The last call of the sink sends nothing, because the stream ends after
+the producer returns.
+
 ## See also
 
 - [connection](connection.md) states how the core feeds and drains one
