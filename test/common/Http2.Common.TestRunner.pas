@@ -44,6 +44,7 @@ uses
   Http2.Common.Body.Streams.Test,
   Http2.Common.Body.Formats.Test,
   Http2.Common.Body.Large.Test,
+  Http2.Common.Body.Producers.Test,
   Http2.Common.Names.Test;
 
 procedure RegisterTests;
