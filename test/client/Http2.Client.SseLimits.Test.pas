@@ -28,7 +28,7 @@ uses
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Config.Security,
   Http2.Client.Stream, Http2.Client.Stream.Types, Http2.Client.Messages,
   Http2.Client, Http2.Client.WebSocket, Http2.Client.Sse,
-  Http2.Client.Sse.Support;
+  Http2.Client.Sse.Support, Http2.Common.Body;
 
 type
   /// one scripted read: wait DelayMs, then return Text
@@ -40,7 +40,7 @@ type
   /// a body that yields its items in order and raises EHttpTimeout when one
   /// of them would wait longer than the idle limit (0 = no limit)
   // - deliberately NOT reference counted: the client owns the instances
-  TScriptedBody = class(TInterfacedObject, IHttpBodyStream)
+  TScriptedBody = class(TBodyReaderBase, IHttpBodyStream)
   private
     FItems: TList<TScriptedItem>;
     FIndex: Integer;
@@ -50,7 +50,7 @@ type
     destructor Destroy; override;
     /// queue one read: wait ADelayMs, then yield AText
     function Add(const ADelayMs: Integer; const AText: string): TScriptedBody;
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
     function QueryInterface(constref AID: TGUID; out AObj): LongInt; cdecl;
     function _AddRef: LongInt; cdecl;

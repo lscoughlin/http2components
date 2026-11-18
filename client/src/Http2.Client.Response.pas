@@ -17,7 +17,7 @@ interface
 uses
   SysUtils,
   SyncObjs,
-  Http2.Common.Headers,
+  Http2.Common.Headers, Http2.Common.Body,
   Http2.Client.Connection,
   Http2.Client.Stream,
   Http2.Client.Messages,
@@ -26,7 +26,7 @@ uses
 
 
 type
-  TGuardedBody = class(TInterfacedObject, IHttpBodyStream, IStampedBodyStream)
+  TGuardedBody = class(TBodyReaderBase, IHttpBodyStream, IStampedBodyStream)
   private
     FInner: IHttpBodyStream;
     FLock: TCriticalSection;
@@ -34,7 +34,7 @@ type
   public
     constructor Create(const AInner: IHttpBodyStream;
       const ALock: TCriticalSection; const ALease: TStreamLease = nil);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
     /// the stamp of the last Read's frame (0 when the inner body is not
     /// stamped)

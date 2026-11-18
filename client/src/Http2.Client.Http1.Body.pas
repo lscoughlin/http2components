@@ -18,7 +18,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs,
   Http2.Client.Errors, Http2.Client.Tls, Http2.Client.Stream,
-  Http2.Client.Clock, Http2.Common.Headers;
+  Http2.Client.Clock, Http2.Common.Headers, Http2.Common.Body;
 
 const
   cHttp1MaxHeaderBytes = 64 * 1024;
@@ -136,7 +136,7 @@ type
   /// an IHttpBodyStream over a response body.  Chunked decoding is pull-based
   /// (a chunk is decoded as the caller reads it), so a large body is not
   /// buffered whole.
-  THttp1BodyStream = class(TInterfacedObject, IHttpBodyStream,
+  THttp1BodyStream = class(TBodyReaderBase, IHttpBodyStream,
     IStampedBodyStream)
   private
     FReader: TBufferedReader;
@@ -146,7 +146,6 @@ type
     FAtChunkEnd: Boolean;       // the CRLF after the current chunk is pending
     FDone: Boolean;
     FReuse: IReuseFlag;         // nil when no connection owns the body
-    FObservedEof: Boolean;
     FTrailers: IHttpHeaders;    // filled when the chunked terminator is parsed
     // observed-attempt hook (doc/design/request-observability.md)
     FExchange: IExchangeObserver;
@@ -166,7 +165,7 @@ type
     constructor Create(const AReader: TBufferedReader;
       const AFraming: TBodyFraming; const AContentLength: Int64;
       const ATrailers: IHttpHeaders);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
     function LastReadArrivedUs: Int64;
     /// report the end of this body (EOF, a failed read or release) to AExchange
@@ -780,7 +779,6 @@ begin
     begin
       ReadTrailers;
       FDone := True;
-      FObservedEof := True;   // this Read observes EOF and returns 0
       // bytes read past the body belong to no response of this connection
       if (FReader.Buffered > 0) and (FReuse <> nil) then
         FReuse.MarkNotReusable;
@@ -797,7 +795,6 @@ begin
   if Result = 0 then
   begin
     FDone := True;
-    FObservedEof := True;   // this Read observes EOF and returns 0
   end;
 end;
 
@@ -890,14 +887,9 @@ begin
   Result := 0;
   if ACount <= 0 then
     Exit;
+  // a read after the end gives 0 again (D2)
   if FDone then
-  begin
-    if FObservedEof then
-      raise EHttpStreamError.Create('read after end of stream', 0,
-        ecStreamClosed);
-    FObservedEof := True;
     Exit(0);
-  end;
   case FFraming of
     bfContentLength: Result := ReadContentLength(ABuffer, ACount);
     bfChunked:       Result := ReadChunked(ABuffer, ACount);
@@ -905,7 +897,6 @@ begin
   else
     // bfNone is FDone at construction; unreachable here
     FDone := True;
-    FObservedEof := True;
     Result := 0;
   end;
 end;

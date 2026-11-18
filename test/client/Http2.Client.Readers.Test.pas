@@ -25,17 +25,17 @@ interface
 uses
   SysUtils, Classes, fpjson, DOM, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Stream, Http2.Client.Messages,
-  Http2.Client, Http2.Client.Readers;
+  Http2.Client, Http2.Client.Readers, Http2.Common.Body;
 
 type
   /// a body stream over a fixed byte array (mirrors Http2.Client.Test's fake)
-  TReaderFakeBody = class(TInterfacedObject, IHttpBodyStream)
+  TReaderFakeBody = class(TBodyReaderBase, IHttpBodyStream)
   private
     FData: TBytes;
     FPos: Integer;
   public
     constructor Create(const AData: TBytes);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
   end;
 

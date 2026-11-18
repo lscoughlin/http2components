@@ -23,17 +23,17 @@ uses
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack, Http2.Client.Tls,
   Http2.Client.Connection, Http2.Client.Stream, Http2.Client.Messages, Http2.Client, Http2.Client.WebSocket,
   Http2.Client.Sse, Http2.Client.MockSocket.Support, Http2.Client.MockSocket.TestSupport,
-  Http2.Client.MockSocket.Frames, Http2.Client.RequestObserver;
+  Http2.Client.MockSocket.Frames, Http2.Client.RequestObserver, Http2.Common.Body;
 
 type
-  TDripBodyStream = class(TInterfacedObject, IHttpBodyStream)
+  TDripBodyStream = class(TBodyReaderBase, IHttpBodyStream)
   private
     FData: TBytes;
     FPos: Integer;
     FChunk: Integer;
   public
     constructor Create(const AData: TBytes; const AChunk: Integer = 1);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
   end;
 

@@ -33,7 +33,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack, Http2.Client.Tls,
-  Http2.Client.Connection, Http2.Client.Stream.Types, Http2.Client.Stream.Receive;
+  Http2.Client.Connection, Http2.Client.Stream.Types, Http2.Client.Stream.Receive, Http2.Common.Body;
 
 const
   /// polls as often as this many milliseconds while waiting for a cancel
@@ -81,12 +81,12 @@ type
   TStreamLease = class;
 
   /// IHttpBodyStream view of a lease's response body
-  TIStreamBody = class(TInterfacedObject, IHttpBodyStream, IStampedBodyStream)
+  TIStreamBody = class(TBodyReaderBase, IHttpBodyStream, IStampedBodyStream)
   private
     FLease: TStreamLease;   // weak reference: the lease owns this object
   public
     constructor Create(const ALease: TStreamLease);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
     function LastReadArrivedUs: Int64;
   end;
@@ -139,7 +139,6 @@ type
     FLastReadArrivedUs: Int64;
     FArrivals: TArrivalStats;
     FBodyEof: Boolean;
-    FBodyEofObserved: Boolean;
     /// total DATA bytes received on this stream, compared against a declared
     /// `content-length` at END_STREAM (RFC 7540 section 8.1.2.6)
     FBodyReceived: Int64;
@@ -237,7 +236,7 @@ type
     procedure ReleaseLease;
     /// true once the response body is complete and no bytes are buffered
     function BodyEof: Boolean;
-    /// blocking body read; a read after EOF raises deterministically
+    /// blocking body read; a read after EOF gives 0
     function ReadBody(var ABuffer; const ACount: LongInt): LongInt;
     /// report a recorded end to the attempt hook (idempotent).  ReadBody only
     /// records; the caller delivers once it holds no lock
@@ -839,12 +838,9 @@ begin
       NoteEnd(edFailed);
       raise MakeStreamError;
     end;
+    // every Read after the end gives 0 (D2); NoteEnd keeps the first end
     if FBodyEof then
     begin
-      if FBodyEofObserved then
-        raise EHttpStreamError.Create('read after end of stream', FStreamId,
-          ecStreamClosed);
-      FBodyEofObserved := True;
       NoteEnd(edEof);
       Exit(0);
     end;

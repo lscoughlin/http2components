@@ -19,7 +19,8 @@ interface
 uses
     SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack,
-  Http2.Client.Connection, Http2.Client.Stream, Http2.Client.ConnectionThread.Test, Http2.Client.Stream.Support;
+  Http2.Client.Connection, Http2.Client.Stream, Http2.Client.ConnectionThread.Test, Http2.Client.Stream.Support,
+  Http2.Common.Body;
 
 type
   TStreamLeaseCoreTest = class(TStreamLeaseTestBase)
@@ -34,7 +35,8 @@ type
     procedure TestBodyWriterIsPulledUntilFalse;
     procedure TestResponseAssemblyStatusHeadersBody;
     procedure TestBodylessResponseIsImmediatelyEof;
-    procedure TestReadAfterEofRaises;
+    procedure TestReadAfterEofGivesZero;
+    procedure TestBodyStreamReadChunkGivesTheBody;
     procedure TestHeadContentLengthIsNotComparedAgainstBody;
     procedure TestContentLengthMismatchRaises;
     procedure TestResponseTeHeaderMustBeTrailers;
@@ -480,7 +482,7 @@ begin
         False));
       Conn.DispatchStreamFrame(BuildDataFrame(Lease.StreamId, BytesOf('y'),
         True));
-      S1 := ReadAllBody(Lease.Body);
+      S1 := Http2.Client.Stream.Support.ReadAllBody(Lease.Body);
       AssertEquals('assembled body', 'xy', S1);
       AssertTrue('body complete', Lease.Body.Eof);
     finally
@@ -536,7 +538,7 @@ begin
   end;
 end;
 
-procedure TStreamLeaseCoreTest.TestReadAfterEofRaises;
+procedure TStreamLeaseCoreTest.TestReadAfterEofGivesZero;
 var
   Sock: TMockSocket;
   Conn: TConnection;
@@ -548,7 +550,6 @@ var
   Extra: array[0..0] of THttpHeaderField;
   Buf: array[0..7] of Byte;
   N: LongInt;
-  Raised: Boolean;
 begin
   Sock := TMockSocket.Create;
   Conn := TConnection.Create(Sock);
@@ -570,13 +571,68 @@ begin
       AssertTrue('header wait', Lease.WaitForResponseHeader(1000));
       N := Lease.ReadBody(Buf, SizeOf(Buf));
       AssertEquals('first read after END_STREAM returns 0', LongInt(0), N);
-      Raised := False;
+      // D2: a read after the end gives 0 again and never raises
+      N := Lease.ReadBody(Buf, SizeOf(Buf));
+      AssertEquals('a second read after EOF returns 0', LongInt(0), N);
+      N := Lease.ReadBody(Buf, SizeOf(Buf));
+      AssertEquals('a third read after EOF returns 0', LongInt(0), N);
+    finally
+      Lease.ReleaseLease;
+      IL := nil;
+      Alloc.Free;
+    end;
+  finally
+    Conn.Free;
+  end;
+end;
+
+procedure TStreamLeaseCoreTest.TestBodyStreamReadChunkGivesTheBody;
+var
+  Sock: TMockSocket;
+  Conn: TConnection;
+  Lease: TStreamLease;
+  IL: IConnectionStream;
+  Alloc: TStreamIdAllocator;
+  Req: TStreamRequest;
+  Enc: THpackCodec;
+  Extra: array[0..0] of THttpHeaderField;
+  Body: IHttpBodyStream;
+  Chunk: TChunkBuffer;
+begin
+  Sock := TMockSocket.Create;
+  Conn := TConnection.Create(Sock);
+  try
+    Req := TStreamRequest.WithMethod(hmGet, 'api.example');
+    MakeLease(Conn, Req, Alloc, Lease, IL);
+    try
+      Lease.Start;
+      Enc := THpackCodec.Create;
       try
-        Lease.ReadBody(Buf, SizeOf(Buf));
-      except
-        on E: EHttpStreamError do Raised := True;
+        Extra[0].Name := 'content-length';
+        Extra[0].Value := '5';
+        Extra[0].Sensitive := False;
+        Conn.DispatchStreamFrame(ResponseHeadersFrame(Enc, '200', Extra,
+          Lease.StreamId, False));
+        Conn.DispatchStreamFrame(BuildDataFrame(Lease.StreamId,
+          BytesOf('hello'), True));
+      finally
+        Enc.Free;
       end;
-      AssertTrue('a second read after EOF raises deterministically', Raised);
+      AssertTrue('header wait', Lease.WaitForResponseHeader(1000));
+      Body := Lease.Body;
+      Chunk := TChunkBuffer.Create;
+      try
+        AssertTrue('the first chunk carries the body', Body.ReadChunk(Chunk));
+        AssertEquals('the first chunk', 'hello', StrOf(ChunkBytes(Chunk)));
+        Chunk.Reset;
+        AssertFalse('the end gives False', Body.ReadChunk(Chunk));
+        AssertEquals('the last call writes no octets', 0, Chunk.Size);
+        Chunk.Reset;
+        AssertFalse('a later ReadChunk gives False again', Body.ReadChunk(Chunk));
+      finally
+        Chunk.Free;
+      end;
+      Body := nil;
     finally
       Lease.ReleaseLease;
       IL := nil;

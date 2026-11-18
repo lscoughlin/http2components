@@ -25,7 +25,7 @@ uses
   SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack,
   Http2.Client.Tls, Http2.Client.Connection, Http2.Client.Stream, Http2.Client.Messages, Http2.Client,
-  Http2.Client.Observer, Http2.Client.Encoding;
+  Http2.Client.Observer, Http2.Client.Encoding, Http2.Common.Body;
 type
   TFakeResponseGate = (frgNone, frgFirstHeaders, frgFirstBody);
   /// a scripted in-memory HTTP/2 server: parses every frame the client writes
@@ -140,13 +140,13 @@ type
   end;
 
   /// a fake response + body stream for TResponseReader<T> tests
-  TFakeBody = class(TInterfacedObject, IHttpBodyStream)
+  TFakeBody = class(TBodyReaderBase, IHttpBodyStream)
   private
     FData: TBytes;
     FPos: Integer;
   public
     constructor Create(const AData: TBytes);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
   end;
 

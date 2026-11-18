@@ -135,6 +135,10 @@ type
   `COMPRESSION_ERROR`, settings error) fail all in-flight leases.
 - **Stream errors** (`ftRstStream` or stream-level protocol error) fail only
   that lease.
+- **Read after the end:** a read of a response body after its end returns 0.
+  The read does not raise `EHttpStreamError`, and every later read also returns
+  0 (see [messages](messages.md)). A caller that caught `EHttpStreamError` for
+  this case no longer gets the exception.
 - **Writer failures:** when `NextChunk` of an `IBodyWriter` raises during an
   HTTP/1.1 upload, the connection closes. A chunked body that stops in the middle
   leaves the connection out of step, so the connection is never reused. The

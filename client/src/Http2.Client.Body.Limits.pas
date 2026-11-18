@@ -18,12 +18,12 @@ interface
 uses
   SysUtils,
   Http2.Client.Errors, Http2.Common.Headers, Http2.Client.Messages,
-  Http2.Client.Stream, Http2.Client.RequestObserver;
+  Http2.Client.Stream, Http2.Client.RequestObserver, Http2.Common.Body;
 
 type
   /// a body stream that raises EHttpResponseTooLarge when more than AMaxBytes
   // arrive; a limit of 0 means no limit
-  TLimitedBodyStream = class(TInterfacedObject, IHttpBodyStream)
+  TLimitedBodyStream = class(TBodyReaderBase, IHttpBodyStream)
   private
     FInner: IHttpBodyStream;
     FMaxBytes: Int64;
@@ -31,7 +31,7 @@ type
   public
     /// wrap AInner, counting the bytes it returns
     constructor Create(const AInner: IHttpBodyStream; const AMaxBytes: Int64);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
   end;
 
