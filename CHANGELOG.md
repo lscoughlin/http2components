@@ -38,41 +38,38 @@
   procedure TEchoHandler.Handle(const ARequest: IServerRequest;
     const AResponse: IServerResponse);
   var
-    Chunk, Body: TBytes;
+    Chunk: TBytes;
   begin
-    Body := nil;
-    while ARequest.ReadChunk(Chunk) do
-      Body := ConcatBytes(Body, Chunk);
     AResponse.SendHeaders(200, nil, False);
-    AResponse.Write(Body);
+    while ARequest.ReadChunk(Chunk) do
+      AResponse.Write(Chunk);
     AResponse.Finish;
   end;
   ```
 
   New shape of the same handler. The loop keeps the octets of a call that returns
-  False, because the last chunk can come with that answer:
+  False, because the last chunk can come with that answer. It sends each chunk at
+  once, so the handler never holds the whole body:
 
   ```pascal
   procedure TEchoHandler.Handle(const ARequest: IServerRequest;
     const AResponse: IServerResponse);
   var
     Buf: TChunkBuffer;
-    Body: TBytes;
     More: Boolean;
   begin
-    Body := nil;
+    AResponse.SendHeaders(200, nil, False);
     Buf := TChunkBuffer.Create;
     try
       repeat
         Buf.Reset;
         More := ARequest.ReadChunk(Buf);
-        Body := ConcatBytes(Body, ChunkBytes(Buf));
+        if Buf.Size > 0 then
+          AResponse.Write(ChunkBytes(Buf));
       until not More;
     finally
       Buf.Free;
     end;
-    AResponse.SendHeaders(200, nil, False);
-    AResponse.Write(Body);
     AResponse.Finish;
   end;
   ```

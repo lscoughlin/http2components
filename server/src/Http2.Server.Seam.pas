@@ -99,11 +99,10 @@ type
     function Path: string;
     /// the decoded header list of the request, without the pseudo-headers
     function Headers: THeaderBlock;
-    /// block until bytes arrive, the body ends, the timeout expires, or the
-    /// stream is cancelled
-    // - a return of 0 means the body has ended
-    // - a cancelled stream raises EStreamCancelled in the handler's thread
-    function Read(var ABuffer; const ACount: Integer): Integer;
+    // Read and ReadChunk come from IBodyReader. A read blocks until bytes arrive,
+    // the body ends, the timeout expires, or the stream is cancelled. A return of 0
+    // means the body has ended. A cancelled stream raises EStreamCancelled in the
+    // handler's thread.
     /// true once the request body has ended
     function BodyIsComplete: Boolean;
     /// true once the peer, or the connection, has cancelled the stream

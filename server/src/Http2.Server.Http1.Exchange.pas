@@ -436,11 +436,10 @@ end;
 
 function TH1Exchange.ReadChunk(const ABuffer: TStream): Boolean;
 var
-  Buf: TBytes;
+  Buf: array[0..cReadChunkBytes - 1] of Byte;
   N: Integer;
 begin
-  SetLength(Buf, cReadChunkBytes);
-  N := Read(Buf[0], Length(Buf));
+  N := Read(Buf[0], cReadChunkBytes);
   Result := N > 0;
   if Result then
     ABuffer.WriteBuffer(Buf[0], N);
