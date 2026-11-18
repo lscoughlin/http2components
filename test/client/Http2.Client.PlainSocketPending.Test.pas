@@ -52,6 +52,7 @@ type
     procedure TestWrittenOctetsArePending;
     procedure TestReadingTheOctetsClearsPending;
     procedure TestPeerCloseIsPending;
+    procedure TestTcpSocketSetsNoDelay;
   end;
 
 implementation
@@ -166,6 +167,39 @@ begin
   AssertTrue('a closed peer counts as pending', FSock.HasPendingInput);
   AssertEquals('the read reports the end of stream', 0,
     FSock.ReadSome(Octet, 1));
+end;
+
+procedure TPlainSocketPendingTest.TestTcpSocketSetsNoDelay;
+var
+  Listener: LongInt;
+  Addr: TInetSockAddr;
+  Len: TSockLen;
+  Sock: TPlainSocket;
+  Opt: LongInt;
+begin
+  Listener := fpSocket(AF_INET, SOCK_STREAM, 0);
+  AssertTrue('the listener opens', Listener >= 0);
+  try
+    FillChar(Addr, SizeOf(Addr), 0);
+    Addr.sin_family := AF_INET;
+    Addr.sin_addr.s_addr := htonl($7F000001);
+    AssertEquals('bind', 0, fpBind(Listener, @Addr, SizeOf(Addr)));
+    AssertEquals('listen', 0, fpListen(Listener, 1));
+    Len := SizeOf(Addr);
+    AssertEquals('getsockname', 0, fpGetSockName(Listener, @Addr, @Len));
+    Sock := TPlainSocket.Create('127.0.0.1', ntohs(Addr.sin_port), cPendingWaitMs);
+    try
+      Opt := 0;
+      Len := SizeOf(Opt);
+      AssertEquals('getsockopt', 0,
+        fpGetSockOpt(Sock.Handle, IPPROTO_TCP, TCP_NODELAY, @Opt, @Len));
+      AssertTrue('a small frame is not held back by Nagle', Opt <> 0);
+    finally
+      Sock.Free;
+    end;
+  finally
+    fpClose(Listener);
+  end;
 end;
 
 initialization

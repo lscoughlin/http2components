@@ -27,9 +27,24 @@ type
     procedure TestHeaderBlockOffsetRejectsShortPriorityFields;
     procedure TestHeaderPriorityDependsOn;
     procedure TestFrameMetadataIsNotSerialized;
+    procedure TestWriteFrameIsOneWrite;
   end;
 
 implementation
+
+type
+  /// counts the Write calls of a stream
+  TCountingStream = class(TMemoryStream)
+  public
+    Writes: Integer;
+    function Write(const ABuffer; ACount: Longint): Longint; override;
+  end;
+
+function TCountingStream.Write(const ABuffer; ACount: Longint): Longint;
+begin
+  Inc(Writes);
+  Result := inherited Write(ABuffer, ACount);
+end;
 
 procedure TCommonFramesUnionTest.TestFrameMetadataDefaults;
 var
@@ -139,6 +154,20 @@ begin
   finally
     PlainStream.Free;
     MarkedStream.Free;
+  end;
+end;
+
+procedure TCommonFramesUnionTest.TestWriteFrameIsOneWrite;
+var
+  S: TCountingStream;
+begin
+  S := TCountingStream.Create;
+  try
+    WriteFrame(S, TFrame.Create(ftWindowUpdate, [], 1, TBytes.Create(0, 0, 128, 0)));
+    AssertEquals('header and payload leave in one write', 1, S.Writes);
+    AssertEquals(13, S.Size);
+  finally
+    S.Free;
   end;
 end;
 

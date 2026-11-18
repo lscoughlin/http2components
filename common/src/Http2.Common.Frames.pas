@@ -855,16 +855,17 @@ end;
 
 procedure WriteFrame(const AStream: TStream; const AFrame: TFrame);
 var
-  Hdr: TBytes;
+  Buf: TBytes;
   H: TFrameHeader;
 begin
   H := AFrame.Header;
   H.Length := Length(AFrame.Payload);
-  SetLength(Hdr, FrameHeaderSize);
-  H.WriteTo(Hdr);
-  AStream.WriteBuffer(Hdr[0], FrameHeaderSize);
+  // header and payload leave in one write, so a peer reads one segment
+  SetLength(Buf, FrameHeaderSize + Length(AFrame.Payload));
+  H.WriteTo(Buf);
   if Length(AFrame.Payload) > 0 then
-    AStream.WriteBuffer(AFrame.Payload[0], Length(AFrame.Payload));
+    Move(AFrame.Payload[0], Buf[FrameHeaderSize], Length(AFrame.Payload));
+  AStream.WriteBuffer(Buf[0], Length(Buf));
 end;
 
 procedure ValidateFrame(const AFrame: TFrame; const AMaxFrameSize: LongWord);

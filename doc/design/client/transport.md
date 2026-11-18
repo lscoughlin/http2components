@@ -281,6 +281,13 @@ read returns it, and the wake byte is only consumed. A socket without the contra
 keeps the timed read, so the poll interval is the longest delay of such a socket.
 The poll interval is therefore not the cost of a flow-control round trip.
 
+`TPlainSocket` sets `TCP_NODELAY` on every TCP connection, so the kernel sends a
+small segment at once and does not wait for the ACK of the previous one. A
+`WINDOW_UPDATE` frame is 13 octets. `WriteFrame` in `Http2.Common.Frames` builds the
+header and the payload in one buffer and writes them in one call, so a frame leaves
+as one segment. A frame in two writes with Nagle on would wait for a delayed ACK of
+the peer, about 40 ms on Linux, for each flow-control window of a body.
+
 A write timeout is not an idle poll. Only a read that returns no byte before
 the poll interval ends is an idle poll, and the reader then continues its loop.
 A timeout from a frame write can leave a frame partly written, so the

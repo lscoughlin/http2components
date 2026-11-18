@@ -250,6 +250,9 @@ begin
   FSocket.WriteFlags := cMsgNoSignal;
   FConnected := True;
   opt := 1;
+  // a frame can leave in two writes; with Nagle on, the second one waits for
+  // the ACK of the first, and a delayed ACK holds it for about 40 ms
+  fpSetSockOpt(FHandle, IPPROTO_TCP, TCP_NODELAY, @opt, SizeOf(opt));
 {$IFDEF DARWIN}
   fpSetSockOpt(FHandle, SOL_SOCKET, SO_NOSIGPIPE, @opt, SizeOf(opt));
 {$ENDIF}
