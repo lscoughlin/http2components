@@ -111,6 +111,10 @@ The [Unix socket record](verification/unix-sockets-2026-11-12.md) states the
 macOS and Linux results of the Unix domain socket feature and one open client
 defect.
 
+The [streamed bodies record](verification/body-reader-2026-11-18.md) states the
+Linux gate results and the load runs of the streamed bodies and messages, and two open
+defects of the HTTP/2 flow control.
+
 The [client compiler probes](verification/client-probes/README.md) are
 historical compiler evidence. The source validation and toolchain records
 are grouped by role:
