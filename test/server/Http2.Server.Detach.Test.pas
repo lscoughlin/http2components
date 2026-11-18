@@ -101,6 +101,7 @@ type
     procedure TestConnectionErrorNotifiesTheSink;
     procedure TestConnectionLossNotifiesTheSink;
     procedure TestSendReportsFullThenDrained;
+    procedure TestFullHoldDrainsTheSinkAtActivate;
     procedure TestAbortSendsRstStreamCancel;
     procedure TestRegistryLimitRefusesTheNextDetach;
     procedure TestSlotIsFreedWhenTheChannelEnds;
@@ -705,6 +706,27 @@ begin
   AssertEquals('nothing drained yet', 0, FSink.Drained);
   Frames;   // the IO side drains the buffer into DATA frames
   AssertEquals('the sink hears that the queue drained', 1, FSink.Drained);
+  AssertTrue('the producer can write again', Ch.Send(Big) = srQueued);
+end;
+
+procedure TDetachTest.TestFullHoldDrainsTheSinkAtActivate;
+var
+  H: TServerResponseHolder;
+  Ch: IDuplexChannel;
+  Big: TBytes;
+begin
+  MakeCore(1000);
+  Start;
+  H := Open(1, True);
+  Ch := H.Response.Detach;
+  Ch.SetSink(FSinkRef);
+  SetLength(Big, 800);
+  AssertTrue('the first write joins the hold', Ch.Send(Big) = srQueued);
+  AssertTrue('the second write passes the limit of the hold', Ch.Send(Big) = srFull);
+  AssertEquals('the stream gave no drain for the hold', 0, FSink.Drained);
+  Ch.Activate(200, Hdrs);
+  Frames;
+  AssertEquals('the sink hears that the hold has room', 1, FSink.Drained);
   AssertTrue('the producer can write again', Ch.Send(Big) = srQueued);
 end;
 
