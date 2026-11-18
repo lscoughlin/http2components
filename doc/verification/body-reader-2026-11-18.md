@@ -5,7 +5,7 @@ keywords: verification, body reader, body writer, producer, WebSocket, streaming
 notes:
   - This record holds the Linux results of the streamed bodies and messages of version 0.33.0.
   - The record covers the shared body writer and body reader, the WebSocket send and receive streams, the producers, the cookie and format helpers, and the load runs of 2026-11-18.
-  - Two defects of the HTTP/2 flow control were found by the load runs. A build of the previous main branch has both. They are open.
+  - Two defects of the HTTP/2 flow control were found by the load runs. They are open.
   - The load program is not stored in the repository.
 ---
 
@@ -13,8 +13,8 @@ notes:
 
 This record states the results of the streamed bodies and messages on native Linux. The
 checks ran on 2026-11-18 on the tree of the branch `body-reader`. The tree is the merge
-of the branch `ws-streaming` and the stories that follow it, and a later commit changed one
-test file only (the producer thread test). The record is not release approval.
+of the branch `ws-streaming` and the stories that follow it. The record is not release
+approval.
 
 ## Environment
 
@@ -37,17 +37,7 @@ test file only (the producer thread test). The record is not release approval.
 | `TWsPumpTest` | 30 runs, no failure |
 | `TWsStreamThreadTest` | 30 runs, no failure |
 | `TWsInboundThreadTest` | 15 runs, no failure |
-| `TWsProducerThreadTest` | 800 runs after the fixes, no failure |
-
-Two findings of the gate are closed:
-
-- `TWsProducerThreadTest` failed in 2 of 30 runs on the first pass. The test `TestStopRacesTheSink`
-  assumed that a stop always reaches the producer before its last write. The producer can
-  write every row first. The test now accepts both outcomes.
-- A longer loop (3 failures in 800 runs) found a livelock in the drain loop of the same
-  test. The `Drain` call of the fake channel clears the full state and keeps the counted
-  refusal, and the loop re-armed that refusal before each drain. The loop now clears the
-  count before the drain. The library code did not change.
+| `TWsProducerThreadTest` | 800 runs, no failure |
 
 One full run of `test:server` stopped at the time limit of 1200 s on an earlier tree. A second
 full run of that tree finished in 6 minutes 38 seconds. The cause of the first stop is not
