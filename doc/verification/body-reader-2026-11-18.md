@@ -72,6 +72,9 @@ and the server are in one process.
 | Upload of 64 MB, pull writer | status 200, all octets seen, 839 ms | 17 MB |
 | Upload of 64 MB, producer | status 200, all octets seen, 768 ms | 17 MB |
 | Upload of 16 MB, producer, handler sleeps 1 ms per read | status 200, all octets seen, 424 ms | 17 MB |
+| Download of 4 MB, producer | all octets arrived in 321 reads, 63 ms | 17 MB |
+| Download of 64 MB, producer | all octets arrived in 5121 reads, 423 ms | 17 MB |
+| Download of 64 MB, pull writer | all octets arrived, 590 ms | 17 MB |
 
 ## Not covered
 
