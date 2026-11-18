@@ -1,7 +1,7 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: websocket, session, frame codec, close handshake, heartbeat, origin policy, init, streaming pool, rfc 6455, inbound message, body reader, pipe, inline limit
+keywords: websocket, session, frame codec, close handshake, heartbeat, origin policy, init, streaming pool, rfc 6455, inbound message, body reader, pipe, inline limit, producer, body producer, chunk sink
 notes:
   - This document describes the WebSocket part of the server, which serves a WebSocket on any detached channel, over HTTP/1.1 and over HTTP/2.
   - RFC 6455 (the WebSocket protocol) is the main source. It was checked on 2026-10-22 at https://www.rfc-editor.org/info/rfc6455. The plain-text copy is doc/references/rfc6455.txt. RFC 6454 (the web origin) was checked on the same date at https://www.rfc-editor.org/info/rfc6454.
@@ -18,6 +18,9 @@ primary_types:
   - TWsReader
   - TWsMessagePipe
   - TWsMemoryReader
+  - IBodyProducer
+  - IBodyChunkSink
+  - IWsProducerPort
 related_docs:
   - seam.md
   - threading.md
@@ -36,6 +39,7 @@ invariants:
   - The end of the session aborts every pipe whose message still arrives, before the streaming pool stops.
   - Exactly one of Closed or Failed ends the conversation, unless the application calls Abort.
   - The server never puts the close codes 1005, 1006 or 1015 on the wire.
+  - A producer that SendStream runs holds one streaming pool thread until it ends. When the channel is full, the sink waits on that thread and holds no lock, and the drain, the end of the session and a poll of 250 ms end the wait.
   - A message that Send sends is written with one call of the channel, so the frames of two messages never mix. A streamed message is written one fragment at a time, and no other data message is written while its stream runs.
 ---
 
@@ -366,6 +370,64 @@ A stream suits one large message. A browser WebSocket gives the page the whole m
 only at its end, so a stream does not deliver the pieces to the page one at a time. For
 a series of messages, such as rows that are ready one at a time, the application sends
 one message for each batch with `Send`.
+
+### SendStream with a producer
+
+A writer that supports `IBodyProducer` (see [body](../common/body.md)), for example the
+writer of `BodyWriterFromStream`, is not pulled with `NextChunk`. One pump step runs the
+producer with `Produce` on one streaming pool thread. The producer writes to a stream, and
+the stream gives each chunk to the sink of the pump. The thread belongs to the producer
+until `Produce` returns. The step limit of 16 chunks does not apply, and the pump does
+not give the thread back between chunks.
+
+The sink turns each chunk into one fragment and writes it with the same write path as
+the pulled stream. The first fragment has the message opcode. Each later fragment has the
+continuation opcode. The call of the sink that is the last one gives its fragment the FIN
+bit. A chunk is not encoded twice: the sink keeps the encoded fragment until the channel
+takes it. The producer stream holds one chunk back, so the last chunk of the body is
+known when the producer ends, and no empty frame follows it. A producer that writes
+octets therefore ends the message with the FIN bit on its last fragment. A producer that
+writes nothing sends one empty frame with the message opcode and the FIN bit, as a writer
+that gives no chunk does. A last call with no octets after earlier fragments sends one
+empty continuation frame with FIN.
+
+When the channel refuses a fragment, the sink waits. The wait blocks the pool thread of
+the producer, so the `Write` of the producer on the stream does not return, and the
+producer produces no more octets. The wait holds no lock of the pump and no lock of the
+session. Four events end the wait:
+
+- The channel drains. `WriteDrained` wakes the pump, and the pump sets the event of the
+  sink.
+- The end of the wait of 250 milliseconds passes. The sink then sends the same fragment
+  again, so a lost drain signal delays the stream by at most one poll. The sink does not
+  use the park timer of the pulled stream here, because the timer is a task of the
+  session, and the pool runs one task of a session at a time: the timer task would wait
+  behind the blocked producer.
+- The session ends, or the Close frame of the application goes out. `TryEnd` and `Close`
+  stop the pump, and the stop sets the event.
+- The channel answers `srClosed`.
+
+After the end of the session or after `srClosed`, the next call of the sink raises
+`EStreamCancelled`, and so the `Write` of the producer raises it. A producer that does not
+catch it ends, and the session sends no more frames. This end is quiet: the handler gets
+no `Failed`. A Close by the application keeps the rule of the pulled stream: the message
+stays incomplete, no data frame follows the Close frame, and the closing handshake goes on
+with the code that the application gave.
+
+The other rules of the pulled stream stay. While the producer runs, `Send` and
+`SendStream` return `srFull`. `MaxMessageSize` limits one chunk of the producer. When the
+producer raises, or when a chunk is longer than `MaxMessageSize`, the session calls
+`Fail`: the handler receives `Failed` once, and one Close frame with code 1011 goes out.
+The pump releases the writer when `Produce` returns or raises. After a stop, the thread
+of the producer releases it when the producer leaves, and not the thread that ended the
+session.
+
+A producer holds one streaming pool thread while it runs, and while it waits for room in
+the channel. The tick, a Pong, `Closed` and the messages of the same session wait until
+`Produce` returns. With the default `StreamPoolSize` of 1, one producer that waits for a
+slow peer stops every other WebSocket session and event stream. An application that streams
+with producers sets `StreamPoolSize` above the number of producers that can run at the same
+time (see [threading](threading.md)).
 
 ## The Init hook
 

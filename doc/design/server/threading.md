@@ -211,6 +211,19 @@ delays the messages of its own session. For example, a cancel message from the c
 waits while a query streams. A writer runs on a streaming pool thread, never on an IO
 thread.
 
+A writer that is an `IBodyProducer` runs differently. One pump step calls `Produce`, and
+the step lasts until the producer ends. The producer holds one streaming pool thread for
+that whole time, as a handler that reads a streamed message does. When the channel refuses
+a fragment, the sink of the pump waits on that thread. It does not park the stream, and it
+posts no timer, because the timer is a task of the session and the pool runs one task of a
+session at a time. The wait holds no lock. The drain of the channel, the end of the
+session and a poll of 250 milliseconds end it. The tick of the session, a Pong, `Closed`
+and the messages of the same session wait until the producer returns. With the default
+`StreamPoolSize` of 1, one producer that waits for a slow peer stops every other WebSocket
+session and event stream, so an application that streams with producers sets
+`StreamPoolSize` above the number of producers that can wait at the same time. The IO
+thread never waits for the producer: the drain only sets an event.
+
 ## Wake-up safety
 
 The wake-up follows the mORMot2 pattern. The IO thread sets a pending flag
