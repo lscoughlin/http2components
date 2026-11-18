@@ -57,6 +57,14 @@
   end;
   ```
 
+- New interface `IBodyReader` in `Http2.Common.Body`, the inbound partner of
+  `IBodyWriter`. `ReadChunk(const ABuffer: TStream): Boolean` appends the next chunk to
+  the buffer. `Read` gives the octets of the body. The end of a body repeats on each
+  later call. The base class `TBodyReaderBase` gives `ReadChunk` for a class that has
+  `Read`. The helpers `ReadAllBody` and `CopyBody` read a body to its end. The new
+  exceptions `EBodyTooLarge` and `EBodyFormatError` derive from `Exception`. The change
+  adds to the API only. No existing routine changes.
+
 ## 0.32.0 — 2026-11-16 (source release)
 
 - This release is a source release. It has no binary artifacts.

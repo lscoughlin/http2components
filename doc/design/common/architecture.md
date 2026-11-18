@@ -48,7 +48,8 @@ common context interface.
 the header compression codec and records. `Http2.Common.Frames` owns frame
 formats and shared settings operations. `Http2.Common.FlowControl` owns
 connection and stream credit operations. `Http2.Common.Body` owns the body writer
-interface `IBodyWriter` and its buffer `TChunkBuffer`; see [body](body.md).
+interfaces `IBodyWriter` and `IBodyReader`, the buffer `TChunkBuffer`, and the helpers
+that read a body to its end; see [body](body.md).
 
 The client and server retain separate transport, connection, HTTP/1.1,
 WebSocket, and event-stream behavior. Common owns `ITLSContext`,
