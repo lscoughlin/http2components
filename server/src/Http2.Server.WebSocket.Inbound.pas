@@ -355,12 +355,17 @@ var
 begin
   FLock.Acquire;
   try
+    // the decision is made under the lock: an octet, the end or an abort that came since
+    // the read looked is not a stall, and the read goes round again
+    if (FChunks.Count > 0) or FFinished or FAborted then
+      Exit;
     Notice := FOnStalled;
     FStalled := True;
+    FAborted := True;
   finally
     FLock.Release;
   end;
-  Abort;
+  RTLEventSetEvent(FEvent);
   if Assigned(Notice) then
     Notice;
   raise EStreamCancelled.Create('the message stalled');
@@ -443,7 +448,10 @@ begin
     begin
       Waited := GetTickCount64 - Start;
       if Waited >= QWord(FStallMs) then
+      begin
         Stall;
+        Continue;   // Stall raises when the read stalled
+      end;
       RTLEventWaitFor(FEvent, Integer(QWord(FStallMs) - Waited));
     end
     else
