@@ -15,6 +15,8 @@ notes:
     link when the connection ends, so a handler thread that runs on never calls a
     core that is gone.
   - The head of the response and its framing come from Http2.Server.Http1.ResponseHead.
+  - The frames of the body and the headers of a refusal or an upgrade come from
+    Http2.Server.Http1.Exchange.Frames.
   - A handler can detach the response. The exchange then answers through a
     TH1ChunkedChannel, and the handler thread is free.
 ---
@@ -183,7 +185,7 @@ type
 implementation
 
 uses
-  Http2.Server.Http1.Status, Http2.Server.ResponseWriter;
+  Http2.Server.Http1.Status, Http2.Server.ResponseWriter, Http2.Server.Http1.Exchange.Frames;
 
 const
   cWaitSliceMs = 5;
@@ -624,10 +626,6 @@ begin
 end;
 
 procedure TH1Exchange.WriteBody(const ABuffer; const ACount: Integer);
-var
-  Frame: TBytes;
-  Hex: string;
-  Off: Integer;
 begin
   if not FHeadersSent then
     raise EHttpError.Create('Write before SendHeaders');
@@ -636,26 +634,7 @@ begin
   if FFraming.NoBody then
     Exit;   // a HEAD response and a 204 or 304 response carry no body
   WaitForRoom;
-  if FFraming.Chunked then
-  begin
-    Hex := IntToHex(ACount, 1) + #13#10;
-    SetLength(Frame, Length(Hex) + ACount + 2);
-    Move(Hex[1], Frame[0], Length(Hex));
-    Off := Length(Hex);
-    Move(ABuffer, Frame[Off], ACount);
-    Frame[Off + ACount] := 13;
-    Frame[Off + ACount + 1] := 10;
-  end
-  else
-  begin
-    if (not FFraming.CloseDelimited) and (ACount > FRemaining) then
-      raise EHttpError.Create('the handler wrote more than its Content-Length');
-    SetLength(Frame, ACount);
-    Move(ABuffer, Frame[0], ACount);
-    if not FFraming.CloseDelimited then
-      Dec(FRemaining, ACount);
-  end;
-  Emit(Frame);
+  Emit(H1BodyFrame(ABuffer, ACount, FFraming, FRemaining));
   Inc(FBodyOctets, ACount);
 end;
 
@@ -796,10 +775,7 @@ begin
 end;
 
 procedure TH1Exchange.Refuse(const AReason: THandlerJobRefusal);
-var
-  Extra: THeaderBlock;
 begin
-  Extra := nil;
   // a refusal that comes late (the exchange ended, or a response is under way)
   // changes nothing
   FLock.Acquire;
@@ -811,13 +787,7 @@ begin
   finally
     FLock.Release;
   end;
-  if AReason <> jrStopped then
-  begin
-    SetLength(Extra, 1);
-    Extra[0].Name := 'retry-after';
-    Extra[0].Value := '1';
-  end;
-  Emit(H1ErrorResponse(503, FHead.Line.Minor, Extra));
+  Emit(H1ErrorResponse(503, FHead.Line.Minor, H1RefusalHeaders(AReason)));
   CompleteExchange(True);
 end;
 
@@ -855,21 +825,12 @@ end;
 
 procedure TH1Exchange.OwnerComplete(const AStatus: Integer;
   const AHeaders: THeaderBlock; const ABody: TBytes);
-var
-  H: THeaderBlock;
-  N: Integer;
 begin
   // a refused upgrade: HTTP/1.1 resumes on the connection after this response
   if FSocketChannel <> nil then
     FLink.UpgradeCancel;
   // a whole response with a body: the length is known, so the head carries it
-  H := Copy(AHeaders);
-  N := Length(H);
-  SetLength(H, N + 1);
-  H[N].Name := 'content-length';
-  H[N].Value := IntToStr(Length(ABody));
-  H[N].Sensitive := False;
-  SendHead(AStatus, H);
+  SendHead(AStatus, H1WithContentLength(AHeaders, Length(ABody)));
   if Length(ABody) > 0 then
     WriteBody(ABody[0], Length(ABody));
   EndResponse;
@@ -968,20 +929,13 @@ begin
 end;
 
 procedure TH1Exchange.OwnerUpgradeHead(const AStatus: Integer; const AHeaders: THeaderBlock);
-var
-  S: string;
-  I: Integer;
 begin
   CheckResponseHeaders(AHeaders);
   if not ClaimResponse then
     raise EHttpError.Create('the response headers were sent already');
-  S := Http1StatusLine(AStatus, 1);
-  for I := 0 to High(AHeaders) do
-    S := S + AHeaders[I].Name + ': ' + AHeaders[I].Value + #13#10;
-  S := S + #13#10;
   FStatus := AStatus;
   FKeep := False;
-  Emit(H1TextBytes(S));
+  Emit(H1TextBytes(H1UpgradeHeadText(AStatus, AHeaders)));
   FLock.Acquire;
   try
     FFinished := True;
