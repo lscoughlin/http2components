@@ -5,7 +5,7 @@ keywords: verification, body reader, body writer, producer, WebSocket, streaming
 notes:
   - This record holds the Linux results of the streamed bodies and messages of version 0.33.0.
   - The record covers the shared body writer and body reader, the WebSocket send and receive streams, the producers, the cookie and format helpers, and the load runs of 2026-11-18.
-  - Two defects of the HTTP/2 flow control were found by the load runs. They are open.
+  - One defect of the HTTP/2 download time is open.
   - The load program is not stored in the repository.
 ---
 
@@ -31,7 +31,8 @@ approval.
 | `build:common`, `build:client`, `build:server` | pass |
 | `source:check`, `docs:check`, `version:check`, `packages:check` | pass |
 | `test:common` | 414 tests, no error, no failure |
-| `test:client` | 1111 tests, no error, no failure |
+| `test:client` | 1113 tests, no error, no failure |
+| `TConnectionThreadTest` | 30 runs, no failure |
 | `test:server` | 1043 tests, no error, no failure |
 | `test:integration` | 21 tests, no error, no failure |
 | `TWsPumpTest` | 30 runs, no failure |
@@ -61,23 +62,28 @@ a stream pool of 400 threads, and a limit of 64 GiB for queued WebSocket octets.
 The inbound results show the rule of an HTTP/1.1 channel: the channel has no flow control,
 so the pipe cap bounds the memory and a handler that reads too slowly loses its session.
 
-## Defects found and open
+## HTTP/2 cleartext runs
 
-The load runs found two defects in the HTTP/2 server flow control on the cleartext
-prior-knowledge path. A build of the previous main branch (before the work of this record)
-shows both, so neither comes from the streamed bodies.
+These runs used the tree at `main` (commit `a65f924`) on the loopback interface. The client
+and the server are in one process.
 
-- An upload of 1 MB or more fails. The server handler reads the body with `Read`, and the
-  read times out after the 30 s limit for a request body. The response is status 500. The
-  failure is the same for a pull writer and for a producer.
-- A download costs 16 to 20 ms for each read. A download of 4 MB with 321 reads takes 5.25 s,
-  on the branch and on the previous main branch. A download of 256 MB would take about
-  5.6 minutes.
+| Scenario | Result | Peak resident memory |
+| --- | --- | --- |
+| Upload of 1 MB, pull writer | status 200, all octets seen, 52 ms | 17 MB |
+| Upload of 64 MB, pull writer | status 200, all octets seen, 839 ms | 17 MB |
+| Upload of 64 MB, producer | status 200, all octets seen, 768 ms | 17 MB |
+| Upload of 16 MB, producer, handler sleeps 1 ms per read | status 200, all octets seen, 424 ms | 17 MB |
+| Download of 64 MB, producer | all octets arrived in 5121 reads, 84.7 s | 17 MB |
 
-The load run of an HTTP/2 upload of a body larger than memory therefore did not run.
+## Defects open
+
+A download over HTTP/2 prior knowledge costs 16 to 20 ms for each read, with a reader that
+does not sleep. A download of 4 MB with 321 reads takes 5.3 s. A download of 64 MB takes
+84.7 s. The memory stays flat, so the defect affects the time only. A suspect is the poll
+timeout of the server IO loop for the direction from the server to the client. The cause is
+not confirmed.
 
 ## Not covered
 
-- HTTP/2 uploads of large bodies (see the open defects).
 - The WebSocket handshake of RFC 8441 over HTTP/2 with streamed messages.
 - A run longer than one pass of each scenario, and a run with the host idle.
