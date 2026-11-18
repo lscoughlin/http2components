@@ -170,13 +170,15 @@ together with no name clash.
 | `Http2.Server.Sse.Encoder.pas` | 190 | streaming | the encoder of server-sent events: field rules, line splitting and the injection checks |
 | `Http2.Server.Sse.pas` | 347 | streaming | `StartSse` and the event stream: serialised sends, the keep-alive timer and the stall rule |
 | `Http2.Server.WebSocket.Origin.pas` | 341 | websocket | the origin policy of an upgrade request |
-| `Http2.Server.WebSocket.Options.pas` | 335 | websocket | the record `TWsOptions` of the server builder, with the inbound settings `InlineLimit`, `InboundPipeBytes` and `InboundStallMs` |
+| `Http2.Server.WebSocket.Options.pas` | 351 | websocket | the record `TWsOptions` of the server builder, with the inbound settings `InlineLimit`, `InboundPipeBytes` and `InboundStallMs`, and the outbound setting `OutboundStallMs` |
 | `Http2.Server.WebSocket.Types.pas` | 176 | websocket | `IWsSession`, `IWsHandler` (whose `Message` takes an `IBodyReader`), `TWsInitResult` and the interfaces to the server |
 | `Http2.Server.WebSocket.Close.pas` | 116 | websocket | the timer rules of ping, pong and close |
+| `Http2.Server.WebSocket.Pump.pas` | 707 | websocket | the pump of a streamed message (`SendStream`): the steps that pull an `IBodyWriter`, the park and its timer, and the step that runs an `IBodyProducer` on one pool thread |
+| `Http2.Server.WebSocket.Pump.Producer.pas` | 245 | websocket | the sink of a producer: one fragment for each chunk, the wait while the channel is full, the control replies between fragments, the outbound stall deadline and the quiet cancel at the end of the session |
 | `Http2.Server.WebSocket.Snapshot.pas` | 135 | websocket | `TWsRequestSnapshot`, the read-only copy of the handshake request that a session gives to its handler |
 | `Http2.Server.WebSocket.Inbound.pas` | 472 | websocket | `TWsMessagePipe` and `TWsMemoryReader`, the `IBodyReader` classes that give an inbound message to the handler: a bounded pipe with a never-blocking push, and a reader over memory |
-| `Http2.Server.WebSocket.SessionCore.pas` | 900 | websocket | the state, the sender, the closing handshake and the timers of a session, and the hook that aborts the open pipe when the session ends |
-| `Http2.Server.WebSocket.Session.pas` | 985 | websocket | the session: task queue, Init, receive path, the streamed message and stop |
+| `Http2.Server.WebSocket.SessionCore.pas` | 985 | websocket | the state, the sender, the closing handshake and the timers of a session, and the hook that aborts the open pipe when the session ends |
+| `Http2.Server.WebSocket.Session.pas` | 984 | websocket | the session: task queue, Init, receive path, the streamed message and stop |
 | `Http2.Server.WebSocket.Environment.pas` | 297 | websocket | the options, counters, report and watchdog that the sessions share |
 | `Http2.Server.WebSocket.Handshake.pas` | 187 | websocket | the accept key, the token lists, the subprotocol choice and the origin check of an upgrade |
 | `Http2.Server.WebSocket.Http2.pas` | 150 | websocket | the checks and the 200 response of the HTTP/2 extended CONNECT |

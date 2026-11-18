@@ -238,6 +238,23 @@ needs more than 1024 frames. The memory that one streamed message holds is at mo
 socket), and at most the stream window plus `InlineLimit` on HTTP/2. `InboundStallMs`
 bounds the time that a read of a streamed message waits for an octet.
 
+A message that a producer writes with `SendStream` has different limits. `MaxMessageSize`
+limits one chunk of the producer, not the whole message, as it does for a pulled writer.
+The producer stream decides the size of its chunks (the argument `AChunkBytes` of
+`BodyWriterFromStream`, 16384 octets by default), so a chunk size above `MaxMessageSize`
+fails the session with 1011 at the first chunk. `MaxFragments` and the other inbound limits
+do not apply. The memory of the message is one chunk that the producer stream holds, one
+chunk that it holds back, and the encoded fragment that waits for the channel. A full
+channel blocks the `Write` of the producer, so a slow peer does not make the message grow
+in memory. The time that a producer waits for the channel is limited by `OutboundStallMs`
+(default 30000, at least 1): when the channel refuses one fragment for that time, the
+session closes with 1008 and the reason `the send stalled`, and the producer ends with
+`EStreamCancelled`. A drain that leaves the channel full does not restart the time, and a
+fragment that the channel accepts starts a new time for the next one. The producer holds
+one streaming pool thread while it runs (see [threading](threading.md)); the stall time
+bounds that hold when the peer reads nothing, which the tick of the session could not do.
+A producer that is slow in its own code is not limited.
+
 The server-wide budget `MaxWsQueuedBytes` (default 128 MiB) charges `InboundPipeBytes` for
 each streamed message from its start until its handler returns, on every channel kind,
 because the length of the message is not known at its start. With the defaults about 128

@@ -109,6 +109,12 @@ value that is not usable.
 | `InlineLimit` | `WithInlineLimit` | the octets of a message that the server keeps in memory before it gives the message to the handler; a message that ends inside the limit goes to the handler whole, and a longer message streams; 1 to 16777216; the default is 65536 |
 | `InboundPipeBytes` | `WithInboundPipeBytes` | the unread octets of a streamed message that the server holds at most on a channel that returns no credit; a push over the limit closes the session with 1009; at least `InlineLimit` plus `MaxFrameSize`; also the budget charge of each streamed message against `MaxWsQueuedBytes` (so about 128 streamed messages fit in the default budget); the default is 1048576 |
 | `InboundStallMs` | `WithInboundStallMs` | the time that a read of a streamed message waits for an octet, in milliseconds; on expiry the session closes with 1008; at least 1; the default is 30000 |
+| `OutboundStallMs` | `WithOutboundStallMs` | the time that the channel may refuse one fragment of a message that a producer writes through `SendStream`, in milliseconds; on expiry the session closes with 1008 (reason `the send stalled`) and the producer ends with `EStreamCancelled`; at least 1; the default is 30000 |
+
+A producer that `SendStream` runs holds one thread of the streaming pool until it ends, so
+the advice on `StreamPoolSize` below holds for producers as well: the value is above the
+number of producers that can run at the same time. `OutboundStallMs` bounds the time that a
+producer holds the thread for a peer that reads nothing.
 
 A handler that reads a streamed message holds one thread of the streaming pool for the
 whole read. The default `StreamPoolSize` is 1, so one such handler stops every other

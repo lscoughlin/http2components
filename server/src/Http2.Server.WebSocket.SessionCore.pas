@@ -138,6 +138,8 @@ type
     //   the lock is busy, or an earlier reply waits, the reply goes to the pool
     procedure IoSend(const AOpcode: Byte; const APayload: TBytes;
       const ACloseAfter: Boolean);
+    /// send a reply that the IO thread deferred; the pool or a producer thread runs it
+    procedure ReplyTask(const ATask: TWsTask);
     /// the messages that wait are dropped from now on
     procedure DropPending;
     procedure ReleaseCredit(const AMessageDone: Boolean);
@@ -184,6 +186,8 @@ type
     function PumpScheduleAfter(const ADelayMs: Integer): Boolean;
     procedure PumpEnded(const AFailure: Exception);
     procedure PumpDefect(const AText: string);
+    /// IWsProducerHost of TWsSession: send the deferred replies on the calling thread
+    procedure PumpReplies;
   end;
 
 implementation
@@ -735,6 +739,55 @@ procedure TWsSessionCore.PumpDefect(const AText: string);
 begin
   FEnv.Report(seHandlerException, 0, AText);
 end;
+
+procedure TWsSessionCore.ReplyTask(const ATask: TWsTask);
+begin
+  // the IO thread could not take the send lock, so this thread sends the frame
+  try
+    SendControl(ATask.Opcode, ATask.Data);
+  except
+    ;   // the channel ended; the closing code below runs all the same
+  end;
+  FLock.Acquire;
+  try
+    if FDeferred > 0 then
+      Dec(FDeferred);
+  finally
+    FLock.Release;
+  end;
+  if ATask.CloseAfter then
+    FChannel.Close(ccGraceful);
+end;
+
+procedure TWsSessionCore.PumpReplies;
+var
+  T: TWsTask;
+  I: Integer;
+  Found: Boolean;
+begin
+  // RFC 6455 section 5.4: control frames may go between the fragments of a message. A
+  // producer holds the pool thread, so the replies that wait for it go out from here, in
+  // order. The task that was posted for a reply finds the queue shorter and ends at once
+  repeat
+    Found := False;
+    FLock.Acquire;
+    try
+      for I := 0 to FTasks.Count - 1 do
+        if FTasks[I].Kind = wtReply then
+        begin
+          T := FTasks[I];
+          FTasks.Delete(I);
+          Found := True;
+          Break;
+        end;
+    finally
+      FLock.Release;
+    end;
+    if Found then
+      ReplyTask(T);
+  until not Found;
+end;
+
 
 function TWsSessionCore.PumpSchedule: Boolean;
 begin

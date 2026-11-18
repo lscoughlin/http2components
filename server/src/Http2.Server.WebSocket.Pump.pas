@@ -13,6 +13,12 @@ notes:
     the host or into the writer.
   - RFC 6455 section 5.4 defines the fragments. The last fragment carries FIN, and the
     octets of the call of NextChunk that returns False are that last fragment.
+  - A writer that supports IBodyProducer runs in one Step on the streaming pool thread
+    (Http2.Server.WebSocket.Pump.Producer). The Step owns the pump until the producer
+    ends, and the step limit does not apply. When the channel is full, the sink waits
+    on the gate of the pump. Wake, TimerFired and Stop set the gate, and a timeout of
+    250 ms ends the wait. The park timer is not used, because the timer task of the
+    session waits behind the blocked Step.
 ---
 }
 /// The pump of a streamed WebSocket message
@@ -26,7 +32,7 @@ interface
 uses
   SysUtils, SyncObjs,
   Http2.Common.Body, Http2.Common.Errors, Http2.Server.Duplex,
-  Http2.Server.WebSocket.Frames;
+  Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Pump.Producer;
 
 const
   cWsPumpStepChunks = 16;
@@ -81,10 +87,14 @@ type
   /// the next named step of Step
   TWsPumpAct = (paPull, paWrite, paQueued, paLimit, paPark, paExit);
 
-  TWsStreamPump = class(TInterfacedObject, IWsPump)
+  TWsStreamPump = class(TInterfacedObject, IWsPump, IWsProducerPort)
   private
     FLock: TCriticalSection;
     // the fields that never change after Create
+    /// the writer is an IBodyProducer: Step runs it instead of the NextChunk steps
+    FProducerMode: Boolean;
+    /// the wait event of the sink; nil when the writer is no producer
+    FGate: TEvent;
     FText: Boolean;
     FFrameSize: Integer;
     FMaxChunk: Int64;
@@ -122,6 +132,25 @@ type
     function ScheduleAfter(const AHost: IWsPumpHost; const ADelayMs: Integer): Boolean;
     /// the drain rule of Wake and TimerFired
     procedure Signal(const AClearTimer: Boolean);
+    /// the Step of a producer: the sink writes each chunk and waits while the channel is full
+    procedure RunProducerStep;
+    // IWsProducerPort
+    function PortWrite(const AWire: TBytes; const AFin: Boolean): TSendResult;
+    procedure PortCount(const APayload: Integer);
+    function PortEnded: Boolean;
+    function PortGate: TEvent;
+    procedure PortReplies;
+    function PortStallMs: Integer;
+    procedure PortStalled;
+    /// the host as the sink needs it; nil after a Stop or for a host without the interface
+    function ProducerHost: IWsProducerHost;
+    procedure IWsProducerPort.Replies = PortReplies;
+    function IWsProducerPort.StallMs = PortStallMs;
+    procedure IWsProducerPort.Stalled = PortStalled;
+    function IWsProducerPort.Write = PortWrite;
+    procedure IWsProducerPort.Count = PortCount;
+    function IWsProducerPort.Ended = PortEnded;
+    function IWsProducerPort.Gate = PortGate;
   public
     /// AStepChunks is the number of chunks of one step; the session passes
     /// cWsPumpStepChunks, and a test passes a smaller number
@@ -154,10 +183,14 @@ begin
   FHost := AHost;
   FBuf := TChunkBuffer.Create;
   FState := psRunning;
+  FProducerMode := Supports(AReader, IBodyProducer);
+  if FProducerMode then
+    FGate := TEvent.Create(nil, True, False, '');
 end;
 
 destructor TWsStreamPump.Destroy;
 begin
+  FGate.Free;
   FBuf.Free;
   FLock.Free;
   inherited Destroy;
@@ -442,6 +475,13 @@ var
 begin
   if not Enter(Host) then
     Exit;
+  if FProducerMode then
+  begin
+    // the Step owns the pump until the producer ends; Host is read again from the pump
+    Host := nil;
+    RunProducerStep;
+    Exit;
+  end;
   Owned := True;
   Chunks := 0;
   Act := paPull;
@@ -494,8 +534,138 @@ begin
   finally
     FLock.Release;
   end;
+  // a sink that waits for room wakes; the event needs no lock
+  if FGate <> nil then
+    FGate.SetEvent;
   if Resume and (Host <> nil) and not Schedule(Host) then
     Stop;
+end;
+
+function TWsStreamPump.PortWrite(const AWire: TBytes; const AFin: Boolean): TSendResult;
+var
+  Host: IWsPumpHost;
+begin
+  FLock.Acquire;
+  try
+    Host := FHost;
+  finally
+    FLock.Release;
+  end;
+  // after a Stop the host reference is nil, and no data frame goes out
+  if Host = nil then
+    Exit(srClosed);
+  // the host call holds the send lock, never the pump lock
+  Result := Host.PumpWrite(AWire, AFin);
+end;
+
+procedure TWsStreamPump.PortCount(const APayload: Integer);
+var
+  Host: IWsPumpHost;
+begin
+  FLock.Acquire;
+  try
+    Host := FHost;
+  finally
+    FLock.Release;
+  end;
+  if Host <> nil then
+    Host.PumpCount(APayload);
+end;
+
+function TWsStreamPump.PortEnded: Boolean;
+begin
+  Result := State = psDone;
+end;
+
+function TWsStreamPump.PortGate: TEvent;
+begin
+  Result := FGate;
+end;
+
+function TWsStreamPump.ProducerHost: IWsProducerHost;
+var
+  Host: IWsPumpHost;
+begin
+  FLock.Acquire;
+  try
+    Host := FHost;
+  finally
+    FLock.Release;
+  end;
+  if (Host = nil) or not Supports(Host, IWsProducerHost, Result) then
+    Result := nil;
+end;
+
+procedure TWsStreamPump.PortReplies;
+var
+  Host: IWsProducerHost;
+begin
+  // no pump lock is held across the host call
+  Host := ProducerHost;
+  if Host <> nil then
+    Host.PumpReplies;
+end;
+
+function TWsStreamPump.PortStallMs: Integer;
+var
+  Host: IWsProducerHost;
+begin
+  Host := ProducerHost;
+  if Host = nil then
+    Result := 0
+  else
+    Result := Host.PumpStallMs;
+end;
+
+procedure TWsStreamPump.PortStalled;
+var
+  Host: IWsProducerHost;
+begin
+  Host := ProducerHost;
+  if Host <> nil then
+    Host.PumpStalled;
+end;
+
+procedure TWsStreamPump.RunProducerStep;
+var
+  Reader: IBodyWriter;
+  Producer: IBodyProducer;
+  Ended: IWsPumpHost;
+  Stopped: Boolean;
+begin
+  FLock.Acquire;
+  try
+    Stopped := FState = psDone;
+    Reader := FReader;
+  finally
+    FLock.Release;
+  end;
+  if Stopped or not Supports(Reader, IBodyProducer, Producer) then
+  begin
+    // a Stop came: the host reference is nil already
+    Producer := nil;
+    Reader := nil;
+    Done;
+    Exit;
+  end;
+  try
+    // a quiet end (the session ended, or the channel closed) and a normal end both
+    // give True or False here; the host knows the end from PumpWrite and from the Stop
+    WsRunProducer(Producer, Self, FText, FFrameSize, FMaxChunk);
+    Producer := nil;
+    Reader := nil;
+    Done;
+  except
+    on E: Exception do
+    begin
+      // E lives until the handler ends: PumpEnded uses it inside the handler
+      Producer := nil;
+      Reader := nil;
+      Ended := Done;
+      if Ended <> nil then
+        Ended.PumpEnded(E);
+    end;
+  end;
 end;
 
 procedure TWsStreamPump.Wake;
@@ -529,6 +699,9 @@ begin
   end;
   Reader := nil;
   Host := nil;
+  // a sink that waits for room sees the end at once
+  if FGate <> nil then
+    FGate.SetEvent;
 end;
 
 end.

@@ -46,6 +46,7 @@ type
     FInlineLimit: Integer;
     FInboundPipeBytes: Integer;
     FInboundStallMs: Integer;
+    FOutboundStallMs: Integer;
   public
     /// the defaults
     class function Create: TWsOptions; static;
@@ -93,6 +94,9 @@ type
     /// the time that a read of a streamed message waits for an octet; on expiry the
     /// session closes with 1008
     function WithInboundStallMs(const AValue: Integer): TWsOptions;
+    /// the time that a streamed message of SendStream with a producer waits for the channel
+    /// to take one fragment; on expiry the session closes with 1008 and the producer ends
+    function WithOutboundStallMs(const AValue: Integer): TWsOptions;
 
     /// add one text to AProblems for each setting that is not usable
     procedure Problems(var AProblems: TArray<string>);
@@ -116,6 +120,7 @@ type
     property InlineLimit: Integer read FInlineLimit;
     property InboundPipeBytes: Integer read FInboundPipeBytes;
     property InboundStallMs: Integer read FInboundStallMs;
+    property OutboundStallMs: Integer read FOutboundStallMs;
   end;
 
 implementation
@@ -147,6 +152,7 @@ begin
   Result.FInlineLimit := 65536;
   Result.FInboundPipeBytes := 1048576;
   Result.FInboundStallMs := 30000;
+  Result.FOutboundStallMs := 30000;
 end;
 
 function TWsOptions.WithMaxMessageSize(const AValue: Int64): TWsOptions;
@@ -263,6 +269,12 @@ begin
   Result.FInboundStallMs := AValue;
 end;
 
+function TWsOptions.WithOutboundStallMs(const AValue: Integer): TWsOptions;
+begin
+  Result := Self;
+  Result.FOutboundStallMs := AValue;
+end;
+
 procedure TWsOptions.Problems(var AProblems: TArray<string>);
 var
   I, J: Integer;
@@ -318,6 +330,8 @@ begin
     Add('the WebSocket inbound pipe size is below the inline limit plus the frame size limit');
   if FInboundStallMs < 1 then
     Add('the WebSocket inbound stall time is below 1');
+  if FOutboundStallMs < 1 then
+    Add('the WebSocket outbound stall time is below 1');
   if (FOriginPolicy = opAllowListOnly) and (Length(FAllowedOrigins) = 0) then
     Add('the origin policy allow-list only needs at least one allowed origin');
   for I := 0 to High(FSubprotocols) do

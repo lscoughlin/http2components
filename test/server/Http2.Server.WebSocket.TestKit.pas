@@ -55,6 +55,12 @@ type
     ClosedCount: Integer;
     /// when True, Send refuses and queues nothing
     Full: Boolean;
+    /// when True, Send refuses a data frame (opcode 0 to 2) and takes a control frame
+    FullForData: Boolean;
+    /// when set and not signaled, Send waits for it (10 seconds at most) before it acts;
+    /// SendBlocked counts the callers that waited
+    SendGate: TEvent;
+    SendBlocked: Integer;
     /// what IChannelFlow answers: True stands for an HTTP/2 stream, whose window slows
     /// the peer; False, the default, for a channel that returns no credit
     FlowControl: Boolean;
@@ -206,6 +212,12 @@ end;
 
 function TFakeWsChannel.Send(const AData: TBytes): TSendResult;
 begin
+  // a test holds the caller here, so the send lock of the session stays busy
+  if (SendGate <> nil) and (SendGate.WaitFor(0) <> wrSignaled) then
+  begin
+    InterlockedIncrement(SendBlocked);
+    SendGate.WaitFor(10000);
+  end;
   // a real channel takes the connection lock to write the bytes into the stream
   if ConnLock <> nil then
     ConnLock.Acquire;
@@ -230,6 +242,8 @@ begin
       Exit(srFull);
     end;
     if Full then
+      Exit(srFull);
+    if FullForData and (Length(AData) > 0) and ((AData[0] and $0F) <= WsOpBinary) then
       Exit(srFull);
     if Length(AData) = 0 then
       Exit(srQueued);

@@ -105,6 +105,38 @@
   when `Activate` has moved the held bytes. It no longer waits for the park timer.
 - `SendStream` releases a writer that it refuses with `srFull` or `srClosed`. Before,
   a writer that the caller made in the call leaked.
+- `SendStream` runs a writer that supports `IBodyProducer`, for example the writer of
+  `BodyWriterFromStream`, with `Produce` on one streaming pool thread. Each chunk of the
+  producer is one fragment, and the last chunk has the FIN bit. A producer that writes
+  nothing sends one empty text or binary frame with FIN. When the channel is full, the
+  `Write` of the producer blocks until the channel drains, until a poll of 250
+  milliseconds finds room, or until the session ends. The end of the session raises
+  `EStreamCancelled` in the next `Write` that fills a chunk, or at the end of the
+  producer, and the handler gets no `Failed` for it. A producer that raises fails the
+  session once, with `Failed` and one Close frame with code 1011. A producer holds one
+  streaming pool thread while it runs, so an application that streams with producers sets
+  `StreamPoolSize` above the number of producers that can run at the same time. New unit:
+  `Http2.Server.WebSocket.Pump.Producer`.
+- New option `TWsOptions.WithOutboundStallMs` (default 30000, at least 1). When the channel
+  refuses one fragment of a producer for that time, the session closes with 1008 (reason
+  `the send stalled`) and the producer ends with `EStreamCancelled`. A peer that keeps its
+  connection open and reads nothing can no longer hold a streaming pool thread for ever.
+- While a producer runs, the replies to a Ping go out between its fragments, so a reply
+  that the IO thread deferred does not wait until the producer ends.
+- The sink of a producer keeps its first failure, and skips a call with no octets that is
+  not the last call. A producer that catches the failure of the sink and writes on can no
+  longer complete a message with a missing fragment: the session fails.
+
+  ```pascal
+  procedure TRows.WriteRows(const AOut: TStream);
+  begin
+    // each Write blocks while the channel is full
+    AOut.WriteBuffer(Row1[1], Length(Row1));
+    AOut.WriteBuffer(Row2[1], Length(Row2));
+  end;
+
+  ASession.SendStream(BodyWriterFromStream(Rows.WriteRows), True);
+  ```
 
 ### Client
 
