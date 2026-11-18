@@ -117,7 +117,10 @@ type
     procedure WriteAll(const ABytes: TBytes); overload;
     procedure WriteAll(const ABuffer; const ACount: Integer); overload;
     /// pull the chunks of AWriter and write each one as it comes (D16, D18, D19)
-    procedure WriteChunkedBody(const AWriter: IBodyWriter);
+    // - a producer body (IBodyProducer) runs on this thread and writes each chunk
+    //   through a sink; ACancel is checked at each chunk
+    procedure WriteChunkedBody(const AWriter: IBodyWriter;
+      const ACancel: ICancellationToken);
     function GetReaderBuffered: Integer;
   public
     constructor Create(const ASocket: IHttp2Socket;
@@ -573,11 +576,92 @@ begin
   end;
 end;
 
-procedure THttp1Connection.WriteChunkedBody(const AWriter: IBodyWriter);
+/// the sink of an HTTP/1.1 upload from a producer (D24, D25)
+// - each Chunk is one chunked-coding frame: the size line, the data and the CRLF in one write
+// - ALast also writes the last-chunk marker and the empty trailer
+// - a cancelled token raises EHttpStreamError with ecCancel before the chunk is written
+type
+  THttp1UploadSink = class(TInterfacedObject, IBodyChunkSink)
+  private
+    FConn: THttp1Connection;
+    FCancel: ICancellationToken;
+    FWire: TChunkBuffer;
+    FEnded: Boolean;
+  public
+    constructor Create(const AConn: THttp1Connection; const ACancel: ICancellationToken);
+    destructor Destroy; override;
+    procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+    /// True once the last chunk went to the socket
+    property Ended: Boolean read FEnded;
+  end;
+
+constructor THttp1UploadSink.Create(const AConn: THttp1Connection;
+  const ACancel: ICancellationToken);
+begin
+  inherited Create;
+  FConn := AConn;
+  FCancel := ACancel;
+  FWire := TChunkBuffer.Create;
+  FEnded := False;
+end;
+
+destructor THttp1UploadSink.Destroy;
+begin
+  FWire.Free;
+  inherited Destroy;
+end;
+
+procedure THttp1UploadSink.Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+begin
+  if (FCancel <> nil) and FCancel.IsCancelled then
+    raise EHttpStreamError.Create('request cancelled', 0, ecCancel);
+  // a call without octets that is not the last one would look like the terminator (D18)
+  if ACount > 0 then
+  begin
+    FWire.Reset;
+    ChunkAppend(FWire, BytesOf(IntToHex(ACount, 1) + cCrLf));
+    FWire.WriteBuffer(ABuffer, ACount);
+    ChunkAppend(FWire, BytesOf(cCrLf));
+    FConn.WriteAll(FWire.Memory^, FWire.Size);
+    Inc(FConn.FSentBodyBytes, FWire.Size);
+  end;
+  if ALast then
+  begin
+    FConn.WriteAll(BytesOf('0' + cCrLf + cCrLf));
+    Inc(FConn.FSentBodyBytes, 5);
+    FEnded := True;
+  end;
+end;
+
+procedure THttp1Connection.WriteChunkedBody(const AWriter: IBodyWriter;
+  const ACancel: ICancellationToken);
 var
   Body, Wire: TChunkBuffer;
   More: Boolean;
+  Producer: IBodyProducer;
+  Sink: IBodyChunkSink;
+  Obj: THttp1UploadSink;
+  NoData: Byte;
 begin
+  if Supports(AWriter, IBodyProducer, Producer) then
+  begin
+    Obj := THttp1UploadSink.Create(Self, ACancel);
+    Sink := Obj;
+    try
+      Producer.Produce(Sink);
+      // a producer that ends without ALast still ends the body
+      if not Obj.Ended then
+      begin
+        NoData := 0;
+        Sink.Chunk(NoData, 0, True);
+      end;
+    except
+      // D19: a producer that raises leaves the chunked body open, so the connection is not reused
+      FReusable := False;
+      raise;
+    end;
+    Exit;
+  end;
   Body := TChunkBuffer.Create;
   Wire := TChunkBuffer.Create;
   try
@@ -633,7 +717,7 @@ begin
     FSentBodyBytes := Length(Body);
   end
   else if ARequest.BodyWriter <> nil then
-    WriteChunkedBody(ARequest.BodyWriter);
+    WriteChunkedBody(ARequest.BodyWriter, ARequest.CancelToken);
   if ARequest.Exchange <> nil then
     ARequest.Exchange.RequestWritten(FSentBodyBytes);
   Inc(FRequestCount);

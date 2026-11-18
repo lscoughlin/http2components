@@ -206,6 +206,79 @@ begin
   end;
 end;
 
+type
+  /// the sink of an HTTP/2 upload from a producer (D24, D25)
+  // - Chunk sends the octets as DATA frames through EmitData; it blocks for flow control
+  // - ALast True sends END_STREAM with the last DATA frame; ACount 0 sends an empty one
+  // - a cancelled token raises EHttpStreamError with ecCancel
+  // - when the peer ended or reset the upload, Chunk raises and StoppedByPeer is True;
+  //   the caller then reads the response, as the pull loop does
+  TUploadSink = class(TInterfacedObject, IBodyChunkSink)
+  private
+    FConnection: TConnection;
+    FOutbound: IBlockingQueue<TFrame>;
+    FWaitLock: TCriticalSection;
+    FStreamId: LongWord;
+    FTimeoutMs: Integer;
+    FPeerDone, FPeerReset: PLongInt;
+    FUploadStopped: PBoolean;
+    FBytesSent: PInt64;
+    FCancel: ICancellationToken;
+    FEnded: Boolean;
+    FStoppedByPeer: Boolean;
+  public
+    constructor Create(const AConnection: TConnection;
+      const AOutbound: IBlockingQueue<TFrame>; const AWaitLock: TCriticalSection;
+      const AStreamId: LongWord; const ATimeoutMs: Integer;
+      const APeerDone, APeerReset: PLongInt; const AUploadStopped: PBoolean;
+      const ABytesSent: PInt64; const ACancel: ICancellationToken);
+    procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+    /// True once the last chunk went to the sink
+    property Ended: Boolean read FEnded;
+    /// True when a Chunk found the upload stopped by the peer
+    property StoppedByPeer: Boolean read FStoppedByPeer;
+  end;
+
+constructor TUploadSink.Create(const AConnection: TConnection;
+  const AOutbound: IBlockingQueue<TFrame>; const AWaitLock: TCriticalSection;
+  const AStreamId: LongWord; const ATimeoutMs: Integer;
+  const APeerDone, APeerReset: PLongInt; const AUploadStopped: PBoolean;
+  const ABytesSent: PInt64; const ACancel: ICancellationToken);
+begin
+  inherited Create;
+  FConnection := AConnection;
+  FOutbound := AOutbound;
+  FWaitLock := AWaitLock;
+  FStreamId := AStreamId;
+  FTimeoutMs := ATimeoutMs;
+  FPeerDone := APeerDone;
+  FPeerReset := APeerReset;
+  FUploadStopped := AUploadStopped;
+  FBytesSent := ABytesSent;
+  FCancel := ACancel;
+  FEnded := False;
+  FStoppedByPeer := False;
+end;
+
+procedure TUploadSink.Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+begin
+  if (FCancel <> nil) and FCancel.IsCancelled then
+    raise EHttpStreamError.Create('request cancelled', FStreamId, ecCancel);
+  if FUploadStopped^ then
+  begin
+    // the peer ended or reset the upload: the producer stops at this write
+    FStoppedByPeer := True;
+    raise EHttpStreamError.Create('the upload stopped', FStreamId, ecStreamClosed);
+  end;
+  // a call without octets that is not the last one carries nothing
+  if (ACount = 0) and (not ALast) then
+    Exit;
+  EmitData(FConnection, FOutbound, FWaitLock, FStreamId, FTimeoutMs,
+    FPeerDone, FPeerReset, FUploadStopped^, FBytesSent^, ABuffer, ACount, ALast);
+  if ALast then
+    FEnded := True;
+end;
+
 procedure LeaseSendHeaders(const ARequest: TStreamRequest;
   const AEncoder: THpackCodec; const AOutbound: IBlockingQueue<TFrame>;
   const AStreamId: LongWord; const AMaxFrameSize: LongWord;
@@ -262,6 +335,9 @@ var
   PendingSet, Ended, LastSent: Boolean;
   NoData: Byte;
   Body: TBytes;
+  Producer: IBodyProducer;
+  Sink: IBodyChunkSink;
+  Obj: TUploadSink;
 begin
   if ALocalState = lsIdle then
     raise EHttpProtocolError.Create('cannot send a body before HEADERS',
@@ -280,6 +356,36 @@ begin
     else
       EmitData(AConnection, AOutbound, AWaitLock, AStreamId, ATimeoutMs,
         APeerDone, APeerReset, AUploadStopped, ABytesSent, NoData, 0, True);
+  end
+  else if (ARequest.BodyWriter <> nil) and
+    Supports(ARequest.BodyWriter, IBodyProducer, Producer) then
+  begin
+    // the producer runs on this thread and gives each chunk to the sink, which
+    // blocks for flow control as the pull loop does (D23, D25). A producer
+    // stream gives ALast, so the sink needs no look-ahead.
+    Obj := TUploadSink.Create(AConnection, AOutbound, AWaitLock, AStreamId,
+      ATimeoutMs, APeerDone, APeerReset, @AUploadStopped, @ABytesSent,
+      ARequest.CancelToken);
+    Sink := Obj;
+    try
+      Producer.Produce(Sink);
+      // a producer that ends without ALast still ends the body
+      if not Obj.Ended then
+        Sink.Chunk(NoData, 0, True);
+    except
+      on E: Exception do
+      begin
+        // the peer already ended or reset the upload: the response decides the call
+        if not Obj.StoppedByPeer then
+        begin
+          // a stream that the producer or the sink left open is reset, never orphaned
+          if (not AUploadStopped) and (InterlockedExchangeAdd(APeerReset^, 0) = 0) then
+            AConnection.PostFrame(BuildRstStreamFrame(AStreamId, ecCancel));
+          ALocalState := lsClosed;
+          raise;
+        end;
+      end;
+    end;
   end
   else if ARequest.BodyWriter <> nil then
   begin
