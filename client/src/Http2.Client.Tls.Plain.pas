@@ -23,14 +23,18 @@ type
   /// to the real target is negotiated first, so every layer above (TLS, h2c,
   /// HTTP/1.1) sees a transparent byte stream to the origin.
   TPlainSocket = class(TInterfacedObject, IHttp2Socket, IPartialReader,
-    IPendingInput)
+    IPendingInput, IReadInterrupt)
   private
     FSocket: TInetSocket;
     FHandle: Integer;
+    /// the two ends of the non-blocking pipe that ends a read early; -1 when off
+    FWakeRead: Integer;
+    FWakeWrite: Integer;
     FConnected: Boolean;
     FConnectTimeoutMs: Integer;
     FReadTimeoutMs: Integer;
     FWriteTimeoutMs: Integer;
+    procedure WaitReadable;
   public
     constructor Create(const AHost: string; const APort: Word;
       const AConnectTimeoutMs: Integer = cDefaultSocketTimeoutMs;
@@ -45,6 +49,8 @@ type
     function Read(var ABuffer; ACount: Integer): Integer;
     function ReadSome(var ABuffer; ACount: Integer): Integer;
     function HasPendingInput: Boolean;
+    procedure EnableInterrupt;
+    procedure InterruptRead;
     function Write(const ABuffer; ACount: Integer): Integer;
     procedure Close;
     function GetConnected: Boolean;
@@ -183,6 +189,8 @@ var
 begin
   inherited Create;
   FHandle := -1;
+  FWakeRead := -1;
+  FWakeWrite := -1;
   FConnectTimeoutMs := AConnectTimeoutMs;
   FReadTimeoutMs := cDefaultSocketTimeoutMs;
   FWriteTimeoutMs := cDefaultSocketTimeoutMs;
@@ -206,6 +214,8 @@ begin
   inherited Create;
   // set first: a failed TInetSocket.Create must not leave 0 (stdin) in FHandle
   FHandle := -1;
+  FWakeRead := -1;
+  FWakeWrite := -1;
   FConnectTimeoutMs := AConnectTimeoutMs;
   FReadTimeoutMs := cDefaultSocketTimeoutMs;
   FWriteTimeoutMs := cDefaultSocketTimeoutMs;
@@ -268,12 +278,81 @@ begin
     fpClose(FHandle);
   FHandle := -1;
   FConnected := False;
+  if FWakeRead >= 0 then
+    fpClose(FWakeRead);
+  if FWakeWrite >= 0 then
+    fpClose(FWakeWrite);
+  FWakeRead := -1;
+  FWakeWrite := -1;
+end;
+
+procedure TPlainSocket.EnableInterrupt;
+var
+  Fds: TFilDes;
+  I: Integer;
+begin
+  if FWakeRead >= 0 then
+    Exit;
+  if fpPipe(Fds) <> 0 then
+    Exit;                       // no pipe: the read keeps its timed poll
+  for I := 0 to 1 do
+  begin
+    fpFcntl(Fds[I], F_SETFL, fpFcntl(Fds[I], F_GETFL) or O_NONBLOCK);
+    fpFcntl(Fds[I], F_SETFD, FD_CLOEXEC);
+  end;
+  FWakeWrite := Fds[1];
+  FWakeRead := Fds[0];
+end;
+
+procedure TPlainSocket.InterruptRead;
+var
+  Fd: Integer;
+  B: Byte;
+begin
+  Fd := FWakeWrite;
+  if Fd < 0 then
+    Exit;
+  B := 1;
+  // a full pipe already holds a wake, so a failed write loses nothing
+  fpWrite(Fd, B, 1);
+end;
+
+/// waits for input or an interrupt; an interrupt with no input ends as a timeout
+procedure TPlainSocket.WaitReadable;
+var
+  Pfds: array[0..1] of pollfd;
+  Skip: array[0..63] of Byte;
+  R, Wait: Integer;
+begin
+  if FWakeRead < 0 then
+    Exit;
+  Pfds[0].fd := FHandle;
+  Pfds[0].events := POLLIN;
+  Pfds[1].fd := FWakeRead;
+  Pfds[1].events := POLLIN;
+  Wait := FReadTimeoutMs;
+  if Wait <= 0 then
+    Wait := -1;
+  repeat
+    Pfds[0].revents := 0;
+    Pfds[1].revents := 0;
+    R := fpPoll(@Pfds[0], 2, Wait);
+  until (R >= 0) or (fpGetErrno <> ESysEINTR);
+  if R = 0 then
+    raise EHttpTimeout.CreateFmt('read timed out after %d ms', [FReadTimeoutMs]);
+  if (R > 0) and (Pfds[1].revents <> 0) then
+  begin
+    while fpRead(FWakeRead, Skip, SizeOf(Skip)) > 0 do;
+    if Pfds[0].revents = 0 then
+      raise EHttpTimeout.Create('read interrupted');
+  end;
 end;
 
 function TPlainSocket.Read(var ABuffer; ACount: Integer): Integer;
 begin
   if not FConnected then
     raise EHttpConnectionClosed.Create('socket is closed');
+  WaitReadable;
   // a timeout after some bytes returns them: the caller reads on, so no
   // consumed byte of a frame is lost
   Result := SocketReadPartial(FHandle, ACount, FReadTimeoutMs, ABuffer);
@@ -287,6 +366,7 @@ begin
     raise EHttpConnectionClosed.Create('socket is closed');
   if ACount <= 0 then
     Exit(0);
+  WaitReadable;
   SetSocketTimeout(FHandle, SOL_SOCKET, SO_RCVTIMEO, FReadTimeoutMs);
   while True do
   begin

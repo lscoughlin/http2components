@@ -24,7 +24,8 @@ interface
 
 uses
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
-  Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls, Http2.Client.Connection;
+  Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls, Http2.Client.Tls.Types,
+  Http2.Client.Connection;
 
 type
   /// when the read script is exhausted, either surface a timeout (so the
@@ -59,6 +60,42 @@ type
     function WaitForWrites(const ACount, ATimeoutMs: Integer): Boolean;
     property ReadExhausted: TReadExhausted read FReadExhausted write FReadExhausted;
     // IHttp2Socket
+    function Read(var ABuffer; ACount: Integer): Integer;
+    function Write(const ABuffer; ACount: Integer): Integer;
+    procedure Close;
+    function GetConnected: Boolean;
+    function GetConnectTimeoutMs: Integer;
+    procedure SetConnectTimeoutMs(const AValue: Integer);
+    function GetReadTimeoutMs: Integer;
+    procedure SetReadTimeoutMs(const AValue: Integer);
+    function GetWriteTimeoutMs: Integer;
+    procedure SetWriteTimeoutMs(const AValue: Integer);
+  end;
+
+  /// a socket whose read blocks for the whole poll interval, as a real one does
+  // - InterruptRead ends the blocked read, as the wake pipe of a plain socket does
+  // - a test that sets a long poll interval shows that a queued frame does not
+  //   wait for the end of the interval
+  TBlockingWakeSocket = class(TInterfacedObject, IHttp2Socket, IReadInterrupt)
+  private
+    FLock: TCriticalSection;
+    FWriteEvent, FWakeEvent, FParkedEvent: PRTLEvent;
+    FWrites: Integer;
+    FParked: Integer;
+    FStopped: Boolean;
+    FReadTimeoutMs: Integer;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    function WaitForWrites(const ACount, ATimeoutMs: Integer): Boolean;
+    /// wait until the connection thread blocks in a read
+    function WaitParked(const ATimeoutMs: Integer): Boolean;
+    /// the write calls so far
+    function Writes: Integer;
+    /// make every later read return at once, so the connection can close
+    procedure StopBlocking;
+    procedure EnableInterrupt;
+    procedure InterruptRead;
     function Read(var ABuffer; ACount: Integer): Integer;
     function Write(const ABuffer; ACount: Integer): Integer;
     procedure Close;
@@ -108,6 +145,9 @@ type
     procedure TestGoAwayMarksHigherStreamsRetryable;
     // 07.5 graceful shutdown sends GOAWAY
     procedure TestCloseSendsGoAwayWithHighestStream;
+    // a queued frame ends a blocked read at once
+    procedure TestControlFrameEndsABlockedRead;
+    procedure TestDataFrameEndsABlockedRead;
   end;
 
 implementation
@@ -649,6 +689,209 @@ begin
     end;
     AssertTrue('graceful Close sent a GOAWAY frame', FoundGoAway);
   finally
+    Conn.Free;
+  end;
+end;
+
+{ TBlockingWakeSocket }
+
+constructor TBlockingWakeSocket.Create;
+begin
+  inherited Create;
+  FLock := TCriticalSection.Create;
+  FWriteEvent := RTLEventCreate;
+  FWakeEvent := RTLEventCreate;
+  FParkedEvent := RTLEventCreate;
+  FReadTimeoutMs := 1000;
+end;
+
+destructor TBlockingWakeSocket.Destroy;
+begin
+  RTLEventDestroy(FWriteEvent);
+  RTLEventDestroy(FWakeEvent);
+  RTLEventDestroy(FParkedEvent);
+  FLock.Free;
+  inherited Destroy;
+end;
+
+function TBlockingWakeSocket.WaitForWrites(const ACount,
+  ATimeoutMs: Integer): Boolean;
+var
+  Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  while True do
+  begin
+    FLock.Acquire;
+    try
+      Result := FWrites >= ACount;
+    finally
+      FLock.Release;
+    end;
+    if Result or (GetTickCount64 >= Deadline) then
+      Exit;
+    RTLEventWaitFor(FWriteEvent, Integer(Deadline - GetTickCount64));
+  end;
+end;
+
+function TBlockingWakeSocket.WaitParked(const ATimeoutMs: Integer): Boolean;
+var
+  Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  while True do
+  begin
+    FLock.Acquire;
+    try
+      Result := FParked > 0;
+    finally
+      FLock.Release;
+    end;
+    if Result or (GetTickCount64 >= Deadline) then
+      Exit;
+    RTLEventWaitFor(FParkedEvent, Integer(Deadline - GetTickCount64));
+  end;
+end;
+
+function TBlockingWakeSocket.Writes: Integer;
+begin
+  FLock.Acquire;
+  try
+    Result := FWrites;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TBlockingWakeSocket.StopBlocking;
+begin
+  FStopped := True;
+  RTLEventSetEvent(FWakeEvent);
+end;
+
+procedure TBlockingWakeSocket.EnableInterrupt;
+begin
+end;
+
+procedure TBlockingWakeSocket.InterruptRead;
+begin
+  RTLEventSetEvent(FWakeEvent);
+end;
+
+function TBlockingWakeSocket.Read(var ABuffer; ACount: Integer): Integer;
+begin
+  if not FStopped then
+  begin
+    FLock.Acquire;
+    try
+      Inc(FParked);
+    finally
+      FLock.Release;
+    end;
+    RTLEventSetEvent(FParkedEvent);
+    // the wait ends at the wake, or at the end of the poll interval
+    RTLEventWaitFor(FWakeEvent, FReadTimeoutMs);
+  end;
+  raise EHttpTimeout.Create('blocking wake socket idle poll');
+end;
+
+function TBlockingWakeSocket.Write(const ABuffer; ACount: Integer): Integer;
+begin
+  FLock.Acquire;
+  try
+    Inc(FWrites);
+  finally
+    FLock.Release;
+  end;
+  RTLEventSetEvent(FWriteEvent);
+  Result := ACount;
+end;
+
+procedure TBlockingWakeSocket.Close;
+begin
+end;
+
+function TBlockingWakeSocket.GetConnected: Boolean;
+begin
+  Result := True;
+end;
+
+function TBlockingWakeSocket.GetConnectTimeoutMs: Integer;
+begin
+  Result := 1000;
+end;
+
+procedure TBlockingWakeSocket.SetConnectTimeoutMs(const AValue: Integer);
+begin
+end;
+
+function TBlockingWakeSocket.GetReadTimeoutMs: Integer;
+begin
+  Result := FReadTimeoutMs;
+end;
+
+procedure TBlockingWakeSocket.SetReadTimeoutMs(const AValue: Integer);
+begin
+  FReadTimeoutMs := AValue;
+end;
+
+function TBlockingWakeSocket.GetWriteTimeoutMs: Integer;
+begin
+  Result := 1000;
+end;
+
+procedure TBlockingWakeSocket.SetWriteTimeoutMs(const AValue: Integer);
+begin
+end;
+
+procedure TConnectionThreadTest.TestControlFrameEndsABlockedRead;
+var
+  Sock: TBlockingWakeSocket;
+  SockRef: IHttp2Socket;
+  Conn: TConnection;
+  Before: Integer;
+begin
+  Sock := TBlockingWakeSocket.Create;
+  SockRef := Sock;
+  Conn := TConnection.Create(SockRef);
+  try
+    // a poll interval of ten minutes: only the wake can end the read in time
+    Conn.ReadPollMs := 600000;
+    Conn.Start;
+    AssertTrue('preface emitted', Sock.WaitForWrites(2, 5000));
+    AssertTrue('the thread blocks in a read', Sock.WaitParked(5000));
+    // the thread writes its preface before the first read, so the count is final
+    Before := Sock.Writes;
+    AssertTrue('the frame is queued', Conn.PostFrame(BuildPingFrame(nil, False)));
+    AssertTrue('the control frame is written before the poll ends',
+      Sock.WaitForWrites(Before + 1, 5000));
+  finally
+    Sock.StopBlocking;
+    Conn.Free;
+  end;
+end;
+
+procedure TConnectionThreadTest.TestDataFrameEndsABlockedRead;
+var
+  Sock: TBlockingWakeSocket;
+  SockRef: IHttp2Socket;
+  Conn: TConnection;
+  Before: Integer;
+begin
+  Sock := TBlockingWakeSocket.Create;
+  SockRef := Sock;
+  Conn := TConnection.Create(SockRef);
+  try
+    Conn.ReadPollMs := 600000;
+    Conn.Start;
+    AssertTrue('preface emitted', Sock.WaitForWrites(2, 5000));
+    AssertTrue('the thread blocks in a read', Sock.WaitParked(5000));
+    Before := Sock.Writes;
+    Conn.Outbound.Push(BuildDataFrame(1, nil, True));
+    AssertTrue('the data frame is written before the poll ends',
+      Sock.WaitForWrites(Before + 1, 5000));
+  finally
+    Sock.StopBlocking;
     Conn.Free;
   end;
 end;

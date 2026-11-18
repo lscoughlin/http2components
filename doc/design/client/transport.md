@@ -264,6 +264,23 @@ function `PendingConnectionCleanups` in `Http2.Client.Pool.Http2` counts the
 cleanup threads that still run. A direct free of a `TConnection` on its own
 reader thread is not supported.
 
+The connection thread is the only writer, and it reads and writes in one loop: it
+drains the control queue and the outbound queue, and then it blocks in a read for
+one poll interval (`cDefaultReadPollMs`, 20 ms). A peer that has used its
+window sends no octet until the client writes a `WINDOW_UPDATE` or a `DATA` frame,
+so a frame that a stream thread queued in that time would wait for the end of the
+interval, once for each flow-control window. Every queue therefore carries a wake.
+A socket that implements `IReadInterrupt` gives the connection thread a wake
+channel: `TPlainSocket` holds a non-blocking pipe, and its read waits for the
+socket and the pipe together. `TTlsSocket` passes the call to its transport. The
+worker enables the channel before its thread starts. `TControlFrameQueue.TryPost`
+and `IBlockingQueue.Push` call `InterruptRead` after they queue a frame, and the
+blocked read ends with `EHttpTimeout`, as an idle poll does. The thread then
+drains the queues at once. Input that is already available takes precedence: the
+read returns it, and the wake byte is only consumed. A socket without the contract
+keeps the timed read, so the poll interval is the longest delay of such a socket.
+The poll interval is no longer the cost of a flow-control round trip.
+
 A write timeout is not an idle poll. Only a read that returns no byte before
 the poll interval ends is an idle poll, and the reader then continues its loop.
 A timeout from a frame write can leave a frame partly written, so the

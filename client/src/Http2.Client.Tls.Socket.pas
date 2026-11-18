@@ -37,7 +37,7 @@ procedure RejectLegacyTlsPolicy(const AInsecure: Boolean;
 
 type
   TTlsSocket = class(TInterfacedObject, IHttp2Socket, IPartialReader,
-    IHttp2TlsSocketInfo, IPendingInput)
+    IHttp2TlsSocketInfo, IPendingInput, IReadInterrupt)
   private
     FTransport: IHttp2Socket;
     FReader: IPartialReader;
@@ -122,6 +122,10 @@ type
     function NegotiatedTlsInfo: TTlsNegotiatedInfo;
     function SelectedProtocol: string;
     function HasPendingInput: Boolean;
+    /// the wake channel is the one of the transport; a transport without one
+    // leaves the timed read
+    procedure EnableInterrupt;
+    procedure InterruptRead;
     property Connected: Boolean read GetConnected;
     property ConnectTimeoutMs: Integer read GetConnectTimeoutMs write SetConnectTimeoutMs;
     property ReadTimeoutMs: Integer read GetReadTimeoutMs write SetReadTimeoutMs;
@@ -683,6 +687,22 @@ begin
   except
     on Exception do Result := True;   // the next read reports the problem
   end;
+end;
+
+procedure TTlsSocket.EnableInterrupt;
+var
+  Transport: IReadInterrupt;
+begin
+  if Supports(FTransport, IReadInterrupt, Transport) then
+    Transport.EnableInterrupt;
+end;
+
+procedure TTlsSocket.InterruptRead;
+var
+  Transport: IReadInterrupt;
+begin
+  if Supports(FTransport, IReadInterrupt, Transport) then
+    Transport.InterruptRead;
 end;
 
 function TTlsSocket.HasPendingInput: Boolean;
