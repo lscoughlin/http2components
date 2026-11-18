@@ -75,6 +75,14 @@ a full outbound buffer, or a read or write whose window is closed.
 Each of those blocks parks on the stream waiter, which releases every lock
 first. The handler thread therefore holds no lock while it sleeps.
 
+A producer body runs on the handler thread too. On HTTP/2 the thread that calls
+`Finish` runs the producer, and on HTTP/1.1 the thread that calls `SetBodyWriter` runs
+it. The producer blocks that thread in its `Write` when the outbound buffer is full, as a
+handler `Write` does, so the producer uses no thread of its own and no IO thread. A
+producer that raises passes its exception to the handler pool, which answers the request
+as it answers any other handler exception. The producer holds no lock across its
+`Write`. A streaming pool thread never runs a producer of a response.
+
 ## Admission
 
 The handler pool has a fixed size and a bounded queue. A new request enters the

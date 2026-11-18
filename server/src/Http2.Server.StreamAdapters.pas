@@ -133,6 +133,36 @@ type
 
 implementation
 
+type
+  /// the sink that a producer body of an HTTP/2 response gives its chunks to
+  // - a chunk with octets goes to the outbound buffer of the stream; Write blocks
+  //   while the buffer is full, so the producer waits (backpressure)
+  // - the last call ends nothing: Finish ends the body after Produce returns
+  TH2BodySink = class(TInterfacedObject, IBodyChunkSink)
+  private
+    FResponse: TServerStreamResponse;
+  public
+    constructor Create(const AResponse: TServerStreamResponse);
+    procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+  end;
+
+{ TH2BodySink }
+
+constructor TH2BodySink.Create(const AResponse: TServerStreamResponse);
+begin
+  inherited Create;
+  FResponse := AResponse;
+end;
+
+procedure TH2BodySink.Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+begin
+  if ACount > 0 then
+  begin
+    FResponse.FStream.Write(ABuffer, ACount);
+    Inc(FResponse.FBodyOctets, ACount);
+  end;
+end;
+
 { TServerStreamRequest }
 
 constructor TServerStreamRequest.Create(const AStream: TServerStream);
@@ -341,27 +371,35 @@ procedure TServerStreamResponse.Finish;
 var
   Buf: TChunkBuffer;
   More: Boolean;
+  Producer: IBodyProducer;
 begin
   CheckNotDetached;
   if FBodyWriter <> nil then
   begin
-    Buf := TChunkBuffer.Create;
-    try
-      repeat
-        Buf.Reset;
-        // the octets of the call that returns False are the last chunk (D22)
-        More := FBodyWriter.NextChunk(Buf);
-        // TServerStream.DoWrite copies the octets into its outbound buffer
-        // before it returns (Http2.Server.Stream.pas lines 653 to 655), so the
-        // buffer is free for the next chunk after the call
-        if Buf.Size > 0 then
-        begin
-          FStream.Write(Buf.Memory^, Buf.Size);
-          Inc(FBodyOctets, Buf.Size);
-        end;
-      until not More;
-    finally
-      Buf.Free;
+    // a producer runs on this thread and blocks in its sink while the outbound
+    // buffer is full (D25, D28); a pulled writer is run by the loop below
+    if Supports(FBodyWriter, IBodyProducer, Producer) then
+      Producer.Produce(TH2BodySink.Create(Self))
+    else
+    begin
+      Buf := TChunkBuffer.Create;
+      try
+        repeat
+          Buf.Reset;
+          // the octets of the call that returns False are the last chunk (D22)
+          More := FBodyWriter.NextChunk(Buf);
+          // TServerStream.DoWrite copies the octets into its outbound buffer
+          // before it returns (Http2.Server.Stream.pas lines 653 to 655), so the
+          // buffer is free for the next chunk after the call
+          if Buf.Size > 0 then
+          begin
+            FStream.Write(Buf.Memory^, Buf.Size);
+            Inc(FBodyOctets, Buf.Size);
+          end;
+        until not More;
+      finally
+        Buf.Free;
+      end;
     end;
   end;
   FStream.RequestFinish;

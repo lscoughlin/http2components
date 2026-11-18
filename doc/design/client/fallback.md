@@ -188,6 +188,15 @@ this scope:
   skipped, because it would end the body on the wire. The octets that the last
   call returns with `False` go out as the last chunk. The last-chunk marker `0`
   and the empty trailer follow.
+- Producer body: a writer that is a producer (see [messages](messages.md),
+  "Request body from a producer") is run on the thread of the call. The
+  producer writes to a stream, and each chunk that the stream sends is one HTTP
+  chunk, in one socket write, when the producer writes it. The last chunk and the
+  last-chunk marker `0` go out when the producer ends. When the producer raises,
+  the connection is marked not reusable, and the exception goes to the caller of
+  `Send`. The pool then closes the socket. A cancelled call raises
+  `EHttpStreamError` with `ecCancel` in the producer's `Write`, and the connection
+  is not reused either.
 - Response: status line, headers, and body. The body uses
   `Content-Length`, chunked coding, or connection close.
 - Connection reuse: `keep-alive` is the default in HTTP/1.1. The codec takes

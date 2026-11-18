@@ -143,6 +143,21 @@
   chunked transfer coding. It no longer holds the whole body in memory. The other
   `IBodyWriter` paths already stream: the server response, the server WebSocket stream
   and the HTTP/2 client upload. This release adds tests for them.
+- The client sends a request body from a producer. `BodyWriterFromStream` in
+  `Http2.Common.Body.Producers` makes an `IBodyWriter` from a method that writes to a
+  `TStream`, and `BodyWriterFromTextWriter` does the same for a `TStreamWriter`. The
+  thread of the call runs the producer, on HTTP/2 and on HTTP/1.1. Each chunk goes out
+  when the producer writes it. A producer that raises ends the call with its exception:
+  the HTTP/2 stream is reset with `CANCEL`, and the HTTP/1.1 connection is not reused. A
+  cancelled call raises `EHttpStreamError` in the producer's `Write`. A request with a
+  producer body is not replayed on a 307 or 308 redirect. See
+  `doc/design/client/messages.md`.
+
+  ```pascal
+  Response := Client.Send(THttpRequest.Create(hmPost, Url)
+    .WithHeader('content-type', 'application/xml')
+    .WithBodyWriter(BodyWriterFromStream(Uploader.Write)));
+  ```
 - **Behavior change.** A read of a response body after its end returns 0. It no longer
   raises `EHttpStreamError`. Every later read also returns 0. A read loop ends at the
   first 0, as before. A caller that caught `EHttpStreamError` for this case gets no
@@ -250,6 +265,32 @@
 
   A handler that needs the whole body can call `Body := ReadAllBody(ARequest)`
   instead.
+
+- **New.** A response body can be a producer. A producer writes to a `TStream`, and
+  `BodyWriterFromStream` (in `Http2.Common.Body.Producers`) makes the body from it. The
+  response runs the producer on the handler thread, when `Finish` runs (HTTP/2) or when
+  `SetBodyWriter` runs (HTTP/1.1). Each `Write` of the producer blocks while the outbound
+  buffer is full, so a producer writes a body of any size with bounded memory. An
+  exception of the producer passes to the handler. A writer that is not a producer works
+  as before. `TCompressingBodyWriter` over a producer is a producer too, so the coded body
+  streams. An example is `examples/server/xml_stream.pas`:
+
+  ```pascal
+  procedure TXmlHandler.Handle(const ARequest: IServerRequest;
+    const AResponse: IServerResponse);
+  var
+    Producer: TXmlDocumentProducer;
+  begin
+    Producer := TXmlDocumentProducer.Create(cItemCount);
+    try
+      AResponse.SendHeaders(200, ContentTypeHeaders('application/xml'), False);
+      AResponse.SetBodyWriter(BodyWriterFromStream(Producer.Write));
+      AResponse.Finish;
+    finally
+      Producer.Free;
+    end;
+  end;
+  ```
 
 ### Common
 

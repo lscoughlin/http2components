@@ -31,7 +31,7 @@ uses
   Http2.Server.Errors, Http2.Server.Seam, Http2.Server.Stream,
   Http2.Server.StreamHost,
   Http2.Server.Limits, Http2.Server.Config, Http2.Common.Hpack,
-  Http2.Server.Admission, Http2.Server.StreamAdapters;
+  Http2.Server.Admission, Http2.Server.StreamAdapters, Http2.Common.Body;
 
 type
   /// a stream host that ignores the window credit
@@ -158,6 +158,8 @@ type
     procedure TestQueueDrainAllReturnsFifo;
     procedure TestRefusalModeHttp503QueuesResponse;
     procedure TestAdaptersExposeStreamState;
+    // P9: the request body read through GetStream equals ReadAllBody
+    procedure TestRequestGetStreamEqualsReadAllBody;
   end;
 
 implementation
@@ -820,6 +822,54 @@ begin
   Res.SendHeaders(204, nil, False);
   AssertTrue('the response block is pending', Stream.HasPendingHeaders);
   AssertFalse('a fresh response is not cancelled', Res.IsCancelled);
+end;
+
+procedure TAdmissionTest.TestRequestGetStreamEqualsReadAllBody;
+const
+  cBodyBytes = 50000;
+var
+  Data: TBytes;
+  I: Integer;
+  First, Second: TServerStream;
+  ReqFirst, ReqSecond: IServerRequest;
+  Expected, Got: TBytes;
+  Stream: TStream;
+  Chunk: array[0..999] of Byte;
+  N, At: Integer;
+begin
+  // the same body on two streams: ReadAllBody takes one, GetStream the other
+  SetLength(Data, cBodyBytes);
+  for I := 0 to cBodyBytes - 1 do
+    Data[I] := Byte(I * 13 + (I shr 7));
+  First := NewStream(51);
+  Second := NewStream(52);
+  First.DeliverData(Data, True);
+  Second.DeliverData(Data, True);
+  ReqFirst := TServerStreamRequest.Create(First);
+  ReqSecond := TServerStreamRequest.Create(Second);
+  Expected := ReadAllBody(ReqFirst);
+  AssertEquals('ReadAllBody reads the whole body', cBodyBytes, Length(Expected));
+
+  Stream := ReqSecond.GetStream;
+  try
+    Got := nil;
+    repeat
+      N := Stream.Read(Chunk[0], SizeOf(Chunk));
+      if N > 0 then
+      begin
+        At := Length(Got);
+        SetLength(Got, At + N);
+        Move(Chunk[0], Got[At], N);
+      end;
+    until N <= 0;
+  finally
+    Stream.Free;
+  end;
+  AssertEquals('GetStream gives the same count', Length(Expected), Length(Got));
+  AssertTrue('GetStream gives the same octets',
+    CompareMem(@Expected[0], @Got[0], Length(Got)));
+  ReqFirst := nil;
+  ReqSecond := nil;
 end;
 
 initialization

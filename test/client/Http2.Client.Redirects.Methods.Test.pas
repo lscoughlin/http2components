@@ -30,8 +30,18 @@ interface
 uses
   SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack,
-  Http2.Common.Body, Http2.Client.Tls, Http2.Client.Connection, Http2.Client.Stream, Http2.Client.Messages, Http2.Client, Http2.Client.Redirects.Test;
+  Http2.Common.Body, Http2.Common.Body.Producers, Http2.Client.Tls, Http2.Client.Connection, Http2.Client.Stream, Http2.Client.Messages, Http2.Client, Http2.Client.Redirects.Test;
 type
+  /// a producer that writes one small body and counts its runs
+  // - the object must live until the call that uses its method pointer returns
+  TStreamedProducer = class
+  private
+    FRuns: Integer;
+  public
+    procedure Write(const AOut: TStream);
+    property Runs: Integer read FRuns;
+  end;
+
   TRedirectMethodTest = class(TTestCase)
   published
     procedure Test301WithGetPreservesMethod;
@@ -40,6 +50,10 @@ type
     procedure Test307PreservesMethodAndReplayableBody;
     procedure Test308PreservesMethodAndReplayableBody;
     procedure Test307WithBodyWriterRaisesNotReplayable;
+    /// a producer body is a body writer: a 307 cannot replay it either
+    procedure Test307WithProducerRaisesNotReplayable;
+    /// a producer body on a 308 cannot be replayed either
+    procedure Test308WithProducerRaisesNotReplayable;
   end;
 
 implementation
@@ -194,6 +208,70 @@ begin
   end;
   AssertTrue('a body writer cannot be replayed on 307', Raised);
   Client.Close;
+end;
+
+{ TStreamedProducer }
+
+procedure TStreamedProducer.Write(const AOut: TStream);
+const
+  cText: string = 'streamed producer body';
+begin
+  Inc(FRuns);
+  AOut.WriteBuffer(cText[1], Length(cText));
+end;
+
+procedure TRedirectMethodTest.Test307WithProducerRaisesNotReplayable;
+var
+  Factory: TFakeFrameFactory;
+  Client: IHttpClient;
+  Producer: TStreamedProducer;
+  Raised: Boolean;
+begin
+  Factory := TFakeFrameFactory.Create;
+  Factory.SetDialScript(0, SpecArray([HdrSpec('307', '/retry')]));
+  Client := THttpClientFactory.Create.WithSocketFactory(Factory).Build;
+  Producer := TStreamedProducer.Create;
+  try
+    Raised := False;
+    try
+      Client.Send(THttpRequest.Create(hmPost, 'https://a.example/x')
+        .WithBodyWriter(BodyWriterFromStream(Producer.Write, 4096)));
+    except
+      on E: EHttpNotReplayable do Raised := True;
+    end;
+    AssertTrue('a producer body cannot be replayed on 307', Raised);
+    AssertEquals('the producer ran once, not again for the redirect', 1, Producer.Runs);
+  finally
+    Client.Close;
+    Producer.Free;
+  end;
+end;
+
+procedure TRedirectMethodTest.Test308WithProducerRaisesNotReplayable;
+var
+  Factory: TFakeFrameFactory;
+  Client: IHttpClient;
+  Producer: TStreamedProducer;
+  Raised: Boolean;
+begin
+  Factory := TFakeFrameFactory.Create;
+  Factory.SetDialScript(0, SpecArray([HdrSpec('308', '/retry')]));
+  Client := THttpClientFactory.Create.WithSocketFactory(Factory).Build;
+  Producer := TStreamedProducer.Create;
+  try
+    Raised := False;
+    try
+      Client.Send(THttpRequest.Create(hmPost, 'https://a.example/x')
+        .WithBodyWriter(BodyWriterFromStream(Producer.Write, 4096)));
+    except
+      on E: EHttpNotReplayable do Raised := True;
+    end;
+    AssertTrue('a producer body cannot be replayed on 308', Raised);
+    AssertEquals('the producer ran once, not again for the redirect', 1, Producer.Runs);
+  finally
+    Client.Close;
+    Producer.Free;
+  end;
 end;
 
 initialization

@@ -21,7 +21,8 @@ interface
 
 uses
   SysUtils, Classes, fpcunit, testregistry,
-  Http2.Client.Errors, Http2.Common.Headers, Http2.Common.Body, Http2.Client.Tls, Http2.Client.Stream, Http2.Client.Messages,
+  Http2.Client.Errors, Http2.Common.Headers, Http2.Common.Body, Http2.Common.Body.Producers,
+  Http2.Client.Tls, Http2.Client.Stream, Http2.Client.Messages,
   Http2.Client.Http1, Http2.Client.Http1.Test;
 
 type
@@ -84,6 +85,27 @@ type
     procedure ExchangeEnded(const AEnd: TExchangeEnd);
   end;
 
+  /// the exception that a producer raises in the upload tests
+  EUploadProducerFailure = class(Exception);
+
+  /// a producer that writes its parts in order, with an optional failure and cancel
+  // - FailAfter: the index of the part after which Write raises (-1: never)
+  // - CancelAfter: the index of the part after which Token is cancelled (-1: never)
+  // - the object must live until the call that uses its method pointer returns
+  TPartsProducer = class
+  private
+    FParts: TArray<string>;
+    FFailAfter: Integer;
+    FCancelAfter: Integer;
+    FToken: TCancellationToken;
+  public
+    constructor Create(const AParts: array of string);
+    procedure Write(const AOut: TStream);
+    property FailAfter: Integer read FFailAfter write FFailAfter;
+    property CancelAfter: Integer read FCancelAfter write FCancelAfter;
+    property Token: TCancellationToken read FToken write FToken;
+  end;
+
   THttp1UploadTest = class(TTestCase)
   published
     procedure TestWriterBodyGoesOutChunkByChunk;
@@ -94,6 +116,18 @@ type
     procedure TestWriterRaisingClosesTheConnection;
     procedure TestLargeWriterBodyKeepsMemoryBounded;
     procedure TestWriterBodyCountsFramingInBytesOut;
+    /// a producer's odd writes go out as chunks of AChunkBytes, the last chunk once
+    procedure TestProducerOddPartsGoOutAsChunks;
+    /// a body that ends on a chunk boundary sends the last chunk once, no empty chunk
+    procedure TestProducerBoundaryEndsOnce;
+    /// a producer that writes nothing sends only the last-chunk marker
+    procedure TestProducerEmptyBodySendsOnlyTheMarker;
+    /// a producer that raises closes the connection for reuse, and the call raises its exception
+    procedure TestProducerRaisingClosesTheConnection;
+    /// a cancelled call raises EHttpStreamError in the producer's Write and closes the connection
+    procedure TestProducerCancelledCallRaisesInWrite;
+    /// the bytes out of a producer body equal the bytes out of the same body pulled
+    procedure TestProducerCountsFramingLikeThePullPath;
   end;
 
 implementation
@@ -489,6 +523,270 @@ begin
     AssertEquals('the framing counts, the head does not', 20, Obs.Written);
   finally
     Conn.Free;
+  end;
+end;
+
+{ TPartsProducer }
+
+constructor TPartsProducer.Create(const AParts: array of string);
+var
+  I: Integer;
+begin
+  inherited Create;
+  SetLength(FParts, Length(AParts));
+  for I := 0 to High(AParts) do
+    FParts[I] := AParts[I];
+  FFailAfter := -1;
+  FCancelAfter := -1;
+  FToken := nil;
+end;
+
+procedure TPartsProducer.Write(const AOut: TStream);
+var
+  I: Integer;
+  Bytes: TBytes;
+begin
+  for I := 0 to High(FParts) do
+  begin
+    Bytes := UploadTextBytes(FParts[I]);
+    if Length(Bytes) > 0 then
+      AOut.WriteBuffer(Bytes[0], Length(Bytes));
+    if I = FFailAfter then
+      raise EUploadProducerFailure.Create('scripted producer failure');
+    if (I = FCancelAfter) and (FToken <> nil) then
+      FToken.Cancel;
+  end;
+end;
+
+procedure THttp1UploadTest.TestProducerOddPartsGoOutAsChunks;
+var
+  Sock: TSocketScript;
+  Conn: THttp1Connection;
+  Prod: TPartsProducer;
+  Keep: IBodyWriter;
+  Req: TStreamRequest;
+begin
+  Sock := TSocketScript.Create;
+  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 0'#13#10#13#10);
+  Prod := TPartsProducer.Create(['ab', 'cdefg', 'h']);
+  try
+    Keep := BodyWriterFromStream(Prod.Write, 3);
+    Req := TStreamRequest.Create('POST', 'example.com').WithPath('/up')
+      .WithBodyWriter(Keep);
+    Conn := THttp1Connection.Create(Sock);
+    try
+      Conn.Send(Req);
+      AssertEquals('chunks of 3 octets, the last chunk once, then the marker',
+        '3'#13#10'abc'#13#10'3'#13#10'def'#13#10'2'#13#10'gh'#13#10'0'#13#10#13#10,
+        AfterHead(Sock.WrittenText));
+    finally
+      Conn.Free;
+    end;
+  finally
+    Prod.Free;
+  end;
+end;
+
+procedure THttp1UploadTest.TestProducerBoundaryEndsOnce;
+var
+  Sock: TSocketScript;
+  Conn: THttp1Connection;
+  Prod: TPartsProducer;
+  Keep: IBodyWriter;
+  Req: TStreamRequest;
+begin
+  // the body ends on a chunk boundary: the last chunk is sent once, with no empty chunk
+  Sock := TSocketScript.Create;
+  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 0'#13#10#13#10);
+  Prod := TPartsProducer.Create(['aaa', 'bbb']);
+  try
+    Keep := BodyWriterFromStream(Prod.Write, 3);
+    Req := TStreamRequest.Create('POST', 'example.com').WithPath('/up')
+      .WithBodyWriter(Keep);
+    Conn := THttp1Connection.Create(Sock);
+    try
+      Conn.Send(Req);
+      AssertEquals('two chunks and the marker',
+        '3'#13#10'aaa'#13#10'3'#13#10'bbb'#13#10'0'#13#10#13#10,
+        AfterHead(Sock.WrittenText));
+    finally
+      Conn.Free;
+    end;
+  finally
+    Prod.Free;
+  end;
+end;
+
+procedure THttp1UploadTest.TestProducerEmptyBodySendsOnlyTheMarker;
+var
+  Sock: TSocketScript;
+  Conn: THttp1Connection;
+  Prod: TPartsProducer;
+  Keep: IBodyWriter;
+  Req: TStreamRequest;
+begin
+  Sock := TSocketScript.Create;
+  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 0'#13#10#13#10);
+  Prod := TPartsProducer.Create(['']);
+  try
+    Keep := BodyWriterFromStream(Prod.Write, 3);
+    Req := TStreamRequest.Create('POST', 'example.com').WithPath('/up')
+      .WithBodyWriter(Keep);
+    Conn := THttp1Connection.Create(Sock);
+    try
+      Conn.Send(Req);
+      AssertEquals('only the last-chunk marker follows the head',
+        '0'#13#10#13#10, AfterHead(Sock.WrittenText));
+    finally
+      Conn.Free;
+    end;
+  finally
+    Prod.Free;
+  end;
+end;
+
+procedure THttp1UploadTest.TestProducerRaisingClosesTheConnection;
+var
+  Sock: TSocketScript;
+  Conn: THttp1Connection;
+  Prod: TPartsProducer;
+  Keep: IBodyWriter;
+  Req: TStreamRequest;
+  Raised: Boolean;
+  Msg: string;
+begin
+  // the producer fails after 'bbb' is written: 'aaa' is out, no last chunk follows
+  Sock := TSocketScript.Create;
+  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 0'#13#10#13#10);
+  Prod := TPartsProducer.Create(['aaa', 'bbb']);
+  Prod.FailAfter := 1;
+  try
+    Keep := BodyWriterFromStream(Prod.Write, 3);
+    Req := TStreamRequest.Create('POST', 'example.com').WithPath('/up')
+      .WithBodyWriter(Keep);
+    Conn := THttp1Connection.Create(Sock);
+    try
+      Raised := False;
+      Msg := '';
+      try
+        Conn.Send(Req);
+      except
+        on E: EUploadProducerFailure do
+        begin
+          Raised := True;
+          Msg := E.Message;
+        end;
+      end;
+      AssertTrue('the producer exception reaches Send', Raised);
+      AssertEquals('the exception keeps its message', 'scripted producer failure', Msg);
+      AssertEquals('only the sent chunk is on the wire',
+        '3'#13#10'aaa'#13#10, AfterHead(Sock.WrittenText));
+      AssertFalse('the connection is not reusable after the failure', Conn.Reusable);
+      Raised := False;
+      try
+        Conn.Send(NewGetRequest('/again'));
+      except
+        on E: EHttpProtocolError do
+          Raised := True;
+      end;
+      AssertTrue('a second request on the same connection is refused', Raised);
+    finally
+      Conn.Free;
+    end;
+  finally
+    Prod.Free;
+  end;
+end;
+
+procedure THttp1UploadTest.TestProducerCancelledCallRaisesInWrite;
+var
+  Sock: TSocketScript;
+  Conn: THttp1Connection;
+  Prod: TPartsProducer;
+  Keep: IBodyWriter;
+  Req: TStreamRequest;
+  TokenIntf: ICancellationToken;
+  Raised: Boolean;
+  Code: THttp2ErrorCode;
+begin
+  // the token is cancelled after 'aaa' is written: the write of 'bbb' sends 'aaa' and raises
+  Sock := TSocketScript.Create;
+  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 0'#13#10#13#10);
+  TokenIntf := TCancellationToken.Create;
+  Prod := TPartsProducer.Create(['aaa', 'bbb', 'ccc']);
+  Prod.Token := TokenIntf as TCancellationToken;
+  Prod.CancelAfter := 0;
+  try
+    Keep := BodyWriterFromStream(Prod.Write, 3);
+    Req := TStreamRequest.Create('POST', 'example.com').WithPath('/up')
+      .WithBodyWriter(Keep).WithCancelToken(TokenIntf);
+    Conn := THttp1Connection.Create(Sock);
+    try
+      Raised := False;
+      Code := ecInternalError;
+      try
+        Conn.Send(Req);
+      except
+        on E: EHttpStreamError do
+        begin
+          Raised := True;
+          Code := E.ErrorCode;
+        end;
+      end;
+      AssertTrue('the cancelled call raises EHttpStreamError', Raised);
+      AssertTrue('the error is the cancel error', Code = ecCancel);
+      AssertEquals('the pending chunk did not go out', '', AfterHead(Sock.WrittenText));
+      AssertFalse('the connection is not reusable after the cancel', Conn.Reusable);
+    finally
+      Conn.Free;
+    end;
+  finally
+    Prod.Free;
+  end;
+end;
+
+procedure THttp1UploadTest.TestProducerCountsFramingLikeThePullPath;
+var
+  Sock, Sock2: TSocketScript;
+  Conn, Conn2: THttp1Connection;
+  Prod: TPartsProducer;
+  Keep, Keep2: IBodyWriter;
+  Obs, Obs2: TBytesOutExchange;
+  ObsRef, ObsRef2: IExchangeObserver;
+  Req, Req2: TStreamRequest;
+begin
+  // the chunks of the producer: '3'CRLF'abc'CRLF = 8, '3'CRLF'def'CRLF = 8,
+  // '2'CRLF'gh'CRLF = 7 and '0'CRLF CRLF = 5, which makes 28 octets after the head
+  Sock := TSocketScript.Create;
+  Sock.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 0'#13#10#13#10);
+  Prod := TPartsProducer.Create(['ab', 'cdefg', 'h']);
+  Keep := BodyWriterFromStream(Prod.Write, 3);
+  Obs := TBytesOutExchange.Create;
+  ObsRef := Obs;
+  Req := TStreamRequest.Create('POST', 'example.com').WithPath('/up')
+    .WithBodyWriter(Keep).WithExchange(ObsRef);
+  Conn := THttp1Connection.Create(Sock);
+  try
+    Conn.Send(Req);
+    AssertEquals('the framing counts, the head does not', 28, Obs.Written);
+  finally
+    Conn.Free;
+  end;
+  // the pull path gives the same count for the same chunks
+  Sock2 := TSocketScript.Create;
+  Sock2.Feed('HTTP/1.1 200 OK'#13#10'Content-Length: 0'#13#10#13#10);
+  Keep2 := TSequenceBodyWriter.Create(['abc', 'def', 'gh'], [True, True, False]);
+  Obs2 := TBytesOutExchange.Create;
+  ObsRef2 := Obs2;
+  Req2 := TStreamRequest.Create('POST', 'example.com').WithPath('/up')
+    .WithBodyWriter(Keep2).WithExchange(ObsRef2);
+  Conn2 := THttp1Connection.Create(Sock2);
+  try
+    Conn2.Send(Req2);
+    AssertEquals('the pull path counts the same octets', Obs2.Written, Obs.Written);
+  finally
+    Conn2.Free;
+    Prod.Free;
   end;
 end;
 

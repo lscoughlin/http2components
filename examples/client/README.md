@@ -1,6 +1,6 @@
 # Examples
 
-Eleven small programs and three adapter units showing use of the client API in `http2components`.
+Twelve small programs and three adapter units showing use of the client API in `http2components`.
 They are smoke builds: the build compiles them, it does not run them.
 
 ## Build
@@ -30,6 +30,7 @@ bin/<target>/<profile>/examples-client/programs/basic_get      https://nghttp2.o
 bin/<target>/<profile>/examples-client/programs/post_text      https://nghttp2.org/httpbin/post
 bin/<target>/<profile>/examples-client/programs/json_request   https://nghttp2.org/httpbin/post
 bin/<target>/<profile>/examples-client/programs/xml_request    https://nghttp2.org/httpbin/xml
+bin/<target>/<profile>/examples-client/programs/xml_upload     https://nghttp2.org/httpbin/post
 https_proxy=http://proxy.corp:3128 bin/<target>/<profile>/examples-client/programs/proxy_env https://nghttp2.org/
 bin/<target>/<profile>/examples-client/programs/threaded_get   https://nghttp2.org/ 8 25
 bin/<target>/<profile>/examples-client/programs/sse_stream     https://example.com/events
@@ -48,6 +49,7 @@ make measure-observer
 | `post_text.pas` | `WithTextBody` attaches a text body and defaults the content-type. |
 | `json_request.pas` | `WithJsonBody` sends JSON; `ReadJsonObject` reads `TJSONObject` directly. Both are wrappers over the common JSON helpers (`Http2.Common.Body.Json`). |
 | `xml_request.pas` | `WithXmlBody` / `ReadXmlDocument` for XML. `ReadXmlDocument` parses the body as it arrives, through the common XML helper (`Http2.Common.Body.Xml`). |
+| `xml_upload.pas` | `BodyWriterFromStream` (`Http2.Common.Body.Producers`) makes a request body from a producer: `WriteXML` writes a `TXMLDocument` to the stream, and each chunk goes out as the producer writes it. |
 | `threaded_get.pas` | Eight threads sharing one client and its connection pool. |
 | `sse_stream.pas` | `SseRequest` + `TSseReconnectLoop`: read an event stream and resume from `last-event-id`. |
 | `websocket_echo.pas` | `TWebSocketRequest` + a `TWebSocketListener` descendant: open a WebSocket, `Request` demand, send a message, close. |

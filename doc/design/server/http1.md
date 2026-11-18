@@ -133,7 +133,13 @@ A response that the handler gave a `Content-Length` is sent with that length. An
 other response to an HTTP/1.1 request is chunked. A body writer of a chunked
 response writes each non-empty chunk as one chunk of the response. The write waits
 for room in the outbound buffer before the next chunk is pulled. The octets that the
-last call returns with `False` are written as the last chunk. A client of HTTP/1.0 gets a
+last call returns with `False` are written as the last chunk.
+
+A producer body (see [seam](seam.md)) gives its chunks through the same path. `SetBodyWriter`
+runs the producer on the handler thread. Each non-empty chunk that the sink receives is
+written as one chunk of the response, with the same wait for room. When the producer
+returns, the response ends with the last-chunk marker, and the marker is written once.
+A producer with no octets gives a response whose only chunk is the last-chunk marker. A client of HTTP/1.0 gets a
 response that ends with the close of the connection. A response to `HEAD` and a 204
 or 304 response have no body; octets that a handler writes for them are dropped. The
 handler never sets `Connection`, `Keep-Alive`, `Transfer-Encoding`, `Upgrade` or
