@@ -231,6 +231,13 @@
 
 ### Common
 
+- New constants for header names and status codes. `Http2.Common.Headers` (and
+  `Http2.Common`) gain 29 header names, among them `HeaderEtag`, `HeaderVary`,
+  `HeaderDate`, `HeaderRange`, `HeaderOrigin`, `HeaderRetryAfter`, `HeaderUpgrade` and the
+  five `HeaderSecWebSocket*` fields. The new unit `Http2.Common.Status` names the HTTP
+  status codes (`HttpStatusOk`, `HttpStatusNotFound`, `HttpStatusServiceUnavailable` and
+  the others of RFC 9110 section 15, with 428, 429, 431, 451 and 511). The additions are
+  not breaking; no existing name changes.
 - New format helpers over `IBodyReader` and `IBodyWriter`, in four units. The units
   `Http2.Common.Body.Text` (`ReadText`, `TextBodyWriter`), `Http2.Common.Body.Json`
   (`ParseJson`, `ReadJson`, `ReadJsonObject`, `JsonBodyWriter`) and

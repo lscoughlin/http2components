@@ -238,7 +238,7 @@ never served, so the graceful stop reads
 
 ## An example
 
-The three programs in `examples/` show the life of a server.
+The programs in `examples/server` show the life of a server and the main handler forms.
 
 `examples/hello_server.pas` builds a cleartext server, starts it, serves one
 page, and stops it when the caller presses Enter.
@@ -249,6 +249,18 @@ page, and stops it when the caller presses Enter.
 `examples/slow_handler.pas` runs a handler that sleeps on a small handler pool
 with a shallow queue, so a burst of requests fills the queue and the server
 refuses the surplus. The observer of the program counts the refusals.
+
+`examples/server/json_echo.pas` reads a JSON request body with `ReadJson` and answers
+with `JsonBodyWriter`. Both helpers are described in
+[formats](../common/formats.md).
+
+`examples/server/ws_echo.pas` echoes WebSocket messages. It reads a text message with
+`ReadAllBody` and a binary message with a `ReadChunk` loop, and it sets a larger
+streaming pool so that a long message does not stall the other sessions (see
+[websocket](websocket.md)).
+
+`examples/server/ws_stream.pas` answers a WebSocket message with a streamed message that
+`IWsSession.SendStream` pulls from an `IBodyWriter`, one fragment for each chunk.
 
 ## RFC references
 

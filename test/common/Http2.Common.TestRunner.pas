@@ -43,7 +43,8 @@ uses
   Http2.Common.Cookie.Test,
   Http2.Common.Body.Streams.Test,
   Http2.Common.Body.Formats.Test,
-  Http2.Common.Body.Large.Test;
+  Http2.Common.Body.Large.Test,
+  Http2.Common.Names.Test;
 
 procedure RegisterTests;
 begin

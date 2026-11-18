@@ -29,6 +29,7 @@ source revisions. They do not report results for the combined TLS implementation
 | [Format helpers](design/common/formats.md) | The text, JSON and XML helpers over the body reader and writer, and their errors and memory. |
 | [Protocol](design/common/protocol.md) | The shared HTTP/2 protocol areas and their RFC references. |
 | [URI](design/common/uri.md) | The shared URI parser, host rules, reference resolution and origin helpers. |
+| [Header names and status codes](design/common/names.md) | The header-name constants and the status-code constants. |
 | [Cookies](design/common/cookies.md) | The cookie record, the Set-Cookie and Cookie helpers, and the case-sensitive parameter map. |
 
 ## Client design

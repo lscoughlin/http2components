@@ -163,14 +163,7 @@ message is a `Read` that returns 0 or a `ReadChunk` that returns False, and both
 repeat.
 
 ```pascal
-// before: the whole message came in a TBytes
-procedure TMyHandler.Message(const ASession: IWsSession; const AData: TBytes;
-  const AText: Boolean);
-begin
-  ASession.Send(AData, AText);
-end;
-
-// now: the message is a reader
+// an echo handler that holds the whole message
 procedure TMyHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
   const AText: Boolean);
 begin

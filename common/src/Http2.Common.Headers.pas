@@ -44,6 +44,39 @@ const
   HeaderLocation      = 'location';
   HeaderHost          = 'host';
   HeaderTe            = 'te';
+  // More regular header names (RFC 9110 section 5 and the sections that define each field).
+  // The connection-specific names (connection, upgrade, transfer-encoding) are
+  // forbidden on the HTTP/2 wire and belong to HTTP/1.1 and to the WebSocket handshake.
+  HeaderAcceptLanguage = 'accept-language';
+  HeaderAcceptRanges  = 'accept-ranges';
+  HeaderAllow         = 'allow';
+  HeaderConnection    = 'connection';
+  HeaderContentDisposition = 'content-disposition';
+  HeaderContentLanguage = 'content-language';
+  HeaderContentRange  = 'content-range';
+  HeaderDate          = 'date';
+  HeaderEtag          = 'etag';
+  HeaderExpect        = 'expect';
+  HeaderIfMatch       = 'if-match';
+  HeaderIfModifiedSince = 'if-modified-since';
+  HeaderIfNoneMatch   = 'if-none-match';
+  HeaderIfRange       = 'if-range';
+  HeaderIfUnmodifiedSince = 'if-unmodified-since';
+  HeaderLastModified  = 'last-modified';
+  HeaderOrigin        = 'origin';
+  HeaderRange         = 'range';
+  HeaderReferer       = 'referer';
+  HeaderRetryAfter    = 'retry-after';
+  HeaderServer        = 'server';
+  HeaderTransferEncoding = 'transfer-encoding';
+  HeaderUpgrade       = 'upgrade';
+  HeaderVary          = 'vary';
+  /// WebSocket handshake fields (RFC 6455 section 11.3)
+  HeaderSecWebSocketAccept = 'sec-websocket-accept';
+  HeaderSecWebSocketExtensions = 'sec-websocket-extensions';
+  HeaderSecWebSocketKey = 'sec-websocket-key';
+  HeaderSecWebSocketProtocol = 'sec-websocket-protocol';
+  HeaderSecWebSocketVersion = 'sec-websocket-version';
   /// Server-Sent Events resume header (WHATWG "last event ID string")
   HeaderLastEventId   = 'last-event-id';
 
