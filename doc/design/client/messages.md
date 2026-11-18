@@ -43,17 +43,22 @@ type
     property Body: IHttpBodyStream read GetBody;
   end;
 
-// client/src/Http2.Client.Stream.pas
+// client/src/Http2.Client.Stream.Types.pas
 type
-  IHttpBodyStream = interface
-    /// block until bytes are available or END_STREAM. The first Read that
-    /// observes EOF returns 0; a Read after EOF raises EHttpStreamError.
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+  IHttpBodyStream = interface(IBodyReader)
+    // Read (inherited) blocks until bytes are available or END_STREAM. The
+    // Read that observes EOF returns 0, and every later Read returns 0 too.
     /// true once END_STREAM (or a bodyless response) is observed and any
     /// buffered bytes are exhausted
     function Eof: Boolean;
   end;
 ```
+
+`IBodyReader` is declared in `Http2.Common.Body`. It gives `Read` and
+`ReadChunk(const ABuffer: TStream): Boolean`. `ReadChunk` appends the next chunk
+to the buffer and returns True. It returns False when the body has ended, and the
+octets of that last call are the last chunk. A chunk of `ReadChunk` is one `Read`
+of at most 16384 octets (see [body](../common/body.md)).
 
 `Http2.Client.Messages` also re-exports `TClearTextPolicy`, `TNegotiatedProtocol`,
 and `ICleartextSocketFactory` as aliases of the types declared in
@@ -130,8 +135,9 @@ verified-facts table.
 - Pseudo-headers are **not** exposed in the public `Headers` map; they are
   surfaced through typed properties (`StatusCode`, etc.).
 - **Body consumption:** the body is a stream. `Read` blocks until enough
-  DATA bytes are available or `END_STREAM` is seen. A second read after EOF
-  raises deterministically rather than hanging.
+  DATA bytes are available or `END_STREAM` is seen. A read after EOF returns 0
+  and never raises `EHttpStreamError`. Every later read also returns 0, so a
+  read loop ends at the first 0.
 - The response object stays valid after `Send` returns even while other
   threads use the client.
 

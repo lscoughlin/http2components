@@ -20,7 +20,7 @@ interface
 
 uses
   SysUtils, Classes, fpcunit, testregistry,
-  Http2.Client.Encoding, Http2.Common.Headers, Http2.Client.Messages, Http2.Client.Stream;
+  Http2.Client.Encoding, Http2.Common.Headers, Http2.Client.Messages, Http2.Client.Stream, Http2.Common.Body;
 
 type
   TEncodingTest = class(TTestCase)
@@ -71,14 +71,14 @@ type
   end;
 
   /// a body stream over a fixed byte array, so a wrapper has an inner stream
-  TMemoryBodyStream = class(TInterfacedObject, IHttpBodyStream)
+  TMemoryBodyStream = class(TBodyReaderBase, IHttpBodyStream)
   private
     FData: TBytes;
     FPos: Integer;
   public
     Reads: Integer;
     constructor Create(const AData: TBytes);
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
   end;
 

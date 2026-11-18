@@ -20,7 +20,7 @@ uses
     SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Client.Tls, Http2.Client.Stream,
   Http2.Client.Messages,
-  Http2.Client, Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.Redirects.Test,
+  Http2.Client, Http2.Client.Clock, Http2.Client.RequestObserver, Http2.Client.Redirects.Test, Http2.Common.Body,
   Http2.Client.ClearText.Support, Http2.Client.Http1, Http2.Client.Http1.Test, Http2.Client.Sse, Http2.Client.RequestObserver.Support;
 
 type
@@ -34,6 +34,7 @@ type
     procedure TestBufferMixingTwoReadsAttributesBytesCorrectly;
     procedure TestAggregatesFollowTheTransportReads;
     procedure TestResponseThroughTheClientReportsAggregates;
+    procedure TestReadChunkFollowsTheTransportReads;
   end;
 
 
@@ -170,6 +171,42 @@ begin
     AssertEquals('last', 1350, Cap.Last.Arrivals.LastUs);
     AssertEquals('max gap', 300, Cap.Last.Arrivals.MaxGapUs);
     AssertEquals('sum', 350, Cap.Last.Arrivals.SumGapUs);
+  finally
+    BodyRef := nil;
+    Reader.Free;
+  end;
+end;
+
+procedure THttp1ArrivalTest.TestReadChunkFollowsTheTransportReads;
+var
+  Sock: TStagedSocket;
+  SockRef: IHttp2Socket;
+  Reader: TBufferedReader;
+  BodyRef: IHttpBodyStream;
+  Chunk: TChunkBuffer;
+begin
+  Sock := TStagedSocket.Create;
+  SockRef := Sock;
+  Sock.Add('abc', 100);
+  Sock.Add('defgh', 750);
+  SetNowUsHook(ScriptedClock);
+  Reader := TBufferedReader.Create(SockRef);
+  try
+    BodyRef := THttp1BodyStream.Create(Reader, bfContentLength, 8, nil);
+    Chunk := TChunkBuffer.Create;
+    try
+      AssertTrue('the first chunk carries the body', BodyRef.ReadChunk(Chunk));
+      AssertEquals('the first transport read', 'abc', StrOf(ChunkBytes(Chunk)));
+      Chunk.Reset;
+      AssertTrue('the second chunk carries the body', BodyRef.ReadChunk(Chunk));
+      AssertEquals('the second transport read', 'defgh', StrOf(ChunkBytes(Chunk)));
+      Chunk.Reset;
+      AssertFalse('the end gives False', BodyRef.ReadChunk(Chunk));
+      Chunk.Reset;
+      AssertFalse('the end repeats', BodyRef.ReadChunk(Chunk));
+    finally
+      Chunk.Free;
+    end;
   finally
     BodyRef := nil;
     Reader.Free;

@@ -30,7 +30,7 @@ interface
 
 uses
   SysUtils, Classes,
-  Http2.Common.Headers, Http2.Client.Messages, Http2.Client.Stream, Http2.Client.RequestObserver, zstream;
+  Http2.Common.Headers, Http2.Common.Body, Http2.Client.Messages, Http2.Client.Stream, Http2.Client.RequestObserver, zstream;
 
 type
   /// the content codings this client understands
@@ -79,7 +79,7 @@ function DeflateDecompress(const AData: TBytes): TBytes;
 // - the compressed bytes are pulled from the inner stream on demand, so a
 ///   large response never has to be held in memory
 type
-  TDecodingBodyStream = class(TInterfacedObject, IHttpBodyStream)
+  TDecodingBodyStream = class(TBodyReaderBase, IHttpBodyStream)
   private
     FInner: IHttpBodyStream;
     FSource: TStream;
@@ -98,7 +98,7 @@ type
       const ACoding: TContentEncoding; const AMaxRatio: Integer = 0;
       const ARatioFloor: Int64 = 1048576);
     destructor Destroy; override;
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
     function Eof: Boolean;
   end;
 
@@ -121,16 +121,16 @@ uses
   Http2.Client.Body.Limits, Http2.Client.Errors;
 
 type
-  /// a non-seekable TStream view of an IHttpBodyStream, with a pushback
+  /// a non-seekable TStream view of an IBodyReader, with a pushback
   /// buffer so a caller can inspect the first bytes and put them back
   TBodyStreamAdapter = class(TStream)
   private
-    FInner: IHttpBodyStream;
+    FInner: IBodyReader;
     FPush: TBytes;
     FPushPos: Integer;
     FWireBytes: Int64;
   public
-    constructor Create(const AInner: IHttpBodyStream);
+    constructor Create(const AInner: IBodyReader);
     /// the bytes read from the inner stream so far (pushback is not counted)
     property WireBytes: Int64 read FWireBytes;
     /// prepend AData to the bytes still to be served
@@ -456,7 +456,7 @@ end;
 
 { TBodyStreamAdapter }
 
-constructor TBodyStreamAdapter.Create(const AInner: IHttpBodyStream);
+constructor TBodyStreamAdapter.Create(const AInner: IBodyReader);
 begin
   inherited Create;
   FInner := AInner;

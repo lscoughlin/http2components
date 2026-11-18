@@ -162,10 +162,10 @@ type
   end;
 
   /// a response body stream (matches doc/design/messages.md IHttpBodyStream)
-  IHttpBodyStream = interface
-    /// block until bytes are available or END_STREAM is seen. The first Read
-    /// that observes EOF returns 0; a Read after EOF raises EHttpStreamError.
-    function Read(var ABuffer; const ACount: LongInt): LongInt;
+  // - Read (inherited from IBodyReader) blocks until bytes are available or
+  //   END_STREAM is seen. The Read that observes EOF returns 0, and every later
+  //   Read returns 0 too (D2): no read after the end raises.
+  IHttpBodyStream = interface(IBodyReader)
     /// true once END_STREAM (or a bodyless response) is observed and buffered
     /// bytes are exhausted
     function Eof: Boolean;

@@ -21,6 +21,54 @@
   chunked transfer coding. It no longer holds the whole body in memory. The other
   `IBodyWriter` paths already stream: the server response, the server WebSocket stream
   and the HTTP/2 client upload. This release adds tests for them.
+- **Behavior change.** A read of a response body after its end returns 0. It no longer
+  raises `EHttpStreamError`. Every later read also returns 0. A read loop ends at the
+  first 0, as before. A caller that caught `EHttpStreamError` for this case gets no
+  exception now.
+
+  Old code, a second read after the end raised:
+
+  ```pascal
+  N := Body.Read(Buf, SizeOf(Buf));   // 0: the end
+  try
+    Body.Read(Buf, SizeOf(Buf));      // raised EHttpStreamError
+  except
+    on EHttpStreamError do ;
+  end;
+  ```
+
+  New code, both reads return 0:
+
+  ```pascal
+  N := Body.Read(Buf, SizeOf(Buf));   // 0: the end
+  N := Body.Read(Buf, SizeOf(Buf));   // 0, no exception
+  ```
+
+- **Breaking change of the API.** `IHttpBodyStream` extends `IBodyReader` and so has
+  `ReadChunk(const ABuffer: TStream): Boolean`. `Read` and `Eof` keep their shape. A unit
+  that implements `IHttpBodyStream` must give `ReadChunk` too. The easy way is to derive
+  its class from `TBodyReaderBase` in `Http2.Common.Body` and to mark its `Read` as
+  `override`.
+
+  Old shape of a body class:
+
+  ```pascal
+  TMyBody = class(TInterfacedObject, IHttpBodyStream)
+  public
+    function Read(var ABuffer; const ACount: LongInt): LongInt;
+    function Eof: Boolean;
+  end;
+  ```
+
+  New shape of the same class:
+
+  ```pascal
+  TMyBody = class(TBodyReaderBase, IHttpBodyStream)
+  public
+    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
+    function Eof: Boolean;
+  end;
+  ```
 
 ### Server
 
