@@ -94,7 +94,7 @@ type
     function Path: string;
     function Headers: THeaderBlock;
     function Read(var ABuffer; const ACount: Integer): Integer;
-    function ReadChunk(out AChunk: TBytes): Boolean;
+    function ReadChunk(const ABuffer: TStream): Boolean;
     function BodyIsComplete: Boolean;
     function IsCancelled: Boolean;
     function StreamId: LongWord;
@@ -389,9 +389,8 @@ begin
   Result := 0;
 end;
 
-function TFakeRequest.ReadChunk(out AChunk: TBytes): Boolean;
+function TFakeRequest.ReadChunk(const ABuffer: TStream): Boolean;
 begin
-  AChunk := nil;
   Result := False;
 end;
 

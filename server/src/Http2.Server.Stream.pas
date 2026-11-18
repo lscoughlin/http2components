@@ -34,7 +34,7 @@ uses
   SysUtils, Classes, SyncObjs,
   mormot.core.base, mormot.core.os,
   Http2.Server.Errors, Http2.Server.Seam, Http2.Server.Waiter,
-  Http2.Common.Hpack, Http2.Server.Duplex, Http2.Server.StreamHost,
+  Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Duplex, Http2.Server.StreamHost,
   Http2.Server.ClientCert, Http2.Server.Stream.Meta;
 
 type
@@ -91,6 +91,10 @@ type
     FDrainLowWater: Integer;
 
     function DoRead(var ABuffer; const ACount: Integer): Integer;
+    /// copy every buffered inbound octet into AChunk and empty the buffer
+    function TakeInbound(out AChunk: TBytes): Boolean;
+    /// park until a delivery, the end or a cancel; raise EHttpTimeout at ADeadline
+    procedure WaitInbound(const ADeadline: QWord);
     function DoWrite(const ABuffer; const ACount: Integer): Boolean;
     /// raise EStreamCancelled when the waiter reports a cancellation
     procedure RaiseIfCancelled;
@@ -149,8 +153,9 @@ type
     /// block until bytes arrive, the body ends, the deadline expires or the
     /// stream is cancelled; 0 means the body has ended
     function Read(var ABuffer; const ACount: Integer): Integer;
-    /// answer with the next buffered chunk; False means the body has ended
-    function ReadChunk(out AChunk: TBytes): Boolean;
+    /// append the next buffered chunk to ABuffer; False means the body has ended
+    // - blocks like Read while the buffer is empty; a True answer writes octets
+    function ReadChunk(const ABuffer: TStream): Boolean;
     /// block while the outbound buffer is full, then append the bytes
     procedure Write(const AData: TBytes); overload;
     /// block while the outbound buffer is full, then append ACount bytes
@@ -573,11 +578,47 @@ begin
   Result := N;
 end;
 
+procedure TServerStream.WaitInbound(const ADeadline: QWord);
+var
+  Remaining: Integer;
+  R: TWaitResult;
+begin
+  // a delivery that races the caller's check is not lost: Signal leaves a pending
+  // mark in the waiter, so the park below returns at once
+  Remaining := Integer(ADeadline - GetTickCount64);
+  if Remaining <= 0 then
+    raise EHttpTimeout.Create('the request body read timed out');
+  R := FWaiter.Wait(Remaining);
+  if R = wrCancelled then
+    raise EStreamCancelled.Create('the stream was cancelled',
+      FStreamId, FResetCode);
+end;
+
+function TServerStream.TakeInbound(out AChunk: TBytes): Boolean;
+var
+  N: Integer;
+begin
+  LockStream;
+  try
+    N := FInboundCount;
+    SetLength(AChunk, N);
+    if N > 0 then
+    begin
+      Move(FInbound[FInboundStart], AChunk[0], N);
+      FInboundStart := 0;
+      FInboundCount := 0;
+      CompactInbound;
+      Inc(FConsumedSinceUpdate, N);
+    end;
+  finally
+    UnlockStream;
+  end;
+  Result := N > 0;
+end;
+
 function TServerStream.Read(var ABuffer; const ACount: Integer): Integer;
 var
   Deadline: QWord;
-  Remaining: Integer;
-  R: TWaitResult;
 begin
   if ACount <= 0 then
     Exit(0);
@@ -590,48 +631,32 @@ begin
       Exit;
     if BodyIsComplete then
       Exit(0);
-    // a delivery that races this check is not lost: Signal leaves a pending
-    // mark in the waiter, so the park below returns at once
-    Remaining := Integer(Deadline - GetTickCount64);
-    if Remaining <= 0 then
-      raise EHttpTimeout.Create('the request body read timed out');
-    R := FWaiter.Wait(Remaining);
-    if R = wrCancelled then
-      raise EStreamCancelled.Create('the stream was cancelled',
-        FStreamId, FResetCode);
+    WaitInbound(Deadline);
   end;
 end;
 
-function TServerStream.ReadChunk(out AChunk: TBytes): Boolean;
+function TServerStream.ReadChunk(const ABuffer: TStream): Boolean;
 var
-  N: Integer;
+  Chunk: TBytes;
+  Deadline: QWord;
 begin
-  AChunk := nil;
-  RaiseIfCancelled;
-  LockStream;
-  try
-    if FInboundCount > 0 then
-    begin
-      N := FInboundCount;
-      SetLength(AChunk, N);
-      Move(FInbound[FInboundStart], AChunk[0], N);
-      FInboundStart := 0;
-      FInboundCount := 0;
-      CompactInbound;
-      Inc(FConsumedSinceUpdate, N);
-    end
-    else
-      N := 0;
-  finally
-    UnlockStream;
-  end;
-  if N > 0 then
+  Deadline := GetTickCount64 + QWord(FReadTimeoutMs);
+  while True do
   begin
-    if Assigned(FHost) then
-      FHost.WindowUpdatePending(FStreamId, N);
-    Exit(True);
+    RaiseIfCancelled;
+    if TakeInbound(Chunk) then
+    begin
+      // the octets go to the caller's stream outside the connection lock
+      ChunkAppend(ABuffer, Chunk);
+      // the handler read is the only source of stream receive credit
+      if Assigned(FHost) then
+        FHost.WindowUpdatePending(FStreamId, Length(Chunk));
+      Exit(True);
+    end;
+    if BodyIsComplete then
+      Exit(False);
+    WaitInbound(Deadline);
   end;
-  Result := not BodyIsComplete;
 end;
 
 function TServerStream.DoWrite(const ABuffer; const ACount: Integer): Boolean;

@@ -28,7 +28,7 @@ uses
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
   Http2.Server.Errors, Http2.Server.Seam, Http2.Server.Waiter,
   Http2.Server.Stream, Http2.Server.StreamHost, Http2.Common.FlowControl,
-  Http2.Common.Hpack;
+  Http2.Common.Hpack, Http2.Common.Body;
 
 type
   /// the connection lock, with a count of the holds for the lock probe
@@ -107,6 +107,10 @@ type
     procedure TestDeliverAndRead;
     procedure TestBodyEndReturnsZero;
     procedure TestReadChunkDrainsBuffer;
+    /// the window update of a ReadChunk covers the octets that it takes
+    procedure TestReadChunkEmitsWindowCredit;
+    /// after the end, every ReadChunk and Read answers the end again
+    procedure TestRepeatedEndAnswersFalse;
     procedure TestReadWaitsForDelivery;
     procedure TestCancelWakesBlockedRead;
     /// a refusal asks the connection for an RST_STREAM
@@ -340,17 +344,67 @@ end;
 procedure TServerStreamTest.TestReadChunkDrainsBuffer;
 var
   Data, Chunk: TBytes;
+  Buf: TChunkBuffer;
 begin
   Data := MakePattern(20);
   FStream.DeliverData(Data, False);
-  AssertTrue('a chunk is available', FStream.ReadChunk(Chunk));
-  AssertEquals('the chunk holds every buffered byte', 20, Length(Chunk));
-  AssertEquals('the chunk starts at the first byte', 0, Chunk[0]);
-  AssertEquals('the buffer is empty', 0, FStream.InboundCount);
+  Buf := TChunkBuffer.Create;
+  try
+    AssertTrue('a chunk is available', FStream.ReadChunk(Buf));
+    Chunk := ChunkBytes(Buf);
+    AssertEquals('the chunk holds every buffered byte', 20, Length(Chunk));
+    AssertEquals('the chunk starts at the first byte', 0, Chunk[0]);
+    AssertEquals('the buffer is empty', 0, FStream.InboundCount);
+    FStream.DeliverData(nil, True);
+    // a drained buffer over a complete body answers False without a reset
+    Buf.Reset;
+    AssertFalse('a chunk after the body end answers False',
+      FStream.ReadChunk(Buf));
+  finally
+    Buf.Free;
+  end;
+end;
+
+procedure TServerStreamTest.TestReadChunkEmitsWindowCredit;
+var
+  Buf: TChunkBuffer;
+begin
+  FStream.DeliverData(MakePattern(100), False);
+  Buf := TChunkBuffer.Create;
+  try
+    AssertTrue('a chunk is read', FStream.ReadChunk(Buf));
+    AssertEquals('the chunk holds 100 octets', 100, Buf.Size);
+    AssertEquals('the host learned of one credit update', 1, FHost.Calls);
+    AssertEquals('the credit equals the octets read', 100, FHost.Updates);
+    AssertEquals('the stream remembers the consumed amount', 100,
+      FStream.ConsumedSinceUpdate);
+  finally
+    Buf.Free;
+  end;
+end;
+
+procedure TServerStreamTest.TestRepeatedEndAnswersFalse;
+var
+  Buf: TChunkBuffer;
+  Dummy: TBytes;
+  I: Integer;
+begin
   FStream.DeliverData(nil, True);
-  // a drained buffer over a complete body answers False without a reset
-  AssertFalse('a chunk after the body end answers False',
-    FStream.ReadChunk(Chunk));
+  SetLength(Dummy, 8);
+  Buf := TChunkBuffer.Create;
+  try
+    for I := 1 to 3 do
+    begin
+      Buf.Reset;
+      AssertFalse('ReadChunk answers False at the end, call ' + IntToStr(I),
+        FStream.ReadChunk(Buf));
+      AssertEquals('the end writes no octets', 0, Buf.Size);
+    end;
+    AssertEquals('Read answers zero at the end', 0, FStream.Read(Dummy[0], 8));
+    AssertEquals('an end sends no window update', 0, FHost.Calls);
+  finally
+    Buf.Free;
+  end;
 end;
 
 procedure TServerStreamTest.TestReadWaitsForDelivery;

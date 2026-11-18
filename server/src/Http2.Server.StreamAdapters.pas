@@ -73,7 +73,7 @@ type
     function Path: string;
     function Headers: THeaderBlock;
     function Read(var ABuffer; const ACount: Integer): Integer;
-    function ReadChunk(out AChunk: TBytes): Boolean;
+    function ReadChunk(const ABuffer: TStream): Boolean;
     function BodyIsComplete: Boolean;
     function IsCancelled: Boolean;
     function StreamId: LongWord;
@@ -216,9 +216,9 @@ begin
   Result := FStream.Read(ABuffer, ACount);
 end;
 
-function TServerStreamRequest.ReadChunk(out AChunk: TBytes): Boolean;
+function TServerStreamRequest.ReadChunk(const ABuffer: TStream): Boolean;
 begin
-  Result := FStream.ReadChunk(AChunk);
+  Result := FStream.ReadChunk(ABuffer);
 end;
 
 function TServerStreamRequest.BodyIsComplete: Boolean;

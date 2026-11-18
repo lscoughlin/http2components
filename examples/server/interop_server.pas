@@ -133,8 +133,6 @@ var
   Value: Int64;
   Body: TBytes;
   Read: Integer;
-  Total: Integer;
-  Chunk: TBytes;
   Coding: TContentEncoding;
   Text: string;
   Headers: THeaderBlock;
@@ -201,17 +199,8 @@ begin
 
   if Path = '/echo' then
   begin
-    SetLength(Body, 0);
-    Total := 0;
-    // pull the request body in chunks, so a large upload needs no large buffer
-    while ARequest.ReadChunk(Chunk) do
-    begin
-      if Length(Chunk) = 0 then
-        Continue;
-      SetLength(Body, Total + Length(Chunk));
-      Move(Chunk[0], Body[Total], Length(Chunk));
-      Inc(Total, Length(Chunk));
-    end;
+    // ReadAllBody pulls the request body with ReadChunk, one chunk at a time
+    Body := ReadAllBody(ARequest);
     AResponse.SendHeaders(200, nil, False);
     AResponse.Write(Body);
     AResponse.Finish;

@@ -89,6 +89,12 @@ The handler runs on a handler-pool thread. A handler that runs on an IO thread
 would hold the connection lock and stall the pool, so the pool checks the rule
 at dispatch (`server/src/Http2.Server.Admission.pas`).
 
+The request is an `IBodyReader` (`Http2.Common.Body`). A handler reads its body with
+`Read`, with `ReadChunk` into a `TChunkBuffer`, or with `ReadAllBody`, which reads
+the body to its end. `ReadChunk(const ABuffer: TStream): Boolean` appends the next
+chunk to the stream that the caller gives, and it answers False at the end of the
+body. The end repeats on every later call. See `doc/design/server/seam.md`.
+
 The request carries a read-write `Principal` property. Code that authenticates a
 request sets it, and the access log writes it. The factory takes an
 `IAccessLogWriter` through `WithAccessLogWriter`; the default is no writer. The

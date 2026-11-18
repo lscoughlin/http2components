@@ -77,11 +77,17 @@ type
   /// the client; its declaration is in Http2.Common.Body.
   IBodyWriter = Http2.Common.Body.IBodyWriter;
 
+  /// The body reader interface, shared with the client and the common units.
+  // - ReadChunk gives the next buffered chunk, and the server sends
+  //   WINDOW_UPDATE only for the octets that the handler reads.
+  IBodyReader = Http2.Common.Body.IBodyReader;
+
   /// The request as one handler sees it.
   ///
   /// The request is byte-oriented.  No method converts a text encoding and no
   /// method takes a string as a byte container.
-  IServerRequest = interface
+  // - the request is a body reader: ReadChunk comes from IBodyReader
+  IServerRequest = interface(IBodyReader)
     ['{7E1F0C11-0003-4A11-9C72-000000000513}']
     /// ':method'
     function Method: string;
@@ -98,10 +104,6 @@ type
     // - a return of 0 means the body has ended
     // - a cancelled stream raises EStreamCancelled in the handler's thread
     function Read(var ABuffer; const ACount: Integer): Integer;
-    /// answer with the next buffered chunk; False means the body has ended
-    // - the server sends WINDOW_UPDATE for the stream only when the handler
-    //   reads, which bounds the memory of a queued or slow request
-    function ReadChunk(out AChunk: TBytes): Boolean;
     /// true once the request body has ended
     function BodyIsComplete: Boolean;
     /// true once the peer, or the connection, has cancelled the stream
