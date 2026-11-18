@@ -110,6 +110,55 @@ the subject DN, or the common name. The TLS context policy uses common
 `tlsAuthRequire`. `IServerRequest` exposes no native certificate handle.
 [mtls](mtls.md) describes the feature.
 
+## Cookies
+
+`IServerRequest.Headers` gives a `THeaderBlock`, an array of `Name` and `Value`
+pairs. The cookie helpers of `Http2.Common.Cookie` take an `IHttpHeaders` map. A
+handler therefore copies the fields into a map, and then calls `GetCookies`. The map
+gives every pair of every `cookie` field, in order, as a `TParameters`. Names are
+case-sensitive.
+
+```pascal
+var
+  LFields: THeaderBlock;
+  LMap: IHttpHeaders;
+  LCookies: TParameters;
+  I: Integer;
+begin
+  LFields := ARequest.Headers;
+  LMap := NewHttpHeaders;
+  for I := 0 to High(LFields) do
+    LMap.Add(LFields[I].Name, LFields[I].Value);
+  LCookies := GetCookies(LMap);
+  // LCookies.GetFirst('session') gives the first value, or ''
+end;
+```
+
+A handler sets a cookie by adding a `set-cookie` field to the response header block. The
+value of the field is `THttpCookie.ToString`. The attributes are the properties of
+`THttpCookie`, and each `With` method gives a changed copy:
+
+```pascal
+var
+  LHeaders: THeaderBlock;
+begin
+  SetLength(LHeaders, 2);
+  LHeaders[0].Name := 'content-type';
+  LHeaders[0].Value := 'text/plain';
+  LHeaders[1].Name := 'set-cookie';
+  LHeaders[1].Value := THttpCookie.Create('session', 'abc')
+    .WithPath('/')
+    .WithSecure
+    .WithHttpOnly
+    .WithSameSite(ssLax)
+    .ToString;
+  AResponse.SendHeaders(200, LHeaders, False);
+end;
+```
+
+`ToString` raises `EBodyFormatError` when the name or the value holds a forbidden octet.
+The description of the cookie types is in [cookies](../common/cookies.md).
+
 ## Detached streams
 
 `IServerResponse.Detach` ends the synchronous life of a handler and answers an
