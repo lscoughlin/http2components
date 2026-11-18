@@ -178,7 +178,9 @@ var
   Settings: TConnectionSettings;
 begin
   Pending := FSock.SockReceivePending(AWaitMs);
-  if not (Pending in [cspSocketError, cspSocketClosed]) then
+  // read only when octets are waiting: SockReceiveString on an idle socket blocks
+  // up to the socket timeout
+  if Pending in [cspDataAvailable, cspDataAvailableOnClosedSocket] then
   begin
     Chunk := FSock.SockReceiveString;
     if Chunk <> '' then
