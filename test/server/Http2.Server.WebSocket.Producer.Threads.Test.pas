@@ -180,8 +180,12 @@ begin
   finally
     FreeAndNil(Reached);
   end;
-  AssertEquals('the Write of the producer raised EStreamCancelled', 'EStreamCancelled',
-    FFixture.ErrorClass);
+  // the stop races the producer: it can end before the producer wrote its last row, and
+  // then a Write raises EStreamCancelled; or the producer wrote every row first, and
+  // then no Write raised. No other exception is legal. The stop while the sink waits,
+  // between two writes and before the step enters have their own deterministic tests.
+  AssertTrue('a Write raised EStreamCancelled or none raised, not ' + FFixture.ErrorClass,
+    (FFixture.ErrorClass = '') or (FFixture.ErrorClass = 'EStreamCancelled'));
   FWantGone := 1;
   AssertTrue('the writer is released', WaitUntil(WriterGone, 5000));
   AssertEquals('no overlapping pump step was reported', 0, FRig.EventCount(seHandlerException));
