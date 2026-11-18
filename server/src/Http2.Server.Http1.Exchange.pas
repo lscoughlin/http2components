@@ -32,7 +32,7 @@ interface
 
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
-  SysUtils, Classes, SyncObjs,
+  SysUtils, Classes, SyncObjs, streamex,
   Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.HandlerJob, Http2.Server.HandlerDeadline, Http2.Server.Http1.Guard, Http2.Server.Http1.Host,
   Http2.Server.Http1.ResponseHead, Http2.Server.Http1.Channel,
@@ -144,6 +144,8 @@ type
     function Headers: THeaderBlock;
     function Read(var ABuffer; const ACount: Integer): Integer;
     function ReadChunk(const ABuffer: TStream): Boolean;
+    function GetStream: TStream;
+    function GetStreamReader: TStreamReader;
     function BodyIsComplete: Boolean;
     function IsCancelled: Boolean;
     function StreamId: LongWord;
@@ -445,6 +447,16 @@ begin
   Result := N > 0;
   if Result then
     ABuffer.WriteBuffer(Buf[0], N);
+end;
+
+function TH1Exchange.GetStream: TStream;
+begin
+  Result := BodyStream(Self as IServerRequest);
+end;
+
+function TH1Exchange.GetStreamReader: TStreamReader;
+begin
+  Result := BodyStreamReader(Self as IServerRequest);
 end;
 
 function TH1Exchange.BodyIsComplete: Boolean;

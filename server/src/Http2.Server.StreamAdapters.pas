@@ -21,7 +21,7 @@ unit Http2.Server.StreamAdapters;
 interface
 
 uses
-  SysUtils, Classes,
+  SysUtils, Classes, streamex,
   Http2.Server.Errors,
   Http2.Common.Hpack,
   Http2.Common.Headers,
@@ -74,6 +74,8 @@ type
     function Headers: THeaderBlock;
     function Read(var ABuffer; const ACount: Integer): Integer;
     function ReadChunk(const ABuffer: TStream): Boolean;
+    function GetStream: TStream;
+    function GetStreamReader: TStreamReader;
     function BodyIsComplete: Boolean;
     function IsCancelled: Boolean;
     function StreamId: LongWord;
@@ -219,6 +221,16 @@ end;
 function TServerStreamRequest.ReadChunk(const ABuffer: TStream): Boolean;
 begin
   Result := FStream.ReadChunk(ABuffer);
+end;
+
+function TServerStreamRequest.GetStream: TStream;
+begin
+  Result := BodyStream(Self as IServerRequest);
+end;
+
+function TServerStreamRequest.GetStreamReader: TStreamReader;
+begin
+  Result := BodyStreamReader(Self as IServerRequest);
 end;
 
 function TServerStreamRequest.BodyIsComplete: Boolean;

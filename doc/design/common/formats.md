@@ -47,14 +47,16 @@ parser.
 
 | Unit | Routines | Library dependency |
 | --- | --- | --- |
-| `Http2.Common.Body.Text` | `ReadText`, `TextBodyWriter` | run-time library only |
+| `Http2.Common.Body.Text` | `ReadText`, `TextBodyWriter` | fcl-base (the FCL package), through `Http2.Common.Body` |
 | `Http2.Common.Body.Json` | `ParseJson`, `ReadJson`, `ReadJsonObject`, `JsonBodyWriter` | fcl-json (the FCL package) |
 | `Http2.Common.Body.Xml` | `ParseXml`, `ReadXml`, `XmlBodyWriter` | fcl-xml (the FCL package) |
-| `Http2.Common.Body.Streams` | `TReaderStream`, `TSerializedBodyWriter` | run-time library only |
+| `Http2.Common.Body.Streams` | `TSerializedBodyWriter`, and the name `TReaderStream` | fcl-base (the FCL package), through `Http2.Common.Body` |
 
 The JSON and XML units are separate. A program that does not use them does not
 link fcl-json or fcl-xml. The unit `Http2.Common.Body.Streams` holds the base class
-of the serialized writers, and the stream that the XML reader uses.
+of the serialized writers. The class `TReaderStream` is declared in
+`Http2.Common.Body`, so that `GetStream` can give it. The name stays available in
+`Http2.Common.Body.Streams` as an alias.
 
 ## Text
 
@@ -186,6 +188,12 @@ client contract is in [messages](../client/messages.md).
 
 The client uses the stream to decode a body with a content coding. In that use the
 mode is single-read, so a decoder receives each chunk as it arrives.
+
+A caller with a parser of its own can use `GetStream` of the reader, which gives
+`TReaderStream` in the single-read mode. The `TStreamReader` of `GetStreamReader`
+reads the same body as lines or text. Such a parser must accept a short read, as
+the text reader does. A parser that takes a short read as the end of its input
+needs the `FillReads` mode, as `ReadXml` uses it.
 
 ## Memory
 
