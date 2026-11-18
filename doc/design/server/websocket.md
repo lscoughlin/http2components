@@ -96,7 +96,7 @@ except 1010, which is a client code.
 | 1003 | available to an application |
 | 1007 | a text message or a Close reason that is not UTF-8, also when the handler has read part of the message already |
 | 1008 | a policy limit: a token bucket is empty, too many messages wait for the application, or a read of a streamed message waited for `InboundStallMs` (reason `the message stalled`) |
-| 1009 | a message or a frame is over its limit, or a streamed message fills the pipe on a channel that cannot slow its peer (reason `the handler reads too slowly`) |
+| 1009 | a message or a frame is over its limit, or a streamed message fills the pipe on a channel that returns no credit (reason `the handler reads too slowly`) |
 | 1011 | a callback raised, or the Pong did not come |
 | 1006 | reported to the application only: the connection ended without a Close frame, or the peer did not answer the Close frame in time |
 | 1005 | reported to the application only: the Close frame had no status |
@@ -214,11 +214,14 @@ handler thread reads.
   The IO thread therefore needs no pool task to deliver a fragment.
 - `Read` waits on an event with no lock held. `ReadChunk` gives the next chunk as it was
   pushed, or the rest of a chunk that a `Read` began.
-- The pipe holds at most `InboundPipeBytes` octets (default 1 MiB). A push that takes the
-  buffer over the cap drops the buffer, aborts the pipe, and the session closes with 1009
-  and the reason `the handler reads too slowly`. On HTTP/2 the credit rule below keeps the
-  unread octets at the stream window plus `InlineLimit`, so the cap is reached only when
-  the window is larger than the cap allows.
+- On a channel that returns no credit (an HTTP/1.1 upgrade, a unix socket) the pipe holds
+  at most `InboundPipeBytes` octets (default 1 MiB). A push that takes the buffer over the
+  cap drops the buffer, aborts the pipe, and the session closes with 1009 and the reason
+  `the handler reads too slowly`. On HTTP/2 the pipe has no cap: the credit rule below
+  keeps the unread octets at the stream window plus `InlineLimit`, so the window is the
+  bound, and a handler that waits before its first read never costs the session. The
+  channel tells the session which case it is through the optional interface
+  `IChannelFlow`; a channel without it counts as a channel that returns no credit.
 - A read that gets no octet for `InboundStallMs` (default 30000) aborts the pipe, raises
   `EStreamCancelled`, and the session closes with 1008 and the reason `the message
   stalled`.
@@ -241,8 +244,12 @@ rules.
 - An HTTP/1.1 upgrade and a unix socket have no flow control: `ReturnCredit` does nothing
   and the IO layer never pauses its reads. A slow handler does not slow its peer on such a
   channel. The pipe cap bounds the memory, and a handler that falls behind by more than
-  the cap loses its session with 1009. The memory bound is `InboundPipeBytes` on every
-  channel kind. The slowing of the peer exists on HTTP/2 only.
+  the cap loses its session with 1009. The memory bound of a streamed message is
+  `InboundPipeBytes` on these channels and the stream window plus `InlineLimit` on HTTP/2.
+  The slowing of the peer exists on HTTP/2 only.
+- The credit that the queue rule holds back (`QueuedMessages` half full) is given back when
+  a message starts to stream, so the inline octets of a streamed message never wait for a
+  handler that is busy with an earlier message.
 - The frame headers of a message that is open never wait under the rule of
   `QueuedMessages` (see [The receive path](#the-receive-path)).
 
@@ -250,17 +257,21 @@ rules.
 message bucket, it counts once in `QueuedMessages`, and it charges the server budget
 `MaxWsQueuedBytes` with `InboundPipeBytes`, because its length is not known then. The task
 keeps the same number, so the release is equal. A message in memory charges its length
-when it ends. `wcMessagesIn` counts at the same moment. `wcBytesIn` counts the octets of
-the message when it ends.
+when it ends. `wcMessagesIn` counts at the same moment. `wcBytesIn` counts the octets of a
+streamed message as they arrive, so a message that ends by an abort, a Close frame, a stall
+or an overflow counts the octets that came before it. A streamed message whose pipe was
+aborted before its handler started (a Close frame between its fragments, for example) is
+not given to the handler: the session drops it and releases its credit, its count and its
+charge.
 
 **Limits.** `MaxMessageSize` limits the whole message, as before, and a message over it
 closes the session with 1009. A program that streams larger messages raises it. The
 assembler limit `MaxFragments` (default 1024) stays and limits the frames of one message.
 With the default `MaxFrameSize` it caps a streamed message at 64 MiB, so a program that
 streams a larger message raises `MaxFragments` together with `MaxMessageSize`.
-`InlineLimit` must not pass `InboundPipeBytes`, because the kept octets move into the
-pipe. On HTTP/2, `InboundPipeBytes` must be at least `InlineLimit` plus the stream window,
-or a slow handler can reach the cap.
+`Problems` requires `InboundPipeBytes` of at least `InlineLimit` plus `MaxFrameSize`,
+because the kept octets move into the pipe when a message starts to stream and the first
+piece follows at once, before the handler has read an octet.
 
 **The threads.**
 
@@ -279,6 +290,14 @@ or a slow handler can reach the cap.
   pool. A reply with `SendStream` starts when `Message` returns.
 - The ping timer cannot close a session while the handler reads, because the tick waits
   for `Message`. The stall time of the pipe is the deadline that covers this case.
+- The stall deadline covers only a blocked `Read`. A handler that blocks outside `Read`
+  holds its pool thread until it returns. On a channel without flow control the pipe then
+  fills, and the session closes with 1009.
+- The hold rule of `QueuedMessages` exempts the headers of the frames of a receive call
+  that carries a streamed message (its start, its pieces or its end). When one receive
+  call also carries a whole small message after the end of a streamed message, the credit
+  of that message is not held in that call. The effect is a window that is larger than
+  the rule intends for one receive call. No credit is lost.
 
 **The end of the session.** `TryEnd` is the one place that every end of a session passes:
 a Close frame, a protocol error, a lost transport, an abort, a failure of a callback and
@@ -554,7 +573,8 @@ upgraded connection (as described in [lifecycle](lifecycle.md)).
   and the session closes with 1008 when the queue passes `QueuedMessages`. An
   application that expects bursts sets a larger queue. A client that sends one large
   message faster than the handler reads it fills the pipe of the message, and the session
-  closes with 1009 when the unread octets pass `InboundPipeBytes`.
+  closes with 1009 when the unread octets pass `InboundPipeBytes`. This cap exists on a
+  channel that returns no credit only; on HTTP/2 the stream window bounds the pipe.
 
 
 ## The HTTP/2 handshake
@@ -670,7 +690,7 @@ defaults live in `Create`.
 | `MessageBucket` | 10000 tokens, 10000 a second | data messages that arrive |
 | `WsEarlyBytes` | 262144 | the octets that the channel holds before the session takes it |
 | `InlineLimit` | 65536 | the octets of a message that the server keeps in memory before it gives the message to the handler; a message that ends inside the limit goes to the handler whole, and a longer message streams; from 1 to 16777216 |
-| `InboundPipeBytes` | 1048576 | the greatest count of unread octets of a streamed message; a push over it closes the session with 1009; at least `InlineLimit` |
+| `InboundPipeBytes` | 1048576 | the greatest count of unread octets of a streamed message on a channel that returns no credit; a push over it closes the session with 1009; at least `InlineLimit` plus `MaxFrameSize`; also the budget charge of every streamed message |
 | `InboundStallMs` | 30000 | the time that a read of a streamed message waits for an octet; on expiry the session closes with 1008 |
 | `OriginPolicy` | `opSameOrAbsent` | as described in above |
 | `AllowedOrigins` | none | the allow-list, each entry `scheme://host[:port]` |

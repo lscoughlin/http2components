@@ -107,17 +107,19 @@ value that is not usable.
 | Setting | `WithX` | Meaning |
 |---|---|---|
 | `InlineLimit` | `WithInlineLimit` | the octets of a message that the server keeps in memory before it gives the message to the handler; a message that ends inside the limit goes to the handler whole, and a longer message streams; 1 to 16777216; the default is 65536 |
-| `InboundPipeBytes` | `WithInboundPipeBytes` | the unread octets of a streamed message that the server holds at most; a push over the limit closes the session with 1009; at least 1 and at least `InlineLimit`; the default is 1048576 |
+| `InboundPipeBytes` | `WithInboundPipeBytes` | the unread octets of a streamed message that the server holds at most on a channel that returns no credit; a push over the limit closes the session with 1009; at least `InlineLimit` plus `MaxFrameSize`; also the budget charge of each streamed message against `MaxWsQueuedBytes` (so about 128 streamed messages fit in the default budget); the default is 1048576 |
 | `InboundStallMs` | `WithInboundStallMs` | the time that a read of a streamed message waits for an octet, in milliseconds; on expiry the session closes with 1008; at least 1; the default is 30000 |
 
 A handler that reads a streamed message holds one thread of the streaming pool for the
 whole read. The default `StreamPoolSize` is 1, so one such handler stops every other
 WebSocket session and event stream until it returns or until `InboundStallMs` passes. An
 application that reads long messages sets `StreamPoolSize` above the number of sessions
-that read at the same time. On HTTP/2, `InboundPipeBytes` is at least `InlineLimit` plus
-the initial stream window, so that a slow handler slows its stream and does not reach the
-limit. An HTTP/1.1 upgrade and a Unix socket have no flow control, so a handler that reads
-slower than the peer sends reaches the limit and loses its session.
+that read at the same time. On HTTP/2 the pipe has no cap, because the stream window bounds
+the unread octets, so a slow handler slows its stream only. An HTTP/1.1 upgrade and a Unix
+socket have no flow control, so a handler that reads slower than the peer sends reaches the
+limit and loses its session with 1009. `Validate` reports an `InboundPipeBytes` below
+`InlineLimit` plus `MaxFrameSize`. A program with more than 128 concurrent streamed
+messages raises `MaxWsQueuedBytes` (see [limits](limits.md)) or lowers `InboundPipeBytes`.
 
 ### The Unix socket settings
 

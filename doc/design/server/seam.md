@@ -248,6 +248,10 @@ the channel lock, and from a pool thread, which takes the channel lock inside th
 A caller therefore holds no lock of its own that the IO thread can take while it holds the
 channel lock.
 
+The optional interface `IChannelFlow` (`ReturnsCredit`) tells a consumer which case a
+channel is. The HTTP/2 stream channel answers True. A channel without the interface counts
+as a channel that returns no credit.
+
 **Pending and active.** A handler that calls `Detach` before `SendHeaders`
 receives a pending channel. No response has left yet. `Send` holds the bytes in
 the channel, so no DATA frame can leave before the HEADERS frame. `Activate`

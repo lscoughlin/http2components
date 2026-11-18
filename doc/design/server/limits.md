@@ -228,15 +228,22 @@ Four settings of `TWsOptions` bound the memory that one inbound message can hold
 | `MaxMessageSize` | 1048576 | the whole inbound message, over all its fragments; a message over it closes the session with 1009 |
 | `MaxFragments` | 1024 | the frames of one message; with the default `MaxFrameSize` it caps a streamed message at 64 MiB |
 | `InlineLimit` | 65536 | the octets that the reader keeps in memory before it streams the message to the handler |
-| `InboundPipeBytes` | 1048576 | the unread octets of a streamed message; a push over it closes the session with 1009 |
+| `InboundPipeBytes` | 1048576 | the unread octets of a streamed message on a channel that returns no credit; a push over it closes the session with 1009; at least `InlineLimit` plus `MaxFrameSize` |
 
 `MaxMessageSize` keeps its meaning for a streamed message: it limits the whole message,
 not the part that waits in memory. A program that streams a message larger than the
 default raises `MaxMessageSize`, and it raises `MaxFragments` as well when the message
 needs more than 1024 frames. The memory that one streamed message holds is at most
-`InboundPipeBytes` on every channel kind. The server-wide budget `MaxWsQueuedBytes`
-charges `InboundPipeBytes` for a streamed message from its start. `InboundStallMs` bounds
-the time that a read of a streamed message waits for an octet.
+`InboundPipeBytes` on a channel that returns no credit (an HTTP/1.1 upgrade, a unix
+socket), and at most the stream window plus `InlineLimit` on HTTP/2. `InboundStallMs`
+bounds the time that a read of a streamed message waits for an octet.
+
+The server-wide budget `MaxWsQueuedBytes` (default 128 MiB) charges `InboundPipeBytes` for
+each streamed message from its start until its handler returns, on every channel kind,
+because the length of the message is not known at its start. With the defaults about 128
+streamed messages can run at the same time. The 129th closes its session with 1008 and the
+reason `the queued bytes of the server are full`. A program with more concurrent streamed
+messages raises `MaxWsQueuedBytes` or lowers `InboundPipeBytes`.
 
 ## Handshake refusals on HTTP/2
 

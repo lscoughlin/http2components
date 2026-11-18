@@ -76,11 +76,25 @@
   message that gets no octet for `InboundStallMs` closes the session with 1008 (reason
   `the message stalled`). A streamed message that fills the pipe on a channel that has no
   flow control (an HTTP/1.1 upgrade, a Unix socket) closes the session with 1009 (reason
-  `the handler reads too slowly`). On HTTP/2 the credit of the octets of a pipe returns as
-  the handler reads them, so a slow handler slows its own stream only.
+  `the handler reads too slowly`). On HTTP/2 the pipe has no cap: the credit of the
+  octets of a pipe returns as the handler reads them, so a slow handler slows its own
+  stream only. `Validate` requires `InboundPipeBytes` of at least `InlineLimit` plus
+  `MaxFrameSize`.
 - A streamed message counts once in `QueuedMessages` and in the message bucket, and it
-  charges `MaxWsQueuedBytes` with `InboundPipeBytes` from its start. A program that streams
-  a message over 64 MiB raises `MaxFragments` with `MaxMessageSize`.
+  charges `MaxWsQueuedBytes` with `InboundPipeBytes` from its start until its handler
+  returns. With the default 128 MiB budget about 128 streamed messages can run at once; a
+  program with more raises `MaxWsQueuedBytes` or lowers `InboundPipeBytes`. A program that
+  streams a message over 64 MiB raises `MaxFragments` with `MaxMessageSize`.
+- When a message starts to stream, the credit that the `QueuedMessages` hold rule kept for
+  its inline octets is given back. A streamed message whose pipe was aborted before its
+  handler started (a Close frame between its fragments) is no longer given to the handler.
+  `wcBytesIn` counts the octets of a streamed message as they arrive, so it agrees with
+  `wcMessagesIn` for a message that is aborted.
+- A read that waits when the last octet or the end arrives at the stall deadline no longer
+  reports the message as stalled.
+- The stall deadline covers a blocked `Read` only. A handler that blocks outside `Read`
+  holds its pool thread, and on a channel without flow control the session closes with
+  1009 when the pipe fills.
 - The end of a session aborts the pipe of a message that still arrives, before the
   streaming pool stops.
 - **Behavior change.** `IWsSession.SendStream` sends each chunk of the writer as one
