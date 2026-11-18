@@ -97,6 +97,7 @@ uses
   Http2.Server.WebSocket.Pump.Test,
   Http2.Server.WebSocket.Inbound.Test,
   Http2.Server.WebSocket.Inbound.Session.Test,
+  Http2.Server.WebSocket.Inbound.Hold.Test,
   Http2.Server.WebSocket.Inbound.Threads.Test,
   Http2.Server.WebSocket.Stream.Test,
   Http2.Server.WebSocket.Stream.Threads.Test,

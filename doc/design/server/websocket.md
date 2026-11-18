@@ -35,7 +35,7 @@ invariants:
   - The handler is called on a thread of the streaming pool, one call at a time for a session, in the order of the events, and never on an IO thread.
   - A message that ends inside the inline limit reaches the handler as a reader over memory, and a read never waits. A longer message reaches the handler when it passes the limit, and a bounded pipe carries the later octets.
   - The IO thread never waits for the handler. A push into the pipe never blocks, and the lock of the pipe is a leaf lock.
-  - The credit of the octets of a pipe returns as the handler reads them. The credit of the inline octets and of every frame header returns when they arrive.
+  - The credit of the octets of a pipe returns as the handler reads them. The credit of the inline octets and of every frame header returns when they arrive, except that it waits while the queue is half full (the frame headers of a streamed message that is open never wait).
   - The end of the session aborts every pipe whose message still arrives, before the streaming pool stops.
   - Exactly one of Closed or Failed ends the conversation, unless the application calls Abort.
   - The server never puts the close codes 1005, 1006 or 1015 on the wire.
@@ -248,7 +248,13 @@ rules.
   a message starts to stream, so the inline octets of a streamed message never wait for a
   handler that is busy with an earlier message.
 - The frame headers of a message that is open never wait under the rule of
-  `QueuedMessages` (see [The receive path](#the-receive-path)).
+  `QueuedMessages` (see [The receive path](#the-receive-path)). A message that follows
+  the end of a streamed message in the same receive call is not open, and its octets
+  wait while the queue is half full. While the session is open, the credit that waits is
+  given back as the handler takes messages, and the sum of the credit equals the octets
+  that arrived. After the session ends (an abort, a protocol error or a lost transport),
+  the stream credit that waits is not returned. The HTTP/2 connection window is credited
+  when the frames arrive, so no connection credit is lost.
 
 **Counting.** A streamed message counts once, when it starts: it takes one token of the
 message bucket, it counts once in `QueuedMessages`, and it charges the server budget
@@ -290,11 +296,12 @@ piece follows at once, before the handler has read an octet.
 - The stall deadline covers only a blocked `Read`. A handler that blocks outside `Read`
   holds its pool thread until it returns. On a channel without flow control the pipe then
   fills, and the session closes with 1009.
-- The hold rule of `QueuedMessages` exempts the headers of the frames of a receive call
-  that carries a streamed message (its start, its pieces or its end). When one receive
-  call also carries a whole small message after the end of a streamed message, the credit
-  of that message is not held in that call. The effect is a window that is larger than
-  the rule intends for one receive call. No credit is lost.
+- The hold rule of `QueuedMessages` exempts the headers of the frames of a streamed
+  message that is open. When a receive call carries the end of a streamed message, the
+  exempt octets are the octets up to the end of its last frame (the reader counts them
+  as it parses). The octets after that frame, such as a whole small message in the same
+  call, are under the hold rule. While the call leaves a streamed message open, every
+  octet of the call is exempt.
 
 **The end of the session.** `TryEnd` is the one place that every end of a session passes:
 a Close frame, a protocol error, a lost transport, an abort, a failure of a callback and
@@ -507,7 +514,8 @@ message](#the-inbound-message)).
   queue of a session is half full, the credit of the octets that the rule credits on
   arrival waits until the application has taken messages. The headers of a streamed
   message that is open do not wait, so a small `QueuedMessages` cannot stall the peer in
-  the middle of a message.
+  the middle of a message. The octets of a receive call that follow the end of a streamed
+  message do wait.
 - **Delivery at the end.** The messages that arrived before a Close frame are delivered
   to `Message`, in order, and `Closed` follows the last of them. An abort, a failure of
   a callback and a protocol error drop the messages that still wait. A lost connection

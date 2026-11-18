@@ -89,6 +89,7 @@ type
     procedure Control(const AOpcode: Byte; const APayload; const ACount: Integer);
     function GetFailed: Boolean;
     function GetFailure: TWsFailure;
+    function GetConsumed: Integer;
   public
     /// ARequireMasked is True for the reader of a server (client frames)
     // - AInlineLimit is the count of octets that the reader keeps before it streams
@@ -108,6 +109,9 @@ type
     /// True while the reader gives the octets that it kept; the sink got them as
     /// arrived octets before
     property Replaying: Boolean read FReplaying;
+    /// the octets of the current Feed call that the reader has taken; at the sink call
+    /// MessageEnd it counts every octet up to the end of the last frame of the message
+    property Consumed: Integer read GetConsumed;
   end;
 
 implementation
@@ -170,6 +174,11 @@ begin
     Result := FFailure
   else
     Result := FParser.Failure;
+end;
+
+function TWsReader.GetConsumed: Integer;
+begin
+  Result := FParser.Consumed;
 end;
 
 function TWsReader.Feed(const AData; const ACount: Integer;
