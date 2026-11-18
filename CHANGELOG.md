@@ -220,7 +220,7 @@
   pipe, and `TTlsSocket` passes the call to its transport. A custom `IHttp2Socket`
   without the interface keeps the timed read, as before. The window rules are the same.
 
-- Fix: a download over `h2c` took about 16 ms for each 16 KiB frame on Linux, so 4 MiB
+- Fix: a download over `h2c` took about 40 ms for each 32 KiB of body on Linux, so 4 MiB
   took 5.3 s and 64 MiB took 85 s. The client socket had Nagle on, and `WriteFrame` wrote
   the 9 octet header and the payload in two calls. The second call of each
   `WINDOW_UPDATE` waited for the delayed ACK of the server, about 40 ms, and the server

@@ -471,7 +471,7 @@ begin
     for I := 0 to 9 do
       AssertTrue('frame enqueued', Conn.PostFrame(
         BuildPingFrame(nil, False)));
-    AssertTrue('all queued frames written', Sock.WaitForWrites(23, 2000));
+    AssertTrue('all queued frames written', Sock.WaitForWrites(12, 2000));
     AllFromWorker := True;
     for I := 0 to Sock.WriteThreadCount - 1 do
       if Sock.WriteThreadId(I) <> WorkerId then
@@ -556,7 +556,7 @@ begin
     Sock.FeedFrame(BuildSettingsFrame(Peer));
     // thread applies peer settings then writes a SETTINGS ACK; once the ACK
     // is observed the applied settings are visible
-    AssertTrue('ACK written', Sock.WaitForWrites(4, 2000));
+    AssertTrue('ACK written', Sock.WaitForWrites(3, 2000));
     AssertEquals('peer max concurrent streams applied', LongWord(7),
       Conn.PeerSettings.MaxConcurrentStreams);
     AssertEquals('peer max frame size applied', LongWord(32768),
@@ -577,7 +577,7 @@ begin
     Conn.Start;
     AssertTrue('preface emitted', Sock.WaitForWrites(2, 2000));
     Sock.FeedFrame(BuildPingFrame(nil, False));
-    AssertTrue('ping ack written', Sock.WaitForWrites(5, 2000));
+    AssertTrue('ping ack written', Sock.WaitForWrites(3, 2000));
   finally
     Conn.Free;
   end;
@@ -621,7 +621,7 @@ begin
     // in-flight work still drains: a queued frame is written after GOAWAY
     AssertTrue('post-GOAWAY frame enqueued',
       Conn.PostFrame(BuildDataFrame(1, nil, True)));
-    AssertTrue('in-flight frame still written', Sock.WaitForWrites(4, 2000));
+    AssertTrue('in-flight frame still written', Sock.WaitForWrites(3, 2000));
   finally
     Conn.Free;
   end;

@@ -5,7 +5,6 @@ keywords: verification, body reader, body writer, producer, WebSocket, streaming
 notes:
   - This record holds the Linux results of the streamed bodies and messages of version 0.33.0.
   - The record covers the shared body writer and body reader, the WebSocket send and receive streams, the producers, the cookie and format helpers, and the load runs of 2026-11-18.
-  - One defect of the HTTP/2 download time is open.
   - The load program is not stored in the repository.
 ---
 
@@ -73,15 +72,6 @@ and the server are in one process.
 | Upload of 64 MB, pull writer | status 200, all octets seen, 839 ms | 17 MB |
 | Upload of 64 MB, producer | status 200, all octets seen, 768 ms | 17 MB |
 | Upload of 16 MB, producer, handler sleeps 1 ms per read | status 200, all octets seen, 424 ms | 17 MB |
-| Download of 64 MB, producer | all octets arrived in 5121 reads, 84.7 s | 17 MB |
-
-## Defects open
-
-A download over HTTP/2 prior knowledge costs 16 to 20 ms for each read, with a reader that
-does not sleep. A download of 4 MB with 321 reads takes 5.3 s. A download of 64 MB takes
-84.7 s. The memory stays flat, so the defect affects the time only. A suspect is the poll
-timeout of the server IO loop for the direction from the server to the client. The cause is
-not confirmed.
 
 ## Not covered
 

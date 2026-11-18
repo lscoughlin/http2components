@@ -208,7 +208,7 @@ begin
       Peer.HeaderTableSize := 256;
       Mock.FeedFrame(BuildSettingsFrame(Peer));
       AssertTrue('the reader acknowledges the SETTINGS and does not wait',
-        Mock.WaitForWrites(4, 2000));
+        Mock.WaitForWrites(3, 2000));
       AssertEquals('the encoder keeps its size while the lock is held',
         LongWord(4096), Encoder.EncoderMaxSize);
       // the stream thread applies the size before it encodes its block

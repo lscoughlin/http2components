@@ -171,7 +171,7 @@ begin
     Peer.InitialWindowSize := 1234;
     Peer.MaxConcurrentStreams := 7;
     Sock.FeedFrame(BuildSettingsFrame(Peer));
-    AssertTrue('first settings are acknowledged', Sock.WaitForWrites(4, 2000));
+    AssertTrue('first settings are acknowledged', Sock.WaitForWrites(3, 2000));
     SetLength(Payload, 6);
     Payload[0] := 0;
     Payload[1] := 1;
@@ -180,7 +180,7 @@ begin
     Payload[4] := 1;
     Payload[5] := 0;
     Sock.FeedFrame(TFrame.Create(ftSettings, [], 0, Payload));
-    AssertTrue('table setting is acknowledged', Sock.WaitForWrites(5, 2000));
+    AssertTrue('table setting is acknowledged', Sock.WaitForWrites(4, 2000));
     AssertEquals('initial window remains unchanged', LongWord(1234),
       Conn.PeerSettings.InitialWindowSize);
     AssertEquals('stream cap remains unchanged', LongWord(7),
@@ -224,7 +224,7 @@ begin
     Peer := TConnectionSettings.Defaults;
     Peer.InitialWindowSize := 1;
     Sock.FeedFrame(BuildSettingsFrame(Peer));
-    AssertTrue('first settings are acknowledged', Sock.WaitForWrites(4, 2000));
+    AssertTrue('first settings are acknowledged', Sock.WaitForWrites(3, 2000));
 
     SetLength(Payload, 4);
     Payload[0] := $7f;
