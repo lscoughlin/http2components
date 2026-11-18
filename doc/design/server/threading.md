@@ -225,12 +225,18 @@ that whole time, as a handler that reads a streamed message does. When the chann
 a fragment, the sink of the pump waits on that thread. It does not park the stream, and it
 posts no timer, because the timer is a task of the session and the pool runs one task of a
 session at a time. The wait holds no lock. The drain of the channel, the end of the
-session and a poll of 250 milliseconds end it. The tick of the session, a Pong, `Closed`
-and the messages of the same session wait until the producer returns. With the default
-`StreamPoolSize` of 1, one producer that waits for a slow peer stops every other WebSocket
-session and event stream, so an application that streams with producers sets
-`StreamPoolSize` above the number of producers that can wait at the same time. The IO
-thread never waits for the producer: the drain only sets an event.
+session and a poll of 250 milliseconds end it. The tick of the session, `Closed` and the
+messages of the same session wait until the producer returns. The replies to a Ping that
+the IO thread deferred, because a fragment write held the send lock, do not wait: the sink
+sends them on its own thread before each fragment and at each wake. A peer that stops
+reading is bounded by `OutboundStallMs` (default 30000): when the channel refuses one
+fragment for that time, the sink closes the session with 1008 and ends the producer, and
+the pool thread is free. The tick, which is a task behind the producer, could not end such
+a session. With the default `StreamPoolSize` of 1, one producer that waits for a slow peer
+stops every other WebSocket session and event stream for at most that time, so an
+application that streams with producers sets `StreamPoolSize` above the number of
+producers that can wait at the same time. The IO thread never waits for the producer: the
+drain only sets an event.
 
 ## Wake-up safety
 

@@ -246,9 +246,14 @@ fails the session with 1011 at the first chunk. `MaxFragments` and the other inb
 do not apply. The memory of the message is one chunk that the producer stream holds, one
 chunk that it holds back, and the encoded fragment that waits for the channel. A full
 channel blocks the `Write` of the producer, so a slow peer does not make the message grow
-in memory. The time that a producer waits has no limit: it holds one streaming pool thread
-(see [threading](threading.md)), and the end of the session is the only event that stops it
-from the outside.
+in memory. The time that a producer waits for the channel is limited by `OutboundStallMs`
+(default 30000, at least 1): when the channel refuses one fragment for that time, the
+session closes with 1008 and the reason `the send stalled`, and the producer ends with
+`EStreamCancelled`. A drain that leaves the channel full does not restart the time, and a
+fragment that the channel accepts starts a new time for the next one. The producer holds
+one streaming pool thread while it runs (see [threading](threading.md)); the stall time
+bounds that hold when the peer reads nothing, which the tick of the session could not do.
+A producer that is slow in its own code is not limited.
 
 The server-wide budget `MaxWsQueuedBytes` (default 128 MiB) charges `InboundPipeBytes` for
 each streamed message from its start until its handler returns, on every channel kind,

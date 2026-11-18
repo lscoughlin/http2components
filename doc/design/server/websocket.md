@@ -39,7 +39,7 @@ invariants:
   - The end of the session aborts every pipe whose message still arrives, before the streaming pool stops.
   - Exactly one of Closed or Failed ends the conversation, unless the application calls Abort.
   - The server never puts the close codes 1005, 1006 or 1015 on the wire.
-  - A producer that SendStream runs holds one streaming pool thread until it ends. When the channel is full, the sink waits on that thread and holds no lock, and the drain, the end of the session and a poll of 250 ms end the wait.
+  - A producer that SendStream runs holds one streaming pool thread until it ends. When the channel is full, the sink waits on that thread and holds no lock, and the drain, the end of the session and a poll of 250 ms end the wait. The sink sends the deferred control replies between fragments, and a fragment that the channel refuses for `OutboundStallMs` closes the session with 1008.
   - A message that Send sends is written with one call of the channel, so the frames of two messages never mix. A streamed message is written one fragment at a time, and no other data message is written while its stream runs.
 ---
 
@@ -99,7 +99,7 @@ except 1010, which is a client code.
 | 1002 | a protocol error: a bad frame, a Close payload that RFC 6455 section 5.5.1 forbids, a data frame after a Close frame |
 | 1003 | available to an application |
 | 1007 | a text message or a Close reason that is not UTF-8, also when the handler has read part of the message already |
-| 1008 | a policy limit: a token bucket is empty, too many messages wait for the application, or a read of a streamed message waited for `InboundStallMs` (reason `the message stalled`) |
+| 1008 | a policy limit: a token bucket is empty, too many messages wait for the application, a read of a streamed message waited for `InboundStallMs` (reason `the message stalled`), or the channel refused one fragment of a producer for `OutboundStallMs` (reason `the send stalled`) |
 | 1009 | a message or a frame is over its limit, or a streamed message fills the pipe on a channel that returns no credit (reason `the handler reads too slowly`) |
 | 1011 | a callback raised, or the Pong did not come |
 | 1006 | reported to the application only: the connection ended without a Close frame, or the peer did not answer the Close frame in time |
@@ -394,7 +394,7 @@ empty continuation frame with FIN.
 When the channel refuses a fragment, the sink waits. The wait blocks the pool thread of
 the producer, so the `Write` of the producer on the stream does not return, and the
 producer produces no more octets. The wait holds no lock of the pump and no lock of the
-session. Four events end the wait:
+session. Five events end the wait:
 
 - The channel drains. `WriteDrained` wakes the pump, and the pump sets the event of the
   sink.
@@ -406,27 +406,58 @@ session. Four events end the wait:
 - The session ends, or the Close frame of the application goes out. `TryEnd` and `Close`
   stop the pump, and the stop sets the event.
 - The channel answers `srClosed`.
+- The channel refuses the same fragment for `OutboundStallMs` (default 30000). The session
+  then closes with 1008 and the reason `the send stalled`, and the sink raises
+  `EStreamCancelled`. The time starts at the first refusal of a fragment. A drain that
+  leaves the channel full does not restart it, and a fragment that the channel accepts
+  starts a new time for the next fragment. The Close frame goes out when the channel takes
+  it. When the channel takes no frame at all, the close timeout of the session ends the
+  session, and the pool thread of the producer is free at once. Without this deadline a
+  peer that keeps its connection open and reads no octet would hold the pool thread for
+  ever, because the tick of the session is a task behind the producer.
 
-After the end of the session or after `srClosed`, the next call of the sink raises
-`EStreamCancelled`, and so the `Write` of the producer raises it. A producer that does not
-catch it ends, and the session sends no more frames. This end is quiet: the handler gets
+After the end of the session, after `srClosed` or after a stall, the next call of the sink
+raises `EStreamCancelled`. The producer stream calls the sink only when a chunk is full
+and at the end of the body, so the `Write` that fills the next chunk, or the end of the
+producer, raises it. A `Write` that only fills part of a chunk returns normally, and a
+producer that waits in its own code sees no cancel. A producer that does not catch the
+exception ends, and the session sends no more frames. This end is quiet: the handler gets
 no `Failed`. A Close by the application keeps the rule of the pulled stream: the message
 stays incomplete, no data frame follows the Close frame, and the closing handshake goes on
 with the code that the application gave.
+
+The sink keeps its first failure. When it has raised (a chunk over `MaxMessageSize`, a host
+error, a cancel), every later call raises the same failure, so a producer that catches the
+exception and writes on cannot complete the message with a missing fragment. When such a
+producer ends, the session fails. A call with no octets that is not the last call is
+skipped, as the pulled stream skips an empty chunk.
 
 The other rules of the pulled stream stay. While the producer runs, `Send` and
 `SendStream` return `srFull`. `MaxMessageSize` limits one chunk of the producer. When the
 producer raises, or when a chunk is longer than `MaxMessageSize`, the session calls
 `Fail`: the handler receives `Failed` once, and one Close frame with code 1011 goes out.
-The pump releases the writer when `Produce` returns or raises. After a stop, the thread
-of the producer releases it when the producer leaves, and not the thread that ended the
-session.
+The pump releases the writer when `Produce` returns or raises, on the pool thread that ran
+the producer. A stop that comes before the pump step has entered has no producer to wait
+for: the thread that ends the session (an IO thread, for a peer that closes or resets the
+stream) releases the writer, as it does for a pulled stream. The destructor of a writer
+therefore must not block, and must not take a lock that a caller of `Send` can hold.
+
+A Ping that arrives while the producer runs is answered. The IO thread sends the Pong at
+once when the send lock is free. When a fragment write holds the send lock, the IO thread
+defers the reply to the session queue, and the queue waits behind the producer. Before it
+writes each fragment, and at each wake while it waits, the sink sends the deferred replies
+on its own thread, in order. RFC 6455 section 5.4 permits control frames between the
+fragments, and no message of `Send` can split the stream. The peer therefore gets its Pong
+while the message runs, and a pong timeout of the peer does not close the connection.
 
 A producer holds one streaming pool thread while it runs, and while it waits for room in
-the channel. The tick, a Pong, `Closed` and the messages of the same session wait until
-`Produce` returns. With the default `StreamPoolSize` of 1, one producer that waits for a
-slow peer stops every other WebSocket session and event stream. An application that streams
-with producers sets `StreamPoolSize` above the number of producers that can run at the same
+the channel. The tick, `Closed` and the messages of the same session wait until `Produce`
+returns, and so does the inbound handler of a message that is larger than `InlineLimit`.
+A producer that waits for an event that a later inbound `Message` of the same session sets
+never gets it, because the `Message` call waits behind the producer. With the default
+`StreamPoolSize` of 1, one producer that waits for a slow peer stops every other WebSocket
+session and event stream for at most `OutboundStallMs`. An application that streams with
+producers sets `StreamPoolSize` above the number of producers that can run at the same
 time (see [threading](threading.md)).
 
 ## The Init hook
@@ -747,6 +778,7 @@ defaults live in `Create`.
 | `InlineLimit` | 65536 | the octets of a message that the server keeps in memory before it gives the message to the handler; a message that ends inside the limit goes to the handler whole, and a longer message streams; from 1 to 16777216 |
 | `InboundPipeBytes` | 1048576 | the greatest count of unread octets of a streamed message on a channel that returns no credit; a push over it closes the session with 1009; at least `InlineLimit` plus `MaxFrameSize`; also the budget charge of every streamed message |
 | `InboundStallMs` | 30000 | the time that a read of a streamed message waits for an octet; on expiry the session closes with 1008 |
+| `OutboundStallMs` | 30000 | the time that the channel may refuse one fragment of a producer that `SendStream` runs; on expiry the session closes with 1008 and the producer ends |
 | `OriginPolicy` | `opSameOrAbsent` | as described in above |
 | `AllowedOrigins` | none | the allow-list, each entry `scheme://host[:port]` |
 | `WsAllowedHosts` | none | the host allow-list, each entry `host[:port]`; an empty list turns the check off |
