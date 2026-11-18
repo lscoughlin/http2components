@@ -65,6 +65,9 @@ type
     procedure TestLargeMessageUsesFlowControl;
     procedure TestTheDetachLimitAnswers503;
     procedure TestDetachedHandlerOutlivesTheLimit;
+    procedure TestSendWsMessageStreamsBigMessage;
+    procedure TestNoneModeStopsTheServer;
+    procedure TestKeepFramesFalseCounts;
   end;
 
 implementation
@@ -557,6 +560,91 @@ begin
   finally
     Gated.LetInit;
     Router.LetReturn;
+    C.Free;
+  end;
+end;
+
+procedure TWsHttp2Test.TestSendWsMessageStreamsBigMessage;
+const
+  BigBytes = 3 * 1024 * 1024;
+var
+  C: TH2WsClient;
+  I: Integer;
+  Found: Boolean;
+  Deadline: QWord;
+begin
+  FRecording.Echo := False;
+  StartServer(Factory.WithWebSockets(TWsOptions.Create.WithQueuedMessages(256)
+    .WithMaxMessageSize(8 * 1024 * 1024)));
+  AssertTrue(Open(C));
+  try
+    C.SendWsMessage(1, BigBytes, 32768, $41);
+    Deadline := GetTickCount64 + 15000;
+    Found := False;
+    repeat
+      for I := 0 to FRecording.Count - 1 do
+        if FRecording.Line(I) = 'msg B ' + IntToStr(BigBytes) then
+          Found := True;
+      if not Found then
+        C.Pump(20);
+    until Found or (GetTickCount64 > Deadline);
+    AssertTrue('the handler saw the 3 MB message', Found);
+  finally
+    C.Free;
+  end;
+end;
+
+procedure TWsHttp2Test.TestNoneModeStopsTheServer;
+const
+  MegaBytes = 1024 * 1024;
+var
+  C: TH2WsClient;
+  Received: Int64;
+  Deadline: QWord;
+begin
+  FRecording.Echo := True;
+  StartServer(Factory.WithWebSockets(TWsOptions.Create.WithQueuedMessages(256)
+    .WithMaxMessageSize(8 * 1024 * 1024).WithOutboundStallMs(60000)));
+  AssertTrue(Open(C));
+  try
+    // no credit for the echo: the server stops at the window of the stream
+    C.CreditMode := ccNone;
+    C.SendWsMessage(1, MegaBytes, 32768, $43);
+    AssertTrue('the echo starts', C.WaitDataCount(1, 1, 5000));
+    // the stop is shown by the bound after a pause; the pause is not the decision
+    Deadline := GetTickCount64 + 500;
+    repeat
+      C.Pump(20);
+    until GetTickCount64 > Deadline;
+    Received := C.DataCount(1);
+    AssertTrue('the server stops at the window: ' + IntToStr(Received),
+      Received <= 65535 + 16384);
+    // credit the octets that arrived, then the rest must arrive
+    C.CreditMode := ccAuto;
+    C.SendWindowUpdate(0, LongWord(Received));
+    C.SendWindowUpdate(1, LongWord(Received));
+    AssertTrue('the rest of the echo arrives', C.WaitDataCount(1, MegaBytes, 15000));
+  finally
+    C.Free;
+  end;
+end;
+
+procedure TWsHttp2Test.TestKeepFramesFalseCounts;
+var
+  C: TH2WsClient;
+begin
+  FRecording.Echo := True;
+  StartServer(Factory);
+  AssertTrue(Open(C));
+  try
+    C.KeepFrames := False;
+    // the echo of 1000 octets is one server frame: a 4 octet header and 1000 payload octets
+    C.SendData(1, ClientText(StringOfChar('x', 1000)));
+    AssertTrue('the echo is counted', C.WaitDataCount(1, 1004, 5000));
+    AssertTrue('the count is the frame length: ' + IntToStr(C.DataCount(1)),
+      C.DataCount(1) = 1004);
+    AssertTrue('no DATA frame is kept', Length(C.DataOf(1)) = 0);
+  finally
     C.Free;
   end;
 end;

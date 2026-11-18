@@ -7,8 +7,11 @@ notes:
   - This unit holds TH2WsClient, a raw h2c frame client for the live WebSocket over
     HTTP/2 tests. The unit registers no test suite and uses no test framework, so the load
     program can link it.
-  - The client keeps every frame it receives, and answers each DATA frame at once with
-    WINDOW_UPDATE frames for the connection and for the stream.
+  - The client keeps the frames it receives while KeepFrames is True (the default). When
+    KeepFrames is False, it keeps no DATA frame and counts the DATA octets of each stream.
+  - The credit mode sets the WINDOW_UPDATE frames that answer a DATA frame. ccAuto
+    answers at once, ccDelayed answers after CreditDelayMs, and ccNone sends none.
+  - The socket sets TCP_NODELAY. Each frame goes out in one socket write.
 ---
 }
 /// A raw h2c frame client for the live WebSocket over HTTP/2 tests
@@ -29,7 +32,11 @@ uses
   Http2.Server.Http1.RawClient, Http2.Server.WebSocket.TestKit;
 
 type
-  /// a raw h2c client that keeps every frame it receives
+  /// the credit that the client returns for the DATA frames it receives
+  // - ccAuto returns the credit at once, ccDelayed after CreditDelayMs, ccNone not at all
+  THcCreditMode = (ccAuto, ccDelayed, ccNone);
+
+  /// a raw h2c client that keeps the frames it receives, unless KeepFrames is False
   TH2WsClient = class
   private
     FSock: TCrtSocket;
@@ -39,13 +46,18 @@ type
     FFields: TList<THeaderBlock>;
     FConnWindow: Int64;
     FStreamWindow: TDictionary<LongWord, Int64>;
+    FDataCounts: TDictionary<LongWord, Int64>;
     FPeerAdvertisesConnect: Boolean;
-    procedure Pump(const AWaitMs: Integer);
+    FCreditMode: THcCreditMode;
+    FCreditDelayMs: Integer;
+    FKeepFrames: Boolean;
     procedure Write(const AFrame: TFrame);
     function Credit(const AStreamId: LongWord): Int64;
   public
     constructor Create(const APort: Integer);
     destructor Destroy; override;
+    /// read and answer the frames that arrive, waiting up to AWaitMs for the first
+    procedure Pump(const AWaitMs: Integer);
     procedure OpenStream(const AId: LongWord; const AFields: THeaderBlock;
       const AEndStream: Boolean = False);
     procedure OpenWebSocket(const AId: LongWord; const AExtra: THeaderBlock = nil);
@@ -66,7 +78,24 @@ type
       out ACode: THttp2ErrorCode): Boolean;
     /// the received frames as text, for a failure message
     function Dump: string;
+    /// send one WebSocket message of ATotal payload octets as masked fragments
+    // - each fragment is at most AFragBytes (1 to 32768) octets; the message never
+    //   exists in memory as a whole
+    procedure SendWsMessage(const AId: LongWord; const ATotal: Int64;
+      const AFragBytes: Integer; const APattern: Byte);
+    /// send a WINDOW_UPDATE for the stream (0 is the connection)
+    procedure SendWindowUpdate(const AStreamId: LongWord; const AIncrement: LongWord);
+    /// the octets of DATA frame payload (padding and framing included) for the stream
+    // - counted in every mode, also when KeepFrames is False
+    function DataCount(const AStreamId: LongWord): Int64;
+    /// pump until DataCount reaches AMin; False after the timeout
+    function WaitDataCount(const AId: LongWord; const AMin: Int64;
+      const ATimeoutMs: Integer): Boolean;
     property PeerAdvertisesConnect: Boolean read FPeerAdvertisesConnect;
+    property CreditMode: THcCreditMode read FCreditMode write FCreditMode;
+    property CreditDelayMs: Integer read FCreditDelayMs write FCreditDelayMs;
+    /// when False, the DATA frames are counted and not kept
+    property KeepFrames: Boolean read FKeepFrames write FKeepFrames;
   end;
 
 implementation
@@ -98,8 +127,12 @@ begin
   FFrames := TList<TFrame>.Create;
   FFields := TList<THeaderBlock>.Create;
   FStreamWindow := TDictionary<LongWord, Int64>.Create;
+  FDataCounts := TDictionary<LongWord, Int64>.Create;
+  FKeepFrames := True;
   FConnWindow := 65535;
   FSock := TCrtSocket.Open('127.0.0.1', IntToStr(APort), nlTcp, ResponseMs);
+  // Nagle would hold a frame that is sent in two writes until the delayed ACK
+  FSock.TcpNoDelay := True;
   SetLength(Wire, ClientPrefaceSize);
   Move(ClientPreface[0], Wire[0], ClientPrefaceSize);
   Wire := Cat(Wire, FrameBytes(BuildSettingsFrame(TConnectionSettings.Defaults)));
@@ -111,6 +144,7 @@ destructor TH2WsClient.Destroy;
 begin
   FSock.Free;
   FStreamWindow.Free;
+  FDataCounts.Free;
   FFields.Free;
   FFrames.Free;
   FDec.Free;
@@ -178,20 +212,29 @@ begin
           FStreamWindow.AddOrSetValue(Header.StreamId,
             Credit(Header.StreamId) + ParseWindowUpdate(Frame));
       ftData:
-        if (Header.Length > 0) and not Frame.IsEndStream and
-           not IsGoingAwayClose(Frame) then
         begin
-          // Ended streams and the terminal going-away close need no more
-          // flow-control credit from this validation peer.
-          Write(BuildWindowUpdateFrame(0, Header.Length));
-          Write(BuildWindowUpdateFrame(Header.StreamId, Header.Length));
+          FDataCounts.AddOrSetValue(Header.StreamId,
+            DataCount(Header.StreamId) + Header.Length);
+          if (Header.Length > 0) and not Frame.IsEndStream and
+             not IsGoingAwayClose(Frame) and (FCreditMode <> ccNone) then
+          begin
+            // Ended streams and the terminal going-away close need no more
+            // flow-control credit from this validation peer.
+            if (FCreditMode = ccDelayed) and (FCreditDelayMs > 0) then
+              Sleep(FCreditDelayMs);
+            Write(BuildWindowUpdateFrame(0, Header.Length));
+            Write(BuildWindowUpdateFrame(Header.StreamId, Header.Length));
+          end;
         end;
     end;
-    FFrames.Add(Frame);
-    if Header.FrameType = ftHeaders then
-      FFields.Add(FDec.Decode(ExtractHeaderBlock(Frame)))
-    else
-      FFields.Add(nil);
+    if (Header.FrameType <> ftData) or FKeepFrames then
+    begin
+      FFrames.Add(Frame);
+      if Header.FrameType = ftHeaders then
+        FFields.Add(FDec.Decode(ExtractHeaderBlock(Frame)))
+      else
+        FFields.Add(nil);
+    end;
   end;
 end;
 
@@ -376,6 +419,62 @@ begin
     Pump(20);
   until GetTickCount64 > Deadline;
   Result := False;
+end;
+
+procedure TH2WsClient.SendWsMessage(const AId: LongWord; const ATotal: Int64;
+  const AFragBytes: Integer; const APattern: Byte);
+var
+  Left: Int64;
+  N: Integer;
+  Opcode: Byte;
+  Chunk: TBytes;
+begin
+  if (AFragBytes < 1) or (AFragBytes > 32768) then
+    raise Exception.Create('the fragment size must be from 1 to 32768 octets');
+  if ATotal <= 0 then
+  begin
+    SendData(AId, ClientFrame(WsOpBinary, True, nil));
+    Exit;
+  end;
+  Left := ATotal;
+  Opcode := WsOpBinary;
+  while Left > 0 do
+  begin
+    if Left > AFragBytes then
+      N := AFragBytes
+    else
+      N := Integer(Left);
+    SetLength(Chunk, N);
+    FillChar(Chunk[0], N, APattern);
+    Dec(Left, N);
+    SendData(AId, ClientFrame(Opcode, Left = 0, Chunk));
+    Opcode := WsOpContinuation;
+  end;
+end;
+
+procedure TH2WsClient.SendWindowUpdate(const AStreamId: LongWord; const AIncrement: LongWord);
+begin
+  Write(BuildWindowUpdateFrame(AStreamId, AIncrement));
+end;
+
+function TH2WsClient.DataCount(const AStreamId: LongWord): Int64;
+begin
+  if not FDataCounts.TryGetValue(AStreamId, Result) then
+    Result := 0;
+end;
+
+function TH2WsClient.WaitDataCount(const AId: LongWord; const AMin: Int64;
+  const ATimeoutMs: Integer): Boolean;
+var
+  Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  repeat
+    if DataCount(AId) >= AMin then
+      Exit(True);
+    Pump(20);
+  until GetTickCount64 > Deadline;
+  Result := DataCount(AId) >= AMin;
 end;
 
 end.
