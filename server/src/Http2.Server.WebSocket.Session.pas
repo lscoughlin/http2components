@@ -72,8 +72,10 @@ type
     FInlineText: Boolean;
     /// the octets that this BytesReceived call gave to a pipe: the pipe credits them
     FPushed: Integer;
-    /// this BytesReceived call belonged to a streamed message, which may have ended in it
-    FStreamFeed: Boolean;
+    /// the octets at the start of this BytesReceived call that belong to a streamed
+    /// message, up to the end of its last frame; MaxInt when a stream is open at the
+    /// end of the call. The hold rule does not apply to them
+    FStreamOctets: Integer;
     /// the message bucket, the queue, the closed state and the budget; False when the
     /// session failed or ended and the message does not go on
     function Admit(const ACharge: Int64): Boolean;
@@ -446,7 +448,7 @@ end;
 procedure TWsSession.BytesReceived(const AData; const ACount: Integer);
 var
   State: TWsState;
-  Data: Int64;
+  Data, Rest: Int64;
   Hold: Boolean;
   Ok: Boolean;
   Failure: TWsFailure;
@@ -472,26 +474,35 @@ begin
       Exit;
     end;
     FPushed := 0;
-    FStreamFeed := False;
+    FStreamOctets := 0;
     Ok := FReader.Feed(AData, ACount, Self);
     // every octet is credited once, when it is consumed: the octets of a frame
     // that arrives in pieces are credited piece by piece, so a control frame in
     // pieces cannot raise the window above what the server consumed. The octets that
     // went to a pipe are credited by the pipe, when the handler reads them. The credit
     // waits when the queue of the session is half full, until the handler has
-    // taken messages; the headers of a streamed message that is open never wait, or a
-    // small queue limit could stall the peer inside a message
+    // taken messages. The headers of a streamed message that is open never wait, or a
+    // small queue limit could stall the peer inside a message: the octets up to the
+    // end of that message are exempt, and the rule governs the octets after it
     Data := ACount - FPushed;
+    Rest := 0;
+    if FStreamOctets < ACount then
+      Rest := ACount - FStreamOctets;
+    if Rest > Data then
+      Rest := Data;
     FLock.Acquire;
     try
       Hold := (FQueuedMsgs * 2 >= FOpts.QueuedMessages) and (FPipe = nil) and
-        not FStreamFeed;
+        (Rest > 0);
       if Hold then
-        Inc(FHeldCredit, Data);
+      begin
+        Inc(FHeldCredit, Rest);
+        Dec(Data, Rest);
+      end;
     finally
       FLock.Release;
     end;
-    if not Hold and (Data > 0) then
+    if Data > 0 then
       FChannel.ReturnCredit(Data);
     if not Ok then
     begin
@@ -636,7 +647,8 @@ begin
   FInlineText := AText;
   if FReader.Streaming then
   begin
-    FStreamFeed := True;
+    // open: all octets are exempt, until MessageEnd sets the exact count
+    FStreamOctets := MaxInt;
     StartStream(AText);
   end;
 end;
@@ -688,8 +700,9 @@ var
 begin
   if FReader.Streaming then
   begin
-    // the headers of the last frame belong to the message that is open: no hold
-    FStreamFeed := True;
+    // the headers of the last frame belong to the message that is open: no hold up to
+    // the end of that frame; the octets after it belong to later messages
+    FStreamOctets := FReader.Consumed;
     FLock.Acquire;
     try
       P := FPipe;

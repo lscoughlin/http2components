@@ -83,6 +83,8 @@ type
     FControlLen: Integer;
     /// true between the first frame of a data message and its last frame
     FInMessage: Boolean;
+    /// the octets of the current Feed call that the parser has taken
+    FConsumed: Integer;
     FFailure: TWsFailure;
     function Fail(const ACode: Word; const AReason: string): Boolean;
     function ParseHead(const ASink: IWsParserSink): Boolean;
@@ -101,6 +103,10 @@ type
     property Failure: TWsFailure read FFailure;
     /// true while a data message is open (a frame without FIN has arrived)
     property InMessage: Boolean read FInMessage;
+    /// the octets of the current Feed call that the parser has taken; a sink call
+    /// sees the octets up to the end of the frame head, or up to the end of the
+    /// payload piece that ended before the call
+    property Consumed: Integer read FConsumed;
   end;
 
 implementation
@@ -231,6 +237,7 @@ var
 begin
   P := @AData;
   N := ACount;
+  FConsumed := 0;
   while (N > 0) and (FState <> psFailed) do
   begin
     if FState = psHead then
@@ -239,6 +246,7 @@ begin
       Inc(FHeadLen);
       Inc(P);
       Dec(N);
+      Inc(FConsumed);
       if FHeadLen = 2 then
       begin
         // the first two octets tell how many more the header needs
@@ -281,6 +289,7 @@ begin
       Inc(P, Take);
       Dec(N, Take);
       Dec(FRemaining, Take);
+      Inc(FConsumed, Take);
       if FRemaining = 0 then
         EndFrame(ASink);
     end;
