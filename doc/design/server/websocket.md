@@ -35,7 +35,7 @@ invariants:
   - The handler is called on a thread of the streaming pool, one call at a time for a session, in the order of the events, and never on an IO thread.
   - A message that ends inside the inline limit reaches the handler as a reader over memory, and a read never waits. A longer message reaches the handler when it passes the limit, and a bounded pipe carries the later octets.
   - The IO thread never waits for the handler. A push into the pipe never blocks, and the lock of the pipe is a leaf lock.
-  - The credit of the octets of a pipe returns as the handler reads them. The credit of the inline octets and of every frame header returns when they arrive.
+  - The credit of the octets of a pipe returns as the handler reads them. The credit of the inline octets and of every frame header returns when they arrive, except that it waits while the queue is half full (the frame headers of a streamed message that is open never wait).
   - The end of the session aborts every pipe whose message still arrives, before the streaming pool stops.
   - Exactly one of Closed or Failed ends the conversation, unless the application calls Abort.
   - The server never puts the close codes 1005, 1006 or 1015 on the wire.
@@ -250,8 +250,11 @@ rules.
 - The frame headers of a message that is open never wait under the rule of
   `QueuedMessages` (see [The receive path](#the-receive-path)). A message that follows
   the end of a streamed message in the same receive call is not open, and its octets
-  wait while the queue is half full. The credit that waits is given back as the handler
-  takes messages, and the sum of the credit equals the octets that arrived.
+  wait while the queue is half full. While the session is open, the credit that waits is
+  given back as the handler takes messages, and the sum of the credit equals the octets
+  that arrived. After the session ends (an abort, a protocol error or a lost transport),
+  the stream credit that waits is not returned. The HTTP/2 connection window is credited
+  when the frames arrive, so no connection credit is lost.
 
 **Counting.** A streamed message counts once, when it starts: it takes one token of the
 message bucket, it counts once in `QueuedMessages`, and it charges the server budget

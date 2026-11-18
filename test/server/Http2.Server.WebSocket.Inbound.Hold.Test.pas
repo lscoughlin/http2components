@@ -33,13 +33,18 @@ type
     /// a queue of four with a message in its handler, a streamed message that is
     /// open, and then one receive call: the last frame of the streamed message and a
     /// whole small message. The queue is at the hold threshold
+    procedure OpenStream(out AFrames: TArray<TBytes>);
     procedure DeliverTailAndSmallMessage(const ASmalls: Integer = 1);
     function CreditReaches: Boolean;
   published
     procedure TestSmallMessageAfterAStreamedTailIsHeld;
     procedure TestHeldCreditIsGivenAsTheHandlerConsumes;
     procedure TestTwoSmallMessagesAfterAStreamedTailBalance;
-    procedure TestAbortAfterAHeldTailNeverCreditsTwice;
+    procedure TestAbortAfterAHeldTailReturnsNoMoreCredit;
+    procedure TestOpenStreamAfterTheTailKeepsEverythingExempt;
+    procedure TestZeroLengthFinalFrameThenASmallMessageIsHeld;
+    procedure TestSplitFinalHeaderThenASmallMessageIsHeld;
+    procedure TestPingAfterAStreamedTailIsHeld;
   end;
 
 implementation
@@ -54,11 +59,7 @@ begin
   Result := FChannel.CreditSoFar = FTotal;
 end;
 
-procedure TWsInboundHoldTest.DeliverTailAndSmallMessage(const ASmalls: Integer);
-var
-  Frames: TArray<TBytes>;
-  Small, Buffer: TBytes;
-  I: Integer;
+procedure TWsInboundHoldTest.OpenStream(out AFrames: TArray<TBytes>);
 begin
   FHandler := TInboundHandler.Create;
   FHandlerRef := FHandler;
@@ -70,15 +71,24 @@ begin
   AssertTrue(FHandler.PartReached.WaitFor(5000) = wrSignaled);
   // M1 streams: 180 octets in three frames of 60. The first frame stays inline, the
   // second one starts the stream. Two places of the queue are in use now
-  Frames := MessageFrames(WsOpBinary, 180, 60);
-  FChannel.Deliver(Frames[0]);
-  FChannel.Deliver(Frames[1]);
+  AFrames := MessageFrames(WsOpBinary, 180, 60);
+  FChannel.Deliver(AFrames[0]);
+  FChannel.Deliver(AFrames[1]);
   // 16 (M0) + 66 (the kept frame) + 6 (the header of the second frame); the 60 octets
   // of the pipe wait for the handler
   AssertEquals(16 + cFrame60 + cHead, FChannel.CreditSoFar);
+  FCredited := FChannel.CreditSoFar;
+end;
+
+procedure TWsInboundHoldTest.DeliverTailAndSmallMessage(const ASmalls: Integer);
+var
+  Frames: TArray<TBytes>;
+  Small, Buffer: TBytes;
+  I: Integer;
+begin
+  OpenStream(Frames);
   Small := ClientFrame(WsOpBinary, True, PatternOf(10));
   FTotal := 16 + 3 * cFrame60 + ASmalls * Length(Small);
-  FCredited := FChannel.CreditSoFar;
   // one buffer: the last frame of M1 and the whole small messages after it
   Buffer := Frames[2];
   for I := 1 to ASmalls do
@@ -119,16 +129,75 @@ begin
   AssertEquals('every octet is credited once', FTotal, FChannel.CreditSoFar);
 end;
 
-procedure TWsInboundHoldTest.TestAbortAfterAHeldTailNeverCreditsTwice;
+procedure TWsInboundHoldTest.TestAbortAfterAHeldTailReturnsNoMoreCredit;
 begin
   DeliverTailAndSmallMessage;
   AssertEquals(FCredited + cHead, FChannel.CreditSoFar);
-  // the session ends while the credit of M2 waits. The channel is aborted, so credit
-  // that is still outstanding has no peer to reach; but no octet is credited twice
+  // the session ends while the credit of M2 waits. After the end no release path
+  // returns stream credit: the octets of M2 and of the pipe of M1 stay outstanding.
+  // The channel is aborted, so no peer waits for them, and the HTTP/2 connection window
+  // is credited when the frames arrive. The value is pinned as the code gives it
   FSession.Abort;
   FHandler.Resume.SetEvent;
-  Sleep(200);
-  AssertTrue('no octet is credited twice', FChannel.CreditSoFar <= FTotal);
+  Sleep(300);
+  AssertEquals('no credit after the end', FCredited + cHead, FChannel.CreditSoFar);
+end;
+
+procedure TWsInboundHoldTest.TestOpenStreamAfterTheTailKeepsEverythingExempt;
+var
+  Frames, Next: TArray<TBytes>;
+begin
+  OpenStream(Frames);
+  Next := MessageFrames(WsOpBinary, 180, 60);
+  // the tail of M1, a whole small message, and the start of a second stream in one
+  // buffer: a stream is open at the end, so nothing is held. The octets of the two
+  // pipes (60 each) wait for the handler
+  FChannel.Deliver(Join([Frames[2], ClientFrame(WsOpBinary, True, PatternOf(10)),
+    Next[0], Next[1]]));
+  AssertEquals(FCredited + 66 + 16 + 132 - 120, FChannel.CreditSoFar);
+end;
+
+procedure TWsInboundHoldTest.TestZeroLengthFinalFrameThenASmallMessageIsHeld;
+var
+  Frames: TArray<TBytes>;
+begin
+  OpenStream(Frames);
+  // the stream ends with an empty frame: its 6 octets are exempt, and the small
+  // message after it waits
+  FChannel.Deliver(Join([ClientFrame(WsOpContinuation, True, nil),
+    ClientFrame(WsOpBinary, True, PatternOf(10))]));
+  AssertEquals(FCredited + cHead, FChannel.CreditSoFar);
+end;
+
+procedure TWsInboundHoldTest.TestSplitFinalHeaderThenASmallMessageIsHeld;
+var
+  Frames: TArray<TBytes>;
+  Last: TBytes;
+begin
+  OpenStream(Frames);
+  Last := ClientFrame(WsOpContinuation, True, nil);
+  // the head of the last frame arrives in two calls: the first one leaves the stream
+  // open, and the second one ends it and carries the small message
+  FChannel.Deliver(Copy(Last, 0, 3));
+  AssertEquals(FCredited + 3, FChannel.CreditSoFar);
+  FChannel.Deliver(Join([Copy(Last, 3, 3), ClientFrame(WsOpBinary, True, PatternOf(10))]));
+  AssertEquals(FCredited + cHead, FChannel.CreditSoFar);
+end;
+
+procedure TWsInboundHoldTest.TestPingAfterAStreamedTailIsHeld;
+var
+  Frames: TArray<TBytes>;
+begin
+  OpenStream(Frames);
+  FTotal := 16 + 3 * cFrame60 + 10 + 16;
+  // the Ping and the small message after the tail wait with the rule
+  FChannel.Deliver(Join([Frames[2], ClientFrame(WsOpPing, True, PatternOf(4)),
+    ClientFrame(WsOpBinary, True, PatternOf(10))]));
+  AssertEquals(FCredited + cHead, FChannel.CreditSoFar);
+  FHandler.Resume.SetEvent;
+  AssertTrue(WaitUntil(CreditReaches));
+  Sleep(50);
+  AssertEquals('every octet is credited once', FTotal, FChannel.CreditSoFar);
 end;
 
 initialization

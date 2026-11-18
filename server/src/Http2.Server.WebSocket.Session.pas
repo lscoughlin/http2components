@@ -72,8 +72,8 @@ type
     FInlineText: Boolean;
     /// the octets that this BytesReceived call gave to a pipe: the pipe credits them
     FPushed: Integer;
-    /// the octets at the start of this BytesReceived call that belong to a streamed
-    /// message, up to the end of its last frame; MaxInt when a stream starts in the call.
+    /// the octets from the start of this BytesReceived call to the end of the last
+    /// streamed message that ended in it; MaxInt when a stream starts in the call.
     /// The hold rule does not apply to them; nor to any octet while FPipe is set
     FStreamOctets: Integer;
     /// the message bucket, the queue, the closed state and the budget; False when the
