@@ -254,6 +254,11 @@ refuses the surplus. The observer of the program counts the refusals.
 with `JsonBodyWriter`. Both helpers are described in
 [formats](../common/formats.md).
 
+`examples/server/xml_stream.pas` builds an XML document with `TXMLDocument` and
+answers with `BodyWriterFromStream` and `WriteXML`. The producer writes the document to
+the body while `Finish` runs, so the handler holds the serialized text in no memory. The
+producer is described in [body](../common/body.md#producers).
+
 `examples/server/ws_echo.pas` echoes WebSocket messages. It reads a text message with
 `ReadAllBody` and a binary message with a `ReadChunk` loop, and it sets a larger
 streaming pool so that a long message does not stall the other sessions (see

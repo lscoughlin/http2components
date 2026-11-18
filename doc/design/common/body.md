@@ -1,7 +1,7 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: body_writer, body_reader, chunk, TChunkBuffer, streaming, upload, response body, ReadAllBody, CopyBody, GetStream, GetStreamReader, TReaderStream, TStreamReader, producer, IBodyProducer, IBodyChunkSink, TProducerStream, BodyWriterFromStream, BodyWriterFromTextWriter, look-ahead, ALast
+keywords: body_writer, body_reader, chunk, TChunkBuffer, streaming, upload, response body, ReadAllBody, CopyBody, GetStream, GetStreamReader, TReaderStream, TStreamReader, producer, IBodyProducer, IBodyChunkSink, TProducerStream, BodyWriterFromStream, BodyWriterFromTextWriter, look-ahead, ALast, TCompressingBodyWriter
 notes:
   - This document describes the body writer contract that the server and the client share.
   - The reader contract is the inbound partner of the writer contract. See the section Reader.
@@ -265,6 +265,26 @@ once. A later call gives False with no octet.
 
 This path holds the whole body in memory. A place that supports producers calls
 `Produce` and does not use this path.
+
+### The compressing producer
+
+`TCompressingBodyWriter` in `Http2.Server.Encoding` codes a body with gzip or deflate.
+It implements `IBodyProducer` as well as `IBodyWriter`, so a place asks for the
+interface and gets it. Its `Produce` depends on its inner writer:
+
+- When the inner writer is a producer, `Produce` runs the inner producer with a sink of
+  its own. Each inner chunk goes through the coder at once. The coded octets of that
+  chunk go to the sink of the place, and a call that codes no octet sends nothing.
+- When the inner writer is pulled only, `Produce` pulls it with `NextChunk` and codes
+  each inner chunk the same way.
+
+The last inner chunk closes the coder. The trailer of the coder goes to the place with
+`ALast` True, so the coded body ends with the footer of the container. An inner body
+without octets gives a valid empty gzip container. The place receives that container
+as one last chunk.
+
+A compressing writer is single use, like every producer body. A `Produce` after a
+`NextChunk`, or a second `Produce`, raises `EBodyFormatError`.
 
 ### Single use
 

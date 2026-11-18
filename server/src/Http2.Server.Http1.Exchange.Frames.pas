@@ -11,6 +11,9 @@ notes:
   - A body frame follows the framing that Http2.Server.Http1.ResponseHead chose. A
     chunked body gets a chunk size and a CRLF. A body with a Content-Length counts
     its octets against the length that remains.
+  - The pull loop of a body writer and the sink of a producer body give each chunk to
+    one write method of the exchange, so a producer body and a pulled body share the
+    framing path of the exchange.
 ---
 }
 /// The octets that an HTTP/1.1 exchange writes around its head
@@ -18,12 +21,33 @@ unit Http2.Server.Http1.Exchange.Frames;
 
 {$mode delphi}{$H+}
 {$modeswitch advancedrecords}
+{$interfaces com}
 
 interface
 
 uses
-  SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.HandlerJob,
-  Http2.Server.Http1.ResponseHead;
+  SysUtils, Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body,
+  Http2.Server.HandlerJob, Http2.Server.Http1.ResponseHead;
+
+type
+  /// the method of an exchange that writes one chunk of a body
+  // - the exchange frames the octets and sends them; it copies them before it returns
+  TH1ChunkWrite = procedure(const ABuffer; const ACount: Integer) of object;
+
+  /// the sink that a producer body gives its chunks to
+  // - a chunk with octets goes to the write method; the last call with no octets
+  //   writes nothing, and the exchange then ends the body
+  TH1BodySink = class(TInterfacedObject, IBodyChunkSink)
+  private
+    FWrite: TH1ChunkWrite;
+  public
+    constructor Create(const AWrite: TH1ChunkWrite);
+    procedure Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+  end;
+
+/// pull every chunk of AWriter and give its octets to AWrite, until the body ends
+// - the octets of the call that returns False are written too (D22)
+procedure H1PullBody(const AWriter: IBodyWriter; const AWrite: TH1ChunkWrite);
 
 /// one frame of a response body, with the octets that the handler wrote
 // - ARemaining is the count of octets that the Content-Length still allows; it is
@@ -109,6 +133,39 @@ begin
     SetLength(Result, 1);
     Result[0].Name := 'retry-after';
     Result[0].Value := '1';
+  end;
+end;
+
+constructor TH1BodySink.Create(const AWrite: TH1ChunkWrite);
+begin
+  inherited Create;
+  FWrite := AWrite;
+end;
+
+procedure TH1BodySink.Chunk(const ABuffer; const ACount: Integer; const ALast: Boolean);
+begin
+  if ACount > 0 then
+    FWrite(ABuffer, ACount);
+end;
+
+procedure H1PullBody(const AWriter: IBodyWriter; const AWrite: TH1ChunkWrite);
+var
+  Buf: TChunkBuffer;
+  More: Boolean;
+begin
+  Buf := TChunkBuffer.Create;
+  try
+    repeat
+      Buf.Reset;
+      // the octets of the call that returns False are the last chunk (D22)
+      More := AWriter.NextChunk(Buf);
+      // AWrite copies the octets into the frame before it returns, so the
+      // buffer is free for the next chunk after the call
+      if Buf.Size > 0 then
+        AWrite(Buf.Memory^, Buf.Size);
+    until not More;
+  finally
+    Buf.Free;
   end;
 end;
 

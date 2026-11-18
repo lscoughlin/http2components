@@ -658,24 +658,17 @@ end;
 
 procedure TH1Exchange.SetBodyWriter(const AWriter: IBodyWriter);
 var
-  Buf: TChunkBuffer;
-  More: Boolean;
+  Producer: IBodyProducer;
+  WriteChunk: TH1ChunkWrite;
 begin
   CheckCanWrite;
-  Buf := TChunkBuffer.Create;
-  try
-    repeat
-      Buf.Reset;
-      // the octets of the call that returns False are the last chunk (D22)
-      More := AWriter.NextChunk(Buf);
-      // WriteBody copies the octets into the frame before it returns, so the
-      // buffer is free for the next chunk after the call
-      if Buf.Size > 0 then
-        Write(Buf.Memory^, Buf.Size);
-    until not More;
-  finally
-    Buf.Free;
-  end;
+  WriteChunk := Write;
+  // a producer runs on this thread and gives each chunk to the same framing path
+  // as the pull loop (D25)
+  if Supports(AWriter, IBodyProducer, Producer) then
+    Producer.Produce(TH1BodySink.Create(WriteChunk))
+  else
+    H1PullBody(AWriter, WriteChunk);
   Finish;
 end;
 
