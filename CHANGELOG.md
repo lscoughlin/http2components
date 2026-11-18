@@ -293,6 +293,31 @@
   `Read`. The helpers `ReadAllBody` and `CopyBody` read a body to its end. The new
   exceptions `EBodyTooLarge` and `EBodyFormatError` derive from `Exception`. The change
   adds to the API only. No existing routine changes.
+- **Change of the interface `IBodyReader`.** `IBodyReader` gains two methods:
+  `GetStream: TStream` gives a read-only, non-seekable stream over the body, and
+  `GetStreamReader: TStreamReader` (the class of the FCL unit `streamex`) gives a text
+  reader over that stream. The caller owns both results and frees them. The stream is
+  for one pass, and it holds a reference to the reader. The class `TBodyReaderBase`
+  gives both methods, so a class that derives from it needs no change. A class that
+  implements `IBodyReader` without `TBodyReaderBase` adds the two methods, each as a
+  one-line delegate:
+
+  ```pascal
+  function TMyReader.GetStream: TStream;
+  begin
+    Result := BodyStream(Self);
+  end;
+
+  function TMyReader.GetStreamReader: TStreamReader;
+  begin
+    Result := BodyStreamReader(Self);
+  end;
+  ```
+
+  A class that lists a descendant interface, such as `IServerRequest`, casts itself to
+  that interface: `BodyStream(Self as IServerRequest)`. The class `TReaderStream` moved
+  to `Http2.Common.Body`. The unit `Http2.Common.Body.Streams` keeps the name as an
+  alias. The common library now uses the unit `streamex`, which the FCL package holds.
 
 - New cookie types and helpers in `Http2.Common.Cookie`: the advanced record
   `THttpCookie` (`Parse`, `TryParse`, `ToString`, and the `With` methods that give a

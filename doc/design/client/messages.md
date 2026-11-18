@@ -16,6 +16,7 @@ related:
   - "[open-questions](open-questions.md)"
 updated: 2026-10-13
 notes:
+  - IHttpBodyStream inherits GetStream and GetStreamReader from IBodyReader.
   - Imported from http2client/doc/design/messages.md at the source commit recorded in the source inventory.
 ---
 
@@ -59,6 +60,11 @@ type
 to the buffer and returns True. It returns False when the body has ended, and the
 octets of that last call are the last chunk. A chunk of `ReadChunk` is one `Read`
 of at most 16384 octets (see [body](../common/body.md)).
+
+`IHttpBodyStream` inherits `GetStream` and `GetStreamReader` from `IBodyReader`.
+The stream that `GetStream` gives is a read-only, non-seekable `TStream` over the
+body, and it is for one pass. The caller owns the result. The client body classes
+derive from `TBodyReaderBase`, so they give the two methods without more code.
 
 `Http2.Client.Messages` also re-exports `TClearTextPolicy`, `TNegotiatedProtocol`,
 and `ICleartextSocketFactory` as aliases of the types declared in

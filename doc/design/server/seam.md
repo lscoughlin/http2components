@@ -7,6 +7,7 @@ notes:
   - The seam exists so that the connection core stays free of sockets and of
     the handler pool, and so that the protocol units never need to know how a
     handler blocks.
+  - IServerRequest inherits GetStream and GetStreamReader from IBodyReader. The classes that implement it give both methods.
   - Imported from http2server/doc/design/server/seam.md at the source commit recorded in the source inventory.
 scope: The handler-facing interfaces, the blocking waiter, the cancel workers and the per-stream buffers.
 primary_types:
@@ -60,6 +61,13 @@ empty and the body has not ended, the call blocks, as `Read` does. When the read
 timeout of the stream expires first, the call raises `EHttpTimeout`. A True answer writes at least one octet. A False answer
 means that the body has ended, and it writes no octet. The end repeats: each later
 `ReadChunk` and `Read` answers the end again, with False and 0.
+
+`IServerRequest` also inherits `GetStream` and `GetStreamReader` from `IBodyReader`.
+They give a read-only `TStream` and a `TStreamReader` over the request body, and
+the caller owns both. Each server class that implements `IServerRequest` gives the
+two methods as one-line delegates to `BodyStream` and `BodyStreamReader`. Each
+delegate casts the object to `IServerRequest`, because a class that lists only
+`IServerRequest` does not give a cast to `IBodyReader`.
 
 The server sends `WINDOW_UPDATE` for the octets that a `ReadChunk` call takes, as
 `Read` does for the octets that it gives. The window update of a call covers those

@@ -18,8 +18,8 @@ unit Http2.Server.WebSocket.Snapshot;
 interface
 
 uses
-  SysUtils, Classes,
-  Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.ClientCert;
+  SysUtils, Classes, streamex,
+  Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.ClientCert;
 
 type
   /// a read-only copy of the handshake request
@@ -43,6 +43,8 @@ type
     function Headers: THeaderBlock;
     function Read(var ABuffer; const ACount: Integer): Integer;
     function ReadChunk(const ABuffer: TStream): Boolean;
+    function GetStream: TStream;
+    function GetStreamReader: TStreamReader;
     function BodyIsComplete: Boolean;
     function IsCancelled: Boolean;
     function StreamId: LongWord;
@@ -115,6 +117,16 @@ end;
 function TWsRequestSnapshot.ReadChunk(const ABuffer: TStream): Boolean;
 begin
   Result := False;
+end;
+
+function TWsRequestSnapshot.GetStream: TStream;
+begin
+  Result := BodyStream(Self as IServerRequest);
+end;
+
+function TWsRequestSnapshot.GetStreamReader: TStreamReader;
+begin
+  Result := BodyStreamReader(Self as IServerRequest);
 end;
 
 function TWsRequestSnapshot.BodyIsComplete: Boolean;

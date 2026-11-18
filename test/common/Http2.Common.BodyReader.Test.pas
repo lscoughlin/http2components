@@ -7,6 +7,7 @@ notes:
   - This test checks the body reader base class and the helpers that read a body to its end.
   - The tests check the chunk size, the end that repeats, the last-chunk rule and the limit.
   - The tests check that CopyBody never seeks the destination.
+  - The tests check GetStream and GetStreamReader: the odd read sizes, the seek and write refusals, the lines over a one-octet reader, the ownership and the end of a stream.
 ---
 }
 unit Http2.Common.BodyReader.Test;
@@ -16,7 +17,7 @@ unit Http2.Common.BodyReader.Test;
 interface
 
 uses
-  SysUtils, Classes, fpcunit, testregistry, Http2.Common.Body;
+  SysUtils, Classes, fpcunit, testregistry, streamex, Http2.Common.Body;
 
 type
   /// a reader over a byte array; each Read gives at most AStep octets
@@ -57,6 +58,16 @@ type
     function Read(var ABuffer; const ACount: Integer): Integer; override;
   end;
 
+  /// an empty reader that counts its destruction in ADestroyed
+  TCountingReader = class(TBodyReaderBase)
+  private
+    FDestroyed: PInteger;
+  public
+    constructor Create(const ADestroyed: PInteger);
+    destructor Destroy; override;
+    function Read(var ABuffer; const ACount: Integer): Integer; override;
+  end;
+
   /// a stream that accepts writes and raises on every seek
   // - the content is kept in an inner memory stream, so the test reads the octets
   TNoSeekStream = class(TStream)
@@ -80,6 +91,7 @@ type
     function Pull(const AReader: IBodyReader; const ABuffer: TChunkBuffer;
       out AMore: Boolean): Integer;
     function ReadsTooLarge(const AReader: IBodyReader; const AMax: Int64): Boolean;
+    function DrainStream(const AStream: TStream; const AStep: Integer): TBytes;
   published
     procedure TestBaseGivesOneChunkPerRead;
     procedure TestShortReadsGiveSmallerChunks;
@@ -92,6 +104,11 @@ type
     procedure TestCopyBodyDoesNotSeek;
     procedure TestReaderExceptionPasses;
     procedure TestOutOfRangeCountIsRefused;
+    procedure TestGetStreamReadsWholeBodyInOddSizes;
+    procedure TestGetStreamSeekAndWriteRaise;
+    procedure TestGetStreamReaderReadsLinesOneOctetPerRead;
+    procedure TestFreeingStreamReaderReleasesReader;
+    procedure TestEndedStreamGivesZero;
   end;
 
 implementation
@@ -151,6 +168,23 @@ end;
 function TOverAnsweringReader.Read(var ABuffer; const ACount: Integer): Integer;
 begin
   Result := ACount + 1;
+end;
+
+constructor TCountingReader.Create(const ADestroyed: PInteger);
+begin
+  inherited Create;
+  FDestroyed := ADestroyed;
+end;
+
+destructor TCountingReader.Destroy;
+begin
+  Inc(FDestroyed^);
+  inherited Destroy;
+end;
+
+function TCountingReader.Read(var ABuffer; const ACount: Integer): Integer;
+begin
+  Result := 0;
 end;
 
 constructor TNoSeekStream.Create;
@@ -484,6 +518,142 @@ begin
     AssertEquals('no octet is written for the refused count', 0, LBuffer.Size);
   finally
     LBuffer.Free;
+  end;
+end;
+
+function TBodyReaderTest.DrainStream(const AStream: TStream; const AStep: Integer): TBytes;
+var
+  LChunk: TBytes;
+  LGot: Integer;
+begin
+  Result := nil;
+  SetLength(LChunk, AStep);
+  repeat
+    LGot := AStream.Read(LChunk[0], AStep);
+    if LGot > 0 then
+    begin
+      SetLength(Result, Length(Result) + LGot);
+      Move(LChunk[0], Result[Length(Result) - LGot], LGot);
+    end;
+  until LGot <= 0;
+end;
+
+procedure TBodyReaderTest.TestGetStreamReadsWholeBodyInOddSizes;
+var
+  LReader: IBodyReader;
+  LStream: TStream;
+begin
+  LReader := TScriptedReader.Create(Pattern(1000), 300);
+  LStream := LReader.GetStream;
+  try
+    AssertTrue('the stream gives the whole body in reads of 37 octets',
+      SameBytes(Pattern(1000), DrainStream(LStream, 37)));
+  finally
+    LStream.Free;
+  end;
+
+  LReader := TScriptedReader.Create(Pattern(1000), 300);
+  LStream := LReader.GetStream;
+  try
+    AssertTrue('the stream gives the whole body in reads of 101 octets',
+      SameBytes(Pattern(1000), DrainStream(LStream, 101)));
+  finally
+    LStream.Free;
+  end;
+end;
+
+procedure TBodyReaderTest.TestGetStreamSeekAndWriteRaise;
+var
+  LReader: IBodyReader;
+  LStream: TStream;
+  LByte: Byte;
+  LRaised: Boolean;
+begin
+  LReader := TScriptedReader.Create(Pattern(4), 4);
+  LStream := LReader.GetStream;
+  try
+    LRaised := False;
+    try
+      LStream.Seek(0, soBeginning);
+    except
+      on E: EStreamError do
+        LRaised := True;
+    end;
+    AssertTrue('Seek raises EStreamError', LRaised);
+
+    LByte := 1;
+    LRaised := False;
+    try
+      LStream.Write(LByte, 1);
+    except
+      on E: EStreamError do
+        LRaised := True;
+    end;
+    AssertTrue('Write raises EStreamError', LRaised);
+  finally
+    LStream.Free;
+  end;
+end;
+
+procedure TBodyReaderTest.TestGetStreamReaderReadsLinesOneOctetPerRead;
+const
+  cBody = 'line one' + #10 + 'line two' + #10 + 'last';
+var
+  LScripted: TScriptedReader;
+  LReader: IBodyReader;
+  LText: TStreamReader;
+  LLine: AnsiString;
+begin
+  LScripted := TScriptedReader.Create(TextBytes(cBody), 1);
+  LReader := LScripted;
+  LText := LReader.GetStreamReader;
+  try
+    AssertTrue('the TStreamReader owns its stream', LText.OwnsStream);
+    LLine := LText.ReadLine;
+    AssertEquals('the first line', 'line one', LLine);
+    LLine := LText.ReadLine;
+    AssertEquals('the second line', 'line two', LLine);
+    LLine := LText.ReadLine;
+    AssertEquals('the last line has no line end', 'last', LLine);
+    AssertTrue('the end of the body is the end of the text', LText.EndOfStream);
+    AssertTrue('every octet came in its own Read call',
+      LScripted.Calls >= Length(TextBytes(cBody)));
+  finally
+    LText.Free;
+  end;
+end;
+
+procedure TBodyReaderTest.TestFreeingStreamReaderReleasesReader;
+var
+  LReader: IBodyReader;
+  LText: TStreamReader;
+  LDestroyed: Integer;
+begin
+  LDestroyed := 0;
+  LReader := TCountingReader.Create(@LDestroyed);
+  LText := LReader.GetStreamReader;
+  // the stream holds the reader, so the reader lives on after the local reference ends
+  LReader := nil;
+  AssertEquals('the stream keeps the reader alive', 0, LDestroyed);
+  LText.Free;
+  AssertEquals('freeing the TStreamReader frees the stream and releases the reader', 1, LDestroyed);
+end;
+
+procedure TBodyReaderTest.TestEndedStreamGivesZero;
+var
+  LReader: IBodyReader;
+  LStream: TStream;
+  LByte: Byte;
+begin
+  LReader := TScriptedReader.Create(Pattern(10), 4);
+  LStream := LReader.GetStream;
+  try
+    AssertTrue('the stream gives the body', SameBytes(Pattern(10), DrainStream(LStream, 3)));
+    LByte := 0;
+    AssertEquals('a read after the end gives 0', 0, LStream.Read(LByte, 1));
+    AssertEquals('the next read after the end gives 0 again', 0, LStream.Read(LByte, 1));
+  finally
+    LStream.Free;
   end;
 end;
 

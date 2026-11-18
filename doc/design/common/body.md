@@ -1,10 +1,11 @@
 ---
 license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
-keywords: body_writer, body_reader, chunk, TChunkBuffer, streaming, upload, response body, ReadAllBody, CopyBody
+keywords: body_writer, body_reader, chunk, TChunkBuffer, streaming, upload, response body, ReadAllBody, CopyBody, GetStream, GetStreamReader, TReaderStream, TStreamReader
 notes:
   - This document describes the body writer contract that the server and the client share.
   - The reader contract is the inbound partner of the writer contract. See the section Reader.
+  - A reader gives a TStream (GetStream) and a TStreamReader (GetStreamReader) over its body. The caller owns both.
   - RFC 9112 section 7.1 (chunked transfer coding) was checked on 2026-11-17 at https://www.rfc-editor.org/rfc/rfc9112.html. The plain-text copy is doc/references/rfc9112.txt.
   - RFC 6455 section 5.4 (fragmentation) was checked on 2026-11-17 at https://www.rfc-editor.org/rfc/rfc6455.html. The plain-text copy is doc/references/rfc6455.txt.
 scope: The shared interfaces IBodyWriter and IBodyReader, the buffer TChunkBuffer, the helper routines, the end of a body, and the threads and memory of each place that pulls a writer or reads a body.
@@ -12,6 +13,7 @@ primary_types:
   - IBodyWriter
   - IBodyReader
   - TChunkBuffer
+  - TReaderStream
 related_docs:
   - ../server/seam.md
   - ../server/websocket.md
@@ -23,6 +25,8 @@ invariants:
   - The library sends the octets of the last call before it ends the body.
   - A reader returns True only with at least one octet written.
   - The end of a body repeats on every later call of a reader.
+  - A stream from GetStream holds a reference to its reader until the stream is freed.
+  - A TStreamReader from GetStreamReader owns its stream, so freeing it frees the stream.
 ---
 
 # Body writer
@@ -156,6 +160,8 @@ process one chunk at a time. The interface is declared in the unit
 IBodyReader = interface
   function Read(var ABuffer; const ACount: Integer): Integer;
   function ReadChunk(const ABuffer: TStream): Boolean;
+  function GetStream: TStream;
+  function GetStreamReader: TStreamReader;
 end;
 ```
 
@@ -184,7 +190,36 @@ end;
 `TBodyReaderBase` implements `IBodyReader`. A descendant implements `Read`. The
 inherited `ReadChunk` makes one `Read` call of at most `cReadChunkBytes` (16384
 octets). It appends the octets that the call wrote. A reader that has natural
-chunks overrides `ReadChunk` and keeps the same contract.
+chunks overrides `ReadChunk` and keeps the same contract. The inherited
+`GetStream` and `GetStreamReader` give the stream and the text reader of the
+next section.
+
+### The stream and the text reader
+
+`GetStream` gives a `TStream` over the body. `GetStreamReader` gives a
+`TStreamReader` (the class of the FCL unit `streamex`) over that stream. The
+caller owns the object that it gets, and the caller frees it.
+
+- The stream is a `TReaderStream` in the one-call mode. Each `Read` of the stream
+  makes one `Read` call of the reader. A short read is not the end of the body.
+- The stream is read only and not seekable. `Seek` and `Write` raise
+  `EStreamError`. `GetSize` raises too.
+- The stream holds a reference to the reader. The reader lives while the stream
+  lives, even when the caller has released its own reference.
+- The reader is held by an interface reference when the caller calls `GetStream`.
+  The stream adds one reference. When the stream is freed and no other reference
+  exists, the reader is freed too.
+- The stream is for one pass. A `Read` after the end gives 0, and every later
+  `Read` gives 0 too.
+- The `TStreamReader` owns its stream: `OwnsStream` is True. Freeing the
+  `TStreamReader` frees the stream, and the stream releases the reader.
+- A stream and its text reader are not thread safe. One thread uses them at a time.
+
+The one-call mode suits a consumer that takes each short read as a part of the
+body. The XML parser of the FCL takes a short read as the end of its input.
+`ReadXml` therefore keeps its own stream in the filling mode (`FillReads` True).
+A consumer with a parser of its own can use `GetStream` when the parser accepts
+short reads.
 
 ### The helpers
 
@@ -192,6 +227,12 @@ chunks overrides `ReadChunk` and keeps the same contract.
 | --- | --- |
 | `ReadAllBody(AReader, AMax)` | reads the body to its end and gives all its octets as a new array; with `AMax` above 0, a longer body raises `EBodyTooLarge` |
 | `CopyBody(AReader, ADest)` | copies the body to `ADest` one chunk at a time, with `WriteBuffer` only |
+| `BodyStream(AReader)` | gives a new `TReaderStream` in the one-call mode; the caller frees it |
+| `BodyStreamReader(AReader)` | gives a new `TStreamReader` over `BodyStream(AReader)`, with `OwnsStream` True; the caller frees it |
+
+`GetStream` and `GetStreamReader` of `TBodyReaderBase` return the results of
+`BodyStream` and `BodyStreamReader`. A class that implements `IBodyReader` with
+its own methods gives the two methods with the same one-line delegates.
 
 The limit of `ReadAllBody` applies after each chunk. A longer body therefore stops
 at the first chunk over the limit. The octets of the last call count toward the
@@ -222,8 +263,9 @@ answers a count outside of its range raises `EBodyFormatError`.
 The text, JSON and XML helpers read a body through `IBodyReader` and write a body
 through `IBodyWriter`. They are in the units `Http2.Common.Body.Text`,
 `Http2.Common.Body.Json` and `Http2.Common.Body.Xml`. The read-only stream
-`TReaderStream` that the XML reader uses is in `Http2.Common.Body.Streams`. The
-contract of each helper is in [formats](formats.md).
+`TReaderStream` is declared in `Http2.Common.Body`, so that `GetStream` can give
+it. The unit `Http2.Common.Body.Streams` keeps the name as an alias. The contract
+of each helper is in [formats](formats.md).
 
 ## RFC references
 
