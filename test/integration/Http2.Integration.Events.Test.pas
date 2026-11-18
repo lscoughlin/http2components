@@ -10,7 +10,7 @@ unit Http2.Integration.Events.Test;
 interface
 uses
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
-  Http2.Common, Http2.Client, Http2.Client.Sse, Http2.Server, Http2.OpenSSL;
+  Http2.Common.Body, Http2.Common, Http2.Client, Http2.Client.Sse, Http2.Server, Http2.OpenSSL;
 type
   TCombinedEventsTest = class(TTestCase)
   private
@@ -27,7 +27,7 @@ type
   TEcho = class(TInterfacedObject, IWsHandler)
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes; const AText: Boolean);
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader; const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
       const AReason: string; const AClean: Boolean);
@@ -51,8 +51,8 @@ type
 function TEcho.Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
   const ASession: IWsSession): TWsInitResult;
 begin Result := TWsInitResult.AcceptedWith('echo'); end;
-procedure TEcho.Message(const ASession: IWsSession; const AData: TBytes; const AText: Boolean);
-begin ASession.Send(AData, AText); end;
+procedure TEcho.Message(const ASession: IWsSession; const AMessage: IBodyReader; const AText: Boolean);
+begin ASession.Send(ReadAllBody(AMessage), AText); end;
 procedure TEcho.Pong(const ASession: IWsSession; const AData: TBytes);
 begin end;
 procedure TEcho.Closed(const ASession: IWsSession; const ACode: Word;

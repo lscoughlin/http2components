@@ -620,8 +620,10 @@ begin
   P.Push(B[0], 2);
   ReadCount(R, 3);
   AssertEquals('three prepaid octets', 0, FTaken);
-  ReadCount(R, 3);
-  AssertEquals('one prepaid and two new octets: two credits', 2, FTaken);
+  AssertEquals('the last prepaid octet', 1, Length(ReadCount(R, 3)));
+  AssertEquals(0, FTaken);
+  AssertEquals('the two new octets', 2, Length(ReadCount(R, 3)));
+  AssertEquals(2, FTaken);
 end;
 
 procedure TWsInboundPipeTest.TestPrepaidOctetsAreNotCreditedWhenDropped;

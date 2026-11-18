@@ -24,7 +24,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs,
   mormot.core.base, mormot.core.os,
-  Http2.Server, Http2.Common, Http2.OpenSSL;
+  Http2.Common.Body, Http2.Server, Http2.Common, Http2.OpenSSL;
 
 type
   /// the observer that counts failed handshakes
@@ -45,7 +45,7 @@ type
     destructor Destroy; override;
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
@@ -140,8 +140,9 @@ begin
 end;
 
 procedure TMtlsWsHandler.Message(const ASession: IWsSession;
-  const AData: TBytes; const AText: Boolean);
+  const AMessage: IBodyReader; const AText: Boolean);
 begin
+  ReadAllBody(AMessage);
   FLock.Acquire;
   try
     // the session holds a snapshot of the request, so this read happens after

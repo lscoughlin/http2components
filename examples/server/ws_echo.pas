@@ -10,6 +10,12 @@ notes:
     shows the echo. A client such as websocat can connect to ws://127.0.0.1:8084/ws.
   - The echo handler sends every message back as it received it, with the same type.
     Init accepts every upgrade and picks the subprotocol echo when the client offers it.
+  - The handler reads a message in two ways. A text message is read with ReadAllBody,
+    which gives the whole message in one call. A binary message is read in a loop of
+    ReadChunk calls, one chunk at a time; a program that does not need the whole message
+    in memory handles each chunk in that loop. A message over 65536 octets streams, so
+    the call of Message holds a streaming pool thread until the message has arrived. The
+    server therefore has a pool of 8 threads.
   - The queue of messages is larger than the default, because an HTTP/1.1 client sends
     a burst without flow control (see doc/design/websocket.md).
   - The server runs until the caller presses Enter, then stops.
@@ -30,6 +36,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Math,
   mormot.core.base,
+  Http2.Common.Body,
   Http2.Server;
 
 const
@@ -52,7 +59,7 @@ type
   public
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
@@ -94,11 +101,32 @@ begin
   Result := TWsInitResult.Accepted;
 end;
 
-procedure TEchoHandler.Message(const ASession: IWsSession; const AData: TBytes;
+procedure TEchoHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
   const AText: Boolean);
+var
+  Chunk: TChunkBuffer;
+  More: Boolean;
 begin
-  // a refused send means the outbound queue is full; the example drops the echo
-  ASession.Send(AData, AText);
+  if AText then
+  begin
+    // form 1: the whole message in one call
+    // a refused send means the outbound queue is full; the example drops the echo
+    ASession.Send(ReadAllBody(AMessage), True);
+    Exit;
+  end;
+  // form 2: one chunk at a time; the buffer keeps its memory between the calls
+  // the octets of the call that answers False are the last chunk
+  // this loop keeps every chunk, because the echo needs the whole message; a program
+  // that hashes or stores the message handles each chunk here and keeps nothing
+  Chunk := TChunkBuffer.Create;
+  try
+    repeat
+      More := AMessage.ReadChunk(Chunk);
+    until not More;
+    ASession.Send(ChunkBytes(Chunk), False);
+  finally
+    Chunk.Free;
+  end;
 end;
 
 procedure TEchoHandler.Pong(const ASession: IWsSession; const AData: TBytes);
@@ -161,13 +189,17 @@ begin
   if ParamCount >= 2 then
     Port := StrToIntDef(ParamStr(2), 8084);
   Options := TWsOptions.Create.WithQueuedMessages(256);
+  // the pipe of a streamed message holds up to a message of this size, because an
+  // HTTP/1.1 peer is not slowed when the handler is slower than the network
   if (ParamCount >= 3) and (ParamStr(3) = 'big') then
     Options := Options.WithMaxMessageSize(33554432).WithMaxFrameSize(33554432)
       .WithMaxFragments(100000).WithPingIntervalMs(0)
+      .WithInboundPipeBytes(33554432)
       .WithMessageBucket(TTokenBucketOptions.Create.WithCapacity(1000000)
         .WithRefillPerSecond(1000000));
   Server := THttp2ServerFactory.Create
     .WithMaxConcurrentStreams(256)
+    .WithStreamPoolSize(8)
     .WithMaxDetachedStreams(IfThen((ParamCount >= 3) and (ParamStr(3) = 'load'), 30000, 10000))
     .WithServerLimits(TServerLimits.Create.WithMaxConnections(
       IfThen((ParamCount >= 3) and (ParamStr(3) = 'load'), 30000, 10000)))

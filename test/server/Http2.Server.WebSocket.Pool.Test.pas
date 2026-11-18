@@ -23,7 +23,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Classes, SyncObjs, Generics.Collections, fpcunit, testregistry,
-  Http2.Server.Errors, Http2.Common.Hpack, Http2.Server.Seam, Http2.Server.Duplex,
+  Http2.Server.Errors, Http2.Common.Hpack, Http2.Common.Body, Http2.Server.Seam, Http2.Server.Duplex,
   Http2.Server.Limits, Http2.Server.Sse.Test, Http2.Server.WebSocket.Options,
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Session,
   Http2.Server.WebSocket.TestKit;
@@ -49,7 +49,7 @@ type
     destructor Destroy; override;
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
@@ -113,14 +113,17 @@ begin
   Result := TWsInitResult.Accepted;
 end;
 
-procedure TCountingHandler.Message(const ASession: IWsSession; const AData: TBytes;
+procedure TCountingHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
   const AText: Boolean);
+var
+  AData: TBytes;
 begin
   if Gate <> nil then
   begin
     RTLEventWaitFor(Gate);
     Gate := nil;
   end;
+  AData := ReadAllBody(AMessage);
   FLock.Acquire;
   try
     Inc(FInside);

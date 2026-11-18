@@ -102,7 +102,7 @@ type
     constructor Create(const AWriter: IBodyWriter);
     function Init(const ARequest: IServerRequest; const AOffered: TArray<string>;
       const ASession: IWsSession): TWsInitResult;
-    procedure Message(const ASession: IWsSession; const AData: TBytes;
+    procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
       const AText: Boolean);
     procedure Pong(const ASession: IWsSession; const AData: TBytes);
     procedure Closed(const ASession: IWsSession; const ACode: Word;
@@ -202,9 +202,10 @@ begin
   Result := TWsInitResult.Accepted;
 end;
 
-procedure TWsStreamHandler.Message(const ASession: IWsSession; const AData: TBytes;
+procedure TWsStreamHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
   const AText: Boolean);
 begin
+  ReadAllBody(AMessage);
   // the client sends one message to start the stream
   ASession.SendStream(FWriter, True);
 end;
