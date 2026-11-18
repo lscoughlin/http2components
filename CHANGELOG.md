@@ -68,9 +68,9 @@
   that reads long messages sets `StreamPoolSize` above the number of sessions that read at
   the same time. The tick, a Pong, `Closed` and the steps of `SendStream` of the same
   session wait until `Message` returns.
-- **Behavior change.** A handler that returns before the end of a message no longer holds
-  the message: the session drops the octets that wait and the octets that still arrive,
-  and it credits them to the channel.
+- A handler that returns before the end of a message does not hold the message: the
+  session drops the octets that wait and the octets that still arrive, and it credits them
+  to the channel.
 - New options of `TWsOptions`: `WithInlineLimit` (default 65536), `WithInboundPipeBytes`
   (default 1048576) and `WithInboundStallMs` (default 30000). A read of a streamed
   message that gets no octet for `InboundStallMs` closes the session with 1008 (reason
@@ -85,13 +85,6 @@
   returns. With the default 128 MiB budget about 128 streamed messages can run at once; a
   program with more raises `MaxWsQueuedBytes` or lowers `InboundPipeBytes`. A program that
   streams a message over 64 MiB raises `MaxFragments` with `MaxMessageSize`.
-- When a message starts to stream, the credit that the `QueuedMessages` hold rule kept for
-  its inline octets is given back. A streamed message whose pipe was aborted before its
-  handler started (a Close frame between its fragments) is no longer given to the handler.
-  `wcBytesIn` counts the octets of a streamed message as they arrive, so it agrees with
-  `wcMessagesIn` for a message that is aborted.
-- A read that waits when the last octet or the end arrives at the stall deadline no longer
-  reports the message as stalled.
 - The stall deadline covers a blocked `Read` only. A handler that blocks outside `Read`
   holds its pool thread, and on a channel without flow control the session closes with
   1009 when the pipe fills.
@@ -101,10 +94,9 @@
   fragment of the message, and it returns at once. A full channel parks the stream
   until the channel drains. While a stream runs, `Send` and `SendStream` return
   `srFull`. `MaxMessageSize` limits one chunk, not the whole streamed message.
-- A `SendStream` that a pending channel refuses (for example from `Init`) wakes at once
-  when `Activate` has moved the held bytes. It no longer waits for the park timer.
-- `SendStream` releases a writer that it refuses with `srFull` or `srClosed`. Before,
-  a writer that the caller made in the call leaked.
+- `SendStream` takes its own reference to the writer, so a writer that the caller makes in
+  the call and does not keep is released when the call ends. In version 0.32.0 such a
+  writer was never freed.
 - `SendStream` runs a writer that supports `IBodyProducer`, for example the writer of
   `BodyWriterFromStream`, with `Produce` on one streaming pool thread. Each chunk of the
   producer is one fragment, and the last chunk has the FIN bit. A producer that writes
@@ -120,7 +112,7 @@
 - New option `TWsOptions.WithOutboundStallMs` (default 30000, at least 1). When the channel
   refuses one fragment of a producer for that time, the session closes with 1008 (reason
   `the send stalled`) and the producer ends with `EStreamCancelled`. A peer that keeps its
-  connection open and reads nothing can no longer hold a streaming pool thread for ever.
+  connection open and reads nothing therefore does not hold a streaming pool thread for ever.
 - While a producer runs, the replies to a Ping go out between its fragments, so a reply
   that the IO thread deferred does not wait until the producer ends.
 - The sink of a producer keeps its first failure, and skips a call with no octets that is
