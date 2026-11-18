@@ -68,6 +68,10 @@ uses
   Http2.Client.Errors, Http2.Client.SigPipe,
   Http2.Client.Tls.Tunnel, Http2.Common.UnixPath;
 
+const
+  /// the close-on-exec descriptor flag (POSIX value; BaseUnix does not export it on Linux)
+  cFdCloExec = 1;
+
 /// fills an address for a socket file; returns the address length
 // - the length covers the family, the path bytes and the terminating NUL
 function FillUnixAddr(const APath: string; out AAddr: TUnixSockAddr): Integer;
@@ -298,7 +302,7 @@ begin
   for I := 0 to 1 do
   begin
     fpFcntl(Fds[I], F_SETFL, fpFcntl(Fds[I], F_GETFL) or O_NONBLOCK);
-    fpFcntl(Fds[I], F_SETFD, FD_CLOEXEC);
+    fpFcntl(Fds[I], F_SETFD, cFdCloExec);
   end;
   FWakeWrite := Fds[1];
   FWakeRead := Fds[0];
