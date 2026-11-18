@@ -218,6 +218,26 @@ messages. An empty bucket closes the session with 1008 and raises
 `seWsBucketTripped`. The capacities and the refill rates are in `TWsOptions` (see
 [websocket](websocket.md)). A Close frame costs no token.
 
+## WebSocket message sizes
+
+Four settings of `TWsOptions` bound the memory that one inbound message can hold (see
+[websocket](websocket.md)).
+
+| Setting | Default | What it bounds |
+|---|---|---|
+| `MaxMessageSize` | 1048576 | the whole inbound message, over all its fragments; a message over it closes the session with 1009 |
+| `MaxFragments` | 1024 | the frames of one message; with the default `MaxFrameSize` it caps a streamed message at 64 MiB |
+| `InlineLimit` | 65536 | the octets that the reader keeps in memory before it streams the message to the handler |
+| `InboundPipeBytes` | 1048576 | the unread octets of a streamed message; a push over it closes the session with 1009 |
+
+`MaxMessageSize` keeps its meaning for a streamed message: it limits the whole message,
+not the part that waits in memory. A program that streams a message larger than the
+default raises `MaxMessageSize`, and it raises `MaxFragments` as well when the message
+needs more than 1024 frames. The memory that one streamed message holds is at most
+`InboundPipeBytes` on every channel kind. The server-wide budget `MaxWsQueuedBytes`
+charges `InboundPipeBytes` for a streamed message from its start. `InboundStallMs` bounds
+the time that a read of a streamed message waits for an octet.
+
 ## Handshake refusals on HTTP/2
 
 A WebSocket handshake that fails a check of `AcceptWebSocket` is answered with an

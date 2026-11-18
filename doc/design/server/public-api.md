@@ -128,9 +128,15 @@ server holds `MaxDetachedStreams` channels. The facade `Http2.Server` re-exports
 
 An application serves a WebSocket with an `IWsHandler`. The handler gets an
 `IWsSession` and is called on a thread of the streaming pool. `Init` authorises the
-upgrade, `Message` gets a whole message, `Pong` and `Closed` report the rest, and
-`Failed` reports a callback that raised. `WithWebSockets` sets the limits, the
-timers, the origin policy and the subprotocols (`TWsOptions`). The facade
+upgrade, `Message` gets a message as an `IBodyReader`, `Pong` and `Closed` report the
+rest, and `Failed` reports a callback that raised. A handler reads the message with
+`ReadAllBody(AMessage)`, which gives a `TBytes`, or with a loop of
+`AMessage.ReadChunk(Buffer)`, which gives one chunk at a time and holds no whole message.
+A message that is larger than `InlineLimit` streams, and the handler holds one pool
+thread while it reads. The reader is valid during the call, and a read raises
+`EStreamCancelled` when the session ends. `WithWebSockets` sets the limits, the
+timers, the origin policy, the subprotocols and the inbound settings `InlineLimit`,
+`InboundPipeBytes` and `InboundStallMs` (`TWsOptions`). The facade
 `Http2.Server` re-exports `TWsOptions`, `TWsOriginPolicy`, `IWsSession`,
 `IWsHandler`, `TWsInitResult`, the origin policies, the close codes that a server
 sends and the observer events `seWsOpened`, `seWsRejected`, `seWsClosed`,

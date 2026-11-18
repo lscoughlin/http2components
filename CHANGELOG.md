@@ -6,6 +6,83 @@
 
 ### WebSocket
 
+- **Breaking change of the API.** `IWsHandler.Message` takes an `IBodyReader` in place of
+  a `TBytes`: `procedure Message(const ASession: IWsSession; const AMessage: IBodyReader;
+  const AText: Boolean)`. A message can be larger than memory, and a handler reads it one
+  chunk at a time. A message that ends inside `InlineLimit` (65536 octets) is complete in
+  memory, and a read never waits. A longer message goes to the handler when it passes the
+  limit, and a bounded pipe carries the later octets. Every handler changes. A handler
+  that wants the whole message calls `ReadAllBody`.
+
+  Old shape of a handler:
+
+  ```pascal
+  procedure TEchoHandler.Message(const ASession: IWsSession; const AData: TBytes;
+    const AText: Boolean);
+  begin
+    ASession.Send(AData, AText);
+  end;
+  ```
+
+  New shape of the same handler, with the whole message in one call:
+
+  ```pascal
+  procedure TEchoHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
+    const AText: Boolean);
+  begin
+    ASession.Send(ReadAllBody(AMessage), AText);
+  end;
+  ```
+
+  New shape of a handler that reads one chunk at a time and keeps no whole message. The
+  octets of the call that answers False are the last chunk:
+
+  ```pascal
+  procedure TCountHandler.Message(const ASession: IWsSession; const AMessage: IBodyReader;
+    const AText: Boolean);
+  var
+    Buf: TChunkBuffer;
+    More: Boolean;
+    Total: Int64;
+  begin
+    Total := 0;
+    Buf := TChunkBuffer.Create;
+    try
+      repeat
+        Buf.Reset;
+        More := AMessage.ReadChunk(Buf);
+        Inc(Total, Buf.Size);
+      until not More;
+    finally
+      Buf.Free;
+    end;
+  end;
+  ```
+
+- **Behavior change.** A text message is valid UTF-8 up to the last octet that the handler
+  has read. A bad octet after the handler has read part of a streamed message closes the
+  session with 1007, and the next read raises `EStreamCancelled`.
+- **Behavior change.** A handler that reads a streamed message holds one streaming pool
+  thread for the whole read. The default `StreamPoolSize` is 1, so one such handler
+  stops every other WebSocket session and event stream until it returns. An application
+  that reads long messages sets `StreamPoolSize` above the number of sessions that read at
+  the same time. The tick, a Pong, `Closed` and the steps of `SendStream` of the same
+  session wait until `Message` returns.
+- **Behavior change.** A handler that returns before the end of a message no longer holds
+  the message: the session drops the octets that wait and the octets that still arrive,
+  and it credits them to the channel.
+- New options of `TWsOptions`: `WithInlineLimit` (default 65536), `WithInboundPipeBytes`
+  (default 1048576) and `WithInboundStallMs` (default 30000). A read of a streamed
+  message that gets no octet for `InboundStallMs` closes the session with 1008 (reason
+  `the message stalled`). A streamed message that fills the pipe on a channel that has no
+  flow control (an HTTP/1.1 upgrade, a Unix socket) closes the session with 1009 (reason
+  `the handler reads too slowly`). On HTTP/2 the credit of the octets of a pipe returns as
+  the handler reads them, so a slow handler slows its own stream only.
+- A streamed message counts once in `QueuedMessages` and in the message bucket, and it
+  charges `MaxWsQueuedBytes` with `InboundPipeBytes` from its start. A program that streams
+  a message over 64 MiB raises `MaxFragments` with `MaxMessageSize`.
+- The end of a session aborts the pipe of a message that still arrives, before the
+  streaming pool stops.
 - **Behavior change.** `IWsSession.SendStream` sends each chunk of the writer as one
   fragment of the message, and it returns at once. A full channel parks the stream
   until the channel drains. While a stream runs, `Send` and `SendStream` return

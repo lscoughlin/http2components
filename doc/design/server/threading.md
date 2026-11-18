@@ -158,6 +158,17 @@ handler. The drain path of a channel runs on an IO thread with the connection lo
 and the channel lock held. Its session call takes the session lock and the pump lock
 only briefly, and it posts a pool task. It never writes to the channel.
 
+The receive path of a WebSocket session takes these locks in this order on HTTP/2:
+connection lock, channel lock, read lock of the session, then short holds of the session
+lock, the budget lock, the pool lock and the stream lock. On an HTTP/1.1 upgrade the
+connection lock and the channel lock are not held. The lock of a message pipe is a leaf
+lock. It guards the buffer and nothing else. No code that holds it takes another lock,
+and the callbacks of the pipe (the credit and the stall notice) run after the lock is
+released. This holds because the IO thread holds the channel lock and takes the pipe
+lock to push, and the handler thread takes the channel lock to return credit: if the
+handler thread returned credit while it held the pipe lock, the two threads would wait
+for each other.
+
 ### The tasks of a WebSocket session
 
 A WebSocket session is a work source of this pool. Its tasks are `Init`, each
@@ -167,10 +178,25 @@ size of 1, one thread runs the callbacks of every session in turn. A callback th
 blocks, for example a database call in `Init`, delays every session and every timer
 of an event stream, and the application raises `StreamPoolSize` for such callbacks.
 A callback never runs on an IO thread. The IO thread parses the frames, answers Ping
-and Close, and queues the data messages. The time limit of `Init` runs on one
+and Close, and queues the data messages. The IO thread never waits for a callback: it
+pushes the octets of a streamed message into the pipe of the message, and a push never
+blocks. The time limit of `Init` runs on one
 watchdog thread of the server and not on the pool, because `Init` can hold every pool
 thread. The lock of a session guards its flags and its queue only, and the session
 never holds it across a call into the channel or the handler.
+
+A handler that reads a streamed message holds one pool thread for the whole read. A
+blocked `Read` does not give the thread back between chunks, as a step of a stream
+writer does. The pool runs one task of a session at a time, so the tick of the session
+(the ping, the pong timeout and the close timeout), a Pong, `Closed`, the deferred
+replies and the steps of `SendStream` of the same session wait until `Message` returns.
+One blocked reader also stops every other session and event stream when the pool has one
+thread. An application that reads long messages sets `StreamPoolSize` above the number
+of sessions that read at the same time. No timer of the session closes a session while
+its handler reads. A read that gets no octet for `InboundStallMs` ends the wait: the pipe
+is aborted, the read raises `EStreamCancelled` and the session closes with 1008. The end
+of a session aborts the pipe from `TryEnd` on the IO thread or on the thread that ends
+the session, and never from a pool task, because the pool task is the one that waits.
 
 A WebSocket stream (`SendStream`) adds its pump steps to the tasks of the session. A
 pump step calls the writer, one step at a time for one stream. A step reads at most
