@@ -70,6 +70,10 @@
   end;
   ```
 
+- New function `WithCookies(ARequest, ACookies: TParameters)` in the unit
+  `Http2.Client.Cookies`. It adds one `cookie` field with the pairs of the map. An empty
+  map adds no field. The client messages document has a section on cookies.
+
 ### Server
 
 - **Breaking change of the API.** `IServerRequest.ReadChunk` takes a `TStream` in place
@@ -167,6 +171,19 @@
   `Read`. The helpers `ReadAllBody` and `CopyBody` read a body to its end. The new
   exceptions `EBodyTooLarge` and `EBodyFormatError` derive from `Exception`. The change
   adds to the API only. No existing routine changes.
+
+- New cookie types and helpers in `Http2.Common.Cookie`: the advanced record
+  `THttpCookie` (`Parse`, `TryParse`, `ToString`, and the `With` methods that give a
+  changed copy), `GetCookies`, `GetSetCookies`, `ParseCookies`, `CookieHeaderValue`,
+  and `AddSetCookie`. `FormatHttpDate` and `TryParseHttpDate` give the HTTP-date
+  formats of RFC 9110 section 5.6.7. See the document `doc/design/common/cookies.md`.
+- New record `TParameters` in `Http2.Common.Parameters`: a case-sensitive map of a
+  name to its values, in insertion order. A copy of the record shares the map, and
+  `Copy` gives an independent map. The cookie helpers use it. The document describes the
+  sharing rule.
+- The rules of `THttpCookie.Parse`: an attribute with an unknown name or a malformed value
+  is ignored, as RFC 6265 section 5.2 says. A name that is not a token, or a value with
+  a forbidden octet, raises `EBodyFormatError`.
 
 ## 0.32.0 — 2026-11-16 (source release)
 

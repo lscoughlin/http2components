@@ -472,8 +472,51 @@ touch the network:
 
 Each respects an explicitly set content-type.
 
+## Cookies
+
+The client sends cookies with `WithCookies(ARequest, ACookies: TParameters)` from
+`Http2.Client.Cookies`. The map holds the pairs of the `cookie` field, and
+`WithCookies` writes them as one field value, for example `a=1; a=3; b=2`. An empty
+map adds no field. A second call adds a second `cookie` field, which HTTP/2 allows.
+
+```pascal
+var
+  LCookies: TParameters;
+  LRequest: THttpRequest;
+begin
+  LCookies := TParameters.Create;
+  LCookies.Add('session', 'abc').Add('theme', 'dark');
+  LRequest := WithCookies(THttpRequest.Create(hmGet, 'https://example.test/home'), LCookies);
+end;
+```
+
+The client reads the cookies that a response sets with `GetSetCookies`, from
+`Http2.Common.Cookie`. The function parses each `set-cookie` field into a
+`THttpCookie`, in field order, and it raises `EBodyFormatError` when a field does not
+parse. A `THttpCookie` gives its name, its value and its attributes as properties.
+
+```pascal
+var
+  LCookies: TArray<THttpCookie>;
+  LCookie: THttpCookie;
+begin
+  LCookies := GetSetCookies(LResponse.Headers);
+  for LCookie in LCookies do
+    if LCookie.Name = 'session' then
+      LSession := LCookie.Value;
+end;
+```
+
+The record `TParameters` and the cookie types are described in
+[Cookies](../common/cookies.md). The cookie names are case-sensitive, and the
+values of one name keep their order.
+
 ## RFC references
 
+- [RFC 6265](https://www.rfc-editor.org/rfc/rfc6265.html), checked 2026-11-18. The
+  cookie grammar and the user agent rules that the cookie helpers follow.
+- [RFC 9110](https://www.rfc-editor.org/rfc/rfc9110.html), checked 2026-11-18 against
+  `doc/references/rfc9110.txt`. The HTTP-date formats (section 5.6.7).
 - [RFC 1950](https://www.rfc-editor.org/rfc/rfc1950.html), checked 2026-11-11.
 - [RFC 1952](https://www.rfc-editor.org/rfc/rfc1952.html), checked 2026-11-11.
 - [RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html), checked 2026-11-11.

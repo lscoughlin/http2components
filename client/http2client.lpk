@@ -25,7 +25,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="67">
+    <Files Count="68">
       <Item1>
         <Filename Value="src/Http2.Client.Api.pas" />
         <UnitName Value="Http2.Client.Api" />
@@ -294,6 +294,10 @@
         <Filename Value="src/Http2.Client.WebSocket.Connection.Io.pas" />
         <UnitName Value="Http2.Client.WebSocket.Connection.Io" />
       </Item67>
+      <Item68>
+        <Filename Value="src/Http2.Client.Cookies.pas" />
+        <UnitName Value="Http2.Client.Cookies" />
+      </Item68>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>

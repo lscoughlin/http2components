@@ -38,7 +38,9 @@ uses
   Http2.Common.Uri.Test,
   Http2.Common.SpscRing.Test,
   Http2.Common.Body.Test,
-  Http2.Common.BodyReader.Test;
+  Http2.Common.BodyReader.Test,
+  Http2.Common.Parameters.Test,
+  Http2.Common.Cookie.Test;
 
 procedure RegisterTests;
 begin
