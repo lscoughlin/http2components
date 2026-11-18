@@ -93,6 +93,7 @@ uses
   Http2.Server.H2Locks.Test,
   Http2.Server.WsHardening.Test,
   Http2.Server.WebSocket.Pump.Test,
+  Http2.Server.WebSocket.Inbound.Test,
   Http2.Server.WebSocket.Stream.Test,
   Http2.Server.WebSocket.Stream.Threads.Test,
   Http2.Server.Lifecycle.Test,
