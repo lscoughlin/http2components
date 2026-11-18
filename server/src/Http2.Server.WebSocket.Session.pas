@@ -73,6 +73,8 @@ type
     FStreamTotal: Int64;
     /// the octets that this BytesReceived call gave to a pipe: the pipe credits them
     FPushed: Integer;
+    /// this BytesReceived call belonged to a streamed message, which may have ended in it
+    FStreamFeed: Boolean;
     /// the message bucket, the queue, the closed state and the budget; False when the
     /// session failed or ended and the message does not go on
     function Admit(const ACharge: Int64): Boolean;
@@ -470,6 +472,7 @@ begin
       Exit;
     end;
     FPushed := 0;
+    FStreamFeed := False;
     Ok := FReader.Feed(AData, ACount, Self);
     // every octet is credited once, when it is consumed: the octets of a frame
     // that arrives in pieces are credited piece by piece, so a control frame in
@@ -481,7 +484,8 @@ begin
     Data := ACount - FPushed;
     FLock.Acquire;
     try
-      Hold := (FQueuedMsgs * 2 >= FOpts.QueuedMessages) and (FPipe = nil);
+      Hold := (FQueuedMsgs * 2 >= FOpts.QueuedMessages) and (FPipe = nil) and
+        not FStreamFeed;
       if Hold then
         Inc(FHeldCredit, Data);
     finally
@@ -631,7 +635,10 @@ begin
   FInline := nil;
   FInlineText := AText;
   if FReader.Streaming then
+  begin
+    FStreamFeed := True;
     StartStream(AText);
+  end;
 end;
 
 procedure TWsSession.MessageData(const AData; const ACount: Integer);
@@ -681,6 +688,8 @@ var
 begin
   if FReader.Streaming then
   begin
+    // the headers of the last frame belong to the message that is open: no hold
+    FStreamFeed := True;
     FLock.Acquire;
     try
       P := FPipe;
