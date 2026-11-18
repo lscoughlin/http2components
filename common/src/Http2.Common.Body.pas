@@ -142,10 +142,9 @@ end;
 
 function TBodyReaderBase.ReadChunk(const ABuffer: TStream): Boolean;
 var
-  LChunk: TBytes;
+  LChunk: array[0..cReadChunkBytes - 1] of Byte;
   LCount: Integer;
 begin
-  SetLength(LChunk, cReadChunkBytes);
   LCount := Read(LChunk[0], cReadChunkBytes);
   if (LCount < 0) or (LCount > cReadChunkBytes) then
     raise EBodyFormatError.Create('a body reader gave a count out of range');
