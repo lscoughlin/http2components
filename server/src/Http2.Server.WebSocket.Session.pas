@@ -45,7 +45,8 @@ uses
   Http2.Server.WebSocket.Types, Http2.Server.WebSocket.Frames, Http2.Server.WebSocket.Parser,
   Http2.Server.WebSocket.Reader, Http2.Server.WebSocket.Close, Http2.Server.WebSocket.SessionCore,
   Http2.Server.WebSocket.Environment, Http2.Server.WebSocket.Budget,
-  Http2.Server.WebSocket.Pump, Http2.Common.Body, Http2.Server.WebSocket.Inbound;
+  Http2.Server.WebSocket.Pump, Http2.Server.WebSocket.Pump.Producer, Http2.Common.Body,
+  Http2.Server.WebSocket.Inbound;
 
 /// start a session on AChannel, which is detached and pending
 // - ARequest is the upgrade request; the session keeps a copy of what it needs
@@ -60,7 +61,7 @@ implementation
 
 type
   TWsSession = class(TWsSessionCore, IChannelSink, IWsReaderSink, IChannelCloser,
-    IWsInitWatch)
+    IWsInitWatch, IWsProducerHost)
   private
     /// the pipe of the streamed message that still arrives, and the reference that
     /// keeps it alive; FLock guards both
@@ -92,7 +93,6 @@ type
     procedure DoMessage(const ATask: TWsTask);
     procedure DoPong(const ATask: TWsTask);
     procedure DoClosed(const ATask: TWsTask);
-    procedure DoReply(const ATask: TWsTask);
     procedure ProtocolFail(const ACode: Word; const AReason: string);
     procedure FinishReject(const AResult: TWsInitResult);
   public
@@ -108,6 +108,10 @@ type
     procedure MessageData(const AData; const ACount: Integer);
     procedure MessageEnd;
     procedure Control(const AOpcode: Byte; const AData: TBytes);
+
+    // IWsProducerHost: PumpReplies is a method of the session core
+    function PumpStallMs: Integer;
+    procedure PumpStalled;
 
     // IChannelCloser, IWsInitWatch
     procedure CloseForStop(const AMode: TChannelClose);
@@ -155,6 +159,22 @@ begin
   // the handler thread runs here. The pipe is aborted already, and the read raises
   try
     Close(WsClosePolicy, 'the message stalled');
+  except
+    ;   // the session ended in the meantime
+  end;
+end;
+
+function TWsSession.PumpStallMs: Integer;
+begin
+  Result := FOpts.OutboundStallMs;
+end;
+
+procedure TWsSession.PumpStalled;
+begin
+  // the peer takes no octet of the fragment: the session closes, and the Close frame
+  // goes out when the channel takes it. The close timeout ends the session otherwise
+  try
+    Close(WsClosePolicy, 'the send stalled');
   except
     ;   // the session ended in the meantime
   end;
@@ -220,7 +240,7 @@ begin
     wtMessage: DoMessage(T);
     wtPong: DoPong(T);
     wtClosed: DoClosed(T);
-    wtReply: DoReply(T);
+    wtReply: ReplyTask(T);
   end;
 end;
 
@@ -352,25 +372,6 @@ begin
   finally
     FLock.Release;
   end;
-end;
-
-procedure TWsSession.DoReply(const ATask: TWsTask);
-begin
-  // the IO thread could not take the send lock, so this thread sends the frame
-  try
-    SendControl(ATask.Opcode, ATask.Data);
-  except
-    ;   // the channel ended; the closing code below runs all the same
-  end;
-  FLock.Acquire;
-  try
-    if FDeferred > 0 then
-      Dec(FDeferred);
-  finally
-    FLock.Release;
-  end;
-  if ATask.CloseAfter then
-    FChannel.Close(ccGraceful);
 end;
 
 procedure TWsSession.DoMessage(const ATask: TWsTask);

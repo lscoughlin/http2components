@@ -139,6 +139,14 @@ type
     procedure PortCount(const APayload: Integer);
     function PortEnded: Boolean;
     function PortGate: TEvent;
+    procedure PortReplies;
+    function PortStallMs: Integer;
+    procedure PortStalled;
+    /// the host as the sink needs it; nil after a Stop or for a host without the interface
+    function ProducerHost: IWsProducerHost;
+    procedure IWsProducerPort.Replies = PortReplies;
+    function IWsProducerPort.StallMs = PortStallMs;
+    procedure IWsProducerPort.Stalled = PortStalled;
     function IWsProducerPort.Write = PortWrite;
     procedure IWsProducerPort.Count = PortCount;
     function IWsProducerPort.Ended = PortEnded;
@@ -572,6 +580,50 @@ end;
 function TWsStreamPump.PortGate: TEvent;
 begin
   Result := FGate;
+end;
+
+function TWsStreamPump.ProducerHost: IWsProducerHost;
+var
+  Host: IWsPumpHost;
+begin
+  FLock.Acquire;
+  try
+    Host := FHost;
+  finally
+    FLock.Release;
+  end;
+  if (Host = nil) or not Supports(Host, IWsProducerHost, Result) then
+    Result := nil;
+end;
+
+procedure TWsStreamPump.PortReplies;
+var
+  Host: IWsProducerHost;
+begin
+  // no pump lock is held across the host call
+  Host := ProducerHost;
+  if Host <> nil then
+    Host.PumpReplies;
+end;
+
+function TWsStreamPump.PortStallMs: Integer;
+var
+  Host: IWsProducerHost;
+begin
+  Host := ProducerHost;
+  if Host = nil then
+    Result := 0
+  else
+    Result := Host.PumpStallMs;
+end;
+
+procedure TWsStreamPump.PortStalled;
+var
+  Host: IWsProducerHost;
+begin
+  Host := ProducerHost;
+  if Host <> nil then
+    Host.PumpStalled;
 end;
 
 procedure TWsStreamPump.RunProducerStep;

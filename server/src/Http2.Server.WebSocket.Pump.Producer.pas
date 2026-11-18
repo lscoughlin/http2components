@@ -48,6 +48,24 @@ type
     function Ended: Boolean;
     /// the event that a drain, a Stop and a timer signal set
     function Gate: TEvent;
+    /// send the control replies that wait for the pool thread, in order
+    procedure Replies;
+    /// the time that one fragment may wait for the channel; 0 means no limit
+    function StallMs: Integer;
+    /// the fragment waited for StallMs: the session closes
+    procedure Stalled;
+  end;
+
+  /// what a session offers to a pump that runs a producer, besides IWsPumpHost
+  // - the pump finds it with Supports on its host; a host without it gets no replies
+  //   between fragments and no stall deadline
+  IWsProducerHost = interface
+    ['{7E1F0C11-00F5-4A11-9C72-000000003402}']
+    /// send the deferred control replies now, on the calling thread
+    procedure PumpReplies;
+    function PumpStallMs: Integer;
+    /// close the session with 1008 and the reason `the send stalled`
+    procedure PumpStalled;
   end;
 
 /// run AProducer on the calling thread and write its chunks as fragments of one message
@@ -135,6 +153,8 @@ var
   Wire: TBytes;
   Gate: TEvent;
   Done: Boolean;
+  Stall, Wait: Integer;
+  Since, Now, Left: QWord;
 begin
   if FPort.Ended then
     Cancel;
@@ -149,8 +169,13 @@ begin
   // the fragment is encoded once; a refused write sends the same octets again
   Wire := WsEncodeFragment(Op, ALast, ABuffer, ACount, FFrameSize);
   Gate := FPort.Gate;
+  Stall := FPort.StallMs;
+  Since := 0;
   Done := False;
   repeat
+    // the producer holds the pool thread, so the replies to the peer (Pong) go out here
+    // between the fragments (RFC 6455 section 5.4)
+    FPort.Replies;
     // the reset comes before the write: a wake after the refusal is not lost
     Gate.ResetEvent;
     case FPort.Write(Wire, ALast) of
@@ -161,8 +186,25 @@ begin
         Cancel;
     else
       begin
+        // the channel refuses this fragment; the time of the first refusal starts the
+        // deadline, and a drain that does not make room does not restart it
+        Now := GetTickCount64;
+        if Since = 0 then
+          Since := Now;
+        Wait := cWsProducerWaitMs;
+        if Stall > 0 then
+        begin
+          if Now - Since >= QWord(Stall) then
+          begin
+            FPort.Stalled;
+            Cancel;
+          end;
+          Left := QWord(Stall) - (Now - Since);
+          if Left < QWord(Wait) then
+            Wait := Integer(Left);
+        end;
         // the pool thread waits here, and it holds no lock
-        Gate.WaitFor(cWsProducerWaitMs);
+        Gate.WaitFor(Wait);
         if FPort.Ended then
           Cancel;
       end;
