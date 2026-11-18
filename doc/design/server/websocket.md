@@ -160,10 +160,16 @@ a cancel message from the client waits until the writer returns.
 
 When the channel refuses a fragment, the stream keeps the encoded fragment and parks. The
 drain of the channel wakes the stream. A parked stream also arms a timer of 250
-milliseconds. The channel does not signal a drain for a refusal in the held bytes of a
-channel that is not active yet, for example a `SendStream` that the `Init` callback
-starts. The timer checks the channel again, so a lost drain signal delays the stream by
-at most one poll after room appears.
+milliseconds. A refusal in the held bytes of a channel that is not active yet, for
+example from a `SendStream` that the `Init` callback starts, gives no drain from the
+stream. The channel records the refusal. When `Activate` has moved the held bytes to the
+stream, the channel calls `WriteDrained`, and the stream wakes at once. The timer checks
+the channel again, so a lost drain signal delays the stream by at most one poll after
+room appears.
+
+`SendStream` takes its own reference to the writer. A writer that the caller makes in
+the call, and does not keep, is therefore released when `SendStream` refuses it with
+`srFull` or `srClosed`.
 
 While a streamed message runs, `Send` and `SendStream` return `srFull`. Ping, Pong and
 Close frames can go out between the fragments (RFC 6455 section 5.5). The session never

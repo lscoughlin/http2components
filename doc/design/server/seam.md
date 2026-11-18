@@ -199,8 +199,10 @@ stream ended. A producer on any thread may call `Send`.
 
 The WebSocket session uses `WriteDrained` to wake a stream that waits for room in
 the channel (see [websocket](websocket.md)). A `srFull` from the held bytes of a
-channel that is not active yet gives no `WriteDrained` call. A stream that waits
-on such a refusal recovers through a timer.
+channel that is not active yet does not reach the stream, so the stream gives no
+drain for it. The channel records the refusal, and it calls `WriteDrained` when
+`Activate` has moved the held bytes to the stream. A stream that waits on such a
+refusal also has a timer as a second recovery.
 
 **Receiving.** With a sink set, the IO thread delivers the DATA payload to the
 sink and keeps no copy in the inbound buffer of the stream. The data call runs on

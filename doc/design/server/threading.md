@@ -177,7 +177,9 @@ pump step calls the writer, one step at a time for one stream. A step reads at m
 16 chunks, and then it posts the next step to the end of the queue of the session.
 When the channel refuses a fragment, the stream parks. The drain of the channel
 posts a pump step later. A park also arms a timer of 250 milliseconds, and the timer
-posts a check of the channel, so a lost drain signal delays the stream by one poll.
+posts a check of the channel, so a lost drain signal delays the stream by one poll. A
+refusal from the held bytes of a channel that is not active yet gets its drain from
+`Activate`, so the stream does not wait for the timer.
 Because the pump steps and the messages of a session share one queue, a slow writer
 delays the messages of its own session. For example, a cancel message from the client
 waits while a query streams. A writer runs on a streaming pool thread, never on an IO

@@ -10,6 +10,10 @@
   fragment of the message, and it returns at once. A full channel parks the stream
   until the channel drains. While a stream runs, `Send` and `SendStream` return
   `srFull`. `MaxMessageSize` limits one chunk, not the whole streamed message.
+- A `SendStream` that a pending channel refuses (for example from `Init`) wakes at once
+  when `Activate` has moved the held bytes. It no longer waits for the park timer.
+- `SendStream` releases a writer that it refuses with `srFull` or `srClosed`. Before,
+  a writer that the caller made in the call leaked.
 
 ### Client
 
