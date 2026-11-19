@@ -17,10 +17,10 @@ related:
   - "[fpc-runtime](fpc-runtime.md)"
 keywords: queue, spsc, mpsc, mpmc, thread
 scope: every queue in client/src, server/src and common/src
-updated: 2026-11-13
+updated: 2026-11-19
 notes:
   - The audit was made by reading the call sites. The references name the methods and the fields that hold the call sites, not line numbers, because line numbers change with each edit.
-  - A queue is classified SPSC only when the call sites prove one producer thread and one consumer thread for the whole life of the queue.
+  - A queue is classified SPSC only when the call sites prove one producer thread. The consumer side is one thread at a time, either enforced by the queue or proven by the call sites.
 ---
 
 # Queues and their thread roles
@@ -31,9 +31,11 @@ protects it, its limit, and a verdict on its thread roles. The verdict tells
 which queues can have exactly one producer and exactly one consumer (SPSC) and
 which queues have more.
 
-The `common/src` directory holds no queue. A search there for
-`TBlockingQueue`, `TQueue<`, `TThreadedQueue` and similar names finds nothing.
-The check was made on 2026-11-13.
+The `common/src` directory holds one ring class, `TSpscRing<T>`
+(`common/src/Http2.Common.SpscRing.pas`). The client receive queue of a stream
+stores its frames in that ring. The directory holds no other queue class. A
+search there for `TBlockingQueue`, `TQueue<`, `TThreadedQueue` and similar names
+finds nothing. The check was made on 2026-11-19.
 
 ## Terms
 
@@ -59,7 +61,7 @@ The check was made on 2026-11-13.
 
 | Queue | Class | Verdict |
 | --- | --- | --- |
-| Per-stream receive queue (client) | `TByteBoundedFrameQueue` | SPSC for the producer side. The consumer side is one thread at a time, but one thread for the whole life is not proven. See the section on this queue. |
+| Per-stream receive queue (client) | `TByteBoundedFrameQueue` | SPSC. The ring checks the thread roles at run time. The consumer is one thread at a time, but the library does not enforce that for the body read. An open defect is listed in the section on this queue. |
 | Outbound queue of a connection (client) | `TBlockingQueue<TFrame>` | MPSC |
 | Control queue of a connection (client) | `TControlFrameQueue` | MPSC |
 | Inbound queue of a connection (client) | `TBlockingQueue<TFrame>` | No producer and no consumer in the library code |
@@ -72,13 +74,14 @@ The check was made on 2026-11-13.
 
 ## The queue class of the client
 
-All client queues that block are built on one class:
+Most client queues that block are built on one class:
 `TBlockingQueueState<T>` in `client/src/Http2.Client.Connection.Queue.pas`.
 It holds a `TQueue<T>`, one `TCriticalSection` and two `PRTLEvent` (not empty,
 not full). It has no restriction on the number of producers or consumers: every
 method takes the one lock. The interface `IBlockingQueue<T>` and its class
 `TBlockingQueue<T>` (`client/src/Http2.Client.Connection.pas`) wrap
-the state class and forward each call.
+the state class and forward each call. The receive queue of a stream is the
+exception. Its ring is described in its own section.
 
 `Pop` and `Push` use a chain wake. A thread that leaves after a `Shutdown` sets
 the same event again, so the full set of blocked threads is released. This
@@ -92,16 +95,16 @@ thread.
 
 | Item | Value |
 | --- | --- |
-| Class | `TByteBoundedFrameQueue` (`client/src/Http2.Client.Stream.Receive.pas`). It wraps a lock-free single-producer single-consumer ring of frames and an atomic byte counter. On a 32-bit CPU a leaf lock guards the counter. |
+| Class | `TByteBoundedFrameQueue` (`client/src/Http2.Client.Stream.Receive.pas`). It wraps a `TSpscRing<TFrame>` (`common/src/Http2.Common.SpscRing.pas`), a lock-free single-producer single-consumer ring of frames, and the byte count `FQueuedBytes`. The ring takes no lock. On a 32-bit CPU a leaf lock `FCounterLock` guards the byte count. |
 | Created by | `TStreamLease.Create` (the overload that takes the encoder and the decoder, `client/src/Http2.Client.Stream.pas`), on the stream thread. |
 | Freed by | `TStreamLease.Destroy` (`client/src/Http2.Client.Stream.pas`). The thread that drops the last interface reference runs it. |
 | Producers (`Push`) | The reader thread only. |
 | Consumers (`TryPop`, `WaitForItem`) | The thread that reads the response of the stream. |
 | `IsShutdown` | The consumer. |
 | `Shutdown` | The reader thread, the thread of `Start`, and the consumer. See below. |
-| Lock outside the queue | None for the pop side. The producer side has no second producer. |
+| Lock outside the queue | None. The producer side has no second producer. The consumer side is one thread at a time (see the open point below). |
 | Limit | The byte cap `MaxReceiveQueueBytes` on DATA and the frame cap `cReceiveQueueFrameCap` (1024, the ring capacity). A `Push` over either cap raises `EHttpStreamError` with a flow-control error and does not block. |
-| Verdict | One producer thread. One consumer thread at a time. |
+| Verdict | One producer thread. One consumer thread at a time, enforced for the ring and not for the body read. Open defect: see below. |
 
 Evidence for the one producer thread. Every path that reaches `Push` starts
 on the reader thread:
@@ -156,26 +159,55 @@ decrements, so no producer call and no consumer call is in progress when
 `Destroy` runs. The freeing thread can be the reader thread or any thread of
 the caller.
 
-Open point on the consumer. The response object leaves the thread that called
-`Send`. The caller can read the body on another thread. The code does not tie
-the reading to the thread that called `Send`. The code also does not stop two
-threads from reading the same response at the same time. The queue itself is
-protected today: `TByteBoundedFrameQueue.Push` and `.TryPop` take `FLock`, and
-the state class takes its own lock. A queue without a lock needs one consumer
-at a time, and it needs a memory barrier at every hand-over of the response
-between threads. This is not proven by the call sites. The verdict for the
-consumer side is therefore "one thread at a time by the use contract, not
-proven for the whole life". A queue that has one consumer thread for the whole
-life holds only if the use contract is a rule that the library checks.
+Consumer side. The response object leaves the thread that called `Send`. The
+caller can read the body on another thread. The code does not tie the reading
+to the thread that called `Send`, and it does not stop two threads from reading
+the same response at the same time. The ring has two checks, and neither is a
+lock:
+
+- `TSpscRing<T>` (`common/src/Http2.Common.SpscRing.pas`) keeps one busy flag
+  for each side. `EnterProducer` and `EnterConsumer` set the flag with
+  `InterlockedExchange`. A call that finds the flag already set raises
+  `EInvalidOperation` before it reads or writes an index. An overlap therefore
+  fails with an exception. It does not corrupt the ring, and the second call
+  does not wait for the first.
+- The consumer role can pass from one thread to another. `TryPop`, `Pop` and
+  `WaitForItem` set the consumer flag on entry, and `LeaveConsumer` clears it
+  with `InterlockedExchange`. Both exchanges are full barriers. The head index
+  that one consumer writes is visible to the next consumer that sets the flag.
+  The ring needs no barrier of its own for the hand-over.
+
+A waiting consumer holds the consumer flag for the whole wait. A `TryPop` from a
+second thread during that wait raises `EInvalidOperation`.
+
+The lease above the ring has no such check. `TStreamLease.ReadBody`
+(`client/src/Http2.Client.Stream.pas`) changes its own fields, among them
+`FBodyPending` and `FBodyPendingOfs`, without a lock. The ring checks do not
+cover these fields.
+
+Open defect: the library does not serialize the readers of one response. Two
+threads that read the same response race on the lease fields of `ReadBody`. The
+race applies even when the two calls do not overlap inside the ring. If two ring
+calls do overlap, one of them raises `EInvalidOperation`. The verdict for the
+consumer side is therefore "one thread at a time by the use contract, enforced
+by the ring for the ring calls and not enforced for the body read".
 
 Other facts that matter for the roles:
 
-- `FLock` of `TByteBoundedFrameQueue` serializes `Push` with `TryPop` for the
-  byte count `FQueuedBytes`. A queue without a lock needs an atomic 64-bit
-  counter instead.
-- `WaitForItem` and `IsShutdown` do not take `FLock`. They go to the state
-  class directly (`client/src/Http2.Client.Stream.Receive.pas`, methods
-  `TByteBoundedFrameQueue.WaitForItem` and `TByteBoundedFrameQueue.IsShutdown`).
+- The byte count `FQueuedBytes` (`client/src/Http2.Client.Stream.Receive.pas`)
+  is updated with atomic operations on a 64-bit CPU. `TryReserve` is a
+  compare-and-exchange loop that checks the cap and adds the bytes in one step.
+  `ReleaseBytes` is an atomic add. The producer reserves the bytes before the
+  frame enters the ring. The consumer releases them after the frame leaves the
+  ring. The count therefore never reads less than the bytes in the ring. On a
+  32-bit CPU the leaf lock `FCounterLock` makes the same steps. It guards the
+  count only, never the ring.
+- On a 64-bit CPU, `Push`, `TryPop`, `WaitForItem`, `IsShutdown` and `Shutdown`
+  take no lock of the queue. On a 32-bit CPU `Push` and `TryPop` take
+  `FCounterLock` for the count. `WaitForItem`, `IsShutdown` and `Shutdown` take
+  no lock on any CPU. `WaitForItem` waits on an event of the ring in slices of
+  at most `cSpscMaxWaitSliceMs` (100 ms) and checks the ring again after each
+  slice.
 - `TStreamLease.WaitForInbound` releases the connection lock `FWaitLock`
   during the wait and takes it again after it
   (`client/src/Http2.Client.Stream.pas`). The connection lock is not a lock
@@ -188,7 +220,7 @@ Other facts that matter for the roles:
 | Class | `TBlockingQueue<TFrame>` through `IBlockingQueue<TFrame>` (`client/src/Http2.Client.Connection.pas`, field `FOutbound` of `TConnection`). |
 | Created by | `TConnection.Create` (the overload that takes the local settings, `client/src/Http2.Client.Connection.pas`), capacity `cDefaultQueueCapacity` (128). |
 | Freed by | The interface reference. The connection, every stream lease and the worker hold it. |
-| Producers (`Push`) | Many stream threads: `EmitHeaderBlock` and `EmitData` in `client/src/Http2.Client.Stream.Send.pas`. `TConnection.Close` pushes the GOAWAY frame from the thread that closes the connection (`client/src/Http2.Client.Connection.pas`). |
+| Producers (`Push`) | Many stream threads: `EmitHeaderBlock` and `EmitData` in `client/src/Http2.Client.Stream.Send.pas`. `TConnection.Close` pushes the GOAWAY frame when it runs on a thread other than the reader, and only when it is the first close, the connection has a reader thread and the state is `csOpening` or `csOpen` (`client/src/Http2.Client.Connection.pas`). |
 | Consumers (`TryPop`) | The reader thread, in `TConnectionWorker.DrainOutbound` (`client/src/Http2.Client.Connection.Thread.pas`). It is the only consumer call in `client/src`. |
 | `Shutdown` | `TConnection.Close` (`client/src/Http2.Client.Connection.pas`) from the closing thread, and `TConnection.FailWith` from the reader thread. |
 | Lock outside the queue | Most pushes run while the stream thread holds the connection lock, which is also the HPACK encoder lock of the pooled connection (`Lease.WaitLock := FLock` in `THttpConnection.AcquireCancellable`, `client/src/Http2.Client.Pool.Http2.pas`). The data push in `EmitData` (`client/src/Http2.Client.Stream.Send.pas`) follows `AcquireCredit`, which releases that lock for a wait and takes it again. The GOAWAY push in `TConnection.Close` runs under no lock of this kind. |
@@ -196,8 +228,9 @@ Other facts that matter for the roles:
 | Verdict | MPSC |
 
 The consumer is one thread, the reader thread. The producers are many, and a
-lock outside the queue serializes only some of their calls. The close path is
-a producer that does not hold that lock. The verdict is MPSC.
+lock outside the queue serializes only some of their calls. A `Close` from a
+thread other than the reader is a producer that does not hold that lock. The
+verdict is MPSC.
 
 ### Control queue of a connection
 
@@ -206,7 +239,7 @@ a producer that does not hold that lock. The verdict is MPSC.
 | Class | `TControlFrameQueue` (`client/src/Http2.Client.Connection.Control.pas`). Its own `FLock` and a `TQueue<TFrame>`. |
 | Created by | `TConnection.Create` (the overload that takes the local settings, `client/src/Http2.Client.Connection.pas`). |
 | Freed by | `TConnection.Destroy` (`client/src/Http2.Client.Connection.pas`), after `Close` has joined the reader thread. |
-| Producers (`TryPost`) | All callers of `TConnection.PostFrame` (`client/src/Http2.Client.Connection.pas`): the reader thread (SETTINGS acknowledgement and PING acknowledgement in `TConnectionWorker.RouteInbound`, `client/src/Http2.Client.Connection.Thread.pas`; connection WINDOW_UPDATE through `TrackReceivedData`, `client/src/Http2.Client.Connection.pas`), and the stream threads (stream WINDOW_UPDATE in `DataConsumed` and `SendWindowUpdate`, `client/src/Http2.Client.Connection.pas`; RST_STREAM in `TStreamLease.ReadBody`, `client/src/Http2.Client.Stream.pas`; RST_STREAM in `EmitData`, `client/src/Http2.Client.Stream.Send.pas`; RST_STREAM in `THttpConnection.AcquireCancellable` and `THttpConnection.AcquireUpgraded`, `client/src/Http2.Client.Pool.Http2.pas`). |
+| Producers (`TryPost`) | All callers of `TConnection.PostFrame` (`client/src/Http2.Client.Connection.pas`): the reader thread (SETTINGS acknowledgement and PING acknowledgement in `TConnectionWorker.RouteInbound`, `client/src/Http2.Client.Connection.Thread.pas`; connection WINDOW_UPDATE through `TrackReceivedData`, `client/src/Http2.Client.Connection.pas`; RST_STREAM with FLOW_CONTROL_ERROR in `LeasePushInbound`, `client/src/Http2.Client.Stream.Inbound.pas`, when the receive queue of a stream refuses a frame). The reader thread also pushes the GOAWAY frame of `TConnection.Close` (`client/src/Http2.Client.Connection.pas`) with a direct `TryPost`, when `Close` runs on the reader thread and under the same conditions as the outbound queue. The stream threads (stream WINDOW_UPDATE in `DataConsumed` and `SendWindowUpdate`, `client/src/Http2.Client.Connection.pas`; RST_STREAM in `TStreamLease.ReadBody`, `client/src/Http2.Client.Stream.pas`; RST_STREAM in `EmitData`, `client/src/Http2.Client.Stream.Send.pas`; RST_STREAM in `THttpConnection.AcquireCancellable` and `THttpConnection.AcquireUpgraded`, `client/src/Http2.Client.Pool.Http2.pas`). |
 | Consumers (`TryPop`) | The reader thread, in `DrainOutbound` (`client/src/Http2.Client.Connection.Thread.pas`). |
 | `Overflowed` | The reader thread (`TConnectionWorker.Run`, `client/src/Http2.Client.Connection.Thread.pas`). |
 | `Count` | No call in `client/src`. |
@@ -306,12 +339,13 @@ queue classes and is listed to complete the list.
 
 ## What the verdicts allow
 
-- A queue without a lock between producer and consumer is safe only where one
-  thread produces and one thread consumes. In the client, only the per-stream
-  receive queue has one producer thread (the reader thread). Its consumer
-  side is one thread at a time by the use contract. A hand-over of the response
-  from one thread to another needs a memory barrier that the library does not
-  state today.
+- A queue without a lock is safe only where the thread roles hold, or where the
+  queue checks them. In the client, only the per-stream receive queue has one
+  producer thread (the reader thread). Its ring checks the roles: a second
+  producer, or a second consumer that overlaps the first, raises
+  `EInvalidOperation`. The exchanges of the ring order a hand-over of the
+  consumer role between threads. The lease above the ring does not check the
+  roles of its readers (see the open defect).
 - The outbound queue and the control queue of a connection have many
   producers. They stay queues with a lock.
 - The admission queue, the stream-pool queues and the cancel-hook queue have
