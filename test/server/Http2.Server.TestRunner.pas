@@ -94,6 +94,7 @@ uses
   Http2.Server.H2Lifecycle.Test,
   Http2.Server.ContentLength.Test,
   Http2.Server.H2Locks.Test,
+  Http2.Server.CloseStream.Test,
   Http2.Server.WsHardening.Test,
   Http2.Server.WebSocket.Pump.Test,
   Http2.Server.WebSocket.Inbound.Test,

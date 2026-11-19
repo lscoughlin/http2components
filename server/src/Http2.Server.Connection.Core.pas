@@ -944,13 +944,13 @@ procedure TConnectionCoreBase.CloseStream(const AStream: TServerStream);
 begin
   if AStream = nil then
     Exit;
+  // a flush in a loop of the core can close the stream first: the core reference drops once
+  if FStreams.Extract(AStream) = nil then Exit;
   AStream.MarkLocalEnded;
   FSend.CloseStream(AStream.StreamId);
   FRecv.CloseStream(AStream.StreamId);
   FById.Remove(AStream.StreamId);
-  FStreams.Extract(AStream);
-  // the core drops its reference; a queue entry or a running handler may
-  // hold the stream alive a while longer
+  // the core drops its reference; a queue entry or a handler may keep the stream
   AStream.ReleaseRef;
 end;
 

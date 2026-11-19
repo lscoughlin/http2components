@@ -112,7 +112,8 @@ moves the state and the accessor `State` reads the flags.
   length. A `DATA` frame that ends with `END_STREAM` marks the remote end.
   A response that ends marks the local end. The state follows those marks.
 - `CloseStream` (`:709`) removes the stream from `FById` and from `FStreams`
-  and drops the reference of the core. The queue entry and running handler each hold a reference. The stream lives
+  and drops the reference of the core, once for each stream: a second close of a stream that
+  is no longer in `FStreams` does nothing. The queue entry and running handler each hold a reference. The stream lives
   until its last reference is released.
 
 `TServerStream` keeps its own reference count. `AddRef` and `ReleaseRef`

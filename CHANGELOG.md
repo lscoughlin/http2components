@@ -330,6 +330,16 @@
   outside the send lock, so it never waits for the connection lock while it holds the
   send lock.
 
+- Fix: a connection that ended its streams (a token bucket trip, a connection error) could
+  free a stream that a WebSocket channel still used, and the server could not be stopped.
+  The defect is in 0.32.0. The core closed a cancelled stream inside its loop over all
+  streams when a stream call woke the writer on the IO thread, and the loop then closed the
+  same stream again. Each close dropped the reference of the core, so the stream was freed
+  while the channel held it. A later credit call of a stream-pool thread failed inside the
+  stream lock after it took the connection lock, and the thread kept that lock. Every other
+  thread that needed the connection lock, and `Stop`, waited behind it. The core now drops
+  its reference once for each stream.
+
 ### Common
 
 - New constants for header names and status codes. `Http2.Common.Headers` (and
