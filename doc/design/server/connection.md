@@ -111,7 +111,7 @@ moves the state and the accessor `State` reads the flags.
 - A request header block that ends marks `MarkRequestHead` and the declared
   length. A `DATA` frame that ends with `END_STREAM` marks the remote end.
   A response that ends marks the local end. The state follows those marks.
-- `CloseStream` (`:917`) removes the stream from `FById` and from `FStreams`
+- `CloseStream` (`:925`) removes the stream from `FById` and from `FStreams`
   and releases the reference of the core. A call for a stream that is not in
   `FStreams` does nothing, so the core releases its reference one time only.
   A queue entry, a running handler and a channel each hold a reference. The
@@ -119,13 +119,14 @@ moves the state and the accessor `State` reads the flags.
 - `CancelAndClose` cancels a stream, tells the events when asked, and closes
   it. It holds a reference of its own for the length of the call, because the
   cancel runs the sink of a detached stream. `EndAllStreams` walks a copy of
-  the stream list and skips a stream that a flush inside the loop closed.
+  the stream list and skips a stream that a flush inside the loop closed. Such
+  a stream gets no `StreamReset` notification, as for any normal reap.
 
 `TServerStream` keeps its own reference count. `AddRef` and `ReleaseRef`
 (`server/src/Http2.Server.Stream.pas`) guard the object. Four holders exist: the
-core, the admission queue, the running handler and a channel. The reference count keeps
-a reset that arrives during a handler run from freeing the stream under the
-handler.
+core, the admission queue, the running handler and a channel. The reference
+count keeps a reset that arrives during a handler run from freeing the stream
+under the handler.
 
 ## The connection lock
 

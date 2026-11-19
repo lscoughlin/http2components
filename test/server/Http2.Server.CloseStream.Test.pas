@@ -59,6 +59,7 @@ type
   published
     procedure TestReentrantFlushDuringEndAllStreamsReleasesTheCoreReferenceOnce;
     procedure TestFlushInsideEndAllStreamsKeepsTheLoopAndTheReferences;
+    procedure TestReentrantFlushDuringPeerResetReleasesTheCoreReferenceOnce;
   end;
 
 implementation
@@ -176,6 +177,36 @@ begin
   S3.SetSink(nil);
   S1.ReleaseRef;
   S3.ReleaseRef;
+end;
+
+procedure TCloseStreamTest.TestReentrantFlushDuringPeerResetReleasesTheCoreReferenceOnce;
+var
+  Stream: TServerStream;
+  Sink: IChannelSink;
+  Waker: IWriteWaker;
+begin
+  FPeer := TH2Peer.Create(TPeerOptions.Default);
+  FPeer.SendPreface;
+  FPeer.SendSettings([], []);
+  FPeer.Pump;
+  FPeer.SendGet(1, '/', False);
+  FPeer.Pump;
+  Stream := FPeer.Core.StreamById(1);
+  AssertTrue('the stream is open', Stream <> nil);
+  Stream.AddRef;
+  Stream.AddRef;
+  Sink := TCreditSink.Create(Stream);
+  Stream.SetSink(Sink);
+  Waker := TFlushWaker.Create(FPeer.Core);
+  FPeer.Core.SetWriteWaker(Waker);
+  // the reset cancels the stream, the sink asks for credit, and the flush closes it
+  FPeer.SendRst(1, ecCancel);
+  FPeer.Pump;
+  AssertTrue('the stream is closed', FPeer.Core.StreamById(1) = nil);
+  AssertEquals('the two holders still own the stream', 2, Stream.RefCount);
+  Stream.SetSink(nil);
+  Stream.ReleaseRef;
+  Stream.ReleaseRef;
 end;
 
 initialization

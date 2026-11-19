@@ -96,7 +96,8 @@
   reference of the core, so the stream was freed while its channel still held it. A credit
   call of a stream-pool thread that had started before the reset then failed in the stream
   lock, and the thread kept the connection lock. The core now releases its reference one
-  time for each stream.
+  time for each stream, and a flush inside the end of all streams no longer fails the loop
+  over the streams.
 - **Behavior change.** `IWsSession.SendStream` sends each chunk of the writer as one
   fragment of the message, and it returns at once. A full channel parks the stream
   until the channel drains. While a stream runs, `Send` and `SendStream` return

@@ -791,9 +791,7 @@ begin
         Stream := FindStream(AFrame.Header.StreamId);
         SendRstStream(AFrame.Header.StreamId, ecFlowControlError);
         if Stream <> nil then
-        begin
           CancelAndClose(Stream, ecFlowControlError, False);
-        end;
         Exit;
       end;
     end;

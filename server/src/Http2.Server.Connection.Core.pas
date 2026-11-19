@@ -481,8 +481,16 @@ begin
     FClosing := True;
     // Cancel runs the sink of a detached stream, so the list is copied first
     Open := FStreams.ToArray;
+    // a flush inside a cancel can free a stream of the copy: hold each one
     for I := 0 to High(Open) do
-      Open[I].Cancel(ecCancel);
+      Open[I].AddRef;
+    try
+      for I := 0 to High(Open) do
+        Open[I].Cancel(ecCancel);
+    finally
+      for I := 0 to High(Open) do
+        Open[I].ReleaseRef;
+    end;
   finally
     UnlockConn;
   end;
@@ -776,8 +784,8 @@ var
   I: Integer;
   Open: TArray<TServerStream>;
 begin
-  // the cancel of a stream can run a flush that closes this stream and others, so the
-  // loop walks a copy and skips a stream that is no longer in the list
+  // the cancel of a stream can run a flush that closes this stream and
+  // others, so the loop walks a copy and skips a stream no longer in the list
   Open := FStreams.ToArray;
   for I := High(Open) downto 0 do
     if FStreams.IndexOf(Open[I]) >= 0 then
@@ -787,8 +795,8 @@ end;
 procedure TConnectionCoreBase.CancelAndClose(const AStream: TServerStream;
   const AErrorCode: THttp2ErrorCode; const ANotify: Boolean);
 begin
-  // the cancel runs the sink of a detached stream, and the sink can drop the last
-  // other reference, so this call holds one until the stream is closed
+  // the cancel runs the sink of a detached stream, and the sink can drop the
+  // last other reference, so this call holds one until the stream is closed
   AStream.AddRef;
   try
     AStream.Cancel(AErrorCode);
@@ -918,7 +926,8 @@ procedure TConnectionCoreBase.CloseStream(const AStream: TServerStream);
 begin
   if AStream = nil then
     Exit;
-  // a flush in a loop of the core can close the stream first: the core reference drops once
+  // a flush in a loop of the core can close the stream first: the core
+  // reference drops once
   if FStreams.Extract(AStream) = nil then
     Exit;
   AStream.MarkLocalEnded;
