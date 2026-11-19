@@ -61,7 +61,7 @@ finds nothing. The check was made on 2026-11-19.
 
 | Queue | Class | Verdict |
 | --- | --- | --- |
-| Per-stream receive queue (client) | `TByteBoundedFrameQueue` | SPSC. The ring checks the thread roles at run time. The consumer is one thread at a time, but the library does not enforce that for the body read. An open defect is listed in the section on this queue. |
+| Per-stream receive queue (client) | `TByteBoundedFrameQueue` | SPSC. The ring checks the thread roles at run time. The body read checks that one reader is active at a time. |
 | Outbound queue of a connection (client) | `TBlockingQueue<TFrame>` | MPSC |
 | Control queue of a connection (client) | `TControlFrameQueue` | MPSC |
 | Inbound queue of a connection (client) | `TBlockingQueue<TFrame>` | No producer and no consumer in the library code |
@@ -102,9 +102,9 @@ thread.
 | Consumers (`TryPop`, `WaitForItem`) | The thread that reads the response of the stream. |
 | `IsShutdown` | The consumer. |
 | `Shutdown` | The reader thread, the thread of `Start`, and the consumer. See below. |
-| Lock outside the queue | None. The producer side has no second producer. The consumer side is one thread at a time (see the open point below). |
+| Lock outside the queue | None. The producer side has no second producer. The consumer side is one thread at a time, checked by the body read (see below). |
 | Limit | The byte cap `MaxReceiveQueueBytes` on DATA and the frame cap `cReceiveQueueFrameCap` (1024, the ring capacity). A `Push` over either cap raises `EHttpStreamError` with a flow-control error and does not block. |
-| Verdict | One producer thread. One consumer thread at a time, enforced for the ring and not for the body read. Open defect: see below. |
+| Verdict | One producer thread. One consumer thread at a time, enforced for the ring and for the body read. |
 
 Evidence for the one producer thread. Every path that reaches `Push` starts
 on the reader thread:
@@ -161,9 +161,9 @@ the caller.
 
 Consumer side. The response object leaves the thread that called `Send`. The
 caller can read the body on another thread. The code does not tie the reading
-to the thread that called `Send`, and it does not stop two threads from reading
-the same response at the same time. The ring has two checks, and neither is a
-lock:
+to the thread that called `Send`. Two readers of one response are kept apart by
+the body read (see the last paragraphs of this section). The ring has two checks,
+and neither is a lock:
 
 - `TSpscRing<T>` (`common/src/Http2.Common.SpscRing.pas`) keeps one busy flag
   for each side. `EnterProducer` and `EnterConsumer` set the flag with
@@ -180,17 +180,21 @@ lock:
 A waiting consumer holds the consumer flag for the whole wait. A `TryPop` from a
 second thread during that wait raises `EInvalidOperation`.
 
-The lease above the ring has no such check. `TStreamLease.ReadBody`
-(`client/src/Http2.Client.Stream.pas`) changes its own fields, among them
-`FBodyPending` and `FBodyPendingOfs`, without a lock. The ring checks do not
-cover these fields.
+The lease above the ring has its own check. `TStreamLease.ReadBody`
+(`client/src/Http2.Client.Stream.pas`) changes the lease fields `FBodyPending`,
+`FBodyPendingOfs` and the stamp fields, which the ring does not cover. The flag
+`FBodyReading` is set with `InterlockedExchange` on entry. A call that finds the
+flag set raises `EInvalidOperation` before it reads or writes a field, so a second
+reader fails and does not wait. The owner clears the flag in a `finally` block. The
+second reader therefore cannot take the frames that the first reader waits for. The
+verdict for the consumer side is "one thread at a time, enforced by the lease and by
+the ring".
 
-Open defect: the library does not serialize the readers of one response. Two
-threads that read the same response race on the lease fields of `ReadBody`. The
-race applies even when the two calls do not overlap inside the ring. If two ring
-calls do overlap, one of them raises `EInvalidOperation`. The verdict for the
-consumer side is therefore "one thread at a time by the use contract, enforced
-by the ring for the ring calls and not enforced for the body read".
+The response object of the pool (`THttpResponse`, `client/src/Http2.Client.Response.pas`)
+wraps the body in `TGuardedBody`. That wrapper holds the connection lock during each
+read. A second reader that uses `IHttpResponse.Body` therefore waits for the first
+one and does not reach the lease check. The lease check covers the direct callers of
+the lease.
 
 Other facts that matter for the roles:
 
@@ -344,8 +348,8 @@ queue classes and is listed to complete the list.
   producer thread (the reader thread). Its ring checks the roles: a second
   producer, or a second consumer that overlaps the first, raises
   `EInvalidOperation`. The exchanges of the ring order a hand-over of the
-  consumer role between threads. The lease above the ring does not check the
-  roles of its readers (see the open defect).
+  consumer role between threads. The lease above the ring checks its readers
+  with the flag `FBodyReading`, as described in the section on this queue.
 - The outbound queue and the control queue of a connection have many
   producers. They stay queues with a lock.
 - The admission queue, the stream-pool queues and the cancel-hook queue have

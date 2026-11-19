@@ -239,6 +239,12 @@
   `Http2.Client.Cookies`. It adds one `cookie` field with the pairs of the map. An empty
   map adds no field. The client messages document has a section on cookies.
 
+- Fix: a second thread that read one response body through a stream lease could take
+  frames that the first thread waited for, because the lease did not check its readers.
+  A second read that overlaps the first one now raises `EInvalidOperation`. A read
+  through `IHttpResponse.Body` already waited for the connection lock, so only direct
+  callers of the lease were exposed. The defect is in 0.32.0.
+
 ### Server
 
 - **Breaking change of the API.** `IServerRequest.ReadChunk` takes a `TStream` in place

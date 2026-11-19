@@ -140,6 +140,7 @@ type
     FLastReadArrivedUs: Int64;
     FArrivals: TArrivalStats;
     FBodyEof: Boolean;
+    FBodyReading: LongInt; // 1 while ReadBody runs; one reader at a time
     /// total DATA bytes received on this stream, compared against a declared
     /// `content-length` at END_STREAM (RFC 7540 section 8.1.2.6)
     FBodyReceived: Int64;
@@ -237,7 +238,8 @@ type
     procedure ReleaseLease;
     /// true once the response body is complete and no bytes are buffered
     function BodyEof: Boolean;
-    /// blocking body read; a read after EOF gives 0
+    /// blocking body read; a read after EOF gives 0. One reader at a time: a
+    /// second call that overlaps this one raises EInvalidOperation
     function ReadBody(var ABuffer; const ACount: LongInt): LongInt;
     /// report a recorded end to the attempt hook (idempotent).  ReadBody only
     /// records; the caller delivers once it holds no lock
@@ -813,70 +815,70 @@ begin
   Result := 0;
   if ACount <= 0 then
     Exit;
-  P := @ABuffer;
-  while True do
-  begin
-    Avail := Length(FBodyPending) - FBodyPendingOfs;
-    if Avail > 0 then
+  if InterlockedExchange(FBodyReading, 1) <> 0 then
+    raise EInvalidOperation.Create('the response body has a second reader at the same time');
+  try
+    P := @ABuffer;
+    while True do
     begin
-      N := ACount;
-      if N > Avail then
-        N := Avail;
-      // a Read never spans two frames, so it maps to exactly one stamp; the
-      // first Read of a frame is one more arrival
-      if FBodyPendingOfs = 0 then
-        FArrivals.Note(FBodyArrivedUs);
-      FLastReadArrivedUs := FBodyArrivedUs;
-      Move(FBodyPending[FBodyPendingOfs], P^, N);
-      Inc(FBodyPendingOfs, N);
-      if FBodyEof and (FBodyPendingOfs >= Length(FBodyPending)) and
-         (not FFailed) then
-        NoteEnd(edEof);
-      Exit(N);
-    end;
-    if FFailed then
-    begin
-      NoteEnd(edFailed);
-      raise MakeStreamError;
-    end;
-    // every Read after the end gives 0 (D2); NoteEnd keeps the first end
-    if FBodyEof then
-    begin
-      NoteEnd(edEof);
-      Exit(0);
-    end;
-    // A body read waits with its OWN deadline when the request set one
-    // (TStreamRequest.BodyReadTimeoutSet): 0 there means "wait
-    // indefinitely", which a Server-Sent Events stream needs because it is
-    // idle between events and must not be aborted by the header timeout.
-    // An unset request keeps the historic behaviour byte-for-byte: the
-    // existing FTimeoutMs deadline applies.
-    if not WaitForBodyFrame(Frame) then
-    begin
-      // the queue can shut down because the stream failed (RST_STREAM,
-      // GOAWAY, connection loss) rather than because the deadline expired;
-      // surface that cause instead of masking it as a timeout, else a caller
-      // cannot distinguish a dead connection from a slow peer (mirrors
-      // WaitForResponseHeader)
+      Avail := Length(FBodyPending) - FBodyPendingOfs;
+      if Avail > 0 then
+      begin
+        N := ACount;
+        if N > Avail then
+          N := Avail;
+        // one Read spans one frame, so it has one stamp; the first Read of a
+        // frame is one more arrival
+        if FBodyPendingOfs = 0 then
+          FArrivals.Note(FBodyArrivedUs);
+        FLastReadArrivedUs := FBodyArrivedUs;
+        Move(FBodyPending[FBodyPendingOfs], P^, N);
+        Inc(FBodyPendingOfs, N);
+        if FBodyEof and (FBodyPendingOfs >= Length(FBodyPending)) and
+           (not FFailed) then
+          NoteEnd(edEof);
+        Exit(N);
+      end;
       if FFailed then
       begin
         NoteEnd(edFailed);
         raise MakeStreamError;
       end;
-      if (FRequest.CancelToken <> nil) and
-         FRequest.CancelToken.IsCancelled then
+      // every Read after the end gives 0 (D2); NoteEnd keeps the first end
+      if FBodyEof then
       begin
-        NoteEnd(edCancelled);
-        // abandon the stream the same way a cancelled Send does: reset it,
-        // never orphan it (doc/design/errors-redirects.md "Cancellation")
-        FConnection.PostFrame(BuildRstStreamFrame(FStreamId, ecCancel));
-        ReleaseLease;
-        raise EHttpStreamError.Create('body read cancelled', FStreamId,
-          ecCancel);
+        NoteEnd(edEof);
+        Exit(0);
       end;
-      raise EHttpTimeout.Create('timed out reading response body');
+      // a body read waits with the request's own deadline when it is set (0
+      // waits indefinitely, as an SSE stream needs); otherwise FTimeoutMs applies
+      if not WaitForBodyFrame(Frame) then
+      begin
+        // the queue shuts down when the stream fails (RST_STREAM, GOAWAY,
+        // connection loss): surface that cause, not a timeout (mirrors
+        // WaitForResponseHeader), so a dead connection is told from a slow peer
+        if FFailed then
+        begin
+          NoteEnd(edFailed);
+          raise MakeStreamError;
+        end;
+        if (FRequest.CancelToken <> nil) and
+           FRequest.CancelToken.IsCancelled then
+        begin
+          NoteEnd(edCancelled);
+          // abandon the stream the same way a cancelled Send does: reset it,
+          // never orphan it (doc/design/errors-redirects.md "Cancellation")
+          FConnection.PostFrame(BuildRstStreamFrame(FStreamId, ecCancel));
+          ReleaseLease;
+          raise EHttpStreamError.Create('body read cancelled', FStreamId,
+            ecCancel);
+        end;
+        raise EHttpTimeout.Create('timed out reading response body');
+      end;
+      HandleInboundFrame(Frame);
     end;
-    HandleInboundFrame(Frame);
+  finally
+    InterlockedExchange(FBodyReading, 0);
   end;
 end;
 

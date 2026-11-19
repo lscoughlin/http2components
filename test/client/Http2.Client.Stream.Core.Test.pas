@@ -40,9 +40,65 @@ type
     procedure TestHeadContentLengthIsNotComparedAgainstBody;
     procedure TestContentLengthMismatchRaises;
     procedure TestResponseTeHeaderMustBeTrailers;
+    procedure TestSecondConcurrentBodyReaderIsRefused;
   end;
 
 implementation
+
+type
+  /// reads one body of a lease on its own thread. A guarded reader holds the
+  /// lock for the whole ReadBody call, the way TGuardedBody holds the
+  /// connection lock; an unguarded reader holds no lock
+  TBodyReadThread = class(TThread)
+  private
+    FLease: TStreamLease;
+    FLock: TCriticalSection;
+    FGotText: string;
+    FRaised: Boolean;
+    FErrorMessage: string;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const ALease: TStreamLease; const ALock: TCriticalSection);
+    property GotText: string read FGotText;
+    property Raised: Boolean read FRaised;
+    property ErrorMessage: string read FErrorMessage;
+  end;
+
+constructor TBodyReadThread.Create(const ALease: TStreamLease;
+  const ALock: TCriticalSection);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FLease := ALease;
+  FLock := ALock;
+end;
+
+procedure TBodyReadThread.Execute;
+var
+  Buf: array[0..7] of Byte;
+  N, I: LongInt;
+begin
+  try
+    if FLock <> nil then
+      FLock.Acquire;
+    try
+      N := FLease.ReadBody(Buf, SizeOf(Buf));
+    finally
+      if FLock <> nil then
+        FLock.Release;
+    end;
+    FGotText := '';
+    for I := 0 to N - 1 do
+      FGotText := FGotText + Chr(Buf[I]);
+  except
+    on E: Exception do
+    begin
+      FRaised := True;
+      FErrorMessage := E.Message;
+    end;
+  end;
+end;
 
 procedure TStreamLeaseCoreTest.TestAllocatorYieldsOddMonotonicIds;
 var
@@ -797,6 +853,80 @@ begin
     ExpectTe('trailers, deflate', True);
     ExpectTe('deflate', True);
   finally
+    Conn.Free;
+  end;
+end;
+
+procedure TStreamLeaseCoreTest.TestSecondConcurrentBodyReaderIsRefused;
+var
+  Sock: TMockSocket;
+  Conn: TConnection;
+  Lease: TStreamLease;
+  IL: IConnectionStream;
+  Alloc: TStreamIdAllocator;
+  Req: TStreamRequest;
+  Enc: THpackCodec;
+  Empty: THeaderBlock;
+  Lock: TCriticalSection;
+  Reader, Intruder: TBodyReadThread;
+begin
+  // The first reader is parked in the wait for a frame, outside the ring's
+  // consumer role, when the lock is taken: it has released the lock, so the
+  // second reader is not blocked by the ring. Then the second reader calls
+  // ReadBody with no lock while the first reader is still inside ReadBody.
+  // Current code lets it take the frame; the fix refuses it.
+  Sock := TMockSocket.Create;
+  Conn := TConnection.Create(Sock);
+  Lock := TCriticalSection.Create;
+  Reader := nil;
+  Intruder := nil;
+  try
+    Req := TStreamRequest.WithMethod(hmGet, 'api.example');
+    MakeLease(Conn, Req, Alloc, Lease, IL);
+    try
+      Lease.Start;
+      Enc := THpackCodec.Create;
+      try
+        Empty := nil;
+        Conn.DispatchStreamFrame(ResponseHeadersFrame(Enc, '200', Empty,
+          Lease.StreamId, False));
+      finally
+        Enc.Free;
+      end;
+      AssertTrue('header wait', Lease.WaitForResponseHeader(1000));
+      Lease.WaitLock := Lock;
+
+      Reader := TBodyReadThread.Create(Lease, Lock);
+      Reader.Start;
+      // the reader must reach the wait before the lock is taken (bounded)
+      Sleep(100);
+      Lock.Acquire;
+      try
+        Lease.OnStreamFrame(BuildDataFrame(Lease.StreamId, BytesOf('abc'), False));
+        // the frame ends the reader's wait; the reader then blocks on the lock
+        Sleep(100);
+        Intruder := TBodyReadThread.Create(Lease, nil);
+        Intruder.Start;
+        Intruder.WaitFor;
+      finally
+        Lock.Release;
+      end;
+      // an end frame lets the reader finish if the intruder took the first one
+      Lease.OnStreamFrame(BuildDataFrame(Lease.StreamId, nil, True));
+      Reader.WaitFor;
+
+      AssertTrue('a second concurrent reader is refused', Intruder.Raised);
+      AssertEquals('the first reader gets its bytes', 'abc', Reader.GotText);
+      AssertFalse('the first reader does not fail', Reader.Raised);
+    finally
+      Intruder.Free;
+      Reader.Free;
+      Lease.ReleaseLease;
+      IL := nil;
+      Alloc.Free;
+    end;
+  finally
+    Lock.Free;
     Conn.Free;
   end;
 end;
