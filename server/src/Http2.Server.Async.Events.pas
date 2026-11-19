@@ -125,8 +125,8 @@ begin
     if Assigned(FOnReset) then
       FOnReset;
   end;
-  if FPool <> nil then
-    FPool.RemoveStream(AStream.StreamId);
+  if (FPool <> nil) and (AStream <> nil) then
+    FPool.RemoveStream(AStream);
 end;
 
 procedure THttp2ConnectionEvents.ConnectionClosing;

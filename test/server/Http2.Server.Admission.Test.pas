@@ -499,7 +499,7 @@ begin
 
   // the peer resets the queued stream
   AssertTrue('the queued entry is removed',
-    FPool.RemoveStream(Queued.StreamId));
+    FPool.RemoveStream(Queued));
   AssertEquals('the queue is short one entry', 0, FPool.QueueLength);
   AssertEquals('the drop is counted', 1, FPool.DroppedBeforeDispatch);
 
@@ -509,7 +509,7 @@ begin
   AssertFalse('the handler never saw the removed stream',
     FGate.HasId(Queued.StreamId));
   AssertFalse('a second removal finds nothing',
-    FPool.RemoveStream(Queued.StreamId));
+    FPool.RemoveStream(Queued));
 end;
 
 procedure TAdmissionTest.TestWaitLimitYieldsTimeout;
@@ -736,14 +736,16 @@ end;
 procedure TAdmissionTest.TestQueueRemovesStream;
 var
   Queue: TRequestQueue;
+  Second: TServerStream;
 begin
   Queue := TRequestQueue.Create(4, 600000, FClock);
   try
     Queue.TryEnqueue(NewStream(1));
-    Queue.TryEnqueue(NewStream(2));
-    AssertTrue('the matching entry is removed', Queue.RemoveStream(2));
+    Second := NewStream(2);
+    Queue.TryEnqueue(Second);
+    AssertTrue('the matching entry is removed', Queue.RemoveStream(Second));
     AssertEquals('the queue is short one entry', 1, Queue.Count);
-    AssertFalse('an absent entry is not removed', Queue.RemoveStream(2));
+    AssertFalse('an absent entry is not removed', Queue.RemoveStream(Second));
   finally
     Queue.Free;
   end;

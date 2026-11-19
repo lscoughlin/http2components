@@ -110,7 +110,9 @@ encodes the block later. This rule follows the seam note in
 ## Reset before dispatch
 
 A peer can reset a queued stream before a handler takes it. The IO side calls
-`THandlerPool.RemoveStream` with the stream id. The queue removes the matching
+`THandlerPool.RemoveStream` with the stream object. Stream ids are per
+connection, and one queue serves all connections, so the queue matches the
+object and never the id. The queue removes the matching
 entry at once (`server/src/Http2.Server.Admission.pas`), and the dropped total
 increases. A worker that takes an entry whose stream is already cancelled
 discards the entry without a handler call. In both paths the handler of the

@@ -139,7 +139,7 @@ begin
 
   // connection A resets its stream 1
   AssertTrue('the entry of A is removed',
-    FPool.RemoveStream(StreamA.StreamId));
+    FPool.RemoveStream(StreamA));
   AssertEquals('one request waits', 1, FPool.QueueLength);
   AssertEquals('A dropped its queue reference', 1, StreamA.RefCount);
   AssertEquals('B keeps its queue reference', 2, StreamB.RefCount);

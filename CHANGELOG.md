@@ -330,6 +330,13 @@
   outside the send lock, so it never waits for the connection lock while it holds the
   send lock.
 
+- Fix: a queued request of one connection could be dropped when another connection reset a
+  stream with the same stream id. The defect is in 0.32.0. It showed only when every handler
+  thread was busy, so that requests waited in the queue. One queue serves all connections,
+  and stream ids are per connection, so a reset of stream 1 on one connection could remove
+  the waiting stream 1 of another connection. That request never ran, and its client waited.
+  A reset now removes the queued entry of the reset stream object only.
+
 ### Common
 
 - New constants for header names and status codes. `Http2.Common.Headers` (and

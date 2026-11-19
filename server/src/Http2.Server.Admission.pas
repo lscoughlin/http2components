@@ -112,8 +112,9 @@ type
     //   the caller answers with a refusal
     function Dequeue(out AStream: TServerStream;
       out AResult: TDequeueResult): Boolean;
-    /// remove the entry of AStreamId; False when no entry matches
-    function RemoveStream(const AStreamId: LongWord): Boolean;
+    /// remove the entry of AStream; False when no entry matches
+    // - the match is the object: stream ids are per connection
+    function RemoveStream(const AStream: TServerStream): Boolean;
     /// remove and answer every waiting entry
     function DrainAll: TArray<TServerStream>;
     /// the entries held now
@@ -211,8 +212,8 @@ type
     function Admit(const AStream: TServerStream): TAdmitResult;
     /// queue an HTTP/1.1 request; a refusal is answered by the job itself
     function AdmitJob(const AJob: IHandlerJob): TAdmitResult;
-    /// remove the queued entry of AStreamId, as a reset does
-    function RemoveStream(const AStreamId: LongWord): Boolean;
+    /// remove the queued entry of AStream (the object, not its id), as a reset does
+    function RemoveStream(const AStream: TServerStream): Boolean;
     /// stop acceptance, refuse the waiting entries and end the workers
     // - AWaitMs bounds each wait for the workers; -1 uses the graceful timeout
     procedure Stop(const AWaitMs: Integer = -1);
@@ -383,7 +384,7 @@ begin
   end;
 end;
 
-function TRequestQueue.RemoveStream(const AStreamId: LongWord): Boolean;
+function TRequestQueue.RemoveStream(const AStream: TServerStream): Boolean;
 var
   Kept: TQueue<TQueueEntry>;
   E: TQueueEntry;
@@ -398,7 +399,7 @@ begin
       while FEntries.Count > 0 do
       begin
         E := FEntries.Dequeue;
-        if (not Result) and (E.Stream <> nil) and (E.Stream.StreamId = AStreamId) then
+        if (not Result) and (E.Stream <> nil) and (E.Stream = AStream) then
         begin
           Result := True;
           // the removed entry drops its reference
@@ -900,9 +901,9 @@ begin
   end;
 end;
 
-function THandlerPool.RemoveStream(const AStreamId: LongWord): Boolean;
+function THandlerPool.RemoveStream(const AStream: TServerStream): Boolean;
 begin
-  Result := FQueue.RemoveStream(AStreamId);
+  Result := FQueue.RemoveStream(AStream);
   if Result then
   begin
     FLock.Acquire;
