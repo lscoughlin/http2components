@@ -59,9 +59,12 @@ The write path calls `AfterWrite` from an IO thread after it drained `fWr`
 (`mormot.net.async.pas`). `TPollAsyncConnection.OnFirstRead` runs once per
 connection, just before the first read, and returns False to close the
 connection (`mormot.net.async.pas`). `TAsyncConnection.AfterCreate`
-runs when the connection is subscribed and its handle is set; it is cheaper
-than the constructor, which mORMot2 reintroduces with its own signature
-(`mormot.net.async.pas`, `...:447`).
+runs at the end of `TAsyncConnections.ConnectionNew`, once the handle is set.
+That point can come before the subscription: `ConnectionNew` calls
+`ConnectionAdd` only when the caller passes `aAddAndSubscribe` or when no
+read-poll thread exists. The method is cheaper than the constructor, which
+mORMot2 reintroduces with its own signature (`mormot.net.async.pas`,
+`TAsyncConnection.Create`).
 
 **The IO thread count.** The server passes the factory value
 `IOThreads` as `aThreadPoolCount` to the `TAsyncServer` constructor
@@ -170,10 +173,11 @@ so the failure of one never closes a good connection.
 
 **The platform notes.** Darwin and Linux both accept `SO_REUSEPORT` and the
 three keep-alive knobs. On Darwin mORMot2 sets `SO_REUSEPORT` on every
-listener (`SetLinger` calls `SetReuseAddrPort`, which sets the option on BSD
-and Darwin in `mormot.net.sock.posix.inc:811-824`), so two listeners share a
-port there even with the option off, and the option decides the sharing on
-Linux. Darwin answers the raw flag bits from `getsockopt` for `TCP_NODELAY`
+listener (`NewSocket` in `mormot.net.sock.pas` calls `SetLinger(5)` before the
+bind, and `SetLinger` calls `SetReuseAddrPort` for a positive linger, which
+sets the option on BSD and Darwin in `mormot.net.sock.posix.inc`), so two
+listeners share a port there even with the option off, and the option decides
+the sharing on Linux. Darwin answers the raw flag bits from `getsockopt` for `TCP_NODELAY`
 (4) and `SO_KEEPALIVE` (8) instead of 1. A buffer size is a hint on some
 systems: the kernel grants at least the asked size, so a read-back passes at
 or above it.
@@ -205,8 +209,8 @@ A lost wake-up is the risk of the pattern. The mORMot2 wake-up of a poll
 thread sets a counter, tries the guard lock, and runs the wake-up itself when
 the lock is free; a request that loses the lock to the running thread is
 picked up by the retry at the end of the lock owner
-(`mormot.net.async.pas`, `...:4102-4114`). The server follows the
-same rule: the send loop records a wake-up that arrives while it runs, and it
+(`mormot.net.async.pas`, `TAsyncConnections.ThreadPollingWakeupLocked`).
+The server follows the same rule: the send loop records a wake-up that arrives while it runs, and it
 repeats until no late wake-up and no queued output remain
 (`THttp2AsyncConnection.SendPendingOutput`). A second call of the mORMot2 write
 path covers the case where the write lock went to the IO thread (the same method).
@@ -290,8 +294,8 @@ tick retired any age above 0 at once; the mORMot2 tick counts the age correctly.
 ## The poller of each platform
 
 mORMot2 uses `epoll` on Linux and forces the `poll` API on BSD and Darwin
-(`mormot.net.sock.posix.inc:36-38`, read 2026-10-07). `poll` costs time in
-proportion to the number of sockets in the set, because the kernel scans the
+(the `USEPOLL` define under `OSBSDDARWIN` in `mormot.net.sock.posix.inc`,
+read 2026-11-19). `poll` costs time in proportion to the number of sockets in the set, because the kernel scans the
 whole set on every call, while `epoll` reports only the ready descriptors. The
 relative cost of the two pollers under load is the subject of the load-testing
 work, and this document records no measurement, because this host is macOS
@@ -313,5 +317,5 @@ validation work. This source design document does not claim those results.
 | The async class set, its virtual methods and the thread roles | `third_party/mORMot2/src/net/mormot.net.async.pas` (pinned revision) | 2026-10-07 |
 | The `DefaultListenBacklog` global | `third_party/mORMot2/src/net/mormot.net.sock.pas` | 2026-10-07 |
 | The connection cap test and the refusal without a reply | `third_party/mORMot2/src/net/mormot.net.async.pas` | 2026-11-06 |
-| The socket defaults of the accept path | `third_party/mORMot2/src/net/mormot.net.sock.pas`, `:3669-3684` | 2026-11-06 |
-| The keep-alive knobs and `SO_REUSEPORT` on each platform | `third_party/mORMot2/src/net/mormot.net.sock.posix.inc:755-802`, `:811-833` | 2026-11-06 |
+| The socket defaults of the `NewSocket` path and of the accept path | `third_party/mORMot2/src/net/mormot.net.sock.pas`, `TNetSocketWrap.SetupConnection` and `TNetSocketWrap.Accept` | 2026-11-19 |
+| The keep-alive knobs and `SO_REUSEPORT` on each platform | `third_party/mORMot2/src/net/mormot.net.sock.posix.inc`, `TNetSocketWrap.ReusePort`, `TNetSocketWrap.SetKeepAliveTcp`, `TNetSocketWrap.SetReuseAddrPort` and `TNetSocketWrap.SetLinger` | 2026-11-19 |
