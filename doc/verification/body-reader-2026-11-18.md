@@ -3,19 +3,22 @@ license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
 copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: verification, body reader, body writer, producer, WebSocket, streaming, load test, linux
 notes:
-  - This record holds the Linux results of the streamed bodies and messages of version 0.33.0.
+  - This record holds the results of the streamed bodies and messages of version 0.33.0, and the state at the release of version 0.33.0, tag `v0.33.0`, commit `7137502`.
+  - The branch `main` is at version 0.34.0 in development, at commit `bf6589f` of 2026-11-19.
   - The record covers the shared body writer and body reader, the WebSocket send and receive streams, the producers, the cookie and format helpers, and the load runs of 2026-11-18 and 2026-11-19.
   - Three findings are open. A code review found a possible lock-order conflict between the connection lock and the write lock of the socket layer. Two smaller findings come from code review of the stream lock and of the handler pool. No run has shown any of the three.
   - The load programs are not stored in the repository.
-  - The record also holds the macOS gate results of commit e3a880b.
+  - The record also holds the macOS gate results of commit e3a880b, and of the source tree of commit 3f0ba0a.
   - The record also holds the Linux gate results, the scenario runs and the stop-path loops of commit 3f0ba0a, run on 2026-11-19.
 ---
 
 # Streamed bodies and messages: Linux verification
 
-This record states the results of the streamed bodies and messages on native Linux. The
-gate and the scenario runs ran on 2026-11-19 on commit `2759ee9` of the branch `main`. The record
-is not release approval.
+This record states the results of the streamed bodies and messages on native Linux. It holds
+the results of version 0.33.0 and the state at the release of version 0.33.0, tag `v0.33.0`,
+commit `7137502`. The first Linux gate of the record ran on 2026-11-19 on commit `2759ee9` of
+the branch `main`. Each later section names the commit of its runs. The record is not release
+approval.
 
 ## Environment
 
@@ -24,6 +27,20 @@ is not release approval.
 | Host | Linux amd64 Docker container on the host `liam-rzbox`, Ubuntu 24.04, 16 cores, Free Pascal 3.2.4 |
 | Host load | The host also runs unrelated containers. The load average was between 0.2 and 2.4 during the runs. The times in this record are not benchmark figures |
 | Staging | The tracked files of the commit, with the `third_party` checkouts of the pinned revisions |
+
+## State of the release
+
+The release of version 0.33.0 is a GitHub source release. The record holds no gate run on
+commit `7137502` itself. The Linux gate of commit `3f0ba0a` covers the release, because the tree
+of the release equals the tree of `3f0ba0a` except `CHANGELOG.md` and this record. The Mac
+gate of the same source tree is in the table below.
+
+| Item | Value |
+| --- | --- |
+| Release tag | `v0.33.0`, on commit `7137502`, dated 2026-11-19 |
+| Source version of `main` | 0.34.0, in development, at commit `bf6589f`, dated 2026-11-19. The commit changes only the version numbers, the README and the changelog |
+| Last Linux gate commit | `3f0ba0a`, dated 2026-11-19. Its source tree is the same as the tree of the release (see above) |
+| Mac gate of the source tree of `3f0ba0a` | `test:server` 1068 tests, no error, no failure. `test:client` 1115 tests, no error, no failure |
 
 ## Gate results
 
@@ -45,17 +62,25 @@ is not release approval.
 
 ### macOS gate results
 
-The gate ran on the Mac at the tip of `main`, commit `e3a880b`. The Linux results above are
-for commit `2759ee9`.
+The gate ran on the Mac on commit `e3a880b`, the tip of `main` at that time. The Linux results
+above are for commit `2759ee9`.
 
 | Step | Result |
 | --- | --- |
 | `test:server` | 1066 tests, no error, no failure |
 | `test:client` | 1115 tests, no failure |
 
+The gate ran on the Mac on the source tree of commit `3f0ba0a`. That tree is the same as the
+tree of commit `c84d5c5`, the tip of the stop-path branch.
+
+| Step | Result |
+| --- | --- |
+| `test:server` | 1068 tests, no error, no failure |
+| `test:client` | 1115 tests, no error, no failure |
+
 ### Linux gate results of commit 3f0ba0a
 
-The gate ran on 2026-11-19 on commit `3f0ba0a`, the tip of the branch `main`, in a Linux amd64
+The gate ran on 2026-11-19 on commit `3f0ba0a` of the branch `main`, in a Linux amd64
 container on the host `liam-rzbox`. The host load average was 0.43 at the start and between
 0.4 and 1.2 during the run.
 
@@ -230,7 +255,7 @@ with 50 parallel streams, did not stop. The review is the only source of this fi
 
 ## Not covered
 
-- `version:check` on Linux for this commit.
+- `version:check` on Linux for commit `3f0ba0a`.
 - A run of more than 10 passes of each scenario, which could show whether the growth of the
   peak resident memory stops.
 - A run with the host fully idle. The load average stayed between 0.2 and 2.4.
