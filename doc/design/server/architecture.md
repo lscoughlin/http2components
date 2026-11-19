@@ -134,83 +134,83 @@ Every unit uses the prefix `Http2.Server.`. The copied client units keep the
 same prefix, so a program links the client library and the server library
 together with no name clash.
 
-| Unit | Lines | Layer | Responsibility |
-| --- | --- | --- | --- |
-| `Http2.Server.pas` | 408 | facade | the public surface, re-exported from the units below |
-| `Http2.Server.Runtime.pas` | 182 | server | `THttp2Server`, the start and stop path |
-| `Http2.Server.Observer.pas` | 121 | server | the events, the observer and the statistics |
-| `Http2.Server.Async.pas` | 998 | IO | the mORMot2 async subclasses and the core bridge |
-| `Http2.Server.Async.Options.pas` | 463 | IO | the TLS policy, the core options, the control bucket and the handshake deadline, built from the factory |
-| `Http2.Server.Async.Counters.pas` | 84 | IO | the connection, reset, trip and handshake counters |
-| `Http2.Server.Async.Waker.pas` | 64 | IO | the write waker of one connection |
-| `Http2.Server.Async.Sweep.pas` | 154 | IO | the sweep over the live connections: age, drain, GOAWAY and stream count |
-| `Http2.Server.Async.Socket.pas` | 128 | IO | the socket options of each accepted connection: no-delay, keep-alive, buffers |
-| `Http2.Server.Stream.Meta.pas` | 324 | seam | the base of the server stream: locks, reference count, request head and pending response head |
-| `Http2.Server.ClientCert.pas` | 275 | TLS | the identity of a verified client certificate |
-| `Http2.Server.Mtls.Types.pas` | 101 | TLS | the client certificate modes and their pure maps |
-| `Http2.Server.Admission.pas` | 709 | admission | the bounded queue and the handler pool |
-| `Http2.Server.StreamAdapters.pas` | 226 | admission | the handler-side request and response of one stream |
-| `Http2.Server.Duplex.pas` | 334 | seam | the interfaces of a detached stream and the registry of channels |
-| `Http2.Server.StreamChannel.pas` | 444 | seam | the channel of a detached HTTP/2 stream |
-| `Http2.Server.HandlerJob.pas` | 47 | seam | the job that the handler pool runs besides an HTTP/2 stream |
-| `Http2.Server.Http1.Limits.pas` | 198 | http1 | the limits of the HTTP/1.1 parser as a record of the server builder |
-| `Http2.Server.Http1.Guard.pas` | 707 | http1 | the strict rules that sit on the mORMot2 parser |
-| `Http2.Server.Http1.Parser.pas` | 506 | http1 | the adapter that drives the mORMot2 parser one state at a time |
-| `Http2.Server.Http1.Select.pas` | 58 | http1 | the clear-text choice between HTTP/2 and HTTP/1.1 |
-| `Http2.Server.Http1.Status.pas` | 87 | http1 | the reason phrases of the status line |
-| `Http2.Server.Http1.ResponseHead.pas` | 159 | http1 | the response head and its framing |
-| `Http2.Server.Http1.Host.pas` | 213 | http1 | the cut-able link between an exchange and its core |
-| `Http2.Server.Http1.Exchange.pas` | 959 | http1 | one HTTP/1.1 request with its response and its pool job |
-| `Http2.Server.Http1.Exchange.Frames.pas` | 115 | http1 | the frames of a response body and the headers of a refusal or an upgrade |
-| `Http2.Server.Http1.Channel.pas` | 356 | http1 | the chunked channel of a detached HTTP/1.1 response |
-| `Http2.Server.Http1.Core.pas` | 467 | http1 | the HTTP/1.1 connection core |
-| `Http2.Server.Http1.Driver.pas` | 128 | http1 | the staged close, the deadlines and the idle decision |
-| `Http2.Server.Async.Events.pas` | 122 | io | the event receivers of an async connection |
-| `Http2.Server.ResponseWriter.pas` | 144 | seam | the `Date` field and the header checks that both protocols share |
-| `Http2.Server.Sse.Encoder.pas` | 190 | streaming | the encoder of server-sent events: field rules, line splitting and the injection checks |
-| `Http2.Server.Sse.pas` | 347 | streaming | `StartSse` and the event stream: serialised sends, the keep-alive timer and the stall rule |
-| `Http2.Server.WebSocket.Origin.pas` | 341 | websocket | the origin policy of an upgrade request |
-| `Http2.Server.WebSocket.Options.pas` | 351 | websocket | the record `TWsOptions` of the server builder, with the inbound settings `InlineLimit`, `InboundPipeBytes` and `InboundStallMs`, and the outbound setting `OutboundStallMs` |
-| `Http2.Server.WebSocket.Types.pas` | 176 | websocket | `IWsSession`, `IWsHandler` (whose `Message` takes an `IBodyReader`), `TWsInitResult` and the interfaces to the server |
-| `Http2.Server.WebSocket.Close.pas` | 116 | websocket | the timer rules of ping, pong and close |
-| `Http2.Server.WebSocket.Pump.pas` | 707 | websocket | the pump of a streamed message (`SendStream`): the steps that pull an `IBodyWriter`, the park and its timer, and the step that runs an `IBodyProducer` on one pool thread |
-| `Http2.Server.WebSocket.Pump.Producer.pas` | 245 | websocket | the sink of a producer: one fragment for each chunk, the wait while the channel is full, the control replies between fragments, the outbound stall deadline and the quiet cancel at the end of the session |
-| `Http2.Server.WebSocket.Snapshot.pas` | 135 | websocket | `TWsRequestSnapshot`, the read-only copy of the handshake request that a session gives to its handler |
-| `Http2.Server.WebSocket.Inbound.pas` | 472 | websocket | `TWsMessagePipe` and `TWsMemoryReader`, the `IBodyReader` classes that give an inbound message to the handler: a bounded pipe with a never-blocking push, and a reader over memory |
-| `Http2.Server.WebSocket.SessionCore.pas` | 985 | websocket | the state, the sender, the closing handshake and the timers of a session, and the hook that aborts the open pipe when the session ends |
-| `Http2.Server.WebSocket.Session.pas` | 984 | websocket | the session: task queue, Init, receive path, the streamed message and stop |
-| `Http2.Server.WebSocket.Environment.pas` | 297 | websocket | the options, counters, report and watchdog that the sessions share |
-| `Http2.Server.WebSocket.Handshake.pas` | 187 | websocket | the accept key, the token lists, the subprotocol choice and the origin check of an upgrade |
-| `Http2.Server.WebSocket.Http2.pas` | 150 | websocket | the checks and the 200 response of the HTTP/2 extended CONNECT |
-| `Http2.Server.WebSocket.Accept.pas` | 50 | websocket | `AcceptWebSocket`, which picks the handshake of the protocol |
-| `Http2.Server.Http1.SocketChannel.pas` | 340 | http1 | the raw-byte channel of an upgraded HTTP/1.1 connection |
-| `Http2.Server.Http1.Upgrade.pas` | 190 | http1 | the checks and the 101 response of the HTTP/1.1 upgrade |
-| `Http2.Server.WebSocket.Frames.pas` | 334 | codec | WebSocket opcodes, close codes, the mask, the frame encoder and the Close payload helpers (RFC 6455) |
-| `Http2.Server.WebSocket.Utf8.pas` | 116 | codec | a resumable UTF-8 validator that holds three bytes of state |
-| `Http2.Server.WebSocket.Parser.pas` | 291 | codec | the resumable frame parser; it pushes the unmasked payload of a data frame to a sink and buffers no data frame |
-| `Http2.Server.WebSocket.Reader.pas` | 324 | codec | the assembly of frames into messages with the size, fragment and UTF-8 checks; it keeps the first `InlineLimit` octets and then gives the octets to its sink one piece at a time; the codec holds no socket and no thread |
-| `Http2.Server.StreamHost.pas` | 60 | seam | the callbacks that a stream uses to reach its connection |
-| `Http2.Server.StreamPool.pas` | 773 | streaming | the streaming pool: ordered task queues, timers and fair scheduling |
-| `Http2.Server.Connection.Core.pas` | 983 | connection | the base of the connection core: fields, locks, output queue, write wake-up and stream table |
-| `Http2.Server.Connection.Options.pas` | 72 | connection | the options record of the core: every per-connection limit |
-| `Http2.Server.Connection.Flush.pas` | 154 | connection | the flush helpers of the core: pending headers, stream and connection credit, drained output |
-| `Http2.Server.OutboundBudget.pas` | 186 | connection | the count of queued outbound frames with the batch release rule |
-| `Http2.Server.Connection.pas` | 617 | connection | the connection core: `Feed` and the frame handlers |
-| `Http2.Server.HpackConnection.pas` | 229 | connection | the HPACK encoder and decoder of one connection |
-| `Http2.Server.Output.pas` | 318 | output | the response path and the drain |
-| `Http2.Server.Stream.pas` | 993 | streams | the stream state, the buffers and the reference count |
-| `Http2.Server.Waiter.pas` | 408 | streams | the blocking waiter and the cancel worker pool |
-| `Http2.Server.Config.pas` | 863 | configuration | the factory record and the option records |
-| `Http2.Server.Config.Limits.pas` | 176 | configuration | the server limits: `TServerLimits` and its fluent methods |
-| `Http2.Server.Config.Socket.pas` | 155 | configuration | the socket options of the listener: `TSocketOptions` and its fluent methods |
-| `Http2.Server.Limits.pas` | 383 | configuration | the token buckets and the clock |
-| `Http2.Server.Seam.pas` | 201 | configuration | the interfaces the handler sees |
-| `Http2.Common.Frames.pas` | 886 | protocol | the frames, the settings and the error codes |
-| `Http2.Common.Hpack.pas` | 800 | protocol | the HPACK codec |
-| `Http2.Common.Headers.pas` | 254 | protocol | the header names and the header list |
-| `Http2.Common.FlowControl.pas` | 300 | protocol | the connection and stream windows |
-| `Http2.Server.RequestValidation.pas` | 204 | protocol | the RFC 9113 section 8.1 field rules |
-| `Http2.Common.Errors.pas` | 135 | foundation | the error codes and the exception classes |
+| Unit | Layer | Responsibility |
+| --- | --- | --- |
+| `Http2.Server.pas` | facade | the public surface, re-exported from the units below |
+| `Http2.Server.Runtime.pas` | server | `THttp2Server`, the start and stop path |
+| `Http2.Server.Observer.pas` | server | the events, the observer and the statistics |
+| `Http2.Server.Async.pas` | IO | the mORMot2 async subclasses and the core bridge |
+| `Http2.Server.Async.Options.pas` | IO | the TLS policy, the core options, the control bucket and the handshake deadline, built from the factory |
+| `Http2.Server.Async.Counters.pas` | IO | the connection, reset, trip and handshake counters |
+| `Http2.Server.Async.Waker.pas` | IO | the write waker of one connection |
+| `Http2.Server.Async.Sweep.pas` | IO | the sweep over the live connections: age, drain, GOAWAY and stream count |
+| `Http2.Server.Async.Socket.pas` | IO | the socket options of each accepted connection: no-delay, keep-alive, buffers |
+| `Http2.Server.Stream.Meta.pas` | seam | the base of the server stream: locks, reference count, request head and pending response head |
+| `Http2.Server.ClientCert.pas` | TLS | the identity of a verified client certificate |
+| `Http2.Server.Mtls.Types.pas` | TLS | the client certificate modes and their pure maps |
+| `Http2.Server.Admission.pas` | admission | the bounded queue and the handler pool |
+| `Http2.Server.StreamAdapters.pas` | admission | the handler-side request and response of one stream |
+| `Http2.Server.Duplex.pas` | seam | the interfaces of a detached stream and the registry of channels |
+| `Http2.Server.StreamChannel.pas` | seam | the channel of a detached HTTP/2 stream |
+| `Http2.Server.HandlerJob.pas` | seam | the job that the handler pool runs besides an HTTP/2 stream |
+| `Http2.Server.Http1.Limits.pas` | http1 | the limits of the HTTP/1.1 parser as a record of the server builder |
+| `Http2.Server.Http1.Guard.pas` | http1 | the strict rules that sit on the mORMot2 parser |
+| `Http2.Server.Http1.Parser.pas` | http1 | the adapter that drives the mORMot2 parser one state at a time |
+| `Http2.Server.Http1.Select.pas` | http1 | the clear-text choice between HTTP/2 and HTTP/1.1 |
+| `Http2.Server.Http1.Status.pas` | http1 | the reason phrases of the status line |
+| `Http2.Server.Http1.ResponseHead.pas` | http1 | the response head and its framing |
+| `Http2.Server.Http1.Host.pas` | http1 | the cut-able link between an exchange and its core |
+| `Http2.Server.Http1.Exchange.pas` | http1 | one HTTP/1.1 request with its response and its pool job |
+| `Http2.Server.Http1.Exchange.Frames.pas` | http1 | the frames of a response body and the headers of a refusal or an upgrade |
+| `Http2.Server.Http1.Channel.pas` | http1 | the chunked channel of a detached HTTP/1.1 response |
+| `Http2.Server.Http1.Core.pas` | http1 | the HTTP/1.1 connection core |
+| `Http2.Server.Http1.Driver.pas` | http1 | the staged close, the deadlines and the idle decision |
+| `Http2.Server.Async.Events.pas` | io | the event receivers of an async connection |
+| `Http2.Server.ResponseWriter.pas` | seam | the `Date` field and the header checks that both protocols share |
+| `Http2.Server.Sse.Encoder.pas` | streaming | the encoder of server-sent events: field rules, line splitting and the injection checks |
+| `Http2.Server.Sse.pas` | streaming | `StartSse` and the event stream: serialised sends, the keep-alive timer and the stall rule |
+| `Http2.Server.WebSocket.Origin.pas` | websocket | the origin policy of an upgrade request |
+| `Http2.Server.WebSocket.Options.pas` | websocket | the record `TWsOptions` of the server builder, with the inbound settings `InlineLimit`, `InboundPipeBytes` and `InboundStallMs`, and the outbound setting `OutboundStallMs` |
+| `Http2.Server.WebSocket.Types.pas` | websocket | `IWsSession`, `IWsHandler` (whose `Message` takes an `IBodyReader`), `TWsInitResult` and the interfaces to the server |
+| `Http2.Server.WebSocket.Close.pas` | websocket | the timer rules of ping, pong and close |
+| `Http2.Server.WebSocket.Pump.pas` | websocket | the pump of a streamed message (`SendStream`): the steps that pull an `IBodyWriter`, the park and its timer, and the step that runs an `IBodyProducer` on one pool thread |
+| `Http2.Server.WebSocket.Pump.Producer.pas` | websocket | the sink of a producer: one fragment for each chunk, the wait while the channel is full, the control replies between fragments, the outbound stall deadline and the quiet cancel at the end of the session |
+| `Http2.Server.WebSocket.Snapshot.pas` | websocket | `TWsRequestSnapshot`, the read-only copy of the handshake request that a session gives to its handler |
+| `Http2.Server.WebSocket.Inbound.pas` | websocket | `TWsMessagePipe` and `TWsMemoryReader`, the `IBodyReader` classes that give an inbound message to the handler: a bounded pipe with a never-blocking push, and a reader over memory |
+| `Http2.Server.WebSocket.SessionCore.pas` | websocket | the state, the sender, the closing handshake and the timers of a session, and the hook that aborts the open pipe when the session ends |
+| `Http2.Server.WebSocket.Session.pas` | websocket | the session: task queue, Init, receive path, the streamed message and stop |
+| `Http2.Server.WebSocket.Environment.pas` | websocket | the options, counters, report and watchdog that the sessions share |
+| `Http2.Server.WebSocket.Handshake.pas` | websocket | the accept key, the token lists, the subprotocol choice and the origin check of an upgrade |
+| `Http2.Server.WebSocket.Http2.pas` | websocket | the checks and the 200 response of the HTTP/2 extended CONNECT |
+| `Http2.Server.WebSocket.Accept.pas` | websocket | `AcceptWebSocket`, which picks the handshake of the protocol |
+| `Http2.Server.Http1.SocketChannel.pas` | http1 | the raw-byte channel of an upgraded HTTP/1.1 connection |
+| `Http2.Server.Http1.Upgrade.pas` | http1 | the checks and the 101 response of the HTTP/1.1 upgrade |
+| `Http2.Server.WebSocket.Frames.pas` | codec | WebSocket opcodes, close codes, the mask, the frame encoder and the Close payload helpers (RFC 6455) |
+| `Http2.Server.WebSocket.Utf8.pas` | codec | a resumable UTF-8 validator that holds three bytes of state |
+| `Http2.Server.WebSocket.Parser.pas` | codec | the resumable frame parser; it pushes the unmasked payload of a data frame to a sink and buffers no data frame |
+| `Http2.Server.WebSocket.Reader.pas` | codec | the assembly of frames into messages with the size, fragment and UTF-8 checks; it keeps the first `InlineLimit` octets and then gives the octets to its sink one piece at a time; the codec holds no socket and no thread |
+| `Http2.Server.StreamHost.pas` | seam | the callbacks that a stream uses to reach its connection |
+| `Http2.Server.StreamPool.pas` | streaming | the streaming pool: ordered task queues, timers and fair scheduling |
+| `Http2.Server.Connection.Core.pas` | connection | the base of the connection core: fields, locks, output queue, write wake-up and stream table |
+| `Http2.Server.Connection.Options.pas` | connection | the options record of the core: every per-connection limit |
+| `Http2.Server.Connection.Flush.pas` | connection | the flush helpers of the core: pending headers, stream and connection credit, drained output |
+| `Http2.Server.OutboundBudget.pas` | connection | the count of queued outbound frames with the batch release rule |
+| `Http2.Server.Connection.pas` | connection | the connection core: `Feed` and the frame handlers |
+| `Http2.Server.HpackConnection.pas` | connection | the HPACK encoder and decoder of one connection |
+| `Http2.Server.Output.pas` | output | the response path and the drain |
+| `Http2.Server.Stream.pas` | streams | the stream state, the buffers and the reference count |
+| `Http2.Server.Waiter.pas` | streams | the blocking waiter and the cancel worker pool |
+| `Http2.Server.Config.pas` | configuration | the factory record and the option records |
+| `Http2.Server.Config.Limits.pas` | configuration | the server limits: `TServerLimits` and its fluent methods |
+| `Http2.Server.Config.Socket.pas` | configuration | the socket options of the listener: `TSocketOptions` and its fluent methods |
+| `Http2.Server.Limits.pas` | configuration | the token buckets and the clock |
+| `Http2.Server.Seam.pas` | configuration | the interfaces the handler sees |
+| `Http2.Common.Frames.pas` | protocol | the frames, the settings and the error codes |
+| `Http2.Common.Hpack.pas` | protocol | the HPACK codec |
+| `Http2.Common.Headers.pas` | protocol | the header names and the header list |
+| `Http2.Common.FlowControl.pas` | protocol | the connection and stream windows |
+| `Http2.Server.RequestValidation.pas` | protocol | the RFC 9113 section 8.1 field rules |
+| `Http2.Common.Errors.pas` | foundation | the error codes and the exception classes |
 
 The five units `Errors`, `Frames`, `Hpack`, `Headers` and `FlowControl` are
 shared protocol units. The server adds behavior at the role edges, and the
