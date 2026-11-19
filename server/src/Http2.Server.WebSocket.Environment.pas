@@ -69,6 +69,8 @@ type
     FCounts: array[TWsCounter] of Int64;
     FWatches: TList<TWatch>;
     FDog: TWsWatchdog;
+    /// set by the watchdog as its last act, when it has stopped using the environment
+    FDogDone: PRTLEvent;
     FStopping: Boolean;
     FBudget: TWsByteBudget;
     procedure Sweep;
@@ -109,14 +111,22 @@ constructor TWsWatchdog.Create(const AOwner: TWsEnvironment);
 begin
   FOwner := AOwner;
   inherited Create(False);
+  // the watchdog frees itself: Stop waits for FDogDone, and a join on the main
+  // thread would sleep 100 ms (TThread.WaitFor calls CheckSynchronize(100))
+  FreeOnTerminate := True;
 end;
 
 procedure TWsWatchdog.Execute;
 begin
-  while not Terminated do
-  begin
-    FOwner.Sweep;
-    RTLEventWaitFor(FOwner.FWake, 50);
+  try
+    while not Terminated do
+    begin
+      FOwner.Sweep;
+      RTLEventWaitFor(FOwner.FWake, 50);
+    end;
+  finally
+    // the last use of the owner: Stop waits for this set
+    RTLEventSetEvent(FOwner.FDogDone);
   end;
 end;
 
@@ -141,6 +151,7 @@ begin
   FWake := RTLEventCreate;
   FWatches := TList<TWatch>.Create;
   FBudget := TWsByteBudget.Create(AMaxBytes, AMaxSessions);
+  FDogDone := RTLEventCreate;
 end;
 
 destructor TWsEnvironment.Destroy;
@@ -148,6 +159,7 @@ begin
   Stop;
   FWatches.Free;
   FBudget.Free;
+  RTLEventDestroy(FDogDone);
   RTLEventDestroy(FWake);
   FLock.Free;
   inherited Destroy;
@@ -169,8 +181,8 @@ begin
   begin
     Dog.Terminate;
     RTLEventSetEvent(FWake);
-    Dog.WaitFor;
-    Dog.Free;
+    // the watchdog frees itself after it sets FDogDone
+    RTLEventWaitFor(FDogDone);
   end;
 end;
 

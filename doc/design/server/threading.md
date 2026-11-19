@@ -151,7 +151,8 @@ thread, also from inside a task.
   and to the error counter.
 - `Close` on a source drops its waiting tasks and its timers and refuses later
   posts. `Stop` on the pool refuses posts, drops everything that waits, lets a
-  running task finish, and waits for the threads. A task cannot call `Stop`,
+  running task finish, and waits for the threads. The stop wakes a parked thread, and each
+thread that ends wakes the next, so the wait does not last for a park. A task cannot call `Stop`,
   because the call would wait for the thread that runs it. A source stays safe
   to call after its pool is gone, and it then answers as closed.
 

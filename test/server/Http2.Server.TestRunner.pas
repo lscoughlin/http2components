@@ -68,6 +68,7 @@ uses
   Http2.Server.WebSocket.H2Client,
   Http2.Server.WebSocket.Session.Test,
   Http2.Server.WebSocketBudget.Test,
+  Http2.Server.WebSocket.Environment.Test,
   Http2.Server.WebSocket.Pool.Test,
   Http2.Server.WebSocket.Http1.Test,
   Http2.Server.WebSocket.Http2.Test,

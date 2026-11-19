@@ -87,6 +87,7 @@ type
     procedure Barrier;
     procedure Sequenced;
     procedure TimerHit;
+    procedure Napping;
     procedure WaitFor(var ACounter: Integer; const AWanted: Integer;
       const ATimeoutMs: Integer);
   published
@@ -94,6 +95,7 @@ type
     procedure TestOneSourceNeverRunsTwoTasksAtOnce;
     procedure TestTimerFiresOnAPoolThread;
     procedure TestStopIsIdempotent;
+    procedure TestStopWakesParkedThreadsPromptly;
   end;
 
 implementation
@@ -445,6 +447,11 @@ begin
   InterlockedIncrement(FDone);
 end;
 
+procedure TStreamPoolThreadTest.Napping;
+begin
+  Sleep(2);
+end;
+
 procedure TStreamPoolThreadTest.TestSourcesRunInParallelOnSeveralThreads;
 var
   Pool: TStreamPool;
@@ -520,6 +527,35 @@ begin
     AssertTrue(Pool.IsStopped);
   finally
     Pool.Free;
+  end;
+end;
+
+procedure TStreamPoolThreadTest.TestStopWakesParkedThreadsPromptly;
+var
+  Pool: TStreamPool;
+  I: Integer;
+  Start: QWord;
+  Elapsed: QWord;
+begin
+  // the park of an idle thread lasts up to cMaxParkMs (250 ms); a Stop that wakes
+  // every parked thread returns in about a millisecond, so 100 ms is a wide bound
+  for I := 1 to 20 do
+  begin
+    Pool := TStreamPool.Create(4);
+    try
+      // on every other run a task is still busy when Stop runs, so the stop
+      // chain must also reach the threads that park after that task ends
+      if Odd(I) then
+        Pool.NewSource.Post(Napping);
+      Sleep(20);   // the other threads park with no work
+      Start := GetTickCount64;
+      Pool.Stop;
+      Elapsed := GetTickCount64 - Start;
+      AssertTrue('run ' + IntToStr(I) + ': Stop took ' + IntToStr(Elapsed) +
+        ' ms, a parked thread waited for its park', Elapsed < 100);
+    finally
+      Pool.Free;
+    end;
   end;
 end;
 

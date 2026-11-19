@@ -62,9 +62,8 @@ type
   TStreamPool = class
   private
     FCore: TStreamPoolCore;
-    /// owns the core; the sources hold their own reference too
+    /// owns the core; the sources and the threads hold their own reference too
     FCoreRef: IInterface;
-    FThreads: TList;
     FSize: Integer;
     function GetStopped: Boolean;
     function GetOnTaskError: TStreamTaskErrorEvent;
@@ -110,6 +109,10 @@ type
   private
     FLock: TCriticalSection;
     FWake: PRTLEvent;
+    /// set by the last pool thread that ends
+    FExited: PRTLEvent;
+    /// pool threads that have started and not ended yet
+    FLive: Integer;
     FClock: IMonotonicClock;
     FReady: TQueue<IInterface>;
     FHeap: array of TTimerEntry;
@@ -125,6 +128,7 @@ type
     procedure FireDueTimersLocked;
     procedure Signal;
     procedure ReportError(const AError: Exception);
+    procedure ThreadExited;
   public
     constructor Create(const AClock: IMonotonicClock);
     destructor Destroy; override;
@@ -146,7 +150,12 @@ type
     function RunStep: Boolean;
     function IsStopped: Boolean;
     procedure SetStopped;
-    procedure WakeAll(const ACount: Integer);
+    /// start the stop chain: one parked thread wakes, and each thread that ends wakes the next
+    procedure WakeForStop;
+    /// wait until every pool thread has ended; a pool with no thread returns at once
+    procedure WaitThreadsExited;
+    /// count one pool thread that the pool has started
+    procedure ThreadStarted;
     function Snapshot: TStreamPoolStats;
     procedure SetThreadCount(const ACount: Integer);
     property OnError: TStreamTaskErrorEvent read FOnError write FOnError;
@@ -193,6 +202,8 @@ type
   TStreamPoolThread = class(TThread)
   private
     FCore: TStreamPoolCore;
+    /// keeps the core alive until the thread has reported its end
+    FCoreRef: IInterface;
   protected
     procedure Execute; override;
   public
@@ -262,13 +273,22 @@ end;
 constructor TStreamPoolThread.Create(const ACore: TStreamPoolCore);
 begin
   FCore := ACore;
+  FCoreRef := ACore;
   inherited Create(False);
+  // the thread frees itself at its end: the pool never joins it. TThread.WaitFor
+  // on the main thread sleeps 100 ms before it looks at the end of the thread.
+  // No thread can end before Stop, and Stop runs after this constructor.
+  FreeOnTerminate := True;
 end;
 
 procedure TStreamPoolThread.Execute;
 begin
-  while FCore.RunStep do
-    ;
+  try
+    while FCore.RunStep do
+      ;
+  finally
+    FCore.ThreadExited;
+  end;
 end;
 
 { TStreamPoolCore }
@@ -278,6 +298,7 @@ begin
   inherited Create;
   FLock := TCriticalSection.Create;
   FWake := RTLEventCreate;
+  FExited := RTLEventCreate;
   if AClock = nil then
     FClock := TMonotonicClock.Create
   else
@@ -290,6 +311,7 @@ begin
   FReady.Free;
   FHeap := nil;
   RTLEventDestroy(FWake);
+  RTLEventDestroy(FExited);
   FLock.Free;
   inherited Destroy;
 end;
@@ -299,12 +321,57 @@ begin
   RTLEventSetEvent(FWake);
 end;
 
-procedure TStreamPoolCore.WakeAll(const ACount: Integer);
-var
-  I: Integer;
+procedure TStreamPoolCore.WakeForStop;
 begin
-  for I := 1 to ACount do
-    RTLEventSetEvent(FWake);
+  RTLEventSetEvent(FWake);
+end;
+
+procedure TStreamPoolCore.ThreadStarted;
+begin
+  FLock.Acquire;
+  try
+    Inc(FLive);
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TStreamPoolCore.ThreadExited;
+var
+  Last: Boolean;
+begin
+  // the stop chain: the thread that ends wakes one parked thread, which ends
+  // in turn, so every parked thread wakes once. The event is an auto-reset
+  // latch, so this set is kept for a thread that is not parked yet.
+  Signal;
+  FLock.Acquire;
+  try
+    Dec(FLive);
+    Last := FLive = 0;
+  finally
+    FLock.Release;
+  end;
+  // the set is outside the lock; the thread still holds the core
+  if Last then
+    RTLEventSetEvent(FExited);
+end;
+
+procedure TStreamPoolCore.WaitThreadsExited;
+var
+  Pending: Boolean;
+begin
+  FLock.Acquire;
+  try
+    Pending := FLive > 0;
+  finally
+    FLock.Release;
+  end;
+  if Pending then
+  begin
+    RTLEventWaitFor(FExited);
+    // keep the set for another caller of Stop that waits as well
+    RTLEventSetEvent(FExited);
+  end;
 end;
 
 function TStreamPoolCore.HeapLess(const A, B: TTimerEntry): Boolean;
@@ -704,16 +771,18 @@ begin
   FSize := ASize;
   FCore := TStreamPoolCore.Create(AClock);
   FCoreRef := FCore;   // the interface reference owns the core
-  FThreads := TList.Create;
   FCore.SetThreadCount(ASize);
   for I := 1 to ASize do
-    FThreads.Add(TStreamPoolThread.Create(FCore));
+  begin
+    // a thread that cannot start raises here, and only the started threads count
+    TStreamPoolThread.Create(FCore);
+    FCore.ThreadStarted;
+  end;
 end;
 
 destructor TStreamPool.Destroy;
 begin
   Stop;
-  FThreads.Free;
   FCore := nil;
   FCoreRef := nil;
   inherited Destroy;
@@ -730,24 +799,13 @@ begin
 end;
 
 procedure TStreamPool.Stop;
-var
-  I: Integer;
-  T: TStreamPoolThread;
 begin
   if Http2IsStreamThread then
     raise EInvalidOperation.Create(
       'a streaming-pool task cannot stop its own pool');
   FCore.SetStopped;
-  FCore.WakeAll(FThreads.Count + 1);
-  for I := FThreads.Count - 1 downto 0 do
-  begin
-    T := TStreamPoolThread(FThreads[I]);
-    // wake again: a thread may have been between its check and its park
-    FCore.WakeAll(1);
-    T.WaitFor;
-    T.Free;
-    FThreads.Delete(I);
-  end;
+  FCore.WakeForStop;
+  FCore.WaitThreadsExited;
 end;
 
 function TStreamPool.Stats: TStreamPoolStats;
