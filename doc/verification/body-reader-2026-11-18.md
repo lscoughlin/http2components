@@ -7,6 +7,7 @@ notes:
   - The record covers the shared body writer and body reader, the WebSocket send and receive streams, the producers, the cookie and format helpers, and the load runs of 2026-11-18 and 2026-11-19.
   - Three findings are open. A code review found a possible lock-order conflict between the connection lock and the write lock of the socket layer. Two smaller findings come from code review of the stream lock and of the handler pool. No run has shown any of the three.
   - The load programs are not stored in the repository.
+  - The record also holds the macOS gate results of commit e3a880b.
 ---
 
 # Streamed bodies and messages: Linux verification
@@ -40,6 +41,16 @@ is not release approval.
 | `TWsInboundThreadTest` | 15 runs, no failure |
 | `TWsProducerThreadTest` | 100 runs, no failure |
 | `TConnectionThreadTest` | 30 runs, no failure |
+
+### macOS gate results
+
+The gate ran on the Mac at the tip of `main`, commit `e3a880b`. The Linux results above are
+for commit `2759ee9`.
+
+| Step | Result |
+| --- | --- |
+| `test:server` | 1066 tests, no error, no failure |
+| `test:client` | 1115 tests, no failure |
 
 ## Load runs on HTTP/1.1
 
@@ -121,6 +132,7 @@ when both counts are exact and the client sees no reset, no GOAWAY and no closed
 | 3 sets of 20 runs per variant, commit `a8da965` | default | plain variant 4 failures in 60 runs, burst variant 39 failures in 60 runs |
 | 3 sets of 20 runs per variant, commit `a8da965` | window-update bucket widened | 120 runs, no failure |
 | 40 sets of 20 plain runs, commit `2759ee9` | default | 720 passes and 80 failures, no run that did not end |
+| 40 sets of 20 plain runs of a later Linux run on `main` (tree of commit `7b15754`, scratch program, not in the repository) | default | 742 passes and 58 failures, all 58 the server closing the connection |
 
 - With the default limits, the server closes the connection when the test client sends window
   updates faster than the window-update bucket allows (capacity 10000, refill 4000 per
@@ -128,7 +140,15 @@ when both counts are exact and the client sees no reset, no GOAWAY and no closed
   client sees a reset of the connection, about 0.3 s to 0.9 s after the start. The widened
   bucket removes these failures. The failures belong to the limit, which works as designed.
 - Of the 80 failures on `2759ee9`, 72 are the reset of the connection and 8 are a wait of the
-  client for the window of the server, which stayed closed. The 8 were not examined further.
+  client for the window of the server, which stayed closed. The output of the 8 was not kept,
+  so they were not available for a check.
+- The test client of the earlier run reported a connection that ended during a wait for a
+  window as a closed window. The 8 cases can therefore be closes by the server.
+- All 58 failures of the 800 runs of the later set were the server closing the connection,
+  through the window-update bucket trip, which is the designed limit. None was a server that
+  withheld credit, a stalled server or another cause. The failures were classified from the
+  frames (GOAWAY, RST_STREAM and a closed socket). The explanation fits the 800 runs. It is not
+  proved for the 8 cases.
 - The scenario did not show the possible lock-order conflict that the finding below names.
   The result is "not observed under scenario Q". It does not show that the conflict cannot
   happen, because the scenario may not create the condition that the conflict needs: a write
