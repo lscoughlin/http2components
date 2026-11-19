@@ -68,6 +68,7 @@ type
     procedure TestSendWsMessageStreamsBigMessage;
     procedure TestNoneModeStopsTheServer;
     procedure TestKeepFramesFalseCounts;
+    procedure TestServerEndingTheConnectionEndsAWaitingSend;
   end;
 
 implementation
@@ -644,6 +645,43 @@ begin
     AssertTrue('the count is the frame length: ' + IntToStr(C.DataCount(1)),
       C.DataCount(1) = 1004);
     AssertTrue('no DATA frame is kept', Length(C.DataOf(1)) = 0);
+  finally
+    C.Free;
+  end;
+end;
+
+procedure TWsHttp2Test.TestServerEndingTheConnectionEndsAWaitingSend;
+var
+  C: TH2WsClient;
+  Started, Elapsed: QWord;
+  Raised: Boolean;
+  Cause: string;
+begin
+  FRecording.Echo := False;
+  // the server closes the message at 64 KB; the client then waits for windows that stay closed
+  StartServer(Factory.WithWebSockets(TWsOptions.Create.WithQueuedMessages(256)
+    .WithMaxMessageSize(64 * 1024)));
+  AssertTrue(Open(C));
+  try
+    Raised := False;
+    Cause := '';
+    Started := GetTickCount64;
+    try
+      C.SendWsMessage(1, 3 * 1024 * 1024, 32768, $44);
+    except
+      on E: EH2ConnectionEnded do
+      begin
+        Raised := True;
+        Cause := E.Message;
+      end;
+      on E: Exception do
+        Cause := E.ClassName + ': ' + E.Message;
+    end;
+    Elapsed := GetTickCount64 - Started;
+    AssertTrue('the send ends with EH2ConnectionEnded, not the window deadline: ' + Cause,
+      Raised);
+    AssertTrue('the send ends within about 2 s: ' + IntToStr(Elapsed) + ' ms',
+      Elapsed < 2000);
   finally
     C.Free;
   end;
