@@ -247,8 +247,9 @@ type
     /// register the waker that the IO side signals when output appears
     procedure SetWriteWaker(const AWaker: IWriteWaker);
     /// ask the IO side to wake, once per transition to "output"
-    // - a handler thread calls this from the stream host callback, never under
-    //   the connection lock, so the waker may take its own locks
+    // - a handler thread calls this from the stream host callback; an IO thread
+    //   calls it with the connection lock held when a read returns credit. The
+    //   waker takes only a lock whose holder never waits for the connection lock
     procedure NotifyWantsWrite;
     /// encode the pending headers and drain the stream buffers into frames
     // - the IO side calls this after a handler wrote, so the frames reach the

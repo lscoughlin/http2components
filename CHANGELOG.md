@@ -320,6 +320,15 @@
   A read now asks the write waker to signal the IO thread, outside the connection lock.
   The flow-control rules are the same: the credit is for octets that the handler read.
 
+- Fix: a connection that carries WebSocket messages over HTTP/2 could stop, and the server
+  could not be stopped. The defect is in 0.32.0. It showed with large messages on several
+  streams of one connection, and also with one very large message. The IO thread held the
+  connection lock and waited for the send lock of the connection, while the send loop held
+  the send lock and waited for the connection lock. The connection then made no progress,
+  and every other thread that needed the connection lock, and `Stop`, waited behind it.
+  The send loop now reads the output queue before it takes the send lock at its exit
+  decision, so it never waits for the connection lock while it holds the send lock.
+
 ### Common
 
 - New constants for header names and status codes. `Http2.Common.Headers` (and

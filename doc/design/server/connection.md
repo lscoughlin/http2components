@@ -131,10 +131,16 @@ itself: `Flush`, `DrainPending`, `TakeOutput`, `HasOutput`, `GracefulGoAway`
 (called by the server stop, from a thread that is not an IO thread) and
 `QueueRefusalFrame` (called by a handler thread).
 
-**The waker.** The write waker writes to the socket, and that write can block. The
-waker therefore never runs with the connection lock held. `NotifyWantsWrite` runs
-after the lock is released: a handler write reaches it from the stream host
-without the lock, and `QueueRefusalFrame` calls it after `UnlockConn`.
+**The waker.** `NotifyWantsWrite` runs without the connection lock when a handler
+write reaches it from the stream host, and `QueueRefusalFrame` calls it after
+`UnlockConn`. It runs with the connection lock held on an IO thread when a read
+delivers body bytes to a handler and the stream returns credit
+(`TServerStream.AddCredit`). The waker therefore takes no lock that its holder
+keeps while it waits for the connection lock. The send lock of the async connection
+(`FSendLock`) is taken after the connection lock, so the send loop reads the output
+queue (`HasOutput`) before it takes the send lock at its exit decision. Output that
+arrives after that read signals the waker again, which sets the repeat flag of the loop
+or starts a new loop. The lock order of the send lock is in the threading document.
 
 **The output cap.** The option `MaxOutputQueueBytes` bounds the output of one
 connection. The core checks its queue at the end of each flush, and the IO side

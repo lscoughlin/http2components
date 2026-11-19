@@ -145,7 +145,8 @@ type
     /// true when a send loop holds output that left the core; the close waits
     function DeferCloseForSend: Boolean;
     /// the send loop ends: true when a deferred close is due; call under FSendLock
-    function TakeDeferredClose: Boolean;
+    // - ADrained is read before the lock, because the read takes the connection lock
+    function TakeDeferredClose(const ADrained: Boolean): Boolean;
   protected
     procedure AfterCreate; override;
     procedure BeforeDestroy; override;
@@ -401,7 +402,8 @@ end;
 function THttp2AsyncConnection.SendPendingOutput: Boolean;
 var
   Data: TBytes;
-  Again, PendingPlainProgress, OwnsSend, CloseDrained: Boolean; Before, After: Int64;
+  Again, PendingPlainProgress, OwnsSend, CloseDrained, HasOut, Drained: Boolean;
+  Before, After: Int64;
 begin
   result := False;
   OwnsSend := False; CloseDrained := False;
@@ -523,11 +525,19 @@ begin
       // records FSendRequested, so the clear must re-read that flag in the
       // same hold that ends the loop.  A clear in a later hold would drop the
       // record, and the handler would wait for a drain that never comes.
+      // The reads of the core take the connection lock, so they run before the
+      // send lock: an IO thread that holds the connection lock can wait for the
+      // send lock (the waker), so this thread never waits for the connection
+      // lock while it holds the send lock.  Output that arrives after the read
+      // signals the waker, which sets FSendRequested under the send lock or
+      // starts a new loop when this loop has already ended
+      HasOut := (FPendingTlsCount = 0) and OutputPending;
+      Drained := (not HasOut) and (FCore <> nil) and Http2Drained(FCore, PendingWrite);
       FSendLock.Acquire;
       try
         if FSendRequested or
            ((FPendingTlsCount > 0) and PendingPlainProgress) or
-           ((FPendingTlsCount = 0) and OutputPending) then
+           HasOut then
           Again := True
         else
         begin
@@ -535,7 +545,7 @@ begin
           OwnsSend := False;
           Again := False;
           // a close that a read left to this loop is decided in this hold
-          CloseDrained := TakeDeferredClose;
+          CloseDrained := TakeDeferredClose(Drained);
         end;
       finally
         FSendLock.Release;

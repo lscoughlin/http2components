@@ -71,6 +71,7 @@ uses
   Http2.Server.WebSocket.Pool.Test,
   Http2.Server.WebSocket.Http1.Test,
   Http2.Server.WebSocket.Http2.Test,
+  Http2.Server.WebSocket.Http2.Locks.Test,
   Http2.Server.ConnectProtocol.Test,
   Http2.Server.RequestPseudo.Test,
   Http2.Server.OutboundBudget.Test,

@@ -158,6 +158,18 @@ thread, also from inside a task.
 The pool lock is the innermost lock. A caller can post while it holds the
 connection lock, and a pool thread runs a task with no pool lock held.
 
+The send lock of an async connection (`FSendLock` in `THttp2AsyncConnection`) guards the
+flags of the send loop (`FInSend`, `FSendRequested`, the deferred close) and nothing
+else. The IO thread can reach it with the connection lock held, because a read that
+returns stream credit calls the waker, and the waker starts the send loop. The order is
+therefore connection lock, then send lock. The send loop takes the connection lock only
+through `DrainPending`, `TakeOutput`, `ReportWritten`, `HasOutput` and `Http2Drained`, and
+it calls each of them with no send lock held. The exit decision of the loop reads
+`HasOutput` and `Http2Drained` before it takes the send lock, and it decides under the
+send lock with those values. Output that arrives after that read signals the waker, which
+sets `FSendRequested` under the send lock or starts a new loop after the loop has ended.
+No thread takes the connection lock while it holds the send lock.
+
 The lock order of the WebSocket send path is: connection lock, stream lock, channel
 lock, session lock, pump lock, pool lock. A reading of the source on 2026-11-17 found
 no path that takes these locks in the other direction. The session lock and the pump
