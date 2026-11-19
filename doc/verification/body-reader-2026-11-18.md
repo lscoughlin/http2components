@@ -142,9 +142,8 @@ when both counts are exact and the client sees no reset, no GOAWAY and no closed
 - Of the 80 failures on `2759ee9`, 72 are the reset of the connection and 8 are a wait of the
   client for the window of the server, which stayed closed. The output of the 8 was not kept,
   so they were not available for a check.
-- The test client reported a closed connection as a closed window, because `SendData` did not
-  check for GOAWAY, RST_STREAM or a closed socket. The test client now raises a distinct error
-  when a connection has ended.
+- The test client of the earlier run reported a connection that ended during a wait for a
+  window as a closed window. The 8 cases can therefore be closes by the server.
 - All 58 failures of the 800 runs of the later set were the server closing the connection,
   through the window-update bucket trip, which is the designed limit. None was a server that
   withheld credit, a stalled server or another cause. The failures were classified from the
