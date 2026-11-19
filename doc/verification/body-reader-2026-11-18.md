@@ -84,6 +84,26 @@ These runs used the raw HTTP/2 test client against the server of the load progra
 | M: a message of 256 MB and a message of 64 MB on two streams of one connection | the small message finished as fast as the big message alone: 386 ms to 573 ms against 391 ms to 404 ms, inside the limit of three times plus 2 s | 6 MB to 10 MB |
 | N: 50 parallel streams of 8 MB each, round robin | no failed reply, 8.9 s to 9.1 s | 6 MB to 13 MB |
 
+## Repeated WebSocket over HTTP/2 runs
+
+Each scenario of the previous section ran 10 times in one process on commit `a8da965`. The host
+load average was between 0.5 and 2.0. All 80 runs passed (scenario L reports two results per
+run, and all 20 passed). The peak resident memory is the peak of one run.
+
+| Scenario | Peak of the first run | Peak of the last run | Longest run |
+| --- | --- | --- | --- |
+| H | 12 MB | 16 MB | 2.7 s |
+| I | 11 MB | 15 MB | 97.3 s |
+| J | 10 MB | 16 MB | 2.5 s |
+| K | 12 MB | 18 MB | 17.0 s |
+| L | 10 MB | 19 MB | 3.0 s |
+| M | 6 MB | 16 MB | 2.8 s |
+| N | 6 MB | 27 MB | 9.0 s |
+
+The peak of the last run is higher than the peak of the first run in every scenario, and no
+peak is above 27 MB. The runs do not show whether the growth stops, because 10 runs are too few
+to tell a slow leak from the retention of the allocator.
+
 ## Findings open
 
 **Possible lock-order conflict with the socket layer.** A code review of the send path found
@@ -101,5 +121,6 @@ with 50 parallel streams, did not stop. The review is the only source of this fi
 ## Not covered
 
 - `test:common`, `docs:check` and `version:check` on Linux for this commit.
-- A run longer than one pass of each scenario, and a run with the host idle. The scenarios of
-  the HTTP/2 runs ran 3 times each.
+- A run of more than 10 passes of each scenario, which could show whether the growth of the
+  peak resident memory stops.
+- A run with the host fully idle. The load average stayed between 0.2 and 2.4.
