@@ -169,8 +169,8 @@ it calls each of them with no send lock held. The exit decision of the loop read
 the waker, which sets `FSendRequested` under the send lock or starts a new loop after the
 loop has ended. The same hold takes and clears the flag of a deferred close, and the
 drained check (`Http2Drained`) runs after the hold. A close that the check finds due runs
-only when no new send loop has started; a new loop takes the close over through
-`DeferCloseForSend`. No thread takes the connection lock while it holds the send lock.
+only when no send loop owns output at the `DeferCloseForSend` check; a loop that owns output
+takes the close over. No thread takes the connection lock while it holds the send lock.
 
 The lock order of the WebSocket send path is: connection lock, stream lock, channel
 lock, session lock, pump lock, pool lock. A reading of the source on 2026-11-17 found

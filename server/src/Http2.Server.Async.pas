@@ -144,7 +144,7 @@ type
     procedure ReleaseAdmission;
     /// true when a send loop holds output that left the core; the close waits
     function DeferCloseForSend: Boolean;
-    /// the send loop ends: true when a deferred close is due; call under FSendLock
+    /// the send loop ends: true when a close is wanted; call under FSendLock
     // - the drained check takes the connection lock, so it runs after the lock
     function TakeDeferredClose: Boolean;
   protected
@@ -543,7 +543,7 @@ begin
           FInSend := False;
           OwnsSend := False;
           Again := False;
-          // a close that a read left to this loop is taken in this hold and
+          // a close that a read or a write left to this loop is taken in this hold and
           // decided after it, because the drained check needs the connection lock
           CloseDrained := TakeDeferredClose;
         end;

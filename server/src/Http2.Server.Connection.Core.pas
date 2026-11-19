@@ -249,7 +249,7 @@ type
     /// ask the IO side to wake, once per transition to "output"
     // - a handler thread calls this from the stream host callback; an IO thread
     //   calls it with the connection lock held when a read returns credit. The
-    //   send lock of the async connection is never held while it takes the connection lock
+    //   no thread holds the send lock of the async connection while it takes this lock
     procedure NotifyWantsWrite;
     /// encode the pending headers and drain the stream buffers into frames
     // - the IO side calls this after a handler wrote, so the frames reach the
