@@ -113,10 +113,12 @@ on the reader thread:
 - `DispatchStreamFrame` calls `S.OnStreamFrame`
   (`client/src/Http2.Client.Connection.pas`).
 - `TStreamLease.OnStreamFrame` calls `LeasePushInbound`
-  (`client/src/Http2.Client.Stream.Inbound.pas`), which calls `FInbound.Push`.
-- `FInbound.Push` has no other call site in `client/src`. Search result for
-  `FInbound.Push` and `.Push(` in the units of the stream and the connection:
-  one hit, in `LeasePushInbound` (`client/src/Http2.Client.Stream.Inbound.pas`).
+  (`client/src/Http2.Client.Stream.Inbound.pas`), which calls `Push` on the
+  queue `FInbound`.
+- The `Push` of the queue `FInbound` has no other call site in `client/src`.
+  Search result for `.Push(` on a `TByteBoundedFrameQueue` in the units of the
+  stream and the connection: one hit, `AInbound.Push` in `LeasePushInbound`
+  (`client/src/Http2.Client.Stream.Inbound.pas`).
 - `DispatchStreamFrame` and `OnStreamFrame` have no other caller in
   `client/src`.
 
