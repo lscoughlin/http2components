@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.33.0 — in development
+## 0.33.0 — 2026-11-19 (source release)
 
-- Version bump after the 0.32.0 source release. No other change yet.
+- This release is a source release. It has no binary artifacts.
 
 ### WebSocket
 
