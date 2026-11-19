@@ -32,50 +32,13 @@ uses
   Http2.Common.FlowControl, Http2.Server.Limits, Http2.Server.Seam,
   Http2.Server.Stream, Http2.Server.StreamHost, Http2.Common.Headers,
   Http2.Server.Output, Http2.Server.OutboundBudget,
-  Http2.Server.HpackConnection, Http2.Server.StreamIdSet;
+  Http2.Server.HpackConnection, Http2.Server.StreamIdSet,
+  Http2.Server.Connection.Options;
 
 type
-  /// the per-connection values the core needs
-  // - the factory fills every field; the core creates no default and holds no
-  //   limit literal of its own
-  TConnectionCoreOptions = record
-    ConnectionWindow: LongInt;
-    InitialStreamWindow: LongInt;
-    MaxConcurrentStreams: LongWord;
-    MaxFrameSize: LongWord;
-    MaxHeaderListSize: LongWord;
-    MaxHeaderTableSize: LongWord;
-    MaxContinuations: LongWord;
-    MaxHeaderBlockBytes: LongWord;
-    InboundBufferLimit: Integer;
-    OutboundBufferLimit: Integer;
-    ConnectionUpdateThreshold: LongWord;
-    StreamUpdateThreshold: LongWord;
-    /// advertise SETTINGS_ENABLE_CONNECT_PROTOCOL and accept :protocol (RFC 8441)
-    ConnectProtocol: Boolean;
-    /// the most octets that the output queue of one connection may hold; a
-    /// peer that does not read ends the connection above it. Zero sets no cap
-    MaxOutputBytes: LongWord;
-    /// how many requests one connection serves before it retires; 0 is off
-    MaxStreams: LongWord;
-    /// the most outbound frames that may wait for the peer; 0 is off
-    MaxOutboundFrames: LongWord;
-    /// the most outbound PING, SETTINGS and RST_STREAM frames that may
-    /// wait for the peer; 0 is off
-    MaxOutboundControlFrames: LongWord;
-    /// the greatest size of an outbound DATA frame, in octets; 0 sends
-    /// up to MaxFrameSize
-    MaxDataFrameSizeOut: LongWord;
-    /// the greatest wait for a read of a stream, in milliseconds; 0 keeps
-    /// the stream default
-    StreamReadTimeoutMs: Integer;
-    /// the greatest wait for a write of a stream, in milliseconds; 0 keeps
-    /// the stream default
-    StreamWriteTimeoutMs: Integer;
-    /// zero every field, so a caller that sets only the fields it uses
-    /// leaves every other limit off
-    class operator Initialize(var AOptions: TConnectionCoreOptions);
-  end;
+  /// the per-connection values the core needs; the record is in
+  /// Http2.Server.Connection.Options
+  TConnectionCoreOptions = Http2.Server.Connection.Options.TConnectionCoreOptions;
 
   /// the core raises one of these events for every state change the server acts on
   IConnectionEvents = interface
@@ -309,12 +272,6 @@ implementation
 
 uses
   Http2.Server.Connection.Flush;
-
-class operator TConnectionCoreOptions.Initialize(
-  var AOptions: TConnectionCoreOptions);
-begin
-  FillChar(AOptions, SizeOf(AOptions), 0);
-end;
 
 const
   /// the longest wait of Orphan for a call in flight, in milliseconds

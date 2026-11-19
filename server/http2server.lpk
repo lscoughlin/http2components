@@ -25,7 +25,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="86">
+    <Files Count="87">
       <Item1>
         <Filename Value="src/Http2.Server.AccessLog.Handler.pas" />
         <UnitName Value="Http2.Server.AccessLog.Handler" />
@@ -370,6 +370,10 @@
         <Filename Value="src/Http2.Server.WebSocket.Pump.Producer.pas" />
         <UnitName Value="Http2.Server.WebSocket.Pump.Producer" />
       </Item86>
+      <Item87>
+        <Filename Value="src/Http2.Server.Connection.Options.pas" />
+        <UnitName Value="Http2.Server.Connection.Options" />
+      </Item87>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
