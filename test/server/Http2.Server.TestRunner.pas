@@ -84,6 +84,7 @@ uses
   Http2.Server.Validation.Test,
   Http2.Server.Validation.Abuse.Test,
   Http2.Server.Admission.Test,
+  Http2.Server.Admission.Connections.Test,
   Http2.Server.HandlerError.Test,
   Http2.Server.AccessLog.Test,
   Http2.Server.Mtls.Test,

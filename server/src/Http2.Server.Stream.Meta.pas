@@ -78,6 +78,8 @@ type
     procedure AddRef;
     /// release one reference and free the stream at zero
     procedure ReleaseRef;
+    /// the number of holders now; a test reads it to check the holders
+    function RefCount: Integer;
 
     /// take the request header block the decoder produced
     procedure SetRemoteHeaders(const AHeaders: THeaderBlock);
@@ -153,6 +155,11 @@ begin
   // the lock object dies with the stream.
   if InterlockedDecrement(FRefCount) = 0 then
     Self.Free;
+end;
+
+function TStreamMeta.RefCount: Integer;
+begin
+  Result := InterlockedExchangeAdd(FRefCount, 0);
 end;
 
 procedure TStreamMeta.LockStream;
