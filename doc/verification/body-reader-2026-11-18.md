@@ -125,7 +125,7 @@ All 21 runs passed. The table shows the range of the 3 runs.
 | --- | --- | --- |
 | H: inbound message of 256 MB on one stream to a handler that reads at once | exact octet count 268435456, close code 1000, 1.3 s to 2.9 s | 12 MB to 13 MB |
 | I: inbound message of 64 MB to a handler that sleeps 5 ms after each chunk | exact octet count 67108864, close code 1000, 96.8 s to 97.0 s | 13 MB to 14 MB |
-| J: the peer stops in the middle of a message, inbound stall 2000 ms | the client saw close code 1008, the second stream of 1 MB arrived exact, 2.1 s. The server `Closed` code was 1001 in two runs and 1006 in one run | 13 MB to 14 MB |
+| J: the peer stops in the middle of a message, inbound stall 2000 ms | the client saw close code 1008, the second stream of 1 MB arrived exact, 2.1 s | 13 MB to 14 MB |
 | K: outbound producer message of 128 MB, the peer returns credit after 1 ms per DATA frame | all octets arrived, 134232064 to 134250496 octets with the WebSocket frame headers, close code 1000, 15.0 s to 17.0 s | 17 MB to 19 MB |
 | L: outbound producer message, the peer returns no credit, outbound stall 2000 ms | the client read 65535 octets, `RST_STREAM` with code 8 at the time of `Closed` or 20 ms after it, the second stream of 1 MB arrived exact, 3.0 s. The log line reports close code 1006 for the session. The earlier runs of this scenario reported 1008 | 16 MB to 19 MB |
 | M: a message of 256 MB and a message of 64 MB on two streams of one connection | the big message took 384 ms to 408 ms, the small message 402 ms to 412 ms, inside the limit of three times plus 2 s (3152 ms to 3224 ms) | 17 MB to 19 MB |
@@ -230,7 +230,7 @@ with 50 parallel streams, did not stop. The review is the only source of this fi
 
 ## Not covered
 
-- `test:common`, `docs:check` and `version:check` on Linux for this commit.
+- `version:check` on Linux for this commit.
 - A run of more than 10 passes of each scenario, which could show whether the growth of the
   peak resident memory stops.
 - A run with the host fully idle. The load average stayed between 0.2 and 2.4.

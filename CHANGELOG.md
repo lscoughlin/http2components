@@ -326,6 +326,12 @@
   end;
   ```
 
+- **Behavior change.** The stop of the server-side streaming pool and of the WebSocket
+  watchdog is prompt. A stop no longer waits for the park interval of each worker (up to
+  250 ms per thread) or for the 100 ms of a thread join. One wake-up chain wakes the
+  workers, and the threads end by themselves. A test class of 200 server stops fell from
+  about 75 s to about 19 s on the Mac.
+
 - Fix: a request body larger than the stream window stalled. A handler that read a body
   of more than 65535 octets (the first window) could wait at the read timeout and end
   with `EHttpTimeout` and status 500. A handler read returned credit to the stream, but
