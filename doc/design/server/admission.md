@@ -34,8 +34,8 @@ A request that the IO side completes does not run on an IO thread. The IO side
 offers the stream to a queue, and a handler thread takes the stream from the
 queue. The unit `server/src/Http2.Server.Admission.pas` holds the queue and the pool.
 The unit `server/src/Http2.Server.StreamAdapters.pas` holds the request and response
-adapters (`TServerStreamRequest` at line 37 and `TServerStreamResponse` at line
-59), which the pool builds for each dispatch.
+adapters (`TServerStreamRequest` and `TServerStreamResponse`), which the pool
+builds for each dispatch.
 
 An HTTP/1.1 request enters the same queue as a job. A job is an `IHandlerJob`
 (`server/src/Http2.Server.HandlerJob.pas`): the pool runs it with `Run`, answers a refusal

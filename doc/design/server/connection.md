@@ -5,7 +5,7 @@ keywords: http2, server, connection, frames, stream-state, hpack
 notes:
   - This document describes the connection core, the unit that turns socket
     bytes into frames and stream state.
-  - The document cites the server code as path:line.
+  - The document cites the server code by path and symbol name.
   - Imported from http2server/doc/design/server/connection.md at the source commit recorded in the source inventory.
 scope: The inbound frame path, the stream state machine, the HPACK state of a connection and the fault rules.
 primary_types:
@@ -58,7 +58,7 @@ buffer and then walks the frames.
 1. The client connection preface comes first. The preface may arrive in
    pieces, so `Feed` copies the bytes into a preface buffer and waits until
    the buffer holds `ClientPrefaceSize` bytes. It then calls
-   `CheckClientPreface` (`:113`). A mismatch sends GOAWAY with
+   `CheckClientPreface`. A mismatch sends GOAWAY with
    `PROTOCOL_ERROR`. The server SETTINGS frame is the first frame the server
    sends (`server/src/Http2.Server.Connection.pas`).
 2. A frame header is nine bytes. A partial frame stays in the input buffer
@@ -83,15 +83,15 @@ The core holds each rule in one place.
 | any, during a header block | Only `CONTINUATION` may follow a `HEADERS` frame on the same stream (RFC 9113 section 4.3). Any other frame is `PROTOCOL_ERROR`. | `ProcessFrame` |
 | `DATA` | A frame on stream zero is `PROTOCOL_ERROR`, whatever its length. A frame on an idle stream is `PROTOCOL_ERROR`. A frame on a closed stream is `STREAM_CLOSED`, except a frame on a stream that the server reset lately: the core ignores it, and the connection window still counts it. A non-empty frame on a half-closed stream is `STREAM_CLOSED`. | `ProcessData` |
 | `HEADERS` | A frame on a half-closed or closed stream is `STREAM_CLOSED`. A second `HEADERS` frame without `END_STREAM` is `PROTOCOL_ERROR`. A new stream id below `FLastStreamId` is a closed stream. A refused stream, and a stream that depends on itself, still has its header block decoded. | `ProcessHeaders` |
-| `PRIORITY` | The payload is five bytes or the frame is `FRAME_SIZE_ERROR`. Stream zero is `PROTOCOL_ERROR`. A stream that depends on itself is a stream error. | `ProcessPriority` (`:205`) |
-| `RST_STREAM` | The payload is four bytes or the frame is `FRAME_SIZE_ERROR`. A frame on an idle stream is `PROTOCOL_ERROR`. | `ProcessRstStream` (`:519`) |
+| `PRIORITY` | The payload is five bytes or the frame is `FRAME_SIZE_ERROR`. Stream zero is `PROTOCOL_ERROR`. A stream that depends on itself is a stream error. | `ProcessPriority` |
+| `RST_STREAM` | The payload is four bytes or the frame is `FRAME_SIZE_ERROR`. A frame on an idle stream is `PROTOCOL_ERROR`. | `ProcessRstStream` |
 | `SETTINGS` | An acknowledged frame with a payload is `FRAME_SIZE_ERROR`. A frame is a delta onto the settings of the peer. | `ProcessSettings` |
-| `PING` | Stream zero is required. The payload is eight bytes. An acknowledged frame adds no frame. | `ProcessPing` (`:551`) |
+| `PING` | Stream zero is required. The payload is eight bytes. An acknowledged frame adds no frame. | `ProcessPing` |
 | `GOAWAY` | Stream zero is required. The open streams finish, the core answers with its own GOAWAY and takes no new stream. When the count of accepted streams reaches `MaxStreams`, the core retires the connection: it serves that stream and sends GOAWAY with `NO_ERROR` and the last accepted stream id; later header blocks take the refusal path (`server/src/Http2.Server.Connection.pas`). | `ProcessGoAway` |
-| `WINDOW_UPDATE` | A frame on an idle stream is `PROTOCOL_ERROR`. A frame on a closed stream carries no action. A stream window above the maximum is a stream error of type `FLOW_CONTROL_ERROR`. | `ProcessWindowUpdate` (`:605`) |
+| `WINDOW_UPDATE` | A frame on an idle stream is `PROTOCOL_ERROR`. A frame on a closed stream carries no action. A stream window above the maximum is a stream error of type `FLOW_CONTROL_ERROR`. | `ProcessWindowUpdate` |
 | `PUSH_PROMISE` | A server never receives this frame. It is `PROTOCOL_ERROR` (RFC 9113 section 8.2). | `ProcessFrame` |
 
-The core names each fault through `FailConnection` (`:636`). That method
+The core names each fault through `FailConnection`. That method
 sends GOAWAY, sets `FClosing`, and reports the close to the observer. The IO
 side closes the connection after the output drains. A fault never raises an
 exception in another thread.
@@ -103,15 +103,15 @@ one of `ssIdle`, `ssOpen`, `ssHalfClosedRemote`, `ssHalfClosedLocal`,
 `ssClosed`, `ssResetting` (`TStreamState` in `server/src/Http2.Server.Stream.pas`). The core
 moves the state and the accessor `State` reads the flags.
 
-- `NewStream` (`:740`) creates the stream in `ssOpen`, adds it to `FStreams`
+- `NewStream` creates the stream in `ssOpen`, adds it to `FStreams`
   and to the index `FById`, and gives it the first reference.
-- `CheckStreamId` (`:722`) rejects a new stream id that is even, or that is
+- `CheckStreamId` rejects a new stream id that is even, or that is
   not above the highest id the core accepted. It runs before the closed-
   stream check, so a repeated id stays a repeated id.
 - A request header block that ends marks `MarkRequestHead` and the declared
   length. A `DATA` frame that ends with `END_STREAM` marks the remote end.
   A response that ends marks the local end. The state follows those marks.
-- `CloseStream` (`:925`) removes the stream from `FById` and from `FStreams`
+- `CloseStream` removes the stream from `FById` and from `FStreams`
   and releases the reference of the core. A call for a stream that is not in
   `FStreams` does nothing, so the core releases its reference one time only.
   A queue entry, a running handler and a channel each hold a reference. The
@@ -233,7 +233,7 @@ and checks the declared content length. The request head stays as it was.
 
 ## The request rules
 
-A complete request header block passes `ValidateRequestBlock` (`:372`). The
+A complete request header block passes `ValidateRequestBlock`. The
 function calls `ValidateRequestHeaders`
 (`server/src/Http2.Server.RequestValidation.pas`) and reads a verdict.
 
@@ -315,7 +315,7 @@ connection window. The core queues the resulting
 frames in `FOutput`, and `TakeOutput` answers them to the IO side.
 
 The wake-up is edge-triggered. The flag `FWakePending` guards one signal per
-transition from "no output" to "output" (`:563`). The document
+transition from "no output" to "output" (`TConnectionCoreBase.NotifyWantsWrite`). The document
 [output](output.md) holds the full rule.
 
 ## The connection write timeout
