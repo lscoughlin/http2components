@@ -185,7 +185,7 @@ type
     FBodyBudget: IBodyBudget;
     FDeadlines: THandlerDeadlineWatch; // nil when MaxHandlerTimeMs is 0
     procedure Notify(const AKind: TServerEventKind;
-      const AStream: TServerStream; const ADetail: string);
+      const AStreamId: LongWord; const ADetail: string);
     procedure DetachNotify(const AStream: TServerStream; const ARefused: Boolean);
     function TakeOne: Boolean;
     procedure AnswerRefusal(const AStream: TServerStream);
@@ -668,23 +668,21 @@ end;
 procedure THandlerPool.ReportError(const AStream: TServerStream;
   const ABeforeHeaders: Boolean);
 begin
-  Notify(seHandlerException, AStream, 'the handler raised');
+  Notify(seHandlerException, AStream.StreamId, 'the handler raised');
   AnswerHandlerError(AStream, ABeforeHeaders);
   if Assigned(FOnHandlerError) then
     FOnHandlerError(AStream, ABeforeHeaders);
 end;
 
 procedure THandlerPool.Notify(const AKind: TServerEventKind;
-  const AStream: TServerStream; const ADetail: string);
+  const AStreamId: LongWord; const ADetail: string);
 var
   Event: TServerEvent;
 begin
   if FObserver = nil then
     Exit;
   Event.Kind := AKind;
-  Event.StreamId := 0;
-  if AStream <> nil then
-    Event.StreamId := AStream.StreamId;
+  Event.StreamId := AStreamId;
   Event.LimitKind := lkReset;
   Event.ErrorCode := ecNoError;
   Event.Detail := ADetail;
@@ -699,10 +697,10 @@ procedure THandlerPool.DetachNotify(const AStream: TServerStream;
   const ARefused: Boolean);
 begin
   if ARefused then
-    Notify(seStreamDetachRefused, AStream,
+    Notify(seStreamDetachRefused, AStream.StreamId,
       'the limit of detached streams is reached')
   else
-    Notify(seStreamDetached, AStream, 'the handler detached the stream');
+    Notify(seStreamDetached, AStream.StreamId, 'the handler detached the stream');
 end;
 
 procedure THandlerPool.RunJob(const AEntry: TQueueEntry;
@@ -719,7 +717,7 @@ begin
     finally
       FLock.Release;
     end;
-    Notify(seRequestTimedOut, nil, 'the queue wait limit passed');
+    Notify(seRequestTimedOut, 0, 'the queue wait limit passed');
     LogJobRefusal(Job);
     Job.Refuse(jrTimedOut);
     Exit;
@@ -751,7 +749,7 @@ begin
         ; // the cancellation ends the handler quietly
       on E: Exception do
         // the job answers its own peer; the pool only reports
-        Notify(seHandlerException, nil, 'the handler raised');
+        Notify(seHandlerException, 0, 'the handler raised');
     end;
   finally
     if FDeadlines <> nil then FDeadlines.UnregisterJob(Job);
@@ -762,7 +760,7 @@ begin
     finally
       FLock.Release;
     end;
-    Notify(seStreamCompleted, nil, 'the handler returned');
+    Notify(seStreamCompleted, 0, 'the handler returned');
   end;
 end;
 
@@ -777,7 +775,7 @@ begin
     finally
       FLock.Release;
     end;
-    Notify(seQueueFull, nil, 'the queue was full');
+    Notify(seQueueFull, 0, 'the queue was full');
     LogJobRefusal(AJob);
     AJob.Refuse(jrQueueFull);
   end;
@@ -787,6 +785,7 @@ function THandlerPool.TakeOne: Boolean;
 var
   Entry: TQueueEntry;
   Stream: TServerStream;
+  StreamId: LongWord;
   Outcome: TDequeueResult;
   Req: TServerStreamRequest;
   Res: TServerStreamResponse;
@@ -813,7 +812,7 @@ begin
     finally
       FLock.Release;
     end;
-    Notify(seRequestTimedOut, Stream, 'the queue wait limit passed');
+    Notify(seRequestTimedOut, Stream.StreamId, 'the queue wait limit passed');
     AnswerRefusal(Stream);
     // this branch never reaches MarkBusy, so the queue reference drops here
     Stream.ReleaseRef;
@@ -865,7 +864,7 @@ begin
         if Res.Detached then
           // the channel owns the stream: an error answer here would put a second
           // HEADERS block on the wire, or reset a stream the owner means to keep
-          Notify(seHandlerException, Stream, 'the handler raised after Detach')
+          Notify(seHandlerException, Stream.StreamId, 'the handler raised after Detach')
         else
           ReportError(Stream, not Res.HeadersSent);
     end;
@@ -879,8 +878,9 @@ begin
     ResRef := nil;
     ReqRef := nil;
     if FDeadlines <> nil then FDeadlines.Unregister(Stream);
+    StreamId := Stream.StreamId; // read before MarkIdle releases the stream
     MarkIdle(Stream);
-    Notify(seStreamCompleted, Stream, 'the handler returned');
+    Notify(seStreamCompleted, StreamId, 'the handler returned');
   end;
 end;
 
@@ -895,8 +895,8 @@ begin
     finally
       FLock.Release;
     end;
-    Notify(seQueueFull, AStream, 'the queue was full');
-    Notify(seStreamRefused, AStream, 'the queue was full');
+    Notify(seQueueFull, AStream.StreamId, 'the queue was full');
+    Notify(seStreamRefused, AStream.StreamId, 'the queue was full');
     AnswerRefusal(AStream);
   end;
 end;

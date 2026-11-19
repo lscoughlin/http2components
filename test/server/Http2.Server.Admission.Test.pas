@@ -31,6 +31,7 @@ uses
   Http2.Server.Errors, Http2.Server.Seam, Http2.Server.Stream,
   Http2.Server.StreamHost,
   Http2.Server.Limits, Http2.Server.Config, Http2.Common.Hpack,
+  Http2.Server.Observer,
   Http2.Server.Admission, Http2.Server.StreamAdapters, Http2.Common.Body;
 
 type
@@ -97,6 +98,27 @@ type
       const AResponse: IServerResponse);
   end;
 
+  /// a handler that sends a complete response and returns
+  TEndingHandler = class(TInterfacedObject, IHttp2Handler)
+  public
+    procedure Handle(const ARequest: IServerRequest;
+      const AResponse: IServerResponse);
+  end;
+
+  /// an observer that records the stream id of each seStreamCompleted event
+  TCompletedObserver = class(TInterfacedObject, IHttp2ServerObserver)
+  private
+    FLock: TCriticalSection;
+    FCount: Integer;
+    FStreamId: LongWord;
+  public
+    constructor Create;
+    destructor Destroy; override;
+    procedure OnEvent(const AEvent: TServerEvent);
+    function Count: Integer;
+    function StreamId: LongWord;
+  end;
+
   /// one producer thread of the counters test
   TProducer = class(TThread)
   private
@@ -160,6 +182,8 @@ type
     procedure TestAdaptersExposeStreamState;
     // P9: the request body read through GetStream equals ReadAllBody
     procedure TestRequestGetStreamEqualsReadAllBody;
+    // the seStreamCompleted event carries the id of the stream it ends
+    procedure TestStreamCompletedCarriesStreamId;
   end;
 
 implementation
@@ -328,6 +352,61 @@ begin
   if FSendHeaders then
     AResponse.SendHeaders(200, nil, False);
   raise EHttpError.Create('the handler failed');
+end;
+
+{ TEndingHandler }
+
+procedure TEndingHandler.Handle(const ARequest: IServerRequest;
+  const AResponse: IServerResponse);
+begin
+  AResponse.SendHeaders(200, nil, True);
+end;
+
+{ TCompletedObserver }
+
+constructor TCompletedObserver.Create;
+begin
+  inherited Create;
+  FLock := TCriticalSection.Create;
+end;
+
+destructor TCompletedObserver.Destroy;
+begin
+  FLock.Free;
+  inherited Destroy;
+end;
+
+procedure TCompletedObserver.OnEvent(const AEvent: TServerEvent);
+begin
+  if AEvent.Kind <> seStreamCompleted then
+    Exit;
+  FLock.Acquire;
+  try
+    Inc(FCount);
+    FStreamId := AEvent.StreamId;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TCompletedObserver.Count: Integer;
+begin
+  FLock.Acquire;
+  try
+    Result := FCount;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function TCompletedObserver.StreamId: LongWord;
+begin
+  FLock.Acquire;
+  try
+    Result := FStreamId;
+  finally
+    FLock.Release;
+  end;
 end;
 
 { TProducer }
@@ -872,6 +951,30 @@ begin
     CompareMem(@Expected[0], @Got[0], Length(Got)));
   ReqFirst := nil;
   ReqSecond := nil;
+end;
+
+procedure TAdmissionTest.TestStreamCompletedCarriesStreamId;
+var
+  Stream: TServerStream;
+  Obs: TCompletedObserver;
+  Waited: Integer;
+begin
+  Configure(1, 2, 600000, rmRefuseStream);
+  FFactory := FFactory.WithHandler(TEndingHandler.Create);
+  FPool := THandlerPool.Create(FFactory);
+  Obs := TCompletedObserver.Create;
+  FPool.Observer := Obs;
+
+  Stream := NewStream(11);
+  AssertEquals('the request queues', Ord(asQueued), Ord(FPool.Admit(Stream)));
+  Waited := 0;
+  while (Obs.Count < 1) and (Waited < 2000) do
+  begin
+    Sleep(1);
+    Inc(Waited);
+  end;
+  AssertEquals('one completion event arrives', 1, Obs.Count);
+  AssertEquals('the event names the stream', 11, Integer(Obs.StreamId));
 end;
 
 initialization
