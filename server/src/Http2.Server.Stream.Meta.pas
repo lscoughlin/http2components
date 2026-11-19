@@ -168,7 +168,14 @@ begin
   // always take the two locks in the same order
   if FConnLock <> nil then
     FConnLock.Acquire;
-  FStreamLock.Acquire;
+  try
+    FStreamLock.Acquire;
+  except
+    // the stream lock is not held, so the connection lock is released here
+    if FConnLock <> nil then
+      FConnLock.Release;
+    raise;
+  end;
   Inc(FLockDepth);
   if FLockDepth > FMaxLockDepth then
     FMaxLockDepth := FLockDepth;
