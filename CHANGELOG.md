@@ -89,7 +89,15 @@
   holds its pool thread, and on a channel without flow control the session closes with
   1009 when the pipe fills.
 - The end of a session aborts the pipe of a message that still arrives, before the
-  streaming pool stops.
+  streaming pool stops. When a stream was cancelled on the IO thread (a peer
+  `RST_STREAM`, a stream error, a connection error or a token bucket trip), a session
+  that returned credit for its message pipe could wake the writer inside that cancel.
+  The flush closed the stream, and the core then closed it again. Each close released the
+  reference of the core, so the stream was freed while its channel still held it. A credit
+  call of a stream-pool thread that had started before the reset then failed in the stream
+  lock, and the thread kept the connection lock. The core now releases its reference one
+  time for each stream, and a flush inside the end of all streams no longer fails the loop
+  over the streams.
 - **Behavior change.** `IWsSession.SendStream` sends each chunk of the writer as one
   fragment of the message, and it returns at once. A full channel parks the stream
   until the channel drains. While a stream runs, `Send` and `SendStream` return

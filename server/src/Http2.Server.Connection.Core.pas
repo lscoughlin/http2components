@@ -32,50 +32,13 @@ uses
   Http2.Common.FlowControl, Http2.Server.Limits, Http2.Server.Seam,
   Http2.Server.Stream, Http2.Server.StreamHost, Http2.Common.Headers,
   Http2.Server.Output, Http2.Server.OutboundBudget,
-  Http2.Server.HpackConnection, Http2.Server.StreamIdSet;
+  Http2.Server.HpackConnection, Http2.Server.StreamIdSet,
+  Http2.Server.Connection.Options;
 
 type
-  /// the per-connection values the core needs
-  // - the factory fills every field; the core creates no default and holds no
-  //   limit literal of its own
-  TConnectionCoreOptions = record
-    ConnectionWindow: LongInt;
-    InitialStreamWindow: LongInt;
-    MaxConcurrentStreams: LongWord;
-    MaxFrameSize: LongWord;
-    MaxHeaderListSize: LongWord;
-    MaxHeaderTableSize: LongWord;
-    MaxContinuations: LongWord;
-    MaxHeaderBlockBytes: LongWord;
-    InboundBufferLimit: Integer;
-    OutboundBufferLimit: Integer;
-    ConnectionUpdateThreshold: LongWord;
-    StreamUpdateThreshold: LongWord;
-    /// advertise SETTINGS_ENABLE_CONNECT_PROTOCOL and accept :protocol (RFC 8441)
-    ConnectProtocol: Boolean;
-    /// the most octets that the output queue of one connection may hold; a
-    /// peer that does not read ends the connection above it. Zero sets no cap
-    MaxOutputBytes: LongWord;
-    /// how many requests one connection serves before it retires; 0 is off
-    MaxStreams: LongWord;
-    /// the most outbound frames that may wait for the peer; 0 is off
-    MaxOutboundFrames: LongWord;
-    /// the most outbound PING, SETTINGS and RST_STREAM frames that may
-    /// wait for the peer; 0 is off
-    MaxOutboundControlFrames: LongWord;
-    /// the greatest size of an outbound DATA frame, in octets; 0 sends
-    /// up to MaxFrameSize
-    MaxDataFrameSizeOut: LongWord;
-    /// the greatest wait for a read of a stream, in milliseconds; 0 keeps
-    /// the stream default
-    StreamReadTimeoutMs: Integer;
-    /// the greatest wait for a write of a stream, in milliseconds; 0 keeps
-    /// the stream default
-    StreamWriteTimeoutMs: Integer;
-    /// zero every field, so a caller that sets only the fields it uses
-    /// leaves every other limit off
-    class operator Initialize(var AOptions: TConnectionCoreOptions);
-  end;
+  /// the per-connection values the core needs; the record is in
+  /// Http2.Server.Connection.Options
+  TConnectionCoreOptions = Http2.Server.Connection.Options.TConnectionCoreOptions;
 
   /// the core raises one of these events for every state change the server acts on
   IConnectionEvents = interface
@@ -212,6 +175,9 @@ type
       const AErrorCode: THttp2ErrorCode);
     /// cancel and close every open stream, with AErrorCode
     procedure EndAllStreams(const AErrorCode: THttp2ErrorCode);
+    /// cancel the stream, tell the events when ANotify is set, and close it
+    procedure CancelAndClose(const AStream: TServerStream;
+      const AErrorCode: THttp2ErrorCode; const ANotify: Boolean);
     /// charge the reset bucket for an RST_STREAM that a frame of the peer made
     // the server send, so a peer cannot ask for resets without a bound
     procedure ChargePeerReset;
@@ -309,12 +275,6 @@ implementation
 
 uses
   Http2.Server.Connection.Flush;
-
-class operator TConnectionCoreOptions.Initialize(
-  var AOptions: TConnectionCoreOptions);
-begin
-  FillChar(AOptions, SizeOf(AOptions), 0);
-end;
 
 const
   /// the longest wait of Orphan for a call in flight, in milliseconds
@@ -521,8 +481,16 @@ begin
     FClosing := True;
     // Cancel runs the sink of a detached stream, so the list is copied first
     Open := FStreams.ToArray;
+    // a flush inside a cancel can free a stream of the copy: hold each one
     for I := 0 to High(Open) do
-      Open[I].Cancel(ecCancel);
+      Open[I].AddRef;
+    try
+      for I := 0 to High(Open) do
+        Open[I].Cancel(ecCancel);
+    finally
+      for I := 0 to High(Open) do
+        Open[I].ReleaseRef;
+    end;
   finally
     UnlockConn;
   end;
@@ -814,15 +782,29 @@ end;
 procedure TConnectionCoreBase.EndAllStreams(const AErrorCode: THttp2ErrorCode);
 var
   I: Integer;
-  Stream: TServerStream;
+  Open: TArray<TServerStream>;
 begin
-  for I := FStreams.Count - 1 downto 0 do
-  begin
-    Stream := FStreams[I];
-    Stream.Cancel(AErrorCode);
-    if FEvents <> nil then
-      FEvents.StreamReset(Stream);
-    CloseStream(Stream);
+  // the cancel of a stream can run a flush that closes this stream and
+  // others, so the loop walks a copy and skips a stream no longer in the list
+  Open := FStreams.ToArray;
+  for I := High(Open) downto 0 do
+    if FStreams.IndexOf(Open[I]) >= 0 then
+      CancelAndClose(Open[I], AErrorCode, True);
+end;
+
+procedure TConnectionCoreBase.CancelAndClose(const AStream: TServerStream;
+  const AErrorCode: THttp2ErrorCode; const ANotify: Boolean);
+begin
+  // the cancel runs the sink of a detached stream, and the sink can drop the
+  // last other reference, so this call holds one until the stream is closed
+  AStream.AddRef;
+  try
+    AStream.Cancel(AErrorCode);
+    if ANotify and (FEvents <> nil) then
+      FEvents.StreamReset(AStream);
+    CloseStream(AStream);
+  finally
+    AStream.ReleaseRef;
   end;
 end;
 
@@ -944,13 +926,15 @@ procedure TConnectionCoreBase.CloseStream(const AStream: TServerStream);
 begin
   if AStream = nil then
     Exit;
+  // a flush in a loop of the core can close the stream first: the core
+  // reference drops once
+  if FStreams.Extract(AStream) = nil then
+    Exit;
   AStream.MarkLocalEnded;
   FSend.CloseStream(AStream.StreamId);
   FRecv.CloseStream(AStream.StreamId);
   FById.Remove(AStream.StreamId);
-  FStreams.Extract(AStream);
-  // the core drops its reference; a queue entry or a running handler may
-  // hold the stream alive a while longer
+  // the core drops its reference; a queue entry or a handler may keep the stream
   AStream.ReleaseRef;
 end;
 

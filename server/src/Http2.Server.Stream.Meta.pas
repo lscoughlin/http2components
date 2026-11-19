@@ -122,6 +122,8 @@ type
     //   value above one would mean a lock held across a nested operation, and
     //   a value of zero at the wait point means no lock is held across a wait
     property MaxLockDepth: Integer read FMaxLockDepth;
+    /// the number of holders of this stream (test seam)
+    property RefCount: Integer read FRefCount;
   end;
 
 implementation

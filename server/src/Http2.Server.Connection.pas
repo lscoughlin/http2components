@@ -362,10 +362,7 @@ begin
     ChargePeerReset;
     SendRstStream(AFrame.Header.StreamId, ecProtocolError);
     if Stream <> nil then
-    begin
-      Stream.Cancel(ecProtocolError);
-      CloseStream(Stream);
-    end;
+      CancelAndClose(Stream, ecProtocolError, False);
     Discard := True;
   end;
   Block := ExtractHeaderBlock(AFrame);
@@ -452,8 +449,7 @@ begin
     // RFC 8441 section 5: an extended CONNECT stream carries DATA after its head, and
     // a trailer block is a stream error (RFC 9113 section 8.5)
     SendRstStream(Stream.StreamId, ecProtocolError);
-    Stream.Cancel(ecProtocolError);
-    CloseStream(Stream);
+    CancelAndClose(Stream, ecProtocolError, False);
     Exit;
   end;
   if IsTrailer then
@@ -470,8 +466,7 @@ begin
       if not Stream.DeclaredLengthMatches then
       begin
         SendRstStream(Stream.StreamId, ecProtocolError);
-        Stream.Cancel(ecProtocolError);
-        CloseStream(Stream);
+        CancelAndClose(Stream, ecProtocolError, False);
       end;
     end;
     Exit;
@@ -486,8 +481,7 @@ begin
   if FHpack.BlockEndStream and (not Stream.DeclaredLengthMatches) then
   begin
     SendRstStream(Stream.StreamId, ecProtocolError);
-    Stream.Cancel(ecProtocolError);
-    CloseStream(Stream);
+    CancelAndClose(Stream, ecProtocolError, False);
     Exit;
   end;
   if FEvents <> nil then
@@ -509,8 +503,7 @@ begin
     if FLimits <> nil then
       FLimits.ChargeReset(True);
     SendRstStream(AStream.StreamId, ecProtocolError);
-    AStream.Cancel(ecProtocolError);
-    CloseStream(AStream);
+    CancelAndClose(AStream, ecProtocolError, False);
     Exit(False);
   end;
   // a trailer carries no content-length, so the head declaration stands
@@ -595,16 +588,14 @@ begin
       if FLimits <> nil then
         FLimits.ChargeReset(True);
       SendRstStream(AFrame.Header.StreamId, ecProtocolError);
-      Stream.Cancel(ecProtocolError);
-      CloseStream(Stream);
+      CancelAndClose(Stream, ecProtocolError, False);
       Exit;
     end;
     if Stream.InboundWouldOverflow(Length(Payload)) then
     begin
       // the handler is behind, so this stream ends and the connection stays
       SendRstStream(AFrame.Header.StreamId, ecFlowControlError);
-      Stream.Cancel(ecFlowControlError);
-      CloseStream(Stream);
+      CancelAndClose(Stream, ecFlowControlError, False);
       Exit;
     end;
     if not FRecv.TryConsumeStream(AFrame.Header.StreamId, Total) then
@@ -642,8 +633,7 @@ begin
   begin
     // the body length differs from the declared content-length
     SendRstStream(AFrame.Header.StreamId, ecProtocolError);
-    Stream.Cancel(ecProtocolError);
-    CloseStream(Stream);
+    CancelAndClose(Stream, ecProtocolError, False);
   end;
 end;
 
@@ -717,10 +707,7 @@ begin
   end;
   if Stream = nil then
     Exit;
-  Stream.Cancel(Code);
-  if FEvents <> nil then
-    FEvents.StreamReset(Stream);
-  CloseStream(Stream);
+  CancelAndClose(Stream, Code, True);
 end;
 
 procedure TServerConnectionCore.ProcessPing(const AFrame: TFrame);
@@ -804,10 +791,7 @@ begin
         Stream := FindStream(AFrame.Header.StreamId);
         SendRstStream(AFrame.Header.StreamId, ecFlowControlError);
         if Stream <> nil then
-        begin
-          Stream.Cancel(ecFlowControlError);
-          CloseStream(Stream);
-        end;
+          CancelAndClose(Stream, ecFlowControlError, False);
         Exit;
       end;
     end;
