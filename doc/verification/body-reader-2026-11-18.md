@@ -8,6 +8,7 @@ notes:
   - Three findings are open. A code review found a possible lock-order conflict between the connection lock and the write lock of the socket layer. Two smaller findings come from code review of the stream lock and of the handler pool. No run has shown any of the three.
   - The load programs are not stored in the repository.
   - The record also holds the macOS gate results of commit e3a880b.
+  - The record also holds the Linux gate results, the scenario runs and the stop-path loops of commit 3f0ba0a, run on 2026-11-19.
 ---
 
 # Streamed bodies and messages: Linux verification
@@ -51,6 +52,22 @@ for commit `2759ee9`.
 | --- | --- |
 | `test:server` | 1066 tests, no error, no failure |
 | `test:client` | 1115 tests, no failure |
+
+### Linux gate results of commit 3f0ba0a
+
+The gate ran on 2026-11-19 on commit `3f0ba0a`, the tip of the branch `main`, in a Linux amd64
+container on the host `liam-rzbox`. The host load average was 0.43 at the start and between
+0.4 and 1.2 during the run.
+
+| Step | Result |
+| --- | --- |
+| `build:client`, `build:server` | pass |
+| `source:check`, `docs:check` | pass |
+| `packages:check` | not run. The Linux image has no `lazbuild`, and the step fails with `lazbuild is required`. This is a toolchain gap, not a result of the packages |
+| `test:common` | 415 tests, no error, no failure |
+| `test:client` | 1115 tests, no error, no failure |
+| `test:server` | 1068 tests, no error, no failure. The time limit was 1200 s |
+| `test:integration` | 21 tests, no error, no failure |
 
 ## Load runs on HTTP/1.1
 
@@ -98,6 +115,22 @@ The table shows the results of `a8da965`; the runs of `2759ee9` passed with the 
 | M: a message of 256 MB and a message of 64 MB on two streams of one connection | the small message finished as fast as the big message alone: 386 ms to 573 ms against 391 ms to 404 ms, inside the limit of three times plus 2 s | 6 MB to 10 MB |
 | N: 50 parallel streams of 8 MB each, round robin | no failed reply, 8.9 s to 9.1 s | 6 MB to 13 MB |
 
+## WebSocket over HTTP/2 runs of commit 3f0ba0a
+
+These runs used the raw HTTP/2 test client against the server of the load program, on commit
+`3f0ba0a` on 2026-11-19. Each scenario ran 3 times in one process (`loadh2ws all 3`, scale 1).
+All 21 runs passed. The table shows the range of the 3 runs.
+
+| Scenario | Result | Peak resident memory |
+| --- | --- | --- |
+| H: inbound message of 256 MB on one stream to a handler that reads at once | exact octet count 268435456, close code 1000, 1.3 s to 2.9 s | 12 MB to 13 MB |
+| I: inbound message of 64 MB to a handler that sleeps 5 ms after each chunk | exact octet count 67108864, close code 1000, 96.8 s to 97.0 s | 13 MB to 14 MB |
+| J: the peer stops in the middle of a message, inbound stall 2000 ms | the client saw close code 1008, the second stream of 1 MB arrived exact, 2.1 s. The server `Closed` code was 1001 in two runs and 1006 in one run | 13 MB to 14 MB |
+| K: outbound producer message of 128 MB, the peer returns credit after 1 ms per DATA frame | all octets arrived, 134232064 to 134250496 octets with the WebSocket frame headers, close code 1000, 15.0 s to 17.0 s | 17 MB to 19 MB |
+| L: outbound producer message, the peer returns no credit, outbound stall 2000 ms | the client read 65535 octets, `RST_STREAM` with code 8 at the time of `Closed` or 20 ms after it, the second stream of 1 MB arrived exact, 3.0 s. The log line reports close code 1006 for the session. The earlier runs of this scenario reported 1008 | 16 MB to 19 MB |
+| M: a message of 256 MB and a message of 64 MB on two streams of one connection | the big message took 384 ms to 408 ms, the small message 402 ms to 412 ms, inside the limit of three times plus 2 s (3152 ms to 3224 ms) | 17 MB to 19 MB |
+| N: 50 parallel streams of 8 MB each, round robin | no failed reply, 8.9 s to 9.0 s | 20 MB to 26 MB |
+
 ## Repeated WebSocket over HTTP/2 runs
 
 Each scenario of the previous section ran 10 times in one process on commit `a8da965`. The host
@@ -133,6 +166,7 @@ when both counts are exact and the client sees no reset, no GOAWAY and no closed
 | 3 sets of 20 runs per variant, commit `a8da965` | window-update bucket widened | 120 runs, no failure |
 | 40 sets of 20 plain runs, commit `2759ee9` | default | 720 passes and 80 failures, no run that did not end |
 | 40 sets of 20 plain runs of a later Linux run on `main` (tree of commit `7b15754`, scratch program, not in the repository) | default | 742 passes and 58 failures, all 58 the server closing the connection |
+| 5 sets of 20 plain runs, commit `3f0ba0a` | default | 92 passes and 8 failures. Set 1: 18 and 2. Set 2: 17 and 3. Set 3: 18 and 2. Set 4: 20 and 0. Set 5: 19 and 1 |
 
 - With the default limits, the server closes the connection when the test client sends window
   updates faster than the window-update bucket allows (capacity 10000, refill 4000 per
@@ -154,6 +188,22 @@ when both counts are exact and the client sees no reset, no GOAWAY and no closed
   happen, because the scenario may not create the condition that the conflict needs: a write
   that blocks while the IO thread returns credit.
 - The peak resident memory of the runs was at most 32 MB.
+
+The 8 failures of commit `3f0ba0a` have these forms. Stream 1 had no count (count 0) in all 8
+runs. The stream 3 data count of the failed runs was between 53457656 and 67125248 octets. Seven
+runs ended in a send of the client that failed at 709 ms to 895 ms with `EPIPE` (2 runs) or
+`ECONNRESET` (5 runs). The eighth ended with `EH2ConnectionEnded: the socket is closed` at
+935 ms. In all 8 runs the connection ended. The output does not hold a GOAWAY frame or a server
+counter, so this run does not show the cause of each failure. The explanation of the earlier
+runs applies: the server closes the connection through the window-update bucket, which is the
+designed limit. This run does not prove that for each of the 8 failures.
+
+## Stop-path loops on commit 3f0ba0a
+
+The runner of the server suite ran two suites 30 times each on commit `3f0ba0a`, with the
+options `--suite=NAME --format=plain --sparse`. `TStreamPoolThreadTest` ran 5 tests in each run,
+and `TWsEnvironmentStopTest` ran 1 test in each run. All 60 first runs passed, with no error and
+no failure. No run needed a rerun.
 
 ## Findings open
 
@@ -184,3 +234,4 @@ with 50 parallel streams, did not stop. The review is the only source of this fi
 - A run of more than 10 passes of each scenario, which could show whether the growth of the
   peak resident memory stops.
 - A run with the host fully idle. The load average stayed between 0.2 and 2.4.
+- `packages:check` on Linux. The Linux image has no `lazbuild`.
