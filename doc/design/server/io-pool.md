@@ -177,10 +177,7 @@ listener (`NewSocket` in `mormot.net.sock.pas` calls `SetLinger(5)` before the
 bind, and `SetLinger` calls `SetReuseAddrPort` for a positive linger, which
 sets the option on BSD and Darwin in `mormot.net.sock.posix.inc`), so two
 listeners share a port there even with the option off, and the option decides
-the sharing on Linux. Darwin answers the raw flag bits from `getsockopt` for `TCP_NODELAY`
-(4) and `SO_KEEPALIVE` (8) instead of 1. A buffer size is a hint on some
-systems: the kernel grants at least the asked size, so a read-back passes at
-or above it.
+the sharing on Linux.
 
 ## The Unix listener
 
