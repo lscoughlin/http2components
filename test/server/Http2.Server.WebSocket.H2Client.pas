@@ -32,6 +32,11 @@ uses
   Http2.Server.Http1.RawClient, Http2.Server.WebSocket.TestKit;
 
 type
+  /// raised when a send waits for the windows of the server and the connection has ended
+  // - the message gives the cause: a GOAWAY with its error code and last stream id, a
+  //   RST_STREAM or END_STREAM of the target stream, or a closed socket
+  EH2ConnectionEnded = class(Exception);
+
   /// the credit that the client returns for the DATA frames it receives
   // - ccAuto returns the credit at once, ccDelayed after CreditDelayMs, ccNone not at all
   THcCreditMode = (ccAuto, ccDelayed, ccNone);
@@ -51,8 +56,14 @@ type
     FCreditMode: THcCreditMode;
     FCreditDelayMs: Integer;
     FKeepFrames: Boolean;
+    FGoAwayCause: string;
+    FResetCauses: TDictionary<LongWord, string>;
+    FEndedStreams: TDictionary<LongWord, Boolean>;
+    FSocketClosed: Boolean;
     procedure Write(const AFrame: TFrame);
     function Credit(const AStreamId: LongWord): Int64;
+    procedure Observe(const AFrame: TFrame);
+    procedure RaiseIfEnded(const AStreamId: LongWord);
   public
     constructor Create(const APort: Integer);
     destructor Destroy; override;
@@ -63,6 +74,8 @@ type
     procedure OpenWebSocket(const AId: LongWord; const AExtra: THeaderBlock = nil);
     procedure OpenGet(const AId: LongWord; const APath: string);
     /// send AData as DATA frames, waiting for the windows of the server
+    // - raises EH2ConnectionEnded when the connection ends during the wait, and a plain
+    //   Exception when the windows stay closed while the connection is alive
     procedure SendData(const AId: LongWord; const AData: TBytes; const AEnd: Boolean = False);
     procedure SendRst(const AId: LongWord; const ACode: THttp2ErrorCode);
     /// the fields of the first HEADERS frame of the stream; False after the timeout
@@ -128,6 +141,8 @@ begin
   FFields := TList<THeaderBlock>.Create;
   FStreamWindow := TDictionary<LongWord, Int64>.Create;
   FDataCounts := TDictionary<LongWord, Int64>.Create;
+  FResetCauses := TDictionary<LongWord, string>.Create;
+  FEndedStreams := TDictionary<LongWord, Boolean>.Create;
   FKeepFrames := True;
   FConnWindow := 65535;
   FSock := TCrtSocket.Open('127.0.0.1', IntToStr(APort), nlTcp, ResponseMs);
@@ -145,6 +160,8 @@ begin
   FSock.Free;
   FStreamWindow.Free;
   FDataCounts.Free;
+  FResetCauses.Free;
+  FEndedStreams.Free;
   FFields.Free;
   FFrames.Free;
   FDec.Free;
@@ -167,6 +184,48 @@ begin
     Result := 65535;
 end;
 
+procedure TH2WsClient.Observe(const AFrame: TFrame);
+var
+  Code: THttp2ErrorCode;
+  Raw, LastId: LongWord;
+  Debug: TBytes;
+begin
+  // the connection-ending frames are noted here, so a wait can stop at once
+  case AFrame.Header.FrameType of
+    ftGoAway:
+      if FGoAwayCause = '' then
+      begin
+        ParseGoAwayRaw(AFrame, LastId, Code, Debug, Raw);
+        FGoAwayCause := Format('GOAWAY received with error code %s (%d) and last stream id %d',
+          [Http2ErrorCodeName(Code), Raw, LastId]);
+      end;
+    ftRstStream:
+      begin
+        ParseRstStreamRaw(AFrame, Code, Raw);
+        FResetCauses.AddOrSetValue(AFrame.Header.StreamId,
+          Format('RST_STREAM received on stream %d with error code %s (%d)',
+          [AFrame.Header.StreamId, Http2ErrorCodeName(Code), Raw]));
+      end;
+    ftData, ftHeaders:
+      if AFrame.IsEndStream then
+        FEndedStreams.AddOrSetValue(AFrame.Header.StreamId, True);
+  end;
+end;
+
+procedure TH2WsClient.RaiseIfEnded(const AStreamId: LongWord);
+var
+  Cause: string;
+begin
+  if FGoAwayCause <> '' then
+    raise EH2ConnectionEnded.Create(FGoAwayCause);
+  if FResetCauses.TryGetValue(AStreamId, Cause) then
+    raise EH2ConnectionEnded.Create(Cause);
+  if FEndedStreams.ContainsKey(AStreamId) then
+    raise EH2ConnectionEnded.Create(Format('END_STREAM received on stream %d', [AStreamId]));
+  if FSocketClosed then
+    raise EH2ConnectionEnded.Create('the socket is closed');
+end;
+
 procedure TH2WsClient.Pump(const AWaitMs: Integer);
 var
   Pending: TCrtSocketPending;
@@ -178,6 +237,8 @@ var
   Settings: TConnectionSettings;
 begin
   Pending := FSock.SockReceivePending(AWaitMs);
+  if Pending in [cspSocketError, cspSocketClosed, cspDataAvailableOnClosedSocket] then
+    FSocketClosed := True;
   // read only when octets are waiting: SockReceiveString on an idle socket blocks
   // up to the socket timeout
   if Pending in [cspDataAvailable, cspDataAvailableOnClosedSocket] then
@@ -199,6 +260,7 @@ begin
       Move(FBuf[FrameHeaderSize + 1], Frame.Payload[0], Header.Length);
     Frame.Header := Header;
     FBuf := Copy(FBuf, N + 1, MaxInt);
+    Observe(Frame);
     case Header.FrameType of
       ftSettings:
         if not Frame.IsAck then
@@ -310,6 +372,10 @@ begin
     while (FConnWindow < N) or (Credit(AId) < N) do
     begin
       Pump(20);
+      if (FConnWindow >= N) and (Credit(AId) >= N) then
+        Break;
+      // a blocked send stops at once when the connection has ended
+      RaiseIfEnded(AId);
       if GetTickCount64 > Deadline then
         raise Exception.Create('the windows of the server stayed closed');
     end;
