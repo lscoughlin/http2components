@@ -191,7 +191,7 @@ together with no name clash.
 | `Http2.Server.WebSocket.Reader.pas` | 324 | codec | the assembly of frames into messages with the size, fragment and UTF-8 checks; it keeps the first `InlineLimit` octets and then gives the octets to its sink one piece at a time; the codec holds no socket and no thread |
 | `Http2.Server.StreamHost.pas` | 60 | seam | the callbacks that a stream uses to reach its connection |
 | `Http2.Server.StreamPool.pas` | 773 | streaming | the streaming pool: ordered task queues, timers and fair scheduling |
-| `Http2.Server.Connection.Core.pas` | 956 | connection | the base of the connection core: fields, locks, output queue, write wake-up and stream table |
+| `Http2.Server.Connection.Core.pas` | 974 | connection | the base of the connection core: fields, locks, output queue, write wake-up and stream table |
 | `Http2.Server.Connection.Options.pas` | 72 | connection | the options record of the core: every per-connection limit |
 | `Http2.Server.Connection.Flush.pas` | 154 | connection | the flush helpers of the core: pending headers, stream and connection credit, drained output |
 | `Http2.Server.OutboundBudget.pas` | 186 | connection | the count of queued outbound frames with the batch release rule |

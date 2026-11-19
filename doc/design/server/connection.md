@@ -111,14 +111,19 @@ moves the state and the accessor `State` reads the flags.
 - A request header block that ends marks `MarkRequestHead` and the declared
   length. A `DATA` frame that ends with `END_STREAM` marks the remote end.
   A response that ends marks the local end. The state follows those marks.
-- `CloseStream` (`:709`) removes the stream from `FById` and from `FStreams`
-  and drops the reference of the core, once for each stream: a second close of a stream that
-  is no longer in `FStreams` does nothing. The queue entry and running handler each hold a reference. The stream lives
-  until its last reference is released.
+- `CloseStream` (`:917`) removes the stream from `FById` and from `FStreams`
+  and releases the reference of the core. A call for a stream that is not in
+  `FStreams` does nothing, so the core releases its reference one time only.
+  A queue entry, a running handler and a channel each hold a reference. The
+  stream lives until its last reference is released.
+- `CancelAndClose` cancels a stream, tells the events when asked, and closes
+  it. It holds a reference of its own for the length of the call, because the
+  cancel runs the sink of a detached stream. `EndAllStreams` walks a copy of
+  the stream list and skips a stream that a flush inside the loop closed.
 
 `TServerStream` keeps its own reference count. `AddRef` and `ReleaseRef`
-(`server/src/Http2.Server.Stream.pas`) guard the object. Three holders exist: the
-core, the admission queue and the running handler. The reference count keeps
+(`server/src/Http2.Server.Stream.pas`) guard the object. Four holders exist: the
+core, the admission queue, the running handler and a channel. The reference count keeps
 a reset that arrives during a handler run from freeing the stream under the
 handler.
 
@@ -189,7 +194,7 @@ connection, because a frame with a hole cannot continue.
 `ServerLimits` (`StreamReadTimeoutMs` and `StreamWriteTimeoutMs`, each 30000 ms
 by default). `BuildConnectionCoreOptions`
 (`server/src/Http2.Server.Async.Options.pas`) maps them to
-`TConnectionCoreOptions` (`server/src/Http2.Server.Connection.Core.pas`), and
+`TConnectionCoreOptions` (`server/src/Http2.Server.Connection.Options.pas`), and
 `NewStream` (`server/src/Http2.Server.Connection.Core.pas`) sets them on each
 new stream. A zero option is unset, so the stream keeps its own default. A bare
 `TServerStream` keeps the stream constants of `server/src/Http2.Server.Stream.pas`,

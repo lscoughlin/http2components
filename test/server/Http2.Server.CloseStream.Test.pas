@@ -58,6 +58,7 @@ type
     procedure TearDown; override;
   published
     procedure TestReentrantFlushDuringEndAllStreamsReleasesTheCoreReferenceOnce;
+    procedure TestFlushInsideEndAllStreamsKeepsTheLoopAndTheReferences;
   end;
 
 implementation
@@ -138,6 +139,43 @@ begin
   Stream.SetSink(nil);
   Stream.ReleaseRef;
   Stream.ReleaseRef;
+end;
+
+procedure TCloseStreamTest.TestFlushInsideEndAllStreamsKeepsTheLoopAndTheReferences;
+var
+  S1, S3: TServerStream;
+  Sink: IChannelSink;
+  Waker: IWriteWaker;
+begin
+  FPeer := TH2Peer.Create(TPeerOptions.Default);
+  FPeer.SendPreface;
+  FPeer.SendSettings([], []);
+  FPeer.Pump;
+  FPeer.SendGet(1, '/', False);
+  FPeer.SendGet(3, '/', False);
+  FPeer.Pump;
+  S1 := FPeer.Core.StreamById(1);
+  S3 := FPeer.Core.StreamById(3);
+  AssertTrue('both streams are open', (S1 <> nil) and (S3 <> nil));
+  // one holder besides the core on each stream
+  S1.AddRef;
+  S3.AddRef;
+  // the stream of the lower index is cancelled and still in the list, so the flush
+  // inside the loop closes it too, and the list shrinks by two entries
+  S1.Cancel(ecCancel);
+  Sink := TCreditSink.Create(S3);
+  S3.SetSink(Sink);
+  Waker := TFlushWaker.Create(FPeer.Core);
+  FPeer.Core.SetWriteWaker(Waker);
+  FPeer.SendWindowUpdate(0, 0);
+  FPeer.Pump;
+  AssertTrue('stream 1 is closed', FPeer.Core.StreamById(1) = nil);
+  AssertTrue('stream 3 is closed', FPeer.Core.StreamById(3) = nil);
+  AssertEquals('stream 1 keeps its holder', 1, S1.RefCount);
+  AssertEquals('stream 3 keeps its holder', 1, S3.RefCount);
+  S3.SetSink(nil);
+  S1.ReleaseRef;
+  S3.ReleaseRef;
 end;
 
 initialization

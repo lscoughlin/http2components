@@ -175,6 +175,9 @@ type
       const AErrorCode: THttp2ErrorCode);
     /// cancel and close every open stream, with AErrorCode
     procedure EndAllStreams(const AErrorCode: THttp2ErrorCode);
+    /// cancel the stream, tell the events when ANotify is set, and close it
+    procedure CancelAndClose(const AStream: TServerStream;
+      const AErrorCode: THttp2ErrorCode; const ANotify: Boolean);
     /// charge the reset bucket for an RST_STREAM that a frame of the peer made
     // the server send, so a peer cannot ask for resets without a bound
     procedure ChargePeerReset;
@@ -771,15 +774,29 @@ end;
 procedure TConnectionCoreBase.EndAllStreams(const AErrorCode: THttp2ErrorCode);
 var
   I: Integer;
-  Stream: TServerStream;
+  Open: TArray<TServerStream>;
 begin
-  for I := FStreams.Count - 1 downto 0 do
-  begin
-    Stream := FStreams[I];
-    Stream.Cancel(AErrorCode);
-    if FEvents <> nil then
-      FEvents.StreamReset(Stream);
-    CloseStream(Stream);
+  // the cancel of a stream can run a flush that closes this stream and others, so the
+  // loop walks a copy and skips a stream that is no longer in the list
+  Open := FStreams.ToArray;
+  for I := High(Open) downto 0 do
+    if FStreams.IndexOf(Open[I]) >= 0 then
+      CancelAndClose(Open[I], AErrorCode, True);
+end;
+
+procedure TConnectionCoreBase.CancelAndClose(const AStream: TServerStream;
+  const AErrorCode: THttp2ErrorCode; const ANotify: Boolean);
+begin
+  // the cancel runs the sink of a detached stream, and the sink can drop the last
+  // other reference, so this call holds one until the stream is closed
+  AStream.AddRef;
+  try
+    AStream.Cancel(AErrorCode);
+    if ANotify and (FEvents <> nil) then
+      FEvents.StreamReset(AStream);
+    CloseStream(AStream);
+  finally
+    AStream.ReleaseRef;
   end;
 end;
 
@@ -902,7 +919,8 @@ begin
   if AStream = nil then
     Exit;
   // a flush in a loop of the core can close the stream first: the core reference drops once
-  if FStreams.Extract(AStream) = nil then Exit;
+  if FStreams.Extract(AStream) = nil then
+    Exit;
   AStream.MarkLocalEnded;
   FSend.CloseStream(AStream.StreamId);
   FRecv.CloseStream(AStream.StreamId);
