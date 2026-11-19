@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.34.0 — in development
+
+- Version bump after the 0.33.0 source release. No other change yet.
+
 ## 0.33.0 — 2026-11-19 (source release)
 
 - This release is a source release. It has no binary artifacts.
