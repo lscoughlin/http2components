@@ -5,14 +5,14 @@ keywords: verification, body reader, body writer, producer, WebSocket, streaming
 notes:
   - This record holds the Linux results of the streamed bodies and messages of version 0.33.0.
   - The record covers the shared body writer and body reader, the WebSocket send and receive streams, the producers, the cookie and format helpers, and the load runs of 2026-11-18 and 2026-11-19.
-  - One finding is open. A code review found a possible lock-order conflict between the connection lock and the write lock of the socket layer. No run has shown it.
+  - Three findings are open. A code review found a possible lock-order conflict between the connection lock and the write lock of the socket layer. Two smaller findings come from code review of the stream lock and of the handler pool. No run has shown any of the three.
   - The load programs are not stored in the repository.
 ---
 
 # Streamed bodies and messages: Linux verification
 
 This record states the results of the streamed bodies and messages on native Linux. The
-checks ran on 2026-11-19 on commit `a8da965` of the branch `main`. The record
+gate and the scenario runs ran on 2026-11-19 on commit `2759ee9` of the branch `main`. The record
 is not release approval.
 
 ## Environment
@@ -30,8 +30,10 @@ is not release approval.
 | `build:client`, `build:server` | pass |
 | `source:check`, `packages:check` | pass |
 | `test:client` | 1114 tests, no error, no failure |
-| `test:server` | 1060 tests, no error, no failure |
+| `test:server` | 1064 tests, no error, no failure |
 | `test:integration` | 21 tests, no error, no failure |
+| `TCloseStreamTest` | 30 runs, no failure |
+| `TAdmissionConnectionsTest` | 30 runs, no failure |
 | `TWsHttp2LocksTest` | 30 runs, no failure |
 | `TWsPumpTest` | 30 runs, no failure |
 | `TWsStreamThreadTest` | 30 runs, no failure |
@@ -72,7 +74,8 @@ They ran on 2026-11-18 on commit `ab35d6e`.
 ## WebSocket over HTTP/2 runs
 
 These runs used the raw HTTP/2 test client against the server of the load program, on commit
-`a8da965`. Each scenario ran 3 times. All runs passed.
+`a8da965` and again on `2759ee9`. Each scenario ran 3 times on each commit. All runs passed.
+The table shows the results of `a8da965`; the runs of `2759ee9` passed with the same counts.
 
 | Scenario | Result | Peak resident memory |
 | --- | --- | --- |
@@ -104,7 +107,44 @@ The peak of the last run is higher than the peak of the first run in every scena
 peak is above 27 MB. The runs do not show whether the growth stops, because 10 runs are too few
 to tell a slow leak from the retention of the allocator.
 
+## Scenario Q: both directions on one connection
+
+Scenario Q runs one HTTP/2 connection with two WebSocket streams at the same time: stream 1
+carries an inbound message of 64 MB to a handler that reads at once, and stream 3 carries an
+outbound producer message of 64 MB. The peer opens the windows to 32 MB first, and the test
+client returns credit for the output of stream 3. The plain variant sends the fragments in one
+loop. The burst variant sends 32 fragments and then waits 20 ms before it reads. A run passes
+when both counts are exact and the client sees no reset, no GOAWAY and no closed socket.
+
+| Run set | Bucket | Result |
+| --- | --- | --- |
+| 3 sets of 20 runs per variant, commit `a8da965` | default | plain variant 4 failures in 60 runs, burst variant 39 failures in 60 runs |
+| 3 sets of 20 runs per variant, commit `a8da965` | window-update bucket widened | 120 runs, no failure |
+| 40 sets of 20 plain runs, commit `2759ee9` | default | 720 passes and 80 failures, no run that did not end |
+
+- With the default limits, the server closes the connection when the test client sends window
+  updates faster than the window-update bucket allows (capacity 10000, refill 4000 per
+  second). The server then reports that a token bucket tripped and resets both streams. The
+  client sees a reset of the connection, about 0.3 s to 0.9 s after the start. The widened
+  bucket removes these failures. The failures belong to the limit, which works as designed.
+- Of the 80 failures on `2759ee9`, 72 are the reset of the connection and 8 are a wait of the
+  client for the window of the server, which stayed closed. The 8 were not examined further.
+- The scenario did not show the possible lock-order conflict that the finding below names.
+  The result is "not observed under scenario Q". It does not show that the conflict cannot
+  happen, because the scenario may not create the condition that the conflict needs: a write
+  that blocks while the IO thread returns credit.
+- The peak resident memory of the runs was at most 32 MB.
+
 ## Findings open
+
+**Handler pool: stream read after release.** A code review of `THandlerPool.TakeOne` found a
+read of the stream identifier for the completion event after the handler released its
+reference, so the stream may already be freed. The read happens only when an observer is set.
+No run has shown it.
+
+**Stream lock is not safe against an exception.** `LockStream` takes the stream lock outside a
+`try` block after it took the connection lock. If the stream lock fails, the connection lock
+stays held. A code review found this. No run has shown it.
 
 **Possible lock-order conflict with the socket layer.** A code review of the send path found
 two locks that two paths can take in opposite orders: the connection lock of the server and
