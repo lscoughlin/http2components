@@ -145,8 +145,8 @@ type
     /// true when a send loop holds output that left the core; the close waits
     function DeferCloseForSend: Boolean;
     /// the send loop ends: true when a deferred close is due; call under FSendLock
-    // - ADrained is read before the lock, because the read takes the connection lock
-    function TakeDeferredClose(const ADrained: Boolean): Boolean;
+    // - the drained check takes the connection lock, so it runs after the lock
+    function TakeDeferredClose: Boolean;
   protected
     procedure AfterCreate; override;
     procedure BeforeDestroy; override;
@@ -402,7 +402,7 @@ end;
 function THttp2AsyncConnection.SendPendingOutput: Boolean;
 var
   Data: TBytes;
-  Again, PendingPlainProgress, OwnsSend, CloseDrained, HasOut, Drained: Boolean;
+  Again, PendingPlainProgress, OwnsSend, CloseDrained, HasOut: Boolean;
   Before, After: Int64;
 begin
   result := False;
@@ -525,14 +525,13 @@ begin
       // records FSendRequested, so the clear must re-read that flag in the
       // same hold that ends the loop.  A clear in a later hold would drop the
       // record, and the handler would wait for a drain that never comes.
-      // The reads of the core take the connection lock, so they run before the
+      // The read of the core takes the connection lock, so it runs before the
       // send lock: an IO thread that holds the connection lock can wait for the
       // send lock (the waker), so this thread never waits for the connection
       // lock while it holds the send lock.  Output that arrives after the read
       // signals the waker, which sets FSendRequested under the send lock or
       // starts a new loop when this loop has already ended
       HasOut := (FPendingTlsCount = 0) and OutputPending;
-      Drained := (not HasOut) and (FCore <> nil) and Http2Drained(FCore, PendingWrite);
       FSendLock.Acquire;
       try
         if FSendRequested or
@@ -544,8 +543,9 @@ begin
           FInSend := False;
           OwnsSend := False;
           Again := False;
-          // a close that a read left to this loop is decided in this hold
-          CloseDrained := TakeDeferredClose(Drained);
+          // a close that a read left to this loop is taken in this hold and
+          // decided after it, because the drained check needs the connection lock
+          CloseDrained := TakeDeferredClose;
         end;
       finally
         FSendLock.Release;
@@ -567,7 +567,10 @@ begin
       end;
     end;
   end;
-  if CloseDrained and DrainTlsClose then
+  // no send lock is held here; a loop that started since the exit hold takes
+  // the close over through DeferCloseForSend
+  if CloseDrained and (FCore <> nil) and Http2Drained(FCore, PendingWrite) and
+     not DeferCloseForSend and DrainTlsClose then
     fOwner.ConnectionRemove(Handle);
   // the close decision of an HTTP/1.1 exchange can come after the last write,
   // so the end of every send loop looks at it too

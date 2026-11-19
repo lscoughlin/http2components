@@ -424,9 +424,9 @@ begin
     FlightCloseDeferred;
 end;
 
-function THttp2AsyncConnection.TakeDeferredClose(const ADrained: Boolean): Boolean;
+function THttp2AsyncConnection.TakeDeferredClose: Boolean;
 begin
-  Result := FCloseWanted and ADrained;
+  Result := FCloseWanted;
   FCloseWanted := False;
 end;
 

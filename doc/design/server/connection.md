@@ -135,12 +135,12 @@ itself: `Flush`, `DrainPending`, `TakeOutput`, `HasOutput`, `GracefulGoAway`
 write reaches it from the stream host, and `QueueRefusalFrame` calls it after
 `UnlockConn`. It runs with the connection lock held on an IO thread when a read
 delivers body bytes to a handler and the stream returns credit
-(`TServerStream.AddCredit`). The waker therefore takes no lock that its holder
-keeps while it waits for the connection lock. The send lock of the async connection
-(`FSendLock`) is taken after the connection lock, so the send loop reads the output
-queue (`HasOutput`) before it takes the send lock at its exit decision. Output that
-arrives after that read signals the waker again, which sets the repeat flag of the loop
-or starts a new loop. The lock order of the send lock is in the threading document.
+(`TServerStream.AddCredit`). The waker then takes the send lock of the async
+connection (`FSendLock`) after the connection lock. The send lock is never held while
+the connection lock is taken, so the send loop reads the output queue (`HasOutput`)
+before it takes the send lock at its exit decision. Output that arrives after that read
+signals the waker again, which sets the repeat flag of the loop or starts a new loop.
+The lock order of the send lock is in the threading document.
 
 **The output cap.** The option `MaxOutputQueueBytes` bounds the output of one
 connection. The core checks its queue at the end of each flush, and the IO side

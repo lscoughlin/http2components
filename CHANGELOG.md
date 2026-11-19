@@ -326,8 +326,9 @@
   connection lock and waited for the send lock of the connection, while the send loop held
   the send lock and waited for the connection lock. The connection then made no progress,
   and every other thread that needed the connection lock, and `Stop`, waited behind it.
-  The send loop now reads the output queue before it takes the send lock at its exit
-  decision, so it never waits for the connection lock while it holds the send lock.
+  The send loop now reads the pending output and the drained state of the connection
+  outside the send lock, so it never waits for the connection lock while it holds the
+  send lock.
 
 ### Common
 

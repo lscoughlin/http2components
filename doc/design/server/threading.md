@@ -165,10 +165,12 @@ returns stream credit calls the waker, and the waker starts the send loop. The o
 therefore connection lock, then send lock. The send loop takes the connection lock only
 through `DrainPending`, `TakeOutput`, `ReportWritten`, `HasOutput` and `Http2Drained`, and
 it calls each of them with no send lock held. The exit decision of the loop reads
-`HasOutput` and `Http2Drained` before it takes the send lock, and it decides under the
-send lock with those values. Output that arrives after that read signals the waker, which
-sets `FSendRequested` under the send lock or starts a new loop after the loop has ended.
-No thread takes the connection lock while it holds the send lock.
+`HasOutput` before it takes the send lock. Output that arrives after that read signals
+the waker, which sets `FSendRequested` under the send lock or starts a new loop after the
+loop has ended. The same hold takes and clears the flag of a deferred close, and the
+drained check (`Http2Drained`) runs after the hold. A close that the check finds due runs
+only when no new send loop has started; a new loop takes the close over through
+`DeferCloseForSend`. No thread takes the connection lock while it holds the send lock.
 
 The lock order of the WebSocket send path is: connection lock, stream lock, channel
 lock, session lock, pump lock, pool lock. A reading of the source on 2026-11-17 found
