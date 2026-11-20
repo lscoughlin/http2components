@@ -392,7 +392,8 @@ begin
   end;
   try
     SendHeaders;
-    if FLocalState = lsHeadersSent then
+    // a KeepOpen request without a body keeps its stream open for SendData
+    if (FLocalState = lsHeadersSent) and not LeaseOpensWithHeaders(FRequest) then
       SendBody;
   except
     ReleaseLease;
