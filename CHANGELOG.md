@@ -13,6 +13,13 @@
   sender now tests the flag again after it registers. In a test of 200 races, 72 senders
   on a peer end and 63 senders on a peer reset waited for the time limit before the fix.
   The defect is in 0.33.0.
+- Fix: a request that started while the server rejected the client certificate after the
+  TLS handshake could fail with `EHttpProtocolError` ("HEADERS already sent or stream
+  closed") instead of `EHttpTlsClientAuthError`. The connection failed between the start
+  check and the first frame of the stream, so the stream reported its own state error
+  and not the connection failure with the TLS alert. The stream now reports the connection
+  failure. In 20 runs of the `TMutualTlsRejectTest` suite, 16 runs failed before the fix.
+  The defect is in 0.33.0.
 
 ## 0.33.0 — 2026-11-19 (source release)
 

@@ -40,6 +40,7 @@ type
     procedure TestExpiredIsRejectedOnTheWireTls12;
     procedure TestExpiredIsRejectedOnTheWireTls13;
     procedure TestRejectionIsNotRetried;
+    procedure TestNoIdentityRejectionHoldsOverFiftyDials;
   end;
 
 implementation
@@ -128,6 +129,27 @@ begin
   AssertEquals('second request', 'certificate required', Alert2);
   AssertEquals('one more connection for the second request', 2,
     FServer.Connections);
+end;
+
+procedure TMutualTlsRejectTest.TestNoIdentityRejectionHoldsOverFiftyDials;
+var
+  Client: IHttpClient;
+  Alert: string;
+  I: Integer;
+begin
+  // the rejection races the stream's first write on the new connection:
+  // the alert must win on every dial, not only on most of them
+  for I := 1 to 50 do
+  begin
+    StartServer(mkH2, cTls13);
+    Client := NewClient(nil);
+    Alert := AlertOfFetch(Client);
+    Client.Close;
+    FServer.Stop;
+    AssertEquals('the alert of dial ' + IntToStr(I), 'certificate required', Alert);
+    AssertEquals('one connection of dial ' + IntToStr(I), 1, FServer.Connections);
+    FreeAndNil(FServer);
+  end;
 end;
 
 { routed dials }

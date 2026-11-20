@@ -373,6 +373,15 @@ begin
     if (FLocalState = lsHeadersSent) and not LeaseOpensWithHeaders(FRequest) then
       SendBody;
   except
+    // the connection may fail while the first frames are built: the stream
+    // then reports the connection failure (with its TLS alert, if any)
+    // rather than the state error that the closed stream raised
+    if FFailed and FConnectionError then
+    begin
+      Err := MakeStreamError;
+      ReleaseLease;
+      raise Err;
+    end;
     ReleaseLease;
     raise;
   end;
@@ -702,7 +711,8 @@ begin
 
   if AEndStream then
     MarkResponseComplete;
-  if FBodyEof then
+  // a KeepOpen lease with its local side open stays registered for its tunnel (story B4)
+  if FBodyEof and not (FRequest.KeepOpen and (FLocalState = lsHeadersSent)) then
     ReleaseLease;
 end;
 
@@ -746,7 +756,9 @@ begin
   if AFrame.IsEndStream then
   begin
     MarkResponseComplete;
-    ReleaseLease;
+    // a KeepOpen lease with its local side open stays registered for its tunnel (story B4)
+    if not (FRequest.KeepOpen and (FLocalState = lsHeadersSent)) then
+      ReleaseLease;
   end;
 end;
 

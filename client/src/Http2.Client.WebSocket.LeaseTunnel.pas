@@ -8,6 +8,7 @@ notes:
   - Two locks guard the lease. The send lock of the tunnel is taken first, then the pool lock of the pooled connection (the lock of the lease). No path takes the send lock while it holds the pool lock.
   - The pool lock is held exactly once around each call of the lease, because the credit wait of the lease releases it once.
   - Reset and Release stop a parked sender first (StopSend), then take the send lock, so that the sender ends before the tunnel posts RST_STREAM or releases the lease. The sender posts the RST_STREAM when it ends a parked send, so the tunnel posts it only when no send did.
+  - A peer END_STREAM alone does not refuse a send (story B4). The send side stays open until the local side ends, the stream is reset, or the tunnel is released. A send after a peer END uses the credit that is available, as RFC 9113 section 5.1 allows for a half-closed (remote) stream.
 ---
 }
 unit Http2.Client.WebSocket.LeaseTunnel;
@@ -58,7 +59,8 @@ type
     /// the lease must have its WaitLock set (the pool lock); AConnection posts RST_STREAM
     constructor Create(const ALease: TStreamLease; const AConnection: TConnection);
     destructor Destroy; override;
-    /// send AData as DATA; blocks for credit; raises EHttpConnectionError when the stream ended
+    /// send AData as DATA; blocks for credit; a peer END_STREAM alone does not refuse it;
+    // raises EHttpConnectionError when the local side ended, the stream was reset or released, or the send failed
     procedure SendData(const AData: TBytes);
     /// half-close: END_STREAM with no data (once; no effect after a reset or release)
     procedure EndSend;
@@ -144,8 +146,6 @@ begin
     Result := 'the WebSocket stream is released'
   else if FResetDone or RemoteReset or FLease.UploadStopped then
     Result := 'the WebSocket stream was reset or failed'
-  else if PeerEnded then
-    Result := 'the peer ended the WebSocket stream'
   else if LocalSideDone then
     Result := 'the send side of the WebSocket stream is closed';
 end;

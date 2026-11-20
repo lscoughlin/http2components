@@ -112,6 +112,9 @@ type
     procedure TestTunnelNeedsThePoolLock;
     procedure TestOpenStreamSendDataIsDataWithoutEndStream;
     procedure TestOpenStreamEndSendEndsTheStream;
+    procedure TestKeepOpenSendAfterPeerEndUsesCredit;
+    procedure TestKeepOpenSendAfterPeerEndWithoutCreditRaisesAtOnce;
+    procedure TestKeepOpenSendAfterLocalEndRaises;
     procedure TestSendOfThreeFrameSizesGivesThreeDataFrames;
     procedure TestSendBeyondWindowWaitsForWindowUpdate;
     procedure TestParkedSenderReturnsWithinOneSecondAfterReset;
@@ -701,6 +704,81 @@ begin
   AssertTrue('the closing DATA carries END_STREAM', (Last >= 0) and Frames[Last].IsEndStream);
   AssertEquals('the closing DATA is empty', 0, Length(ExtractDataPayload(Frames[Last])));
   AssertFalse('the peer side is still open', FTunnel.IsEnded);
+end;
+
+procedure TLeaseTunnelTest.TestKeepOpenSendAfterPeerEndUsesCredit;
+var
+  Text: string;
+  Frames: TArray<TFrame>;
+  I: Integer;
+begin
+  OpenKeepOpenTunnel;
+  FSock.EnqueueData(1, ToBytes('x'), True);
+  AssertEquals('the octet', 1, WaitForOctets(Text, 2000));
+  AssertEquals('END_STREAM gives 0', 0, WaitForOctets(Text, 2000));
+  AssertFalse('the send side is still open', FTunnel.IsEnded);
+  // the peer ended its side, but the window is open: the send goes out
+  FTunnel.SendData(ToBytes('pong'));
+  AssertEquals('one DATA frame for the send', 1, WaitForFrameCount(ftData, 1, 2000));
+  Frames := FSock.OutboundFrames(True);
+  for I := 0 to High(Frames) do
+    if Frames[I].Header.FrameType = ftData then
+      AssertFalse('the DATA has no END_STREAM', Frames[I].IsEndStream);
+  AssertEquals('no RST_STREAM for the send', 0, WaitForRstCount(1, 100));
+end;
+
+procedure TLeaseTunnelTest.TestKeepOpenSendAfterPeerEndWithoutCreditRaisesAtOnce;
+var
+  Text: string;
+  Raised: Boolean;
+  Started, Elapsed: QWord;
+begin
+  SetPeerWindow(0);
+  OpenKeepOpenTunnel;
+  FSock.EnqueueData(1, ToBytes('x'), True);
+  AssertEquals('the octet', 1, WaitForOctets(Text, 2000));
+  AssertEquals('END_STREAM gives 0', 0, WaitForOctets(Text, 2000));
+  Raised := False;
+  Started := GetTickCount64;
+  try
+    FTunnel.SendData(ToBytes('pong'));
+  except
+    on E: EHttpConnectionError do
+      Raised := True;
+  end;
+  Elapsed := GetTickCount64 - Started;
+  AssertTrue('a send without credit after the peer END raises', Raised);
+  AssertTrue('the refusal does not wait for the credit timeout', Elapsed < 1000);
+  AssertEquals('exactly one RST_STREAM', 1, WaitForRstCount(1, 2000));
+  AssertEquals('the RST_STREAM carries CANCEL', Ord(ecCancel), Ord(RstCodeOfFirstFrame));
+  Raised := False;
+  try
+    FTunnel.SendData(ToBytes('again'));
+  except
+    on E: EHttpConnectionError do
+      Raised := True;
+  end;
+  AssertTrue('a second send raises too', Raised);
+  AssertEquals('still one RST_STREAM', 1, WaitForRstCount(2, 100));
+  AssertEquals('no DATA frame was sent', 0, DataFrameCount);
+end;
+
+procedure TLeaseTunnelTest.TestKeepOpenSendAfterLocalEndRaises;
+var
+  Raised: Boolean;
+begin
+  OpenKeepOpenTunnel;
+  FTunnel.EndSend;
+  AssertEquals('END_STREAM sent with an empty DATA frame', 1, WaitForFrameCount(ftData, 1, 2000));
+  Raised := False;
+  try
+    FTunnel.SendData(ToBytes('no'));
+  except
+    on E: EHttpConnectionError do
+      Raised := True;
+  end;
+  AssertTrue('a send after the local end raises', Raised);
+  AssertEquals('no DATA after the local end', 1, WaitForFrameCount(ftData, 2, 100));
 end;
 
 procedure TLeaseTunnelTest.TestSendOfThreeFrameSizesGivesThreeDataFrames;
