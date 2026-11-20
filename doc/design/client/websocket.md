@@ -251,6 +251,11 @@ HTTP/1.1 route.
   identifier of the WebSocket stream, gives `OnError`.
 - A sender that waits for flow-control credit and is then released ends with one
   RST_STREAM with CANCEL.
+- A failed send ends the client's output, and the callbacks go on. The listener gets
+  `OnClose` with the code of the server's Close frame when that frame is read, and
+  `OnError` when the session ends without one. The peer has the close timeout after
+  the failed send to send its Close frame; when the timeout passes, the listener gets
+  `OnError`.
 
 ### Back pressure
 

@@ -30,6 +30,15 @@
   and not the connection failure with the TLS alert. The stream now reports the connection
   failure. In 20 runs of the `TMutualTlsRejectTest` suite, 16 runs failed before the fix.
   The defect is in 0.33.0.
+- Fix: a WebSocket whose write failed could end with no `OnClose` and no `OnError`. A failed
+  write set the abort flag, which is also the flag of a caller `Abort`, and that flag drops
+  the pending messages and the callbacks. A `Close` frame of the peer that was already on
+  the wire was lost, and a session that ended with no `Close` frame gave no terminal
+  callback. A failed write now only ends the output. The reader still reads, so a `Close`
+  frame gives `OnClose` with the code of the peer, and a session that ends with no `Close`
+  frame gives one `OnError` after the close timeout. An `Abort` of the caller still drops
+  the callbacks. The defect is in 0.33.0 for HTTP/1.1, which shares this code. No test of
+  the HTTP/1.1 case exists yet.
 
 ### Server
 
