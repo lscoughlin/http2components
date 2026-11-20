@@ -287,11 +287,12 @@ connection advertises the extended CONNECT setting. Otherwise it runs the HTTP/1
 dial of its own, with the ALPN offer `http/1.1` alone for `wss`, whatever the client fallback
 setting is. A pooled connection without the setting is not used, and that case is not an error.
 A server that offers `h2` alone (its HTTP/1.1 fallback is off) ends that dial at the TLS
-handshake, which raises `EHttpConnectionError`. The mode `wpmHttp2` offers `h2` alone, and such
-a server selects `h2`.
+handshake, which raises `EHttpConnectionError`. The mode `wpmHttp2` offers `h2` alone when the
+fallback is off, and `h2` then `http/1.1` when it is on.
 
-The mode `wpmHttp2` dials with the ALPN offer `h2` alone (over TLS). A peer that selects no
-HTTP/2 raises `EHttpWebSocketError`. The h2c `Upgrade` is never used for a WebSocket. A `ws` URL
+The mode `wpmHttp2` dials over TLS with that same ALPN offer. A peer that selects no HTTP/2
+raises `EHttpWebSocketError`. Under the fallback, a peer that selects `http/1.1` also raises
+it, with the reason that the connection speaks HTTP/1.1. The h2c `Upgrade` is never used for a WebSocket. A `ws` URL
 uses a pooled HTTP/2 connection only with prior knowledge.
 
 ## Errors

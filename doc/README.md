@@ -120,12 +120,11 @@ completed Docker checks, repairs, retained evidence, and acceptance work
 that is still in progress.
 
 The [Unix socket record](verification/unix-sockets-2026-11-12.md) states the
-macOS and Linux results of the Unix domain socket feature and one open client
-defect.
+macOS and Linux results of the Unix domain socket feature.
 
 The [streamed bodies record](verification/body-reader-2026-11-18.md) states the
-Linux gate results and the load runs of the streamed bodies and messages, and two open
-defects of the HTTP/2 flow control.
+Linux gate results and the load runs of the streamed bodies and messages, and three open
+findings of code review: the handler pool, the stream lock and the lock order with the socket layer.
 
 The [client compiler probes](verification/client-probes/README.md) are
 historical compiler evidence. The source validation and toolchain records

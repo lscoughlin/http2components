@@ -4,7 +4,6 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: verification, unix socket, linux, macos
 notes:
   - This record holds the results of the Unix domain socket feature on macOS arm64 and on native Linux amd64.
-  - A client flow-control defect that limited the Linux integration result is fixed.
 ---
 
 # Unix domain socket verification
@@ -46,28 +45,11 @@ record is not release approval.
 - `TUnixIntegrationTest` runs 10 tests with no failure. The TLS tests,
   `TestTlsOverUnix` and `TestTlsH2OverUnix`, run with a certificate directory
   and are not skipped.
-- An earlier revision failed `TestPostOneMiBodyEchoes` in one of five Linux
-  runs. The section "Client flow-control stall" states the cause and the fix.
-
-## Client flow-control stall
-
-A client request that sent a large body while the server echoed the body could
-stall. The client sends the whole body before it reads the response. The
-connection reader blocked when a bounded inbound queue was full, and the window
-updates of the peer stayed unread. The request then failed with a flow-control
-timeout after 3000 ms, and `Close` waited for the blocked reader.
-
-- The defect was independent of the Unix socket. It occurred with plain TCP on
-  the revision before the feature, for bodies of 2 MiB or more on macOS.
-- The per-stream inbound queue and the connection queue are now unbounded, so
-  the reader never blocks on a queue. Window credit is returned on arrival.
-  Per-stream memory of a stalled consumer therefore has no hard limit.
-- The test `TFlowControlTest.TestLargeBodyEchoDoesNotStallTheReader` echoes a
-  4 MiB body. It failed before the fix and passes after the fix.
-- `TUnixIntegrationTest` passed 10 of 10 runs on macOS after the fix.
-
 ## Limits
 
+- The per-stream inbound queue and the connection queue are unbounded, so the reader
+  never blocks on a queue. Window credit is returned on arrival. Per-stream memory of a
+  stalled consumer therefore has no hard limit.
 - The load, abuse and external conformance checks did not run for this
   feature.
 - A Linux abstract socket, peer credentials other than the process identifier,

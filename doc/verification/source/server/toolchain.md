@@ -10,8 +10,8 @@ scope: The compiler and platform facts, the build flags, the TLS libraries, the 
 primary_types: []
 db_tables: []
 related_docs:
-  - doc/design/fpc-runtime.md
-  - doc/verification/validation.md
+  - doc/design/server/fpc-runtime.md
+  - doc/verification/source/server/validation.md
 invariants:
   - The pinned compiler is Free Pascal 3.2.4.
   - OpenSSL 3 is a run-time dependency and is not linked into the binary.

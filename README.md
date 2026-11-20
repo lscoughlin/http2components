@@ -9,7 +9,7 @@ published release.
 | Unit or package | Units | Purpose |
 | --- | ---: | --- |
 | `Http2.Common` / `http2common` | 11 | Shared protocol units and provider-neutral TLS interfaces. |
-| `Http2.Client` / `http2client` | 55 | Client factory, requests, responses, and transport. |
+| `Http2.Client` / `http2client` | 55 | Client factory, requests, responses, transport, and WebSocket over HTTP/1.1 and over HTTP/2 (RFC 8441). |
 | `Http2.Server` / `http2server` | 71 | Server factory, handlers, requests, and responses. |
 | `Http2.OpenSSL` / `http2openssl` | 6 | OpenSSL TLS context and identity provider. |
 | `Http2.TlsLib` / `http2tlslib` | 8 | TlsLib TLS context and identity provider. |
@@ -137,7 +137,7 @@ design](doc/design/server/unix-socket.md) and the [client
 transport](doc/design/client/transport.md) describe the rules. The examples are
 `examples/server/unix_server.pas` and `examples/client/unix_client.pas`. The
 [Unix socket verification record](doc/verification/unix-sockets-2026-11-12.md)
-states the results and one open client defect.
+states the results.
 
 ## TLS documentation
 

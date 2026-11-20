@@ -14,7 +14,7 @@ related:
   - "[client-api](client-api.md)"
   - "[transport](transport.md)"
   - "[fpc-runtime](fpc-runtime.md)"
-updated: 2026-11-11
+updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/architecture.md at the source commit recorded in the source inventory.
 ---
@@ -119,6 +119,24 @@ Conventions:
   types (avoids an implicit copy + refcount churn).
 - **Header-name constants** are lowercase (`HeaderContentType` = `'content-type'`)
   because HTTP/2 requires lowercase on the wire. Details are in [messages](messages.md).
+
+## Units of the HTTP/2 WebSocket route
+
+- `Http2.Client.Tunnel.Types`: the interfaces `IH2Tunnel` and `IH2Abortable` of a tunnel over one
+  HTTP/2 stream. The unit has no WebSocket code.
+- `Http2.Client.WebSocket.LeaseTunnel`: the tunnel over one stream lease, with its send lock and
+  its pool lock.
+- `Http2.Client.WebSocket.H2Socket`: presents a tunnel as an `IHttp2Socket`, so that the WebSocket
+  connection runs over it unchanged.
+- `Http2.Client.WebSocket.H2Handshake`: the request fields of the extended `CONNECT` and the check
+  of its answer. The unit has no I/O.
+- `Http2.Client.WebSocket.Connection.OpenH2`: opens a WebSocket on a tunnel of the pool.
+- `Http2.Client.Stream.ResponseState`: the response state of a stream lease.
+- `Http2.Client.Stream.BodyView`: the body view of a stream lease, an `IHttpBodyStream` over the
+  response body of one lease.
+- `Http2.Client.Connection.Peer`: records the first SETTINGS frame of the peer for the extended
+  `CONNECT` check.
+- `Http2.Client.Connection.Preface`: the 24-octet client connection preface.
 
 ## RFC references
 

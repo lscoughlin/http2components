@@ -28,15 +28,14 @@ ones the library is built and validated with.
 |---|---|---|
 | Compiler | `fpc 3.2.4` (`ppca64`), macOS aarch64 | `fpc -iV` |
 | Unit search root | `/usr/local/lib/fpc/3.2.4/units/aarch64-darwin/` | `/etc/fpc.cfg` `-Fu` entries |
-| Mode | `{$mode delphi}{$H+}`, `{$modeswitch advancedrecords}`, `{$modeswitch typehelpers}`, `{$interfaces com}` | `doc/design/fpc-runtime.md` |
+| Mode | `{$mode delphi}{$H+}`, `{$modeswitch advancedrecords}`, `{$modeswitch typehelpers}`, `{$interfaces com}` | `doc/design/client/fpc-runtime.md` |
 | Thread manager | `{$IFDEF UNIX}cthreads,{$ENDIF}` **before** threaded units | probe12; else `Runtime error 232` |
-| Queue primitive | `TBlockingQueue<T>` — `TThreadedQueue<T>` does **not** exist | `doc/reference/fpc-verified/README.md` |
+| Queue primitive | `TBlockingQueue<T>` — `TThreadedQueue<T>` does **not** exist | `doc/verification/client-probes/README.md` |
 | Lock | `TCriticalSection` — `TMonitor` absent | idem |
 | Signal | `RTLEvent` — `TEvent`/`TSimpleEvent` raise `ESyncObjectException` on macOS | idem |
 | List delete | `TStringList.IndexOf` + `Delete` — no `.Remove` | idem |
 
-The original probes were stored under `doc/reference/fpc-verified/` for the probe programs and exact
-reproduce commands.
+The probe programs and the reproduce commands are in `doc/verification/client-probes/`.
 
 ## TLS / ALPN (decisive)
 
