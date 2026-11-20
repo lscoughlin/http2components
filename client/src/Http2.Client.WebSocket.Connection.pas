@@ -280,18 +280,7 @@ begin
   Wire := WsEncodeFrame(AOpcode, AFin, APayload, True,
     WsMaskKeyFromCardinal(FMask()));
   try
-    if FLocked then
-    begin
-      InterlockedIncrement(FWriters);
-      FIo.Enter;
-      InterlockedDecrement(FWriters);
-    end;
-    try
-      WsWriteAll(FSock, Wire);
-    finally
-      if FLocked then
-        FIo.Leave;
-    end;
+    WsWriteLocked(FSock, Wire, FLocked, FIo, @FWriters);
   except
     on E: Exception do
     begin
@@ -486,24 +475,7 @@ end;
 function TWebSocketConnection.PollRead(var ABuffer;
   const ACount: Integer): Integer;
 begin
-  try
-    if FLocked then
-    begin
-      while FWriters > 0 do
-        Sleep(1);
-      FIo.Enter;
-      try
-        Result := FReader.ReadBytes(ABuffer, ACount);
-      finally
-        FIo.Leave;
-      end;
-    end
-    else
-      Result := FReader.ReadBytes(ABuffer, ACount);
-  except
-    on EHttpTimeout do
-      Result := -1;
-  end;
+  Result := WsReadLocked(FReader, ABuffer, ACount, FLocked, FIo, @FWriters);
 end;
 function TWebSocketConnection.WaitDemand: Boolean;
 begin
