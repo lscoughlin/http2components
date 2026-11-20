@@ -71,6 +71,7 @@ uses
   Http2.Client.SendCredit.Wakeup.Test,
   Http2.Client.WebSocket.LeaseTunnel.Test,
   Http2.Client.Pool.Tunnel.Test, Http2.Client.WebSocket.OpenH2.Test,
+  Http2.Client.WebSocket.ProtocolMode.Test,
   Http2.Client.WebSocket.OpenH2.Close.Test;
 
 end.

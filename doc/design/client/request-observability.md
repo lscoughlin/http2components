@@ -635,9 +635,12 @@ requested.
 
   A close frame with no payload reports 1005. `Error` is borrowed for the
   callback, as everywhere.
-- A WebSocket uses a dedicated unpooled connection, so
+- A WebSocket on the HTTP/1.1 route uses a dedicated unpooled connection, so
   `ConnectionReused = False` and `Protocol` is HTTP/1.1 (`npHttp1Cleartext`
   for `ws`, `npHttp1Tls` for `wss`); a proxy route is not an outcome field.
+  A WebSocket on the HTTP/2 route reports `Protocol` as HTTP/2 (`npHttp2Cleartext`
+  for `ws`, `npHttp2Tls` for `wss`) and `ConnectionReused` as False; see
+  [websocket](websocket.md), "WebSocket over HTTP/2".
 - Counters are always collected and are atomic. `MessagesIn` and `MessagesOut`
   count data messages (a fragmented message counts once, when its last
   fragment is read or written); ping, pong and close are not counted.

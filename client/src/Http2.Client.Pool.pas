@@ -60,8 +60,6 @@ type
       const AUseIdentity: Boolean; const AIdentity: IClientIdentity;
       out AConn: IPooledConnection; out AUpgraded: Boolean;
       out AFirst: IHttpResponse): Boolean;
-    function TryH2cUpgrade(const Sock: IHttp2Socket;
-      const ARequest: TStreamRequest; out AStatusLine: string): Boolean;
   public
     function Acquire(const AOrigin, AHost: string; const APort: Word;
       const ARequest: TStreamRequest; const AHeaderTimeoutMs: Integer;
@@ -78,13 +76,29 @@ type
       const ARequestIdentity: IClientIdentity;
       out AOutcome: TTunnelOutcome; out AStatus: Integer;
       out AFields: TArray<TWsHeaderField>; out ARefusalBody: string): IH2Tunnel;
+    /// AcquireTunnel that never dials: the tunnel is taken only from a live pooled
+    /// connection of the key. Without one, AOutcome is toHttp1 and no socket is
+    /// opened (the caller then runs its HTTP/1.1 opening).
+    function AcquireTunnelPooled(const AOrigin, AHost: string;
+      const APort: Word; const ARequest: TStreamRequest;
+      const AHeaderTimeoutMs: Integer; const AProxy: IProxy;
+      const ARequestIdentity: IClientIdentity;
+      out AOutcome: TTunnelOutcome; out AStatus: Integer;
+      out AFields: TArray<TWsHeaderField>; out ARefusalBody: string): IH2Tunnel;
+    function AcquireTunnelCore(const AOrigin, AHost: string;
+      const APort: Word; const ARequest: TStreamRequest;
+      const AHeaderTimeoutMs: Integer; const AProxy: IProxy;
+      const ARequestIdentity: IClientIdentity;
+      out AOutcome: TTunnelOutcome; out AStatus: Integer;
+      out AFields: TArray<TWsHeaderField>; out ARefusalBody: string;
+      const ANoDial: Boolean): IH2Tunnel;
   end;
 
 implementation
 
 uses
   Http2.Client.Pool.Http1, Http2.Client.Pool.Http2, Http2.Client.Upgrade, Http2.Client.Identity, Http2.Client.Defaults,
-  Http2.Client.WebSocket.LeaseTunnel;
+  Http2.Client.WebSocket.LeaseTunnel, Http2.Client.Pool.H2cUpgrade;
 
 function TConnectionPool.DialFor(const AHost: string; const APort: Word;
   const AScheme: string; const ATimeoutMs: Integer; const AProxy: IProxy;
@@ -186,62 +200,6 @@ begin
   // the client option for the body limit; a request may override it
   Pooled.MaxResponseBytes := FSecurity.MaxResponseBytes;
   Result := Pooled;
-end;
-
-function TConnectionPool.TryH2cUpgrade(const Sock: IHttp2Socket;
-  const ARequest: TStreamRequest; out AStatusLine: string): Boolean;
-var
-  Raw: TBytes;
-  Ofs, N: Integer;
-  Line, Version, Reason: string;
-  Status, Lines: Integer;
-begin
-  // write the Upgrade request and read the response head byte by byte, so a
-  // 101 leaves the HTTP/2 frames that FOLLOW the head untouched in the
-  // socket.  The Upgrade and Connection headers cannot travel through
-  // TStreamRequest.Headers (the shared map forbids connection-specific
-  // fields), so the wire bytes are built here (doc/design/fallback.md
-  // "h2c upgrade procedure").
-  AStatusLine := '';
-  Raw := BuildH2cUpgradeRequest(ARequest);
-  Ofs := 0;
-  while Ofs < Length(Raw) do
-  begin
-    N := Sock.Write(Raw[Ofs], Length(Raw) - Ofs);
-    if N <= 0 then
-      raise EHttpConnectionClosed.Create('h2c upgrade request write failed');
-    Inc(Ofs, N);
-  end;
-  // the probe carries the request, so this is the moment it was written; the
-  // declined and accepted paths report again after the response head was read
-  if ARequest.Exchange <> nil then
-    ARequest.Exchange.RequestWritten(Length(ARequest.Body.Data));
-  if not ReadHeadLineBytewise(Sock, Line) then
-    raise EHttpProtocolError.Create('peer closed during the h2c upgrade',
-      ecProtocolError);
-  ParseStatusLine(Line, Version, Status, Reason);
-  Result := Status = HttpStatusSwitchingProtocols;
-  if not Result then
-  begin
-    AStatusLine := Line;
-    Exit;
-  end;
-  // the 101 head continues with Upgrade/Connection fields and the mandatory
-  // empty line; consume them all before the socket becomes an HTTP/2
-  // transport, else the connection thread frames those bytes as HTTP/2
-  Lines := 0;
-  while True do
-  begin
-    if not ReadHeadLineBytewise(Sock, Line) then
-      raise EHttpProtocolError.Create('truncated 101 response head',
-        ecProtocolError);
-    if Line = '' then
-      Break;
-    Inc(Lines);
-    if Lines > 64 then
-      raise EHttpProtocolError.Create('101 response head is too large',
-        ecProtocolError);
-  end;
 end;
 
 function TConnectionPool.OpenForTxn(const AOrigin, AHost: string;
@@ -707,7 +665,31 @@ function TConnectionPool.AcquireTunnel(const AOrigin, AHost: string;
   const ARequestIdentity: IClientIdentity;
   out AOutcome: TTunnelOutcome; out AStatus: Integer;
   out AFields: TArray<TWsHeaderField>; out ARefusalBody: string): IH2Tunnel;
+begin
+  Result := AcquireTunnelCore(AOrigin, AHost, APort, ARequest, AHeaderTimeoutMs,
+    AProxy, ARequestIdentity, AOutcome, AStatus, AFields, ARefusalBody, False);
+end;
+
+function TConnectionPool.AcquireTunnelPooled(const AOrigin, AHost: string;
+  const APort: Word; const ARequest: TStreamRequest;
+  const AHeaderTimeoutMs: Integer; const AProxy: IProxy;
+  const ARequestIdentity: IClientIdentity;
+  out AOutcome: TTunnelOutcome; out AStatus: Integer;
+  out AFields: TArray<TWsHeaderField>; out ARefusalBody: string): IH2Tunnel;
+begin
+  Result := AcquireTunnelCore(AOrigin, AHost, APort, ARequest, AHeaderTimeoutMs,
+    AProxy, ARequestIdentity, AOutcome, AStatus, AFields, ARefusalBody, True);
+end;
+
+function TConnectionPool.AcquireTunnelCore(const AOrigin, AHost: string;
+  const APort: Word; const ARequest: TStreamRequest;
+  const AHeaderTimeoutMs: Integer; const AProxy: IProxy;
+  const ARequestIdentity: IClientIdentity;
+  out AOutcome: TTunnelOutcome; out AStatus: Integer;
+  out AFields: TArray<TWsHeaderField>; out ARefusalBody: string;
+  const ANoDial: Boolean): IH2Tunnel;
 var
+  NoConn: Boolean;
   Deadline: QWord;
   Conn: IPooledConnection;
   Sock: IHttp2Socket;
@@ -785,7 +767,8 @@ begin
         ReapClosed;
         ReapIdleLocked;
         Conn := PickEligible(Key);
-        if (Conn = nil) and (DialingForBase(Key) = 0) and
+        NoConn := (Conn = nil) and ANoDial;
+        if (Conn = nil) and not ANoDial and (DialingForBase(Key) = 0) and
           CanOpenNew(Key, not (Selecting and not Resolved)) then
         begin
           if Selecting and not Resolved then
@@ -811,7 +794,7 @@ begin
         end;
         if Dialing then
           ReserveDial(Key)
-        else if (Conn = nil) and not NeedSelect then
+        else if (Conn = nil) and not NeedSelect and not NoConn then
         begin
           WaitDial := EnterWait(Key, WaitGen);
           Retry := WaitDial = nil;
@@ -821,6 +804,8 @@ begin
       end;
       if not Dialing then
         CloseVictims;                  // what ReapIdleLocked took out, outside FLock
+      if NoConn then
+        Exit;                          // AOutcome is toHttp1: no live connection, no dial
       if Retry then
       begin
         ThreadSwitch;

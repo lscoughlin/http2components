@@ -68,6 +68,9 @@ const
   ctPriorKnowledge = Http2.Client.Tls.ctPriorKnowledge;
   ctUpgrade = Http2.Client.Tls.ctUpgrade;
   ctHttp1 = Http2.Client.Tls.ctHttp1;
+  wpmAuto = Http2.Client.WebSocket.wpmAuto;
+  wpmHttp1 = Http2.Client.WebSocket.wpmHttp1;
+  wpmHttp2 = Http2.Client.WebSocket.wpmHttp2;
   pkHttp = Http2.Client.Proxy.pkHttp;
   pkHttps = Http2.Client.Proxy.pkHttps;
   pkSocks5 = Http2.Client.Proxy.pkSocks5;
@@ -103,6 +106,7 @@ type
   IWebSocketRequest = Http2.Client.WebSocket.IWebSocketRequest;
   TWebSocketListener = Http2.Client.WebSocket.TWebSocketListener;
   TWebSocketRequest = Http2.Client.WebSocket.TWebSocketRequest;
+  TWsProtocolMode = Http2.Client.WebSocket.TWsProtocolMode;
 
   IHttp2SocketFactory = Http2.Client.SocketFactory.Types.IHttp2SocketFactory;
   TDefaultSocketFactory = Http2.Client.SocketFactory.TDefaultSocketFactory;

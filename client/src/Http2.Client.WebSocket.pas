@@ -152,10 +152,18 @@ type
     property Url: string read GetUrl;
   end;
 
+  /// the protocol of a WebSocket opening (doc/design/client/websocket.md "WebSocket
+  /// over HTTP/2"). wpmAuto is the default: HTTP/2 first over TLS, and over
+  /// cleartext only with prior knowledge; wpmHttp1 is HTTP/1.1 only; wpmHttp2 is
+  /// HTTP/2 only
+  TWsProtocolMode = (wpmAuto, wpmHttp1, wpmHttp2);
+
   /// an immutable request to open a WebSocket; every WithX returns a new one
   IWebSocketRequest = interface
     ['{5E0A7C11-3B2D-4F6A-9C41-8D7E1B2A0003}']
     function WithConnectTimeoutMs(const AMs: Integer): IWebSocketRequest;
+    /// choose the protocol of the opening; the default is wpmAuto
+    function WithProtocolMode(const AMode: TWsProtocolMode): IWebSocketRequest;
     /// raises EHttpWebSocketError for a header the handshake owns
     function WithHeader(const AName, AValue: string): IWebSocketRequest;
     function WithSubprotocol(const AName: string): IWebSocketRequest;
@@ -184,7 +192,9 @@ type
     function GetPingIntervalMs: Integer;
     function GetAutoRequest: Boolean;
     function GetContext: IInterface;
+    function GetProtocolMode: TWsProtocolMode;
     property ClientIdentity: IClientIdentityHandle read GetClientIdentity;
+    property ProtocolMode: TWsProtocolMode read GetProtocolMode;
     property Url: string read GetUrl;
     property Listener: IWebSocketListener read GetListener;
     property Headers: TArray<TWsHeaderField> read GetHeaders;
@@ -226,11 +236,13 @@ type
     FAutoRequest: Boolean;
     FContext: IInterface;
     FIdentity: IClientIdentityHandle;
+    FProtocolMode: TWsProtocolMode;
     function Clone: TWebSocketRequest;
   public
     /// AUrl is ws, wss, http or https; AListener is required
     constructor Create(const AUrl: string; const AListener: IWebSocketListener);
     function WithConnectTimeoutMs(const AMs: Integer): IWebSocketRequest;
+    function WithProtocolMode(const AMode: TWsProtocolMode): IWebSocketRequest;
     function WithHeader(const AName, AValue: string): IWebSocketRequest;
     function WithSubprotocol(const AName: string): IWebSocketRequest;
     function WithSubprotocols(const ANames: TArray<string>): IWebSocketRequest;
@@ -255,6 +267,7 @@ type
     function GetPingIntervalMs: Integer;
     function GetAutoRequest: Boolean;
     function GetContext: IInterface;
+    function GetProtocolMode: TWsProtocolMode;
   end;
 
 implementation
@@ -644,6 +657,7 @@ begin
   Result.FAutoRequest := FAutoRequest;
   Result.FContext := FContext;
   Result.FIdentity := FIdentity;
+  Result.FProtocolMode := FProtocolMode;
 end;
 
 function TWebSocketRequest.WithConnectTimeoutMs(
@@ -703,6 +717,21 @@ begin
   Result := Self;
   for I := 0 to High(ANames) do
     Result := Result.WithSubprotocol(ANames[I]);
+end;
+
+function TWebSocketRequest.WithProtocolMode(
+  const AMode: TWsProtocolMode): IWebSocketRequest;
+var
+  R: TWebSocketRequest;
+begin
+  R := Clone;
+  R.FProtocolMode := AMode;
+  Result := R;
+end;
+
+function TWebSocketRequest.GetProtocolMode: TWsProtocolMode;
+begin
+  Result := FProtocolMode;
 end;
 
 function TWebSocketRequest.WithCloseTimeoutMs(

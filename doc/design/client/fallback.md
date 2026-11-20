@@ -279,6 +279,18 @@ does not mix a TLS connection with a cleartext connection. The client does
 not mix an HTTP/2 connection with an HTTP/1.1 connection. [transport](transport.md) holds
 the pool rules.
 
+## WebSocket
+
+A WebSocket ([websocket](websocket.md)) under the default mode `wpmAuto` never dials an HTTP/2
+connection. It takes a stream of a live pooled HTTP/2 connection of the origin, when that
+connection advertises the extended CONNECT setting. Otherwise it runs the HTTP/1.1 route: a
+dial of its own, with the ALPN offer `http/1.1` alone for `wss`, whatever the client fallback
+setting is. A pooled connection without the setting is not used, and that case is not an error.
+
+The mode `wpmHttp2` dials with the ALPN offer `h2` alone (over TLS). A peer that selects no
+HTTP/2 raises `EHttpWebSocketError`. The h2c `Upgrade` is never used for a WebSocket. A `ws` URL
+uses a pooled HTTP/2 connection only with prior knowledge.
+
 ## Errors
 
 The client uses the existing exception hierarchy. Details are in [errors-redirects](errors-redirects.md).
