@@ -361,6 +361,7 @@ begin
   FConnection.RegisterStream(FStreamId, Self);
   if FFailed then
   begin
+    ReadBarrier; // pairs with the WriteBarrier after the data in OnConnectionFailed
     // the connection was already dead: the stream must not stay in its map
     // (ReleaseLease is idempotent, and the failure callback usually ran it)
     Err := MakeStreamError;
@@ -376,6 +377,7 @@ begin
     // the connection may fail while the first frames are built: the stream
     // then reports the connection failure (with its TLS alert, if any)
     // rather than the state error that the closed stream raised
+    ReadBarrier; // pairs with the WriteBarrier before FLocalState in OnConnectionFailed
     if FFailed and FConnectionError then
     begin
       Err := MakeStreamError;
@@ -897,13 +899,15 @@ begin
   Inc(FFailCount);
   if not FFailed then
   begin
-    FFailed := True;
     FConnectionError := True;   // connection-scoped: the connection is gone
     FErrorMessage := AMessage;
     FErrorCode := ACode;
     FBodyEof := True;
     if FResponseState = rsIdle then
       FResponseState := rsFailed;
+    WriteBarrier; // pairs with the ReadBarrier in Start: the data before FFailed
+    FFailed := True;
+    WriteBarrier; // pairs with the ReadBarrier in Start: FFailed before FLocalState
     FLocalState := lsClosed;
   end;
   FInbound.Shutdown;
