@@ -79,17 +79,6 @@ type
 
   TStreamLease = class;
 
-  /// IHttpBodyStream view of a lease's response body
-  TIStreamBody = class(TBodyReaderBase, IHttpBodyStream, IStampedBodyStream)
-  private
-    FLease: TStreamLease;   // weak reference: the lease owns this object
-  public
-    constructor Create(const ALease: TStreamLease);
-    function Read(var ABuffer; const ACount: LongInt): LongInt; override;
-    function Eof: Boolean;
-    function LastReadArrivedUs: Int64;
-  end;
-
   /// one request/response exchange. Implements IConnectionStream so the
   /// connection can route stream-scoped frames to it and fan out failures.
   TStreamLease = class(TInterfacedObject, IConnectionStream)
@@ -269,6 +258,13 @@ type
     property FailCount: Integer read FFailCount;
     property RstReceived: Boolean read FRstReceived;
     property RstCode: THttp2ErrorCode read FRstCode;
+    // read-only views for the WebSocket tunnel: the connection thread sets
+    // PeerDone (END_STREAM or RST_STREAM) and PeerReset (RST_STREAM) without
+    // the lock; read them with the lock of the connection held
+    property PeerDone: LongInt read FPeerDone;
+    property PeerReset: LongInt read FPeerReset;
+    property UploadStopped: Boolean read FUploadStopped;
+    property Failed: Boolean read FFailed;
     property GoAwayLastStreamId: LongWord read FGoAwayLastStreamId;
     property Retryable: Boolean read FRetryable;
     /// True when the owner calls DeliverEnd itself, after releasing its lock
@@ -282,36 +278,8 @@ type
 implementation
 
 uses
-  Http2.Client.Stream.Send, Http2.Client.Stream.Exchange, Http2.Client.Stream.Inbound;
-
-{ TIStreamBody }
-
-constructor TIStreamBody.Create(const ALease: TStreamLease);
-begin
-  inherited Create;
-  FLease := ALease;
-end;
-
-function TIStreamBody.Read(var ABuffer; const ACount: LongInt): LongInt;
-begin
-  try
-    Result := FLease.ReadBody(ABuffer, ACount);
-  finally
-    // a pooled response defers this until its connection lock is released
-    if not FLease.DeferDelivery then
-      FLease.DeliverEnd;
-  end;
-end;
-
-function TIStreamBody.Eof: Boolean;
-begin
-  Result := FLease.BodyEof;
-end;
-
-function TIStreamBody.LastReadArrivedUs: Int64;
-begin
-  Result := FLease.LastReadArrivedUs;
-end;
+  Http2.Client.Stream.Send, Http2.Client.Stream.Exchange, Http2.Client.Stream.Inbound,
+  Http2.Client.Stream.BodyView;
 
 { TStreamLease }
 
