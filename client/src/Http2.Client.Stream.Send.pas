@@ -94,6 +94,19 @@ var
   Field: THttpHeaderField;
 begin
   Result := nil;
+  if ARequest.Protocol <> '' then
+  begin
+    // an extended CONNECT (RFC 8441 section 4) needs the CONNECT method, a scheme and a path
+    if ARequest.Method <> 'CONNECT' then
+      raise EHttpError.Create('a :protocol request must use the CONNECT method',
+        ecProtocolError);
+    if ARequest.Scheme = '' then
+      raise EHttpError.Create('a :protocol request needs a scheme',
+        ecProtocolError);
+    if ARequest.Path = '' then
+      raise EHttpError.Create('a :protocol request needs a path',
+        ecProtocolError);
+  end;
   Fields := TList<THttpHeaderField>.Create;
   try
     Field.Name := HeaderMethod;
@@ -109,6 +122,13 @@ begin
     Field.Name := HeaderAuthority;
     Field.Value := ARequest.Authority;
     Fields.Add(Field);
+    if ARequest.Protocol <> '' then
+    begin
+      Field.Name := HeaderProtocol;
+      Field.Value := ARequest.Protocol;
+      Field.Sensitive := False;
+      Fields.Add(Field);
+    end;
     if ARequest.Headers <> nil then
     begin
       Names := ARequest.Headers.Names;
@@ -285,15 +305,16 @@ procedure LeaseSendHeaders(const ARequest: TStreamRequest;
   var ALocalState: TLeaseLocalState);
 var
   Block: TBytes;
-  Bodyless: Boolean;
+  EndStream: Boolean;
 begin
   if ALocalState <> lsIdle then
     raise EHttpProtocolError.Create('HEADERS already sent or stream closed',
       ecProtocolError);
   Block := AEncoder.Encode(BuildRequestHeaderBlock(ARequest));
-  Bodyless := (not ARequest.Body.IsSet) and (ARequest.BodyWriter = nil);
-  EmitHeaderBlock(AOutbound, AStreamId, AMaxFrameSize, Block, Bodyless);
-  if Bodyless then ALocalState := lsLocalHalfClosed
+  EndStream := (not ARequest.Body.IsSet) and (ARequest.BodyWriter = nil) and
+    (not ARequest.KeepOpen);
+  EmitHeaderBlock(AOutbound, AStreamId, AMaxFrameSize, Block, EndStream);
+  if EndStream then ALocalState := lsLocalHalfClosed
   else ALocalState := lsHeadersSent;
 end;
 

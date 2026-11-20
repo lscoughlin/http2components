@@ -35,7 +35,7 @@ and for a field that it adds.
 
 | Group | Constants |
 | --- | --- |
-| Pseudo-header fields | `HeaderMethod`, `HeaderPath`, `HeaderScheme`, `HeaderAuthority`, `HeaderStatus` |
+| Pseudo-header fields | `HeaderMethod`, `HeaderPath`, `HeaderScheme`, `HeaderAuthority`, `HeaderProtocol`, `HeaderStatus` |
 | Content | `HeaderContentType`, `HeaderContentLength`, `HeaderContentEncoding`, `HeaderContentLanguage`, `HeaderContentDisposition`, `HeaderContentRange` |
 | Negotiation | `HeaderAccept`, `HeaderAcceptEncoding`, `HeaderAcceptLanguage`, `HeaderAcceptRanges`, `HeaderVary` |
 | Request | `HeaderHost`, `HeaderUserAgent`, `HeaderReferer`, `HeaderOrigin`, `HeaderAuthorization`, `HeaderCookie`, `HeaderRange`, `HeaderExpect`, `HeaderTe`, `HeaderLastEventId` |

@@ -28,6 +28,7 @@ const
   HeaderPath      = ':path';
   HeaderScheme    = ':scheme';
   HeaderAuthority = ':authority';
+  HeaderProtocol  = ':protocol';
   HeaderStatus    = ':status';
 
   // Regular headers, lowercase (HTTP/2 wire form).
