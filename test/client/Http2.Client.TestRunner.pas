@@ -63,6 +63,7 @@ uses
   Http2.Client.Http1BodyTimeout.Test,
   Http2.Client.PoolWait.Test,
   Http2.Client.CloseLock.Test,
-  Http2.Client.SocketLock.Test;
+  Http2.Client.SocketLock.Test,
+  Http2.Client.WebSocket.H2Socket.Test;
 
 end.
