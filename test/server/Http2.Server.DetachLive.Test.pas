@@ -151,8 +151,8 @@ begin
   begin
     AResponse.SendHeaders(200, nil, False);
     Channel := AResponse.Detach;
-    Channel.Send(BytesOf('first'));
     Keep(Channel);
+    Channel.Send(BytesOf('first'));
     raise Exception.Create('the handler failed after Detach');
   end;
   try
@@ -173,9 +173,9 @@ begin
     end;
   end;
   // the channel is pending: the headers and the first bytes follow
+  Keep(Channel);
   Channel.Activate(200, nil);
   Channel.Send(BytesOf('first'));
-  Keep(Channel);
   if Path = '/raise-pending' then
     raise Exception.Create('the handler failed after Detach');
 end;
@@ -419,6 +419,7 @@ var
   Clients: array[0..cDetached - 1] of TLifecycleClient;
   Ordinary: TLifecycleClient;
   I: Integer;
+  Waited: Integer;
   Body: TBytes;
   Ended: Boolean;
   Stats: TServerStats;
@@ -449,7 +450,16 @@ begin
     finally
       Ordinary.Free;
     end;
+    // the handler thread may still be returning from Handle after its bytes
+    // left, so the check waits for the final state with a limit
+    Waited := 0;
     Stats := Server.Stats;
+    while (Stats.BusyHandlers > 0) and (Waited < ResponseTimeoutMs) do
+    begin
+      Sleep(5);
+      Inc(Waited, 5);
+      Stats := Server.Stats;
+    end;
     AssertEquals('no handler thread is busy', 0, Stats.BusyHandlers);
   finally
     for I := 0 to cDetached - 1 do

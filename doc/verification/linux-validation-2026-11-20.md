@@ -224,23 +224,16 @@ The server keeps a queue of messages for each WebSocket session. The
 
 The items below are open limits and open defects of this run.
 
-1. The test `TDetachLiveTest` fails about 1 run in 20 on Linux. In the run
-   of this record it failed in run 6 of 20. The failing test is
-   `TestDetachedStreamIsServedAndStopEndsIt`, with the exception
-   `EArgumentOutOfRangeException` and the message "Argument out of range".
-   The cause is not found. The defect is in the test or in the detach
-   path. On macOS the same test has a second form of the flake: a socket error
-   EINVAL from `SetOptions`.
-2. No test has run on Windows.
-3. No test covers a loss of the network connection with no Close frame for the
+1. No test has run on Windows.
+2. No test covers a loss of the network connection with no Close frame for the
    WebSocket client. The repository has no TCP relay helper.
-4. The task `packages:check` did not run on Linux, because the image has no
+3. The task `packages:check` did not run on Linux, because the image has no
    `lazbuild`.
-5. The distribution of the classes of the independent harness differs from the
+4. The distribution of the classes of the independent harness differs from the
    distribution of an earlier Linux run, because the peers differ. The count of
    WORSE is 0, and the count of UNKNOWN is 62.
-6. The connection load and the million-request runs were 4 to 5 percent slower
+5. The connection load and the million-request runs were 4 to 5 percent slower
    than in the previous Linux run. A million-request run took 381 to 389 s in
    this run, and 364 to 371 s in the previous run.
-7. The peer limitations in the section above remain: three Squid cases
+6. The peer limitations in the section above remain: three Squid cases
    skipped, and the case A.8 of `nghttpd` skipped.

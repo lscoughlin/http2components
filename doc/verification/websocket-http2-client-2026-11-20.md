@@ -108,9 +108,6 @@ Four suites ran 20 times each to find flaky tests.
 | `TPoolDialTest` | 20 | 0 | 6 |
 | `TMutualTlsRejectTest` | 20 | 0 | 11 |
 
-The failure of `TDetachLiveTest` is an open defect. The first open item below
-describes it.
-
 ## Volume results
 
 The tests of the volume prove the exact octet counts, the exact frame counts and
@@ -140,18 +137,12 @@ the [server WebSocket](../design/server/websocket.md) documents the queue, and
 
 ## Open items
 
-1. The test `TDetachLiveTest` fails about 1 run in 20 on Linux. In run 6 of 20
-   the test `TestDetachedStreamIsServedAndStopEndsIt` raised
-   `EArgumentOutOfRangeException` with the message "Argument out of range". The
-   cause is not found. The defect is in the test or in the detach path. On
-   macOS the same test has a second form of the flake: a socket error EINVAL
-   from `SetOptions`.
-2. No test has run on Windows.
-3. No test covers a loss of the network connection with no Close frame for the
+1. No test has run on Windows.
+2. No test covers a loss of the network connection with no Close frame for the
    WebSocket client. The repository has no TCP relay helper. The abort tests
    cover the end of a stream without a Close frame from the handler of the
    server.
-4. The tests run on loopback. They do not prove the behavior on a network with
+3. The tests run on loopback. They do not prove the behavior on a network with
    loss or delay.
-5. The tests of the WebSocket over HTTP/2 route of the client use the library
+4. The tests of the WebSocket over HTTP/2 route of the client use the library
    server as the peer. No independent server peer runs this route.
