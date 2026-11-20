@@ -5,9 +5,10 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: client_test, websocket, protocol mode, extended connect, rfc 8441
 notes:
   - this tests the protocol choice of THttpClient.Send for a WebSocket (wpmAuto, wpmHttp1, wpmHttp2)
-  - the factory scripts the ALPN name that the peer selects; the TLS mapping is the real ProtocolForTlsAlpn
+  - wpmAuto never dials HTTP/2 for a WebSocket: it uses a live pooled HTTP/2 connection of the origin, else the HTTP/1.1 opening
   - an HTTP/1.1 opening is seen as a 101 answer with a wrong accept field, which the handshake refuses
     with EHttpWebSocketHandshakeError (status 101): the status proves that the Upgrade was written
+  - a dial of the factory is counted as a TLS handshake; the pooled connection is made by a wpmHttp2 opening
 ---
 }
 unit Http2.Client.WebSocket.ProtocolMode.Test;
@@ -38,7 +39,6 @@ type
     FH2: TList<IHttp2Socket>;
     FHttp1: TList<IHttp2Socket>;
     FProtocolDials: Integer;
-    FLastFallback: Boolean;
     FLastPolicy: TClearTextPolicy;
     FLastProtocol: TNegotiatedProtocol;
     function NewH2: IHttp2Socket;
@@ -62,7 +62,6 @@ type
     /// the socket of HTTP/1.1 dial AIndex (0 is the first)
     function Http1Socket(const AIndex: Integer): TMockSocket;
     property ProtocolDials: Integer read FProtocolDials;
-    property LastFallback: Boolean read FLastFallback;
     property LastPolicy: TClearTextPolicy read FLastPolicy;
     property LastProtocol: TNegotiatedProtocol read FLastProtocol;
     function Http1Dials: Integer;
@@ -77,6 +76,8 @@ type
     FClient: IHttpClient;
     FListener: IWebSocketListener;
     FSocket: IWebSocket;
+    /// the socket of an earlier opening in the same test (aborted by TearDown)
+    FOther: IWebSocket;
     /// builds the client over a factory with the given script and cleartext policy
     procedure Build(const APeer: string; const AConnect: Boolean;
       const AStatus: string; const APolicy: TClearTextPolicy);
@@ -84,23 +85,26 @@ type
     /// 'handshake:<status>' for a handshake refusal, 'websocket' for an
     /// EHttpWebSocketError, 'protocol' for an EHttpProtocolError, or the class name
     function Attempt(const AUrl: string; const AMode: TWsProtocolMode): string;
-    /// the HEADERS frames that the client sent on stream 1 of HTTP/2 dial AIndex
-    function HeadersOnStream1(const AIndex: Integer): Integer;
+    /// the HEADERS frames that the client sent on any stream of HTTP/2 dial AIndex
+    function HeadersSent(const AIndex: Integer): Integer;
   protected
     procedure TearDown; override;
   published
     procedure TestDefaultModeIsAuto;
     procedure TestWithProtocolModeLeavesTheOriginal;
     procedure TestHttp1ModeNeverOffersH2;
+    procedure TestHttp2ModeDialsH2;
     procedure TestHttp2ModeWithoutSettingRaises;
     procedure TestHttp2ModeRefusesAnHttp1Peer;
     procedure TestAutoWithHttp1OnlyPeerUsesUpgrade;
     procedure TestAutoWithNoAlpnPeerUsesUpgrade;
-    procedure TestAutoWithH2AndSettingUsesExtendedConnect;
-    procedure TestAutoWithH2AndNoSettingDialsAgainWithUpgrade;
+    procedure TestAutoWithNoPooledConnectionDoesNotDialH2;
+    procedure TestAutoWithPooledH2UsesExtendedConnect;
+    procedure TestAutoWithPooledH2WithoutSettingUsesHttp1;
     procedure TestRefusedConnectDoesNotFallBack;
     procedure TestCleartextWithoutPriorKnowledgeUsesHttp1;
-    procedure TestCleartextWithPriorKnowledgeUsesHttp2;
+    procedure TestCleartextWithPriorKnowledgeNoPoolUsesHttp1;
+    procedure TestCleartextPooledWithPriorKnowledgeIsReused;
     procedure TestHttp2ModeCleartextNeedsPriorKnowledge;
   end;
 
@@ -178,7 +182,6 @@ function TWsModeFactory.DialProtocol(const AHost: string; const APort: Word;
   out AProtocol: TNegotiatedProtocol): IHttp2Socket;
 begin
   Inc(FProtocolDials);
-  FLastFallback := AHttp1Fallback;
   FLastPolicy := APolicy;
   if AScheme = 'http' then
   begin
@@ -189,8 +192,8 @@ begin
     AProtocol := npHttp2Cleartext;
   end
   else
-    // the real mapping of the selected ALPN name: h2 is accepted, and http/1.1
-    // or no name fails the strict check with EHttpProtocolError
+    // the real mapping of the selected ALPN name: h2 is accepted; http/1.1 or
+    // no name fails the strict check with EHttpProtocolError
     AProtocol := ProtocolForTlsAlpn(FPeer, AHttp1Fallback);
   FLastProtocol := AProtocol;
   Result := NewH2;
@@ -244,6 +247,8 @@ function TWsProtocolModeTest.Attempt(const AUrl: string;
   const AMode: TWsProtocolMode): string;
 begin
   Result := '';
+  if FSocket <> nil then
+    FOther := FSocket;
   FSocket := nil;
   try
     FSocket := FClient.Send(TWebSocketRequest.Create(AUrl, FListener)
@@ -260,7 +265,7 @@ begin
   end;
 end;
 
-function TWsProtocolModeTest.HeadersOnStream1(const AIndex: Integer): Integer;
+function TWsProtocolModeTest.HeadersSent(const AIndex: Integer): Integer;
 var
   Frames: TArray<TFrame>;
   I: Integer;
@@ -268,8 +273,7 @@ begin
   Result := 0;
   Frames := FFactory.H2Socket(AIndex).OutboundFrames(True);
   for I := 0 to High(Frames) do
-    if (Frames[I].Header.FrameType = ftHeaders) and
-      (Frames[I].Header.StreamId = 1) then
+    if Frames[I].Header.FrameType = ftHeaders then
       Inc(Result);
 end;
 
@@ -277,7 +281,10 @@ procedure TWsProtocolModeTest.TearDown;
 begin
   if FSocket <> nil then
     FSocket.Abort;
+  if FOther <> nil then
+    FOther.Abort;
   FSocket := nil;
+  FOther := nil;
   if FClient <> nil then
     FClient.Close;
   FClient := nil;
@@ -316,6 +323,17 @@ begin
     Pos('Upgrade: websocket', FromBytes(FFactory.Http1Socket(0).WrittenBytes)) > 0);
 end;
 
+procedure TWsProtocolModeTest.TestHttp2ModeDialsH2;
+begin
+  Build('h2', True, '200', ctReject);
+  AssertEquals('the socket opened', '', Attempt(cWssUrl, wpmHttp2));
+  AssertTrue('a socket is returned', FSocket <> nil);
+  AssertEquals('one HTTP/2 dial', 1, FFactory.ProtocolDials);
+  AssertTrue('the protocol is HTTP/2 over TLS', FFactory.LastProtocol = npHttp2Tls);
+  AssertEquals('no HTTP/1.1 dial', 0, FFactory.Http1Dials);
+  AssertTrue('the extended CONNECT was sent', HeadersSent(0) >= 1);
+end;
+
 procedure TWsProtocolModeTest.TestHttp2ModeWithoutSettingRaises;
 begin
   Build('h2', False, '200', ctReject);
@@ -326,7 +344,7 @@ end;
 procedure TWsProtocolModeTest.TestHttp2ModeRefusesAnHttp1Peer;
 begin
   Build('http/1.1', True, '200', ctReject);
-  AssertEquals('the strict ALPN check fails', 'protocol',
+  AssertEquals('an HTTP/2 refusal is a WebSocket error', 'websocket',
     Attempt(cWssUrl, wpmHttp2));
   AssertEquals('no HTTP/1.1 fallback', 0, FFactory.Http1Dials);
 end;
@@ -335,8 +353,7 @@ procedure TWsProtocolModeTest.TestAutoWithHttp1OnlyPeerUsesUpgrade;
 begin
   Build('http/1.1', True, '200', ctReject);
   AssertEquals('handshake answer', 'handshake:101', Attempt(cWssUrl, wpmAuto));
-  AssertEquals('the offer was h2 alone', 1, FFactory.ProtocolDials);
-  AssertFalse('strict offer (fallback off)', FFactory.LastFallback);
+  AssertEquals('no HTTP/2 dial for wpmAuto', 0, FFactory.ProtocolDials);
   AssertEquals('one HTTP/1.1 dial', 1, FFactory.Http1Dials);
 end;
 
@@ -347,30 +364,49 @@ begin
   AssertEquals('one HTTP/1.1 dial', 1, FFactory.Http1Dials);
 end;
 
-procedure TWsProtocolModeTest.TestAutoWithH2AndSettingUsesExtendedConnect;
+procedure TWsProtocolModeTest.TestAutoWithNoPooledConnectionDoesNotDialH2;
 begin
+  // wpmAuto never dials HTTP/2 for a WebSocket: one dial, the HTTP/1.1 Upgrade
   Build('h2', True, '200', ctReject);
-  AssertEquals('the socket opened', '', Attempt(cWssUrl, wpmAuto));
-  AssertTrue('a socket is returned', FSocket <> nil);
-  AssertEquals('no HTTP/1.1 dial', 0, FFactory.Http1Dials);
-  AssertTrue('the protocol is HTTP/2 over TLS', FFactory.LastProtocol = npHttp2Tls);
-  AssertTrue('the extended CONNECT was sent on stream 1',
-    HeadersOnStream1(0) >= 1);
+  AssertEquals('handshake answer', 'handshake:101', Attempt(cWssUrl, wpmAuto));
+  AssertEquals('no TLS dial offers h2', 0, FFactory.ProtocolDials);
+  AssertEquals('no HTTP/2 connection', 0, FFactory.H2Dials);
+  AssertEquals('one handshake in all', 1, FFactory.Http1Dials);
 end;
 
-procedure TWsProtocolModeTest.TestAutoWithH2AndNoSettingDialsAgainWithUpgrade;
+procedure TWsProtocolModeTest.TestAutoWithPooledH2UsesExtendedConnect;
 begin
+  // a wpmHttp2 opening leaves its pooled connection in place
+  Build('h2', True, '200', ctReject);
+  AssertEquals('the first socket opened', '', Attempt(cWssUrl, wpmHttp2));
+  FOther := FSocket;
+  FSocket := nil;
+  AssertEquals('the second socket opened', '', Attempt(cWssUrl, wpmAuto));
+  AssertTrue('a socket is returned', FSocket <> nil);
+  AssertEquals('one HTTP/2 dial in all', 1, FFactory.ProtocolDials);
+  AssertEquals('one HTTP/2 connection in all', 1, FFactory.H2Dials);
+  AssertEquals('no HTTP/1.1 dial', 0, FFactory.Http1Dials);
+  AssertTrue('two extended CONNECTs on the pooled connection',
+    HeadersSent(0) >= 2);
+end;
+
+procedure TWsProtocolModeTest.TestAutoWithPooledH2WithoutSettingUsesHttp1;
+begin
+  // the pooled connection has no setting: wpmAuto takes the HTTP/1.1 opening
   Build('h2', False, '200', ctReject);
+  AssertEquals('wpmHttp2 is refused', 'websocket', Attempt(cWssUrl, wpmHttp2));
   AssertEquals('handshake answer', 'handshake:101', Attempt(cWssUrl, wpmAuto));
-  AssertEquals('the first dial was HTTP/2', 1, FFactory.H2Dials);
-  AssertEquals('one HTTP/1.1 dial after it', 1, FFactory.Http1Dials);
-  AssertEquals('no extended CONNECT was sent', 0, HeadersOnStream1(0));
+  AssertEquals('one HTTP/2 dial in all', 1, FFactory.ProtocolDials);
+  AssertEquals('one HTTP/2 connection in all', 1, FFactory.H2Dials);
+  AssertEquals('one HTTP/1.1 dial', 1, FFactory.Http1Dials);
 end;
 
 procedure TWsProtocolModeTest.TestRefusedConnectDoesNotFallBack;
 begin
   Build('h2', True, '404', ctReject);
   AssertEquals('the refusal is a handshake failure', 'handshake:404',
+    Attempt(cWssUrl, wpmHttp2));
+  AssertEquals('the pooled connection answers the same way', 'handshake:404',
     Attempt(cWssUrl, wpmAuto));
   AssertEquals('no HTTP/1.1 dial after a refusal', 0, FFactory.Http1Dials);
 end;
@@ -383,19 +419,27 @@ begin
   AssertEquals('one HTTP/1.1 dial', 1, FFactory.Http1Dials);
 end;
 
-procedure TWsProtocolModeTest.TestCleartextWithPriorKnowledgeUsesHttp2;
+procedure TWsProtocolModeTest.TestCleartextWithPriorKnowledgeNoPoolUsesHttp1;
+begin
+  // prior knowledge alone does not dial for wpmAuto: no pooled connection, HTTP/1.1
+  Build('', True, '200', ctPriorKnowledge);
+  AssertEquals('handshake answer', 'handshake:101', Attempt(cWsUrl, wpmAuto));
+  AssertEquals('no HTTP/2 dial', 0, FFactory.ProtocolDials);
+  AssertEquals('one HTTP/1.1 dial', 1, FFactory.Http1Dials);
+end;
+
+procedure TWsProtocolModeTest.TestCleartextPooledWithPriorKnowledgeIsReused;
 begin
   Build('', True, '200', ctPriorKnowledge);
-  AssertEquals('the socket opened', '', Attempt(cWsUrl, wpmAuto));
+  AssertEquals('the wpmHttp2 socket opened', '', Attempt(cWsUrl, wpmHttp2));
+  FOther := FSocket;
+  FSocket := nil;
+  AssertEquals('the wpmAuto socket opened', '', Attempt(cWsUrl, wpmAuto));
   AssertTrue('a socket is returned', FSocket <> nil);
-  AssertEquals('one HTTP/2 dial', 1, FFactory.ProtocolDials);
-  AssertTrue('the policy is prior knowledge',
-    FFactory.LastPolicy = ctPriorKnowledge);
+  AssertEquals('one HTTP/2 dial in all', 1, FFactory.ProtocolDials);
   AssertTrue('the protocol is HTTP/2 cleartext',
     FFactory.LastProtocol = npHttp2Cleartext);
   AssertEquals('no HTTP/1.1 dial', 0, FFactory.Http1Dials);
-  AssertTrue('the extended CONNECT was sent on stream 1',
-    HeadersOnStream1(0) >= 1);
 end;
 
 procedure TWsProtocolModeTest.TestHttp2ModeCleartextNeedsPriorKnowledge;
