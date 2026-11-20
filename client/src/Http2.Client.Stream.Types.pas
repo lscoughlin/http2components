@@ -127,6 +127,8 @@ type
     Scheme: string;         // ':scheme'
     Authority: string;      // ':authority' (host[:port])
     Path: string;           // ':path' (defaults to '/')
+    /// ':protocol' of an extended CONNECT (RFC 8441); '' when the request has none
+    Protocol: string;
     Headers: IHttpHeaders;  // regular headers
     Body: THttpBody;        // fixed body; IsSet=False when absent
     BodyWriter: IBodyWriter;
@@ -145,12 +147,19 @@ type
     MaxResponseBytesSet: Boolean;
     /// the observed attempt this request belongs to (nil when unobserved)
     Exchange: IExchangeObserver;
+    /// the stream stays open after HEADERS when the request has no body:
+    /// HEADERS carries no END_STREAM (a WebSocket over HTTP/2 uses it)
+    KeepOpen: Boolean;
     /// build a request with default scheme 'https', path '/', empty headers
     class function Create(const AMethod, AAuthority: string): TStreamRequest; static;
     class function WithMethod(const AMethod: THttpMethod;
       const AAuthority: string): TStreamRequest; static;
     function WithScheme(const AScheme: string): TStreamRequest;
     function WithPath(const APath: string): TStreamRequest;
+    /// set the ':protocol' pseudo-header (RFC 8441 extended CONNECT)
+    function WithProtocol(const AProtocol: string): TStreamRequest;
+    /// keep the stream open after HEADERS when the request has no body
+    function WithKeepOpen: TStreamRequest;
     function WithHeader(const AName, AValue: string): TStreamRequest;
     function WithBody(const ABody: THttpBody): TStreamRequest;
     function WithBodyWriter(const AWriter: IBodyWriter): TStreamRequest;
@@ -256,6 +265,8 @@ begin
   Result.Scheme := 'https';
   Result.Authority := AAuthority;
   Result.Path := '/';
+  Result.Protocol := '';
+  Result.KeepOpen := False;
   Result.Headers := NewHttpHeaders;
   Result.Body.FIsSet := False;
   Result.Body.FData := nil;
@@ -281,6 +292,18 @@ begin
     Result.Path := '/'
   else
     Result.Path := APath;
+end;
+
+function TStreamRequest.WithProtocol(const AProtocol: string): TStreamRequest;
+begin
+  Result := Self;
+  Result.Protocol := AProtocol;
+end;
+
+function TStreamRequest.WithKeepOpen: TStreamRequest;
+begin
+  Result := Self;
+  Result.KeepOpen := True;
 end;
 
 function TStreamRequest.WithHeader(const AName, AValue: string): TStreamRequest;

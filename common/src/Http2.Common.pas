@@ -43,6 +43,7 @@ const
   HeaderPath = Http2.Common.Headers.HeaderPath;
   HeaderScheme = Http2.Common.Headers.HeaderScheme;
   HeaderAuthority = Http2.Common.Headers.HeaderAuthority;
+  HeaderProtocol = Http2.Common.Headers.HeaderProtocol;
   HeaderStatus = Http2.Common.Headers.HeaderStatus;
   HeaderContentType = Http2.Common.Headers.HeaderContentType;
   HeaderContentLength = Http2.Common.Headers.HeaderContentLength;
