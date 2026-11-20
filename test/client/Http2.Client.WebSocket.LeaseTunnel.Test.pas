@@ -5,8 +5,9 @@ copyright: Copyright 2026 Liam Seamus Coughlin
 keywords: client_test, websocket, tunnel, lease
 notes:
   - this checks the tunnel over a stream lease with the scripted frame peer of the mock socket tests
-  - the tests use a GET lease: its request ends on the local side, so no test needs an open request stream (story A4 is not merged)
-  - the tests that send DATA on an open request stream wait for story A4 and story C1
+  - the tests of the GET lease use a request that ends on the local side
+  - the tests of the open request stream use a KeepOpen lease (story A4): they send DATA, end the send side and park a sender for credit
+  - the race tests start a parked sender and call Reset or Release while the sender waits for credit
 ---
 }
 unit Http2.Client.WebSocket.LeaseTunnel.Test;
@@ -38,6 +39,26 @@ type
     property Failed: Boolean read FFailed;
   end;
 
+  /// sends AData through the tunnel from its own thread and records how the call ended
+  TParkedSendWorker = class(TThread)
+  private
+    FTunnel: IH2Tunnel;
+    FData: TBytes;
+    FRaised: Boolean;
+    FErrorText: string;
+    FEndedAt: QWord;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const ATunnel: IH2Tunnel; const AData: TBytes);
+    /// True when SendData raised EHttpConnectionError
+    property Raised: Boolean read FRaised;
+    /// the class and the message of any other exception
+    property ErrorText: string read FErrorText;
+    /// the tick count when the call ended
+    property EndedAt: QWord read FEndedAt;
+  end;
+
   TLeaseTunnelTest = class(TTestCase)
   private
     FSock: TMockSocket;
@@ -50,6 +71,18 @@ type
     FTunnel: IH2Tunnel;
     /// open the GET lease, answer 200 without END_STREAM and build the tunnel
     procedure OpenTunnel;
+    /// open a KeepOpen POST lease on stream 1 (HEADERS only), answer 200 and build the tunnel
+    procedure OpenKeepOpenTunnel;
+    /// start a KeepOpen POST lease on the next stream id; the caller holds ALease through AKeep
+    procedure StartKeepOpenLease(out ALease: TStreamLease; out AKeep: IConnectionStream);
+    /// send SETTINGS with the initial window AWindow and wait until the client applied it
+    procedure SetPeerWindow(const AWindow: LongWord);
+    /// the loop of the race tests: a parked sender, then Reset or Release from this thread
+    procedure RunParkedSenderRaces(const AByReset: Boolean);
+    /// count the frames of AType that the client wrote, waiting up to ATimeoutMs
+    /// for at least AExpected of them
+    function WaitForFrameCount(const AType: TFrameType; const AExpected,
+      ATimeoutMs: Integer): Integer;
     /// read the octets that are ready; returns the ReadSome result
     function ReadSomeText(out AText: string): Integer;
     /// poll ReadSome until it returns a count other than -1, or the time passes
@@ -77,6 +110,14 @@ type
     procedure TestSendDataRaisesAfterRelease;
     procedure TestReadSomeRaisesAfterRelease;
     procedure TestTunnelNeedsThePoolLock;
+    procedure TestOpenStreamSendDataIsDataWithoutEndStream;
+    procedure TestOpenStreamEndSendEndsTheStream;
+    procedure TestSendOfThreeFrameSizesGivesThreeDataFrames;
+    procedure TestSendBeyondWindowWaitsForWindowUpdate;
+    procedure TestParkedSenderReturnsWithinOneSecondAfterReset;
+    procedure TestParkedSenderReturnsWithinOneSecondAfterRelease;
+    procedure TestParkedSenderRaceLoopForReset;
+    procedure TestParkedSenderRaceLoopForRelease;
   end;
 
 implementation
@@ -84,6 +125,10 @@ implementation
 const
   /// the poll of the request: the body-read time of the WebSocket poll
   cPollMs = 100;
+  /// number of races per race test
+  cRaceLoops = 100;
+  /// a parked sender that returns this late after Reset or Release fails the test
+  cReturnLimitMs = 1000;
 
 function ToBytes(const AText: string): TBytes;
 var
@@ -113,6 +158,32 @@ begin
   except
     FFailed := True;
   end;
+end;
+
+{ TParkedSendWorker }
+
+constructor TParkedSendWorker.Create(const ATunnel: IH2Tunnel; const AData: TBytes);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FTunnel := ATunnel;
+  FData := AData;
+  FRaised := False;
+  FErrorText := '';
+  FEndedAt := 0;
+end;
+
+procedure TParkedSendWorker.Execute;
+begin
+  try
+    FTunnel.SendData(FData);
+  except
+    on E: EHttpConnectionError do
+      FRaised := True;
+    on E: Exception do
+      FErrorText := E.ClassName + ': ' + E.Message;
+  end;
+  FEndedAt := GetTickCount64;
 end;
 
 { TLeaseTunnelTest }
@@ -161,6 +232,129 @@ begin
   end;
   AssertEquals('status 200', 200, FLease.StatusCode);
   FTunnel := TLeaseTunnel.Create(FLease, FConn);
+end;
+
+procedure TLeaseTunnelTest.OpenKeepOpenTunnel;
+begin
+  StartKeepOpenLease(FLease, FKeep);
+  FServer.SendHeaders(1, '200', False);
+  FLock.Acquire;
+  try
+    AssertTrue('response headers received', FLease.WaitForResponseHeader(2000));
+  finally
+    FLock.Release;
+  end;
+  AssertEquals('status 200', 200, FLease.StatusCode);
+  FTunnel := TLeaseTunnel.Create(FLease, FConn);
+end;
+
+procedure TLeaseTunnelTest.StartKeepOpenLease(out ALease: TStreamLease;
+  out AKeep: IConnectionStream);
+var
+  Req: TStreamRequest;
+begin
+  Req := TStreamRequest.WithMethod(hmPost, 'api.example:443').WithPath('/')
+    .WithKeepOpen.WithBodyReadTimeout(cPollMs);
+  ALease := TStreamLease.Create(FConn, FAlloc, Req);
+  AKeep := ALease;
+  ALease.WaitLock := FLock;
+  // the pool calls Start under its lock, as the pool does
+  FLock.Acquire;
+  try
+    ALease.Start;
+  finally
+    FLock.Release;
+  end;
+end;
+
+procedure TLeaseTunnelTest.SetPeerWindow(const AWindow: LongWord);
+var
+  Settings: TConnectionSettings;
+  Deadline: QWord;
+begin
+  Settings := TConnectionSettings.Defaults;
+  Settings.InitialWindowSize := AWindow;
+  FServer.SendSettings(Settings);
+  Deadline := GetTickCount64 + 2000;
+  while (FConn.PeerSettings.InitialWindowSize <> AWindow) and
+    (GetTickCount64 < Deadline) do
+    Sleep(5);
+  AssertEquals('the peer window is applied', AWindow,
+    FConn.PeerSettings.InitialWindowSize);
+end;
+
+procedure TLeaseTunnelTest.RunParkedSenderRaces(const AByReset: Boolean);
+var
+  I, J, Slow: Integer;
+  Lease: TStreamLease;
+  Keep: IConnectionStream;
+  Tunnel: IH2Tunnel;
+  Worker: TParkedSendWorker;
+  Started, Elapsed: QWord;
+  Failures: string;
+begin
+  SetPeerWindow(0);
+  Slow := 0;
+  Failures := '';
+  for I := 1 to cRaceLoops do
+  begin
+    StartKeepOpenLease(Lease, Keep);
+    Tunnel := TLeaseTunnel.Create(Lease, FConn);
+    Worker := TParkedSendWorker.Create(Tunnel, ToBytes('race'));
+    try
+      Worker.Start;
+      // a varying delay moves the reset across the park of the sender
+      for J := 1 to I mod 37 do
+        Sleep(0);
+      Started := GetTickCount64;
+      if AByReset then
+        Tunnel.Reset
+      else
+        Tunnel.Release;
+      Worker.WaitFor;
+      Elapsed := Worker.EndedAt - Started;
+      if Worker.ErrorText <> '' then
+        Failures := Failures + Format(' loop %d: %s;', [I, Worker.ErrorText]);
+      if (not Worker.Raised) and (Worker.ErrorText = '') then
+        Failures := Failures + Format(' loop %d: the send did not raise;', [I]);
+      if Elapsed >= cReturnLimitMs then
+      begin
+        Inc(Slow);
+        // the first slow return is the result: the later loops would wait too
+        Break;
+      end;
+    finally
+      Worker.Free;
+    end;
+    Tunnel := nil;
+    Keep := nil;
+    Lease := nil;
+  end;
+  AssertEquals('no sender raised another error:' + Failures, '', Trim(Failures));
+  AssertEquals(Format('senders that returned %d ms or more after the stop (of %d races)',
+    [cReturnLimitMs, cRaceLoops]), 0, Slow);
+  AssertEquals('no DATA frame was sent', 0, WaitForFrameCount(ftData, 1, 100));
+end;
+
+function TLeaseTunnelTest.WaitForFrameCount(const AType: TFrameType;
+  const AExpected, ATimeoutMs: Integer): Integer;
+var
+  Frames: TArray<TFrame>;
+  I, Count: Integer;
+  Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  while True do
+  begin
+    Count := 0;
+    Frames := FSock.OutboundFrames(True);
+    for I := 0 to High(Frames) do
+      if Frames[I].Header.FrameType = AType then
+        Inc(Count);
+    if (Count >= AExpected) or (GetTickCount64 >= Deadline) then
+      Exit(Count);
+    Sleep(5);
+  end;
 end;
 
 function TLeaseTunnelTest.ReadSomeText(out AText: string): Integer;
@@ -470,6 +664,144 @@ begin
   AssertTrue('a tunnel without the pool lock is refused', Raised);
   Tunnel := nil;
   Keep := nil;
+end;
+
+procedure TLeaseTunnelTest.TestOpenStreamSendDataIsDataWithoutEndStream;
+var
+  Frames: TArray<TFrame>;
+  I: Integer;
+begin
+  OpenKeepOpenTunnel;
+  FTunnel.SendData(ToBytes('ping'));
+  AssertEquals('one DATA frame', 1, WaitForFrameCount(ftData, 1, 2000));
+  Frames := FSock.OutboundFrames(True);
+  for I := 0 to High(Frames) do
+    if Frames[I].Header.FrameType = ftData then
+      AssertFalse('DATA has no END_STREAM', Frames[I].IsEndStream);
+  AssertFalse('the stream is open', FTunnel.IsEnded);
+  AssertFalse('the stream is not abnormal', FTunnel.EndedAbnormally);
+end;
+
+procedure TLeaseTunnelTest.TestOpenStreamEndSendEndsTheStream;
+var
+  Frames: TArray<TFrame>;
+  I, Last: Integer;
+begin
+  OpenKeepOpenTunnel;
+  FTunnel.SendData(ToBytes('ping'));
+  FTunnel.EndSend;
+  FTunnel.EndSend;
+  AssertEquals('DATA and the closing DATA', 2, WaitForFrameCount(ftData, 2, 2000));
+  AssertEquals('no third DATA frame', 2, WaitForFrameCount(ftData, 3, 100));
+  Frames := FSock.OutboundFrames(True);
+  Last := -1;
+  for I := 0 to High(Frames) do
+    if Frames[I].Header.FrameType = ftData then
+      Last := I;
+  AssertTrue('the closing DATA carries END_STREAM', (Last >= 0) and Frames[Last].IsEndStream);
+  AssertEquals('the closing DATA is empty', 0, Length(ExtractDataPayload(Frames[Last])));
+  AssertFalse('the peer side is still open', FTunnel.IsEnded);
+end;
+
+procedure TLeaseTunnelTest.TestSendOfThreeFrameSizesGivesThreeDataFrames;
+var
+  Data: TBytes;
+begin
+  OpenKeepOpenTunnel;
+  SetLength(Data, 3 * Integer(DefaultMaxFrameSize));
+  FillChar(Data[0], Length(Data), Ord('z'));
+  FTunnel.SendData(Data);
+  AssertEquals('three DATA frames', 3, WaitForFrameCount(ftData, 3, 2000));
+  AssertEquals('still three after a short wait', 3, WaitForFrameCount(ftData, 4, 100));
+  AssertFalse('the stream is open', FTunnel.IsEnded);
+end;
+
+procedure TLeaseTunnelTest.TestSendBeyondWindowWaitsForWindowUpdate;
+var
+  Worker: TParkedSendWorker;
+begin
+  SetPeerWindow(4);
+  OpenKeepOpenTunnel;
+  Worker := TParkedSendWorker.Create(FTunnel, ToBytes('0123456789'));
+  try
+    Worker.Start;
+    AssertEquals('the 4 octets of the window go out', 1,
+      WaitForFrameCount(ftData, 1, 2000));
+    Sleep(100);
+    AssertFalse('the sender waits for credit', Worker.Finished);
+    FServer.SendWindowUpdate(1, 6);
+    Worker.WaitFor;
+    AssertFalse('the send did not raise', Worker.Raised);
+    AssertEquals('no other error', '', Worker.ErrorText);
+    AssertEquals('the rest goes out as a second DATA frame', 2,
+      WaitForFrameCount(ftData, 2, 2000));
+  finally
+    Worker.Free;
+  end;
+end;
+
+procedure TLeaseTunnelTest.TestParkedSenderReturnsWithinOneSecondAfterReset;
+var
+  Worker: TParkedSendWorker;
+  Started, Elapsed: QWord;
+begin
+  SetPeerWindow(0);
+  OpenKeepOpenTunnel;
+  Worker := TParkedSendWorker.Create(FTunnel, ToBytes('parked'));
+  try
+    Worker.Start;
+    Sleep(200);
+    AssertFalse('the sender is parked for credit', Worker.Finished);
+    Started := GetTickCount64;
+    FTunnel.Reset;
+    Worker.WaitFor;
+    Elapsed := Worker.EndedAt - Started;
+    AssertTrue(Format('the parked sender returns within %d ms of Reset (it returned after %d ms)',
+      [cReturnLimitMs, Elapsed]), Elapsed < cReturnLimitMs);
+    AssertTrue('the parked send raises EHttpConnectionError', Worker.Raised);
+    AssertEquals('no other error', '', Worker.ErrorText);
+    AssertEquals('one RST_STREAM', 1, WaitForRstCount(1, 2000));
+    AssertTrue('the code is CANCEL', RstCodeOfFirstFrame = ecCancel);
+    AssertEquals('no DATA frame was sent', 0, WaitForFrameCount(ftData, 1, 100));
+  finally
+    Worker.Free;
+  end;
+end;
+
+procedure TLeaseTunnelTest.TestParkedSenderReturnsWithinOneSecondAfterRelease;
+var
+  Worker: TParkedSendWorker;
+  Started, Elapsed: QWord;
+begin
+  SetPeerWindow(0);
+  OpenKeepOpenTunnel;
+  Worker := TParkedSendWorker.Create(FTunnel, ToBytes('parked'));
+  try
+    Worker.Start;
+    Sleep(200);
+    AssertFalse('the sender is parked for credit', Worker.Finished);
+    Started := GetTickCount64;
+    FTunnel.Release;
+    Worker.WaitFor;
+    Elapsed := Worker.EndedAt - Started;
+    AssertTrue(Format('the parked sender returns within %d ms of Release (it returned after %d ms)',
+      [cReturnLimitMs, Elapsed]), Elapsed < cReturnLimitMs);
+    AssertTrue('the parked send raises EHttpConnectionError', Worker.Raised);
+    AssertEquals('no other error', '', Worker.ErrorText);
+    AssertEquals('no DATA frame was sent', 0, WaitForFrameCount(ftData, 1, 100));
+  finally
+    Worker.Free;
+  end;
+end;
+
+procedure TLeaseTunnelTest.TestParkedSenderRaceLoopForReset;
+begin
+  RunParkedSenderRaces(True);
+end;
+
+procedure TLeaseTunnelTest.TestParkedSenderRaceLoopForRelease;
+begin
+  RunParkedSenderRaces(False);
 end;
 
 initialization

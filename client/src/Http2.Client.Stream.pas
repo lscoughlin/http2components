@@ -59,6 +59,10 @@ const
   edEof = Http2.Client.Stream.Types.edEof;
   edFailed = Http2.Client.Stream.Types.edFailed;
   edCancelled = Http2.Client.Stream.Types.edCancelled;
+  /// the value of PeerDone once the peer ended the stream (END_STREAM or RST_STREAM)
+  cPeerDoneByPeer = 1;
+  /// the value of PeerDone once StopSend ran before the peer ended the stream
+  cPeerDoneByStop = 2;
 
 type
   THttpMethod = Http2.Client.Stream.Types.THttpMethod;
@@ -216,6 +220,10 @@ type
     procedure SendBody;
     /// half-close the local side with an empty END_STREAM DATA frame
     procedure EndSend;
+    /// stop the send side from any thread: a sender that waits for credit returns
+    // at once, and no send of this lease waits again; sends no frame. Safe to call
+    // more than once. Only a lease that calls it changes (PeerDone is then cPeerDoneByStop)
+    procedure StopSend;
 
     /// block until response HEADERS are decoded. Returns False on timeout;
     /// raises EHttpProtocolError on framing/HPACK errors and EHttpStreamError
@@ -259,8 +267,9 @@ type
     property RstReceived: Boolean read FRstReceived;
     property RstCode: THttp2ErrorCode read FRstCode;
     // read-only views for the WebSocket tunnel: the connection thread sets
-    // PeerDone (END_STREAM or RST_STREAM) and PeerReset (RST_STREAM) without
-    // the lock; read them with the lock of the connection held
+    // PeerDone (cPeerDoneByPeer for END_STREAM or RST_STREAM) and PeerReset
+    // (RST_STREAM) without the lock; read them with the lock of the connection
+    // held. StopSend sets PeerDone to cPeerDoneByStop: such a value is not a peer end
     property PeerDone: LongInt read FPeerDone;
     property PeerReset: LongInt read FPeerReset;
     property UploadStopped: Boolean read FUploadStopped;
@@ -417,6 +426,14 @@ procedure TStreamLease.EndSend;
 begin
   LeaseEndSend(FConnection, FOutbound, FWaitLock, FStreamId, FTimeoutMs,
     @FPeerDone, @FPeerReset, FUploadStopped, FBytesSent, FLocalState);
+end;
+
+procedure TStreamLease.StopSend;
+begin
+  // AcquireCredit waits while the word is 0, so any other value ends the wait.
+  // Only an unset word takes the stop value: a peer end keeps cPeerDoneByPeer.
+  InterlockedCompareExchange(FPeerDone, cPeerDoneByStop, 0);
+  FConnection.WakeSendCredit;
 end;
 
 function TStreamLease.WaitForInbound(const ATimeoutMs: Integer): Boolean;
