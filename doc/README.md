@@ -12,6 +12,8 @@ This directory holds the design documents, reference copies, and source
 verification records. The source verification records describe earlier
 source revisions. They do not report results for the combined TLS implementation.
 
+The [design index](design/README.md) lists the design sections, and each section has its own index.
+
 ## TLS design
 
 | Document | Subject |
@@ -19,6 +21,8 @@ source revisions. They do not report results for the combined TLS implementation
 | [Common TLS context](design/common/tls-context.md) | Shared context, policy, identity, and session contract. |
 | [OpenSSL provider](design/tls/openssl.md) | OpenSSL capabilities and native dependency boundary. |
 | [TlsLib provider](design/tls/tlslib.md) | TlsLib capabilities and unsupported features. |
+
+The [TLS provider index](design/tls/README.md) lists the provider pages.
 
 ## Common design
 
@@ -31,6 +35,8 @@ source revisions. They do not report results for the combined TLS implementation
 | [URI](design/common/uri.md) | The shared URI parser, host rules, reference resolution and origin helpers. |
 | [Header names and status codes](design/common/names.md) | The header-name constants and the status-code constants. |
 | [Cookies](design/common/cookies.md) | The cookie record, the Set-Cookie and Cookie helpers, and the case-sensitive parameter map. |
+
+The [common design index](design/common/README.md) lists these pages.
 
 ## Client design
 
@@ -55,6 +61,8 @@ The client topic documents describe the merged `Http2.Client.*` and
 | [Testing observability](design/client/testing-observability.md) | Test seams and protocol observations. |
 | [FPC runtime](design/client/fpc-runtime.md) | Compiler and runtime notes from the client source. |
 | [Open questions](design/client/open-questions.md) | Questions in the client source design. |
+
+The [client design index](design/client/README.md) lists these pages.
 
 ## Server design
 
@@ -85,6 +93,8 @@ The server topic documents describe the merged `Http2.Server.*` and
 | [Future coroutines](design/server/future-coroutines.md) | Deferred coroutine design. |
 | [Access log](design/server/access-log.md) | Access-log records and writers. |
 
+The [server design index](design/server/README.md) lists these pages.
+
 ## References and source history
 
 The [reference index](references/README.md) lists the specification copies,
@@ -96,6 +106,8 @@ The [migration table](migration-0.30.0.md) contains the unit map and current
 TLS API migration notes. The source histories are [client 0.23.0](history/client-0.23.0.md)
 and [server 0.29.0](history/server-0.29.0.md). Those numbers identify source
 package versions; they do not assert that either version was released.
+
+The [history index](history/README.md) lists the source changelog snapshots.
 
 ## Verification records
 
@@ -139,6 +151,8 @@ The source-record files are listed below for direct access.
 
 These source records describe their pinned source revisions. Combined-tree
 results are in the [current verification record](verification/current-status.md).
+
+The [verification index](verification/README.md) lists the records of this section, and the [source record index](verification/source/README.md) lists the source records by role.
 
 ## RFC references
 
