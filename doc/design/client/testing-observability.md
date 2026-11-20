@@ -184,6 +184,16 @@ message, abort, the close and ping timeouts, a raising listener, and a fresh
 masking key per frame. Tests wait on events with a bounded timeout and never
 sleep to wait for another thread.
 
+`Http2.Client.WebSocket.Http1WriteFail.Test` covers a failed write of a WebSocket over the
+HTTP/1.1 route. The HTTP/1.1 WebSocket tests use a real loopback socket, not the
+`IHttp2Socket` mock. The unit wraps that socket in a test socket with a switch: once the test
+arms it, every write raises `EHttpConnectionError` before it reaches the wire. The peer of the
+unit sends its Close frame only when the test releases it, after the switch is armed, so that the
+reader cannot take the frame before the write fails. The tests check these results: one `OnClose` with the code of the peer's Close frame and
+no `OnError`; one `OnError` after the close timeout when no Close frame comes, and no `OnClose`;
+one `OnClose` with the peer's code when the Close echo is the failed write; no callback after a
+user `Abort`; and `EHttpWebSocketClosedError` for a send after the failed write.
+
 `Http2.Client.WebSocket.ProtocolMode.Test` covers the choice of the protocol in `Send`: the
 default mode, each mode of `WithProtocolMode`, the pooled HTTP/2 connection that `wpmAuto`
 reuses (a `wpmHttp2` opening leaves it in the pool), the cleartext rules of `ws` URLs, and a

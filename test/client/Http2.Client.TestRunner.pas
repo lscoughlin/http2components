@@ -72,6 +72,6 @@ uses
   Http2.Client.WebSocket.LeaseTunnel.Test,
   Http2.Client.Pool.Tunnel.Test, Http2.Client.WebSocket.OpenH2.Test,
   Http2.Client.WebSocket.ProtocolMode.Test,
-  Http2.Client.WebSocket.OpenH2.Close.Test;
+  Http2.Client.WebSocket.OpenH2.Close.Test, Http2.Client.WebSocket.Http1WriteFail.Test;
 
 end.

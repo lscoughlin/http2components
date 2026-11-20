@@ -231,20 +231,16 @@ The items below are open limits and open defects of this run.
    The cause is not found. The defect is in the test or in the detach
    path. On macOS the same test has a second form of the flake: a socket error
    EINVAL from `SetOptions`.
-2. The rule for a failed write of the WebSocket client is that a failed write
-   no longer suppresses `OnClose` and `OnError`. The rule changes HTTP/1.1 also.
-   No HTTP/1.1 test of the rule exists, because the mock socket has no
-   failure switch.
-3. No test has run on Windows.
-4. No test covers a loss of the network connection with no Close frame for the
+2. No test has run on Windows.
+3. No test covers a loss of the network connection with no Close frame for the
    WebSocket client. The repository has no TCP relay helper.
-5. The task `packages:check` did not run on Linux, because the image has no
+4. The task `packages:check` did not run on Linux, because the image has no
    `lazbuild`.
-6. The distribution of the classes of the independent harness differs from the
+5. The distribution of the classes of the independent harness differs from the
    distribution of an earlier Linux run, because the peers differ. The count of
    WORSE is 0, and the count of UNKNOWN is 62.
-7. The connection load and the million-request runs were 4 to 5 percent slower
+6. The connection load and the million-request runs were 4 to 5 percent slower
    than in the previous Linux run. A million-request run took 381 to 389 s in
    this run, and 364 to 371 s in the previous run.
-8. The peer limitations in the section above remain: three Squid cases
+7. The peer limitations in the section above remain: three Squid cases
    skipped, and the case A.8 of `nghttpd` skipped.
