@@ -70,8 +70,10 @@ type
     FInput, FOutput, FPlaintext: TBytes;
     FFailureCategory: TTlsErrorCategory;
     FFailureMessage: string;
+    FFailureAlert: Integer;
     FSelectedAlpn: string;
     procedure Fail(const ACategory: TTlsErrorCategory; const AMessage: string);
+    procedure RaiseFailure;
     procedure RequireWritable;
   public
     constructor Create(const AOwner: ITLSContext; const ARole: TTlsRole;
@@ -193,6 +195,7 @@ begin
   FHoldHandshake := AHoldHandshake;
   FIsServer := ARole = trServer;
   FSelectedAlpn := ASelectedAlpn;
+  FFailureAlert := -1;
   FState := tssNew;
 end;
 procedure TTlsFakeSession.Fail(const ACategory: TTlsErrorCategory; const AMessage: string);
@@ -205,10 +208,19 @@ begin
       FOutput := FOutput + [$15, $02];
   end;
 end;
+{ A failed session keeps its failure, as the TlsLib and OpenSSL sessions do.
+  Every later call that reports state raises the same error, with the peer
+  alert description when the peer sent one. }
+procedure TTlsFakeSession.RaiseFailure;
+begin
+  if FState = tssFailed then
+    raise ETlsSessionError.Create(FFailureMessage, FFailureCategory, '',
+      FFailureAlert, FFailureAlert = 116);
+end;
 procedure TTlsFakeSession.RequireWritable;
 begin
   if FState = tssFailed then
-    raise ETlsSessionError.Create(FFailureMessage, FFailureCategory);
+    RaiseFailure;
   if FState = tssClosed then
     raise ETlsSessionError.Create('Session is closed', tecProtocol);
 end;
@@ -273,7 +285,7 @@ begin
   for I := 0 to Result - 1 do ABuffer[AOffset + I] := FPlaintext[I];
   Delete(FPlaintext, 0, Result);
   if (Result = 0) and (FState = tssFailed) then
-    raise ETlsSessionError.Create(FFailureMessage, FFailureCategory);
+    RaiseFailure;
 end;
 function TTlsFakeSession.PendingPlaintext: SizeInt;
 begin Result := Length(FPlaintext); end;
@@ -281,7 +293,8 @@ function TTlsFakeSession.Advance(const AMonotonicMs: Int64): TTlsProgress;
 var I, OldLength, N: SizeInt; B: Byte; PeerClosed: Boolean;
 begin
   Result := Default(TTlsProgress);
-  if FState in [tssFailed, tssClosed] then begin
+  if FState = tssFailed then RaiseFailure;
+  if FState = tssClosed then begin
     Result.State := FState;
     Result.NeedOutput := Length(FOutput) > 0;
     Exit;
@@ -317,6 +330,7 @@ begin
     B := FInput[I];
     if B = $FA then begin
       Fail(tecAlert, 'Fake peer rejected the client certificate');
+      FFailureAlert := 116;
       raise ETlsSessionError.Create(FFailureMessage, tecAlert, '', 116, True);
     end;
     if B = $FF then begin

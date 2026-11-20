@@ -651,6 +651,47 @@ begin
   Context := nil;
 end;
 
+procedure TestPendingPollAlertSurvivesLaterWrite;
+var
+  Raw: TPartialStream;
+  RawSocket, Socket: IHttp2Socket;
+  Context: ITLSContext;
+  Pending: IPendingInput;
+  Payload, Alert: TBytes;
+  GotAlert: Boolean;
+  Failure: string;
+begin
+  Raw := TPartialStream.Create;
+  RawSocket := Raw;
+  Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 0);
+  Socket := TTlsSocket.Create(RawSocket, 'example.test', Context, nil,
+    ['h2'], 1000);
+  SetLength(Alert, 1);
+  Alert[0] := $FA;
+  Raw.Push(Alert);
+  Check(Supports(Socket, IPendingInput, Pending), 'pending-input interface missing');
+  // The poll reads the peer alert and drops its error.  The session stays
+  // failed, and the next write must still report the peer alert.
+  Pending.HasPendingInput;
+  Payload := Bytes('preface');
+  GotAlert := False;
+  Failure := '';
+  try
+    Socket.Write(Payload[0], Length(Payload));
+  except
+    on E: EHttpTlsClientAuthError do
+      GotAlert := E.Alert = 'certificate required';
+    on E: Exception do
+      Failure := E.ClassName + ': ' + E.Message;
+  end;
+  Check(GotAlert, 'write after a dropped peer alert lost the client-certificate alert: ' +
+    Failure);
+  Socket.Close;
+  Socket := nil;
+  RawSocket := nil;
+  Context := nil;
+end;
+
 procedure TestWriteFailureWithoutAlertKeepsOriginalError;
 var
   Raw: TPartialStream;
@@ -853,6 +894,8 @@ begin
   TestBackpressuredWriteAllowsConcurrentRead; Inc(Cases);
   WriteLn('RUN write-failure-auth-alert'); Flush(Output);
   TestWriteFailureRecoversPeerClientAuthAlert; Inc(Cases);
+  WriteLn('RUN pending-poll-alert-write'); Flush(Output);
+  TestPendingPollAlertSurvivesLaterWrite; Inc(Cases);
   WriteLn('RUN write-failure-preserved-deadline'); Flush(Output);
   TestWriteFailureWithoutAlertKeepsOriginalError; Inc(Cases);
   WriteLn('RUN write-failure-busy-reader'); Flush(Output);
