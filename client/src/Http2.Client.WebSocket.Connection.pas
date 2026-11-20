@@ -635,7 +635,7 @@ var
   Reason: string;
   Echo: TBytes;
   Stamp: Int64;
-  Echoed, Local: Boolean;
+  Echoed, Local, Aborted: Boolean;
   By: TCloseInitiator;
 begin
   WsParseClosePayload(AFrame.Payload, Code, Reason);
@@ -643,6 +643,7 @@ begin
   FPeerCode := Code;
   FPeerReason := Reason;
   Echoed := False;
+  Aborted := FAborted;
   Stamp := 0;
   FSendLock.Enter;                    // Close holds it until FLocalClose is set
   try
@@ -665,6 +666,7 @@ begin
         Echoed := True;
       except
       end;
+      if (not Echoed) and (not Aborted) and Supports(FSock, IH2Abortable) then FAborted := False; // HTTP/2 only: the server's Close was read
       FStateLock.Enter;
       try
         FOutputClosed := True;
