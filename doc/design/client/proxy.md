@@ -20,7 +20,7 @@ related:
   - "[errors-redirects](errors-redirects.md)"
   - "[open-questions](open-questions.md)"
   - "[toolchain](../../verification/source/client/toolchain.md)"
-updated: 2026-11-11
+updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/proxy.md at the source commit recorded in the source inventory.
 ---
@@ -357,7 +357,9 @@ A WebSocket ([websocket](websocket.md)) is routed by the same selector. It is ca
 with the URL's `http` or `https` form (`ws` maps to `http`, `wss` to `https`),
 so `http_proxy`, `https_proxy`, `all_proxy` and `no_proxy` apply as for the
 equivalent HTTP request, and the tunnel is a `CONNECT` or SOCKS5 connection
-for `ws` as well.
+for `ws` as well. On the HTTP/2 route, the pool key of the WebSocket is the origin of the
+equivalent `http` or `https` URL with the proxy route key, as for a request. The WebSocket
+shares a pooled connection only with requests that use the same proxy route.
 
 ## Interaction with the transport
 

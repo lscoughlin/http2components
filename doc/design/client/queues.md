@@ -17,7 +17,7 @@ related:
   - "[fpc-runtime](fpc-runtime.md)"
 keywords: queue, spsc, mpsc, mpmc, thread
 scope: every queue in client/src, server/src and common/src
-updated: 2026-11-19
+updated: 2026-11-20
 notes:
   - The audit was made by reading the call sites. The references name the methods and the fields that hold the call sites, not line numbers, because line numbers change with each edit.
   - A queue is classified SPSC only when the call sites prove one producer thread. The consumer side is one thread at a time, either enforced by the queue or proven by the call sites.
@@ -285,6 +285,18 @@ queue with thread roles.
 `TSendCreditWaiterRegistry` (`client/src/Http2.Client.Connection.SendCredit.pas`)
 holds a `TList` of waiters under a lock. It is a set of waiters, not a queue of
 items. The WebSocket client of `client/src` has no queue class of its own.
+
+### Tunnel of a WebSocket over HTTP/2
+
+The tunnel `TLeaseTunnel` (`client/src/Http2.Client.WebSocket.LeaseTunnel.pas`) runs over one
+stream lease of a pooled connection and holds two locks. The send lock of the tunnel is taken
+first, then the pool lock of the connection, which is the lock of the lease. No path takes the
+send lock while it holds the pool lock. A send takes both locks in that order and makes one call
+of the lease under the pool lock. The lease releases the pool lock during its wait for
+flow-control credit, so the pool lock is held once around each call. A reset or a release first
+stops a parked sender, then takes the send lock, so that the sender ends before the tunnel posts
+RST_STREAM or releases the lease. The tunnel posts RST_STREAM only when no parked send has posted
+it. A send that fails in the transport resets the stream.
 
 ## Server queues
 

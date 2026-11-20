@@ -14,7 +14,8 @@ related:
   - "[transport](transport.md)"
   - "[messages](messages.md)"
   - "[open-questions](open-questions.md)"
-updated: 2026-10-13
+  - "[websocket](websocket.md)"
+updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/protocol.md at the source commit recorded in the source inventory.
 ---
@@ -274,6 +275,31 @@ every open stream by the `SETTINGS_INITIAL_WINDOW_SIZE` delta. Returning
 credit on arrival keeps a body larger than the advertised 65535-byte window
 flowing; interop case A.7 (a 100 000-byte response) exercises it.
 
+## Extended CONNECT
+
+A WebSocket over HTTP/2 ([websocket](websocket.md)) uses the extended `CONNECT` method of
+[RFC 8441](https://www.rfc-editor.org/info/rfc8441). The client sends that request only when the
+peer allows the extended `CONNECT`.
+
+- **The setting.** The peer allows it when a SETTINGS frame of the peer carries
+  `SETTINGS_ENABLE_CONNECT_PROTOCOL` (identifier 8) with the value 1 (RFC 8441 section 3). The
+  connection records the value in `TPeerSettingsGate` (`client/src/Http2.Client.Connection.Peer.pas`).
+  After one SETTINGS frame sets the value to 1, a later frame with the value 0 does not clear it.
+- **The wait.** The extended `CONNECT` waits for the first SETTINGS frame of the peer, up to the
+  connect timeout of the WebSocket request (`WithConnectTimeoutMs`, or the client's connect timeout). If the connection is closed when the wait ends, the call raises
+  `EHttpConnectionError`. If the wait ends without a frame that allows the extended `CONNECT`, the
+  call does not use the connection for the WebSocket. The connection stays in the pool for other
+  requests.
+- **The request.** The pseudo-header fields are `:method` (`CONNECT`), `:protocol` (`websocket`),
+  `:scheme`, `:path` and `:authority`. The name `:protocol` is the constant `HeaderProtocol` (see
+  [names](../common/names.md)). The stream stays open and carries the frames of the WebSocket. The
+  request has no body. The field `sec-websocket-version` has the value `13` (RFC 6455).
+  The handshake rules are in `Http2.Client.WebSocket.H2Handshake`.
+- **The answer.** The answer is accepted with the status `200` only, without a `content-length`
+  field and without an extension field. The rule is the one of [websocket](websocket.md) under
+  "Response rule".
+
 ## RFC references
 
+- [RFC 8441](https://www.rfc-editor.org/info/rfc8441), checked 2026-11-20.
 - [RFC 9113](https://www.rfc-editor.org/rfc/rfc9113.html), checked 2026-11-11.

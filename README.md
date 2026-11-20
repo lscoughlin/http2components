@@ -9,7 +9,7 @@ published release.
 | Unit or package | Units | Purpose |
 | --- | ---: | --- |
 | `Http2.Common` / `http2common` | 11 | Shared protocol units and provider-neutral TLS interfaces. |
-| `Http2.Client` / `http2client` | 55 | Client factory, requests, responses, and transport. |
+| `Http2.Client` / `http2client` | 55 | Client factory, requests, responses, transport, and WebSocket over HTTP/1.1 and over HTTP/2 (RFC 8441). |
 | `Http2.Server` / `http2server` | 71 | Server factory, handlers, requests, and responses. |
 | `Http2.OpenSSL` / `http2openssl` | 6 | OpenSSL TLS context and identity provider. |
 | `Http2.TlsLib` / `http2tlslib` | 8 | TlsLib TLS context and identity provider. |

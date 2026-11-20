@@ -61,10 +61,11 @@ The copied PEM field is certificate data; private keys are not part of peer
 metadata. Secret key material is not written to logs or observer records.
 
 A WebSocket over HTTP/2 ([websocket](websocket.md)) presents the client identity in the
-same way. Under `wpmHttp2`, the TLS connection that the WebSocket dials carries the identity
-of the factory, or the identity of the request, and the server handler reads the verified
-certificate of the extended CONNECT request. The integration tests of
-`Http2.Integration.WssH2.Test` show both identities.
+same way as the HTTP/1.1 route. The identity of the request, or else the identity of the
+factory, applies to the TLS connection that carries the WebSocket. A pooled connection is keyed
+by the identity fingerprint, so a pooled HTTP/2 connection serves only the identity that it was
+dialled with. The server handler reads the verified certificate of the extended CONNECT request.
+The integration test `Http2.Integration.WssH2.Test` shows both identities.
 
 The TLS 1.2 and TLS 1.3 sessions do not use session resumption or early data.
 The common session contract exposes no ticket or early-data controls. RFC

@@ -10,7 +10,8 @@
   connection to its origin, with the extended `CONNECT`. The request setting
   `WithProtocolMode` takes `wpmAuto` (the default), `wpmHttp1` or `wpmHttp2`. `wpmHttp2`
   dials HTTP/2 for the WebSocket and raises `EHttpWebSocketError` when the peer does not
-  advertise the extended `CONNECT` or selects no HTTP/2.
+  advertise the extended `CONNECT` or selects no HTTP/2. A `ws` URL uses HTTP/2 only with
+  `WithClearText(ctPriorKnowledge)`.
 - **Behavior change.** Under the default `wpmAuto`, a WebSocket uses a live pooled HTTP/2
   connection to its origin when one exists and advertises the extended `CONNECT`. A normal
   `https` request that ran over HTTP/2 leaves such a connection in the pool. Without one, the

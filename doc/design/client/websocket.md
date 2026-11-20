@@ -62,6 +62,10 @@ begin
   `Http2.Client` declares aliases for `IWebSocket`, `IWebSocketListener`,
   `IWebSocketRequest`, `TWebSocketListener`, `TWebSocketRequest` and `TWsProtocolMode`, so a
   program that names only `Http2.Client` can use the API.
+- The HTTP/2 route uses `Http2.Client.WebSocket.H2Handshake` (the handshake rules),
+  `Http2.Client.WebSocket.H2Socket` (the adapter over a tunnel),
+  `Http2.Client.WebSocket.LeaseTunnel` (the tunnel over a stream lease) and
+  `Http2.Client.WebSocket.Connection.OpenH2` (the opening over a pooled connection).
 
 ## Interfaces
 
@@ -125,6 +129,9 @@ A connection that the caller does not `Abort` ends with exactly one of
 
 ## Opening handshake
 
+The diagram and the text of this section describe the HTTP/1.1 route. The HTTP/2 route
+is described in [WebSocket over HTTP/2](#websocket-over-http2).
+
 ```mermaid
 flowchart TB
   S["Send(IWebSocketRequest)"] --> R["proxy selector on the http/https form of the URL"]
@@ -157,14 +164,14 @@ header lines and up to 4 KiB of the body. Redirects are not followed, and a
 `401` or `407` is reported rather than retried. Bytes the server sends after
 the `101` head, in the same read, belong to the frame stream and are kept.
 
-The connection to the server is made by a dial that speaks HTTP/1.1 only
-(`IHttp1SocketFactory`), unless `wpmAuto` carries the WebSocket on a live pooled
-HTTP/2 connection (see [WebSocket over HTTP/2](#websocket-over-http2)). For `wss`
-the ALPN offer of the dial is `http/1.1` alone, a server
-that selects `h2` is refused, and a server that answers no ALPN is accepted,
-since many WebSocket servers lack ALPN. The fallback and cleartext switches of
-[fallback](fallback.md) do not apply: a `ws://` URL is allowed under the default
-cleartext policy. A socket factory that lacks the dial makes `Send` raise
+On the HTTP/1.1 route, the connection to the server is made by a dial that speaks
+HTTP/1.1 only (`IHttp1SocketFactory`). The HTTP/2 route uses a pooled connection
+instead (see [WebSocket over HTTP/2](#websocket-over-http2)). For `wss` the ALPN
+offer of this dial is `http/1.1` alone, whatever the client fallback setting is. A
+server that selects `h2` is refused, and a server that answers no ALPN is accepted,
+since many WebSocket servers lack ALPN. The HTTP/1.1 route does not use the
+fallback switch of [fallback](fallback.md). A `ws://` URL is allowed under the
+default cleartext policy. A socket factory that lacks the dial makes `Send` raise
 `EHttpWebSocketError`.
 
 ## WebSocket over HTTP/2
@@ -183,7 +190,7 @@ reference copy is `doc/references/rfc8441.txt`.
 | --- | --- |
 | `wpmAuto` | A live connection of the pool that speaks HTTP/2 to the origin and advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL` = 1 carries the WebSocket on a new stream. Without such a connection, the route is the HTTP/1.1 route of the earlier releases: its own dial, with the ALPN offer `http/1.1` alone. Under this mode, a WebSocket never dials an HTTP/2 connection. |
 | `wpmHttp1` | The HTTP/1.1 route only. |
-| `wpmHttp2` | The HTTP/2 route only. The client dials the origin over TLS with the ALPN offer `h2` alone, or over cleartext with prior knowledge. A peer that does not advertise the setting, or that selects no HTTP/2, raises `EHttpWebSocketError`. |
+| `wpmHttp2` | The HTTP/2 route only. The client dials the origin over TLS with its ALPN offer, which is `h2` alone unless `WithHttp1Fallback` is on (then `h2` and `http/1.1`), or over cleartext with prior knowledge. A `ws` URL without prior knowledge raises `EHttpWebSocketError`. A peer that does not advertise the setting, or that selects no HTTP/2 (`http/1.1` included), raises `EHttpWebSocketError`. |
 
 A pooled HTTP/2 connection to an origin exists after an `https` request to that
 origin that ran over HTTP/2. The connection stays in the pool while it is idle,
@@ -200,7 +207,7 @@ flowchart TB
   P -->|"no"| H1
   P -->|"yes, without the setting"| H1
   P -->|"yes, with the setting"| X["extended CONNECT on a new stream"]
-  M -->|"wpmHttp2"| D["dial: ALPN h2 alone, or prior knowledge"]
+  M -->|"wpmHttp2"| D["dial: ALPN of the client, or prior knowledge"]
   D -->|"no setting, or no HTTP/2"| E["EHttpWebSocketError"]
   D -->|"setting"| X
   X --> A{"response status"}
@@ -231,7 +238,7 @@ octets, masked by the client as on the HTTP/1.1 route.
 
 The client accepts the status `200` only. The response is accepted when
 `sec-websocket-protocol` is absent or names one subprotocol that the request
-offered, and when `sec-websocket-extensions` is absent. The field
+offered, and when neither `sec-websocket-extensions` nor `content-length` is present. The field
 `sec-websocket-accept` is ignored, because RFC 8441 has no key exchange. Any other
 status raises `EHttpWebSocketHandshakeError`, with the status, the header lines and
 the first 4 KiB of the body. A refused extended `CONNECT` never falls back to the
@@ -243,19 +250,23 @@ HTTP/1.1 route.
   server's Close frame is echoed, and the client waits for the server's
   END_STREAM. Then the client ends its side and releases the stream.
 - `Abort` sends RST_STREAM with CANCEL and no Close frame.
-- A close timeout sends RST_STREAM with CANCEL, and the listener's `OnClose` gets
-  the code 1006, as on the HTTP/1.1 route.
+- A close timeout gives `OnError` with `EHttpTimeout`, not `OnClose`. The stream is
+  reset with RST_STREAM and CANCEL. The observer records the close code 1006.
 - An END_STREAM of the server without a Close frame gives `OnError`, as a TCP end
   without a Close frame does on the HTTP/1.1 route.
 - A RST_STREAM of the server, or a GOAWAY whose last stream identifier is below the
   identifier of the WebSocket stream, gives `OnError`.
 - A sender that waits for flow-control credit and is then released ends with one
   RST_STREAM with CANCEL.
-- A failed send ends the client's output, and the callbacks go on. The listener gets
-  `OnClose` with the code of the server's Close frame when that frame is read, and
-  `OnError` when the session ends without one. The peer has the close timeout after
-  the failed send to send its Close frame; when the timeout passes, the listener gets
-  `OnError`.
+- On the HTTP/1.1 route, a failed write ends the client's output, and the callbacks go
+  on. The listener gets `OnClose` with the code of the server's Close frame when that
+  frame is read, and `OnError` when the session ends without one. The peer has the
+  close timeout after the failed write to send its Close frame; when the timeout
+  passes, the listener gets `OnError`.
+- On the HTTP/2 route, a send that fails in the transport (for example, a wait for
+  flow-control credit that expires) resets the stream with RST_STREAM and CANCEL. The
+  reader then fails at its next read, and the listener gets one `OnError` without a
+  wait for the close timeout. A Close frame of the server that is not read yet is lost.
 
 ### Back pressure
 
@@ -358,17 +369,21 @@ between the fragments of a data message, as RFC 6455 section 5.4 allows. A
 message sent in fragments must keep one kind: a binary send inside an open
 text message raises `EHttpWebSocketError`.
 
-A write that fails or times out aborts the connection, since a partial frame
-leaves the stream unusable. A send after the output side is closed raises
-`EHttpWebSocketClosedError`.
+A write that fails or times out ends the output: every later send raises
+`EHttpWebSocketClosedError`. The callbacks that follow depend on the route (see
+[Closing](#closing) and [Ending the stream](#ending-the-stream)). On the HTTP/2 route,
+the END_STREAM of the server does not refuse a send. A send fails there only when the
+client's side has ended, the stream is reset or the tunnel is released.
 
-When reads and writes share one TLS state (every `wss` connection, and a
-cleartext connection through an `https://` proxy), the socket is guarded by a
+On the HTTP/1.1 route, when reads and writes share one TLS state (every `wss`
+connection, and a cleartext connection through an `https://` proxy), the socket is
+guarded by a
 lock, because OpenSSL does not allow `SSL_read` and `SSL_write` on one
 connection at the same time. The reader takes the lock only for short polls
 of 25 ms and yields to a waiting sender, so a send waits at most one poll. A
 plain TCP connection needs no lock and polls every 100 ms; the poll is how
-the reader notices `Abort`, the close timeout and the ping interval. The
+the reader notices `Abort`, the close timeout and the ping interval. On the HTTP/2
+route no lock applies, and the reader polls the stream every 100 ms. The
 timers are checked on every pass of the reader, so a server that keeps sending
 cannot keep a close timeout from firing.
 
@@ -391,7 +406,8 @@ the server's close frame arrives. After both frames have been exchanged the
 client waits up to `CloseTimeoutMs` for the server to close TCP, then closes
 it. A server close that arrives first is echoed with the same status code (an
 empty close payload is echoed empty and reported as `1005`). A second `Close`
-does nothing. Status codes `1004`, `1005`, `1006` and `1015`, and codes
+does nothing. When the echo of a server's Close frame cannot be written, the listener
+still gets `OnClose`. Status codes `1004`, `1005`, `1006` and `1015`, and codes
 outside `1000`-`1003`, `1007`-`1011` and `3000`-`4999`, cannot be sent.
 
 ## Routing and pooling
@@ -474,8 +490,8 @@ kind `akWebSocket` (as described in [request-observability](request-observabilit
   refusal's status. On the HTTP/2 route, the observer gets `RouteChosen` with the
   HTTP/2 protocol (`npHttp2Tls` for `wss`, `npHttp2Cleartext` for `ws`) and
   `reused` False, and `HandshakeWritten` once, after the response head was read.
-  The attempt builds a synthetic HTTP/1.1 response with the status and the reason
-  `Switching Protocols`; the method stays `GET`. No TLS details of a `wss` session over
+  The attempt builds a synthetic HTTP/1.1 response with the status (`101` on the
+  HTTP/1.1 route, `200` on the HTTP/2 route) and the reason `Switching Protocols`; the method stays `GET`. No TLS details of a `wss` session over
   HTTP/2 are reported, since the stream has no TLS socket information.
 - The attempt ends once: after the close handshake, on `Abort`, on a failure,
   or (only for a connection that never started) on release. `ClosedBy`,

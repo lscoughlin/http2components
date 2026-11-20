@@ -16,7 +16,7 @@ related:
   - "[mtls](mtls.md)"
   - "[messages](messages.md)"
   - "[open-questions](open-questions.md)"
-updated: 2026-11-11
+updated: 2026-11-20
 notes:
   - The current TLS API selects provider contexts through the common interface.
 ---
@@ -287,12 +287,15 @@ A cancellation token applies to its request. Cancellation of a blocked
 stream does not cancel another stream on the same connection. This rule
 applies to HTTP/2; an HTTP/1.1 connection has one active request at a time.
 
-The second `Send` opens a WebSocket (as described in [websocket](websocket.md)). Under the
-default mode `wpmAuto`, it takes a stream of a live pooled HTTP/2 connection to the origin when
-one exists; otherwise it dials a dedicated HTTP/1.1 connection and runs the upgrade handshake.
-It returns an `IWebSocket` whose listener callbacks run on its own reader thread. A dedicated
-HTTP/1.1 connection is not pooled. A class that implements `IHttpClient` itself has to provide both
-overloads.
+The second `Send` opens a WebSocket (as described in [websocket](websocket.md)). The request
+setting `WithProtocolMode` chooses the route, with the type `TWsProtocolMode`. The default mode
+`wpmAuto` takes a stream of a live pooled HTTP/2 connection to the origin when one exists and
+advertises the extended `CONNECT`; otherwise it runs the HTTP/1.1 route. `wpmHttp1` always runs
+the HTTP/1.1 route. `wpmHttp2` opens over HTTP/2 only and raises `EHttpWebSocketError` when the
+peer does not allow it. On the HTTP/1.1 route, the call dials a dedicated HTTP/1.1 connection and
+runs the upgrade handshake; that connection is not pooled. The call returns an `IWebSocket` whose
+listener callbacks run on its own reader thread. A class that implements `IHttpClient` itself has
+to provide both overloads.
 
 `Close` stops accepting new leases, gracefully closes open connections
 (GOAWAY, as described in [transport](transport.md)), and releases the pool. Outstanding
