@@ -32,7 +32,8 @@ uses
   Http2.Client.Request,
   Http2.Client.Pool,
   Http2.Client.Pool.Types,
-  Http2.Client.SocketFactory.Types, Http2.Client.Config.Security;
+  Http2.Client.SocketFactory.Types, Http2.Client.Config.Security,
+  Http2.Client.WebSocket.Connection.Types;
 
 
 type
@@ -59,6 +60,15 @@ type
     FSecurity: TClientSecurityOptions;
     function SendOnce(const ARequest: THttpRequest;
       const AExchange: IExchangeObserver): IHttpResponse;
+    /// the HTTP/2 opening of a WebSocket (D3); nil when the HTTP/1.1 opening applies
+    function OpenWebSocketOverHttp2(const ARequest: IWebSocketRequest;
+      const ASecure: Boolean; const AProxy: IProxy; const AIdentity: IClientIdentity;
+      const AAttempt: IWebSocketAttempt): IWebSocket;
+    /// the HTTP/1.1 opening of a WebSocket, with the identity of its dial
+    function OpenWebSocketOverHttp1(const ARequest: IWebSocketRequest;
+      const ASecure: Boolean; const AHost: string; const APort: Word;
+      const AProxy: IProxy; const AIdentity: IClientIdentity;
+      const AAttempt: IWebSocketAttempt): IWebSocket;
   public
     constructor Create(const AFactory: IHttp2SocketFactory;
       const AMaxConnectionsPerHost, AMaxTotalConnections,
@@ -97,7 +107,12 @@ implementation
 
 uses
   Http2.Client.Attempt, Http2.Client.Url, Http2.Client.Defaults, Http2.Client.Identity, Http2.Client.SocketFactory, Http2.Client.WebSocket.Connection,
-  Http2.Common.Uri, Http2.Client.Redirect;
+  Http2.Common.Uri, Http2.Client.Redirect, Http2.Client.WebSocket.Connection.OpenH2;
+
+const
+  /// the start of the message that ProtocolForTlsAlpn (Http2.Client.Tls.Types) gives
+  /// when the peer selects no allowed ALPN protocol
+  cAlpnRefusalPrefix = 'peer did not negotiate an allowed TLS ALPN protocol';
 
 function HttpMethodIsIdempotent(const AToken: string): Boolean;
 begin
@@ -381,14 +396,83 @@ begin
   end;
 end;
 
+function THttpClient.OpenWebSocketOverHttp2(const ARequest: IWebSocketRequest;
+  const ASecure: Boolean; const AProxy: IProxy; const AIdentity: IClientIdentity;
+  const AAttempt: IWebSocketAttempt): IWebSocket;
+var
+  Outcome: TTunnelOutcome;
+  Mode: TWsProtocolMode;
+  Why: string;
+begin
+  Result := nil;
+  Mode := ARequest.ProtocolMode;
+  // a ws URL speaks HTTP/2 only with prior knowledge; the h2c Upgrade is never used
+  if (not ASecure) and (FClearTextPolicy <> ctPriorKnowledge) then
+  begin
+    if Mode = wpmHttp2 then
+      raise EHttpWebSocketError.Create(
+        'HTTP/2 for a ws URL needs WithClearText(ctPriorKnowledge)');
+    Exit;
+  end;
+  try
+    Result := OpenWebSocketH2(FPool, ARequest, AProxy, AIdentity, FConnectTimeoutMs,
+      nil, AAttempt, Outcome);
+  except
+    on E: EHttpProtocolError do
+    begin
+      // wpmAuto over TLS: the offer is h2 alone (fallback off), so a peer that
+      // selects http/1.1, or no protocol, fails the ALPN check of the dial with
+      // the message of ProtocolForTlsAlpn. That peer gets the HTTP/1.1 opening.
+      // The check runs before any HTTP/2 request is written.
+      if (Mode = wpmAuto) and ASecure and
+         (Pos(cAlpnRefusalPrefix, E.Message) = 1) then
+      begin
+        Result := nil;
+        Exit;
+      end;
+      raise;
+    end;
+  end;
+  if Result <> nil then
+    Exit;
+  if Mode <> wpmHttp2 then
+    Exit;                              // wpmAuto: the HTTP/1.1 opening follows
+  if Outcome = toNoExtendedConnect then
+    Why := 'the server does not allow the extended CONNECT (RFC 8441)'
+  else
+    Why := 'the connection speaks HTTP/1.1';
+  raise EHttpWebSocketError.Create('HTTP/2 WebSocket refused: ' + Why);
+end;
+
+function THttpClient.OpenWebSocketOverHttp1(const ARequest: IWebSocketRequest;
+  const ASecure: Boolean; const AHost: string; const APort: Word;
+  const AProxy: IProxy; const AIdentity: IClientIdentity;
+  const AAttempt: IWebSocketAttempt): IWebSocket;
+var
+  Dialer: IHttp1SocketFactory;
+  IdFactory: IIdentitySocketFactory;
+begin
+  if not Supports(FFactory, IHttp1SocketFactory, Dialer) then
+    raise EHttpWebSocketError.Create(
+      'the socket factory cannot dial an HTTP/1.1 connection');
+  // the request's own identity wins; else a selector chooses the identity
+  // of this dial, on this thread
+  if ASecure and (AIdentity <> nil) and
+     Supports(FFactory, IIdentitySocketFactory, IdFactory) then
+    Dialer := TIdentityHttp1Dialer.Create(IdFactory, AIdentity)
+  else if ASecure and (FIdentitySelector <> nil) and
+     Supports(FFactory, IIdentitySocketFactory, IdFactory) then
+    Dialer := TIdentityHttp1Dialer.Create(IdFactory,
+      ChooseClientIdentity(FIdentitySelector, AHost, APort));
+  Result := OpenWebSocket(Dialer, ARequest, AProxy, FConnectTimeoutMs, nil, AAttempt);
+end;
+
 function THttpClient.Send(const ARequest: IWebSocketRequest): IWebSocket;
 var
   Secure: Boolean;
   Host, Target, Authority, Mapped: string;
   Port: Word;
   Proxy: IProxy;
-  Dialer: IHttp1SocketFactory;
-  IdFactory: IIdentitySocketFactory;
   ReqId: IClientIdentity;
   Closed: Boolean;
   Tracker: TAttemptTracker;
@@ -420,18 +504,6 @@ begin
     Tracker.StartSocket(ARequest, Host, Port, Secure);
   end;
   try
-    if not Supports(FFactory, IHttp1SocketFactory, Dialer) then
-      raise EHttpWebSocketError.Create(
-        'the socket factory cannot dial an HTTP/1.1 connection');
-    // the request's own identity wins; else a selector chooses the identity
-    // of this dial, on this thread
-    if Secure and (ReqId <> nil) and
-       Supports(FFactory, IIdentitySocketFactory, IdFactory) then
-      Dialer := TIdentityHttp1Dialer.Create(IdFactory, ReqId)
-    else if Secure and (FIdentitySelector <> nil) and
-       Supports(FFactory, IIdentitySocketFactory, IdFactory) then
-      Dialer := TIdentityHttp1Dialer.Create(IdFactory,
-        ChooseClientIdentity(FIdentitySelector, Host, Port));
     // the route is chosen on the equivalent http(s) URL, so http_proxy,
     // https_proxy and no_proxy apply as they do for the same request
     Proxy := nil;
@@ -444,8 +516,12 @@ begin
       Proxy := FProxySelector.SelectProxy(Mapped);
       ValidateProxy(Proxy);
     end;
-    Result := OpenWebSocket(Dialer, ARequest, Proxy, FConnectTimeoutMs, nil,
-      TrackerRef);
+    Result := nil;
+    if ARequest.ProtocolMode <> wpmHttp1 then
+      Result := OpenWebSocketOverHttp2(ARequest, Secure, Proxy, ReqId, TrackerRef);
+    if Result = nil then
+      Result := OpenWebSocketOverHttp1(ARequest, Secure, Host, Port, Proxy, ReqId,
+        TrackerRef);
   except
     on E: Exception do
     begin
