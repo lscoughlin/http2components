@@ -8,9 +8,9 @@ published release.
 
 | Unit or package | Units | Purpose |
 | --- | ---: | --- |
-| `Http2.Common` / `http2common` | 11 | Shared protocol units and provider-neutral TLS interfaces. |
-| `Http2.Client` / `http2client` | 55 | Client factory, requests, responses, transport, and WebSocket over HTTP/1.1 and over HTTP/2 (RFC 8441). |
-| `Http2.Server` / `http2server` | 71 | Server factory, handlers, requests, and responses. |
+| `Http2.Common` / `http2common` | 23 | Shared protocol units and provider-neutral TLS interfaces. |
+| `Http2.Client` / `http2client` | 78 | Client factory, requests, responses, transport, and WebSocket over HTTP/1.1 and over HTTP/2 (RFC 8441). |
+| `Http2.Server` / `http2server` | 87 | Server factory, handlers, requests, and responses. |
 | `Http2.OpenSSL` / `http2openssl` | 6 | OpenSSL TLS context and identity provider. |
 | `Http2.TlsLib` / `http2tlslib` | 8 | TlsLib TLS context and identity provider. |
 | `http2clientreaders` | 1 | Optional JSON and XML readers. |
@@ -51,7 +51,7 @@ server, OpenSSL, and TlsLib in dependency order. `task build:<component>`
 builds one component. `task clean` removes generated output from this
 repository's `bin/` directory. `task --list` shows every task.
 The repository checks are Taskfile tasks. `source:check`, `docs:check`,
-`version:check`, and `packages:check` run 29 simple rules over the file lists.
+`version:check`, and `packages:check` run simple rules over the file lists.
 Each rule is one shell command. Review and the repository guidelines cover the
 other rules.
 Six relative Lazarus package targets are listed in `http2components.lpg`.
@@ -191,11 +191,17 @@ These behaviors have no option:
 ## Verification
 
 The TLS implementation has bounded provider, transport, integration, and
-package isolation results on macOS arm64. This does not establish Linux,
-load, independent-peer, or full conformance results. The client 0.23.0 and
-server 0.29.0 source records describe earlier source revisions. Their test
-counts are not results for this TLS implementation. The merged result and
-remaining validation limits are recorded in the [current verification
+package isolation results on macOS arm64, and a native Linux validation run
+that completed on 2026-11-12, with load stages and documented peer
+limitations. The client 0.23.0 and server 0.29.0 source records describe
+earlier source revisions. Their test counts are not results for this TLS
+implementation.
+
+The WebSocket over HTTP/2 client (RFC 8441) in 0.34.0 has unit and
+integration results from the library server and the library client on macOS
+arm64. It has no Linux run, no load check, and no independent-peer check. No
+test has run on Windows. The merged result and remaining validation limits
+are recorded in the [current verification
 record](doc/verification/current-status.md).
 
 ## License
