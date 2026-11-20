@@ -25,7 +25,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="72">
+    <Files Count="73">
       <Item1>
         <Filename Value="src/Http2.Client.Api.pas" />
         <UnitName Value="Http2.Client.Api" />
@@ -314,6 +314,10 @@
         <Filename Value="src/Http2.Client.WebSocket.H2Socket.pas" />
         <UnitName Value="Http2.Client.WebSocket.H2Socket" />
       </Item72>
+      <Item73>
+        <Filename Value="src/Http2.Client.Stream.BodyView.pas" />
+        <UnitName Value="Http2.Client.Stream.BodyView" />
+      </Item73>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
