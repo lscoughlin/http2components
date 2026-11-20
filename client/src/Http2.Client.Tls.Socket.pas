@@ -737,7 +737,11 @@ begin
     if FTransportEof or (FSession.State = tssClosed) then
       raise EHttpConnectionClosed.Create('TLS transport is closed');
     if FSession.State = tssFailed then
+    begin
+      // the failed session raises the failure it stored, with any peer alert
+      AdvanceSession;
       raise ETlsSessionError.Create('TLS session is not writable', tecProtocol);
+    end;
     N := FSession.WritePlaintext(B, Accepted, ACount - Accepted);
     if (N < 0) or (N > ACount - Accepted) then
       raise EHttpConnectionError.Create('TLS session returned an invalid write count');

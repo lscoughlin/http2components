@@ -79,7 +79,8 @@ type
     property Error: string read FError;
   end;
 
-  TPartialStream = class(TInterfacedObject, IHttp2Socket, IPartialReader)
+  TPartialStream = class(TInterfacedObject, IHttp2Socket, IPartialReader,
+    IPendingInput)
   private
     FInput, FOutput: TBytes;
     FOpen: Boolean;
@@ -107,6 +108,7 @@ type
     function WaitForWriteStart(const ATimeoutMs: Integer): Boolean;
     procedure ReleaseBlockedWrite;
     procedure Push(const ABytes: TBytes);
+    function HasPendingInput: Boolean;
     function Output: TBytes;
     function ReadCount: Integer;
     function WriteCount: Integer;
@@ -276,6 +278,11 @@ begin
   FPool.ConnectionCount;
   InterlockedExchange(FProbe.FPoolLockAvailable, 1);
 end;
+function TPartialStream.HasPendingInput: Boolean;
+begin
+  Result := Length(FInput) > 0;
+end;
+
 procedure TPartialStream.Push(const ABytes: TBytes);
 var OldLength: Integer;
 begin

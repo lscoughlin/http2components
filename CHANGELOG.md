@@ -31,6 +31,11 @@
   and not the connection failure with the TLS alert. The stream now reports the connection
   failure. In 20 runs of the `TMutualTlsRejectTest` suite, 16 runs failed before the fix.
   The defect is in 0.33.0.
+- Fix: a write on a TLS connection that the peer had already failed could raise
+  `EHttpConnectionError` ("TLS session is not writable") instead of `EHttpTlsClientAuthError`.
+  A pending-input check read the peer's client-certificate alert and dropped its error. The
+  session stayed failed, and the next write raised a generic error without the alert. The write
+  now raises the failure that the session stored, with its alert. The defect is in 0.33.0.
 - Fix: a WebSocket whose write failed could end with no `OnClose` and no `OnError`. A failed
   write set the abort flag, which is also the flag of a caller `Abort`, and that flag drops
   the pending messages and the callbacks. A `Close` frame of the peer that was already on
