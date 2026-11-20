@@ -2,7 +2,17 @@
 
 ## 0.34.0 — in development
 
-- Version bump after the 0.33.0 source release. No other change yet.
+- Version bump after the 0.33.0 source release.
+
+### Client
+
+- Fix: a sender that waited for flow-control credit could miss the wake-up sent when the
+  peer ended or reset its stream. The reader thread set the peer flag outside the
+  connection lock. A sender that tested the flag and then registered its wait did not
+  see a wake that came between the two steps, so it waited for its full time limit. The
+  sender now tests the flag again after it registers. In a test of 200 races, 72 senders
+  on a peer end and 63 senders on a peer reset waited for the time limit before the fix.
+  The defect is in 0.33.0.
 
 ## 0.33.0 — 2026-11-19 (source release)
 
