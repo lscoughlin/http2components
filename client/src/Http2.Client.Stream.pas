@@ -260,6 +260,13 @@ type
     property FailCount: Integer read FFailCount;
     property RstReceived: Boolean read FRstReceived;
     property RstCode: THttp2ErrorCode read FRstCode;
+    // read-only views for the WebSocket tunnel: the connection thread sets
+    // PeerDone (END_STREAM or RST_STREAM) and PeerReset (RST_STREAM) without
+    // the lock; read them with the lock of the connection held
+    property PeerDone: LongInt read FPeerDone;
+    property PeerReset: LongInt read FPeerReset;
+    property UploadStopped: Boolean read FUploadStopped;
+    property Failed: Boolean read FFailed;
     property GoAwayLastStreamId: LongWord read FGoAwayLastStreamId;
     property Retryable: Boolean read FRetryable;
     /// True when the owner calls DeliverEnd itself, after releasing its lock

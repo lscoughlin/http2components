@@ -1,0 +1,478 @@
+{**
+---
+license: Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)
+copyright: Copyright 2026 Liam Seamus Coughlin
+keywords: client_test, websocket, tunnel, lease
+notes:
+  - this checks the tunnel over a stream lease with the scripted frame peer of the mock socket tests
+  - the tests use a GET lease: its request ends on the local side, so no test needs an open request stream (story A4 is not merged)
+  - the tests that send DATA on an open request stream wait for story A4 and story C1
+---
+}
+unit Http2.Client.WebSocket.LeaseTunnel.Test;
+
+{$mode delphi}{$H+}
+{$modeswitch advancedrecords}
+{$modeswitch typehelpers}
+{$interfaces com}
+
+interface
+
+uses
+  SysUtils, Classes, SyncObjs, fpcunit, testregistry,
+  Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Errors,
+  Http2.Client.Connection, Http2.Client.Stream, Http2.Client.Stream.Types,
+  Http2.Client.Tunnel.Types, Http2.Client.WebSocket.LeaseTunnel,
+  Http2.Client.MockSocket.Support, Http2.Client.MockSocket.Frames;
+
+type
+  /// calls Reset many times from its own thread
+  TResetWorker = class(TThread)
+  private
+    FTunnel: IH2Tunnel;
+    FFailed: Boolean;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const ATunnel: IH2Tunnel);
+    property Failed: Boolean read FFailed;
+  end;
+
+  TLeaseTunnelTest = class(TTestCase)
+  private
+    FSock: TMockSocket;
+    FConn: TConnection;
+    FServer: TScriptedServer;
+    FAlloc: TStreamIdAllocator;
+    FLock: TCriticalSection;
+    FLease: TStreamLease;
+    FKeep: IConnectionStream;
+    FTunnel: IH2Tunnel;
+    /// open the GET lease, answer 200 without END_STREAM and build the tunnel
+    procedure OpenTunnel;
+    /// read the octets that are ready; returns the ReadSome result
+    function ReadSomeText(out AText: string): Integer;
+    /// poll ReadSome until it returns a count other than -1, or the time passes
+    function WaitForOctets(out AText: string; const ATimeoutMs: Integer): Integer;
+    /// count the RST_STREAM frames that the client wrote, waiting up to ATimeoutMs
+    /// for at least AExpected of them
+    function WaitForRstCount(const AExpected, ATimeoutMs: Integer): Integer;
+    function DataFrameCount: Integer;
+    function RstCodeOfFirstFrame: THttp2ErrorCode;
+  protected
+    procedure SetUp; override;
+    procedure TearDown; override;
+  published
+    procedure TestReadSomeDeliversThePeerData;
+    procedure TestPollWithNoOctetGivesMinusOne;
+    procedure TestPeerEndGivesZeroAndEnds;
+    procedure TestPeerResetIsAbnormal;
+    procedure TestResetPostsOneRstCancel;
+    procedure TestResetTwiceAndReleasePostsOnce;
+    procedure TestResetAfterPeerEndPostsNothing;
+    procedure TestResetAfterReleasePostsOneRst;
+    procedure TestResetFromTwoThreadsPostsOnce;
+    procedure TestEndSendOnHalfClosedSideSendsNothing;
+    procedure TestSendDataRaisesAfterPeerReset;
+    procedure TestSendDataRaisesAfterRelease;
+    procedure TestReadSomeRaisesAfterRelease;
+    procedure TestTunnelNeedsThePoolLock;
+  end;
+
+implementation
+
+const
+  /// the poll of the request: the body-read time of the WebSocket poll
+  cPollMs = 100;
+
+function ToBytes(const AText: string): TBytes;
+var
+  I: Integer;
+begin
+  SetLength(Result, Length(AText));
+  for I := 1 to Length(AText) do
+    Result[I - 1] := Ord(AText[I]);
+end;
+
+{ TResetWorker }
+
+constructor TResetWorker.Create(const ATunnel: IH2Tunnel);
+begin
+  inherited Create(True);
+  FTunnel := ATunnel;
+  FreeOnTerminate := False;
+end;
+
+procedure TResetWorker.Execute;
+var
+  I: Integer;
+begin
+  try
+    for I := 1 to 100 do
+      FTunnel.Reset;
+  except
+    FFailed := True;
+  end;
+end;
+
+{ TLeaseTunnelTest }
+
+procedure TLeaseTunnelTest.SetUp;
+begin
+  inherited SetUp;
+  FSock := TMockSocket.Create;
+  FConn := TConnection.Create(FSock);
+  FServer := TScriptedServer.Create(FSock);
+  FAlloc := TStreamIdAllocator.Create;
+  FLock := TCriticalSection.Create;
+  FConn.Start;
+  AssertTrue('connection opens', FConn.WaitForState(csOpen, 2000));
+  FServer.SendSettings(TConnectionSettings.Defaults);
+end;
+
+procedure TLeaseTunnelTest.TearDown;
+begin
+  FTunnel := nil;
+  FKeep := nil;
+  FLease := nil;
+  FLock.Free;
+  FAlloc.Free;
+  FServer.Free;
+  FConn.Free;
+  inherited TearDown;
+end;
+
+procedure TLeaseTunnelTest.OpenTunnel;
+var
+  Req: TStreamRequest;
+begin
+  Req := TStreamRequest.WithMethod(hmGet, 'api.example:443').WithPath('/')
+    .WithBodyReadTimeout(cPollMs);
+  FLease := TStreamLease.Create(FConn, FAlloc, Req);
+  FKeep := FLease;
+  FLease.WaitLock := FLock;
+  FLease.Start;
+  FServer.SendHeaders(1, '200', False);
+  FLock.Acquire;
+  try
+    AssertTrue('response headers received', FLease.WaitForResponseHeader(2000));
+  finally
+    FLock.Release;
+  end;
+  AssertEquals('status 200', 200, FLease.StatusCode);
+  FTunnel := TLeaseTunnel.Create(FLease, FConn);
+end;
+
+function TLeaseTunnelTest.ReadSomeText(out AText: string): Integer;
+var
+  Buf: array[0..63] of Byte;
+begin
+  Result := FTunnel.ReadSome(Buf, SizeOf(Buf), cPollMs);
+  AText := '';
+  if Result > 0 then
+  begin
+    SetLength(AText, Result);
+    Move(Buf, AText[1], Result);
+  end;
+end;
+
+function TLeaseTunnelTest.WaitForOctets(out AText: string;
+  const ATimeoutMs: Integer): Integer;
+var
+  Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  repeat
+    Result := ReadSomeText(AText);
+    if Result <> -1 then
+      Exit;
+  until GetTickCount64 >= Deadline;
+end;
+
+function TLeaseTunnelTest.WaitForRstCount(const AExpected,
+  ATimeoutMs: Integer): Integer;
+var
+  Frames: TArray<TFrame>;
+  I, Count: Integer;
+  Deadline: QWord;
+begin
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  while True do
+  begin
+    Count := 0;
+    Frames := FSock.OutboundFrames(True);
+    for I := 0 to High(Frames) do
+      if Frames[I].Header.FrameType = ftRstStream then
+        Inc(Count);
+    if (Count >= AExpected) or (GetTickCount64 >= Deadline) then
+      Exit(Count);
+    Sleep(5);
+  end;
+end;
+
+function TLeaseTunnelTest.DataFrameCount: Integer;
+var
+  Frames: TArray<TFrame>;
+  I: Integer;
+begin
+  Result := 0;
+  Frames := FSock.OutboundFrames(True);
+  for I := 0 to High(Frames) do
+    if Frames[I].Header.FrameType = ftData then
+      Inc(Result);
+end;
+
+function TLeaseTunnelTest.RstCodeOfFirstFrame: THttp2ErrorCode;
+var
+  Frames: TArray<TFrame>;
+  I: Integer;
+begin
+  Result := ecNoError;
+  Frames := FSock.OutboundFrames(True);
+  for I := 0 to High(Frames) do
+    if Frames[I].Header.FrameType = ftRstStream then
+    begin
+      ParseRstStream(Frames[I], Result);
+      Exit;
+    end;
+end;
+
+procedure TLeaseTunnelTest.TestReadSomeDeliversThePeerData;
+var
+  Text: string;
+begin
+  OpenTunnel;
+  FSock.EnqueueData(1, ToBytes('hello'), False);
+  AssertEquals('five octets read', 5, WaitForOctets(Text, 2000));
+  AssertEquals('octets in order', 'hello', Text);
+  AssertFalse('the stream is not ended', FTunnel.IsEnded);
+end;
+
+procedure TLeaseTunnelTest.TestPollWithNoOctetGivesMinusOne;
+var
+  Text: string;
+begin
+  OpenTunnel;
+  AssertEquals('a poll with no octet gives -1', -1, ReadSomeText(Text));
+  AssertFalse('the stream is not ended by a poll', FTunnel.IsEnded);
+  AssertFalse('the stream is not abnormal after a poll', FTunnel.EndedAbnormally);
+  // a later DATA frame still reaches the reader
+  FSock.EnqueueData(1, ToBytes('abc'), False);
+  AssertEquals('the later octets arrive', 3, WaitForOctets(Text, 2000));
+  AssertEquals('later octets', 'abc', Text);
+end;
+
+procedure TLeaseTunnelTest.TestPeerEndGivesZeroAndEnds;
+var
+  Text: string;
+begin
+  OpenTunnel;
+  FSock.EnqueueData(1, ToBytes('x'), True);
+  AssertEquals('the last octet', 1, WaitForOctets(Text, 2000));
+  AssertEquals('the octet', 'x', Text);
+  AssertEquals('END_STREAM gives 0', 0, WaitForOctets(Text, 2000));
+  AssertTrue('the stream is ended', FTunnel.IsEnded);
+  AssertFalse('a normal end is not abnormal', FTunnel.EndedAbnormally);
+  AssertEquals('no RST for a normal end', 0, WaitForRstCount(1, 100));
+end;
+
+procedure TLeaseTunnelTest.TestPeerResetIsAbnormal;
+var
+  Text: string;
+  Raised: Boolean;
+begin
+  OpenTunnel;
+  FServer.SendRstStream(1, ecCancel);
+  Raised := False;
+  try
+    WaitForOctets(Text, 2000);
+  except
+    on E: EHttpStreamError do
+      Raised := True;
+  end;
+  AssertTrue('the reader raises the peer reset', Raised);
+  AssertTrue('the stream ended abnormally', FTunnel.EndedAbnormally);
+  AssertTrue('the stream is ended', FTunnel.IsEnded);
+  Raised := False;
+  try
+    FTunnel.SendData(ToBytes('late'));
+  except
+    on E: EHttpConnectionError do
+      Raised := True;
+  end;
+  AssertTrue('a send after the reset raises', Raised);
+  FTunnel.Reset;
+  AssertEquals('no RST for a reset that the peer sent', 0, WaitForRstCount(1, 100));
+end;
+
+procedure TLeaseTunnelTest.TestResetPostsOneRstCancel;
+begin
+  OpenTunnel;
+  AssertFalse('the stream is open', FTunnel.IsEnded);
+  FTunnel.Reset;
+  AssertEquals('one RST_STREAM', 1, WaitForRstCount(1, 2000));
+  AssertTrue('the code is CANCEL', RstCodeOfFirstFrame = ecCancel);
+  AssertTrue('the tunnel is ended', FTunnel.IsEnded);
+  AssertFalse('a local reset is not an abnormal end', FTunnel.EndedAbnormally);
+end;
+
+procedure TLeaseTunnelTest.TestResetTwiceAndReleasePostsOnce;
+begin
+  OpenTunnel;
+  FTunnel.Reset;
+  FTunnel.Reset;
+  FTunnel.Release;
+  FTunnel.Reset;
+  FTunnel.Release;
+  AssertEquals('one RST_STREAM for all calls', 1, WaitForRstCount(1, 2000));
+  AssertEquals('still one after a short wait', 1, WaitForRstCount(2, 100));
+end;
+
+procedure TLeaseTunnelTest.TestResetAfterPeerEndPostsNothing;
+var
+  Text: string;
+begin
+  OpenTunnel;
+  FSock.EnqueueData(1, ToBytes('x'), True);
+  AssertEquals('the octet', 1, WaitForOctets(Text, 2000));
+  AssertEquals('END_STREAM gives 0', 0, WaitForOctets(Text, 2000));
+  FTunnel.Reset;
+  AssertEquals('a closed stream takes no RST', 0, WaitForRstCount(1, 100));
+  AssertTrue('the tunnel is ended', FTunnel.IsEnded);
+end;
+
+procedure TLeaseTunnelTest.TestResetAfterReleasePostsOneRst;
+begin
+  OpenTunnel;
+  FTunnel.Release;
+  AssertEquals('release sends nothing', 0, WaitForRstCount(1, 100));
+  FTunnel.Reset;
+  AssertEquals('reset after release sends one RST', 1, WaitForRstCount(1, 2000));
+  AssertTrue('the tunnel is ended', FTunnel.IsEnded);
+end;
+
+procedure TLeaseTunnelTest.TestResetFromTwoThreadsPostsOnce;
+var
+  A, B: TResetWorker;
+begin
+  OpenTunnel;
+  A := TResetWorker.Create(FTunnel);
+  B := TResetWorker.Create(FTunnel);
+  try
+    A.Start;
+    B.Start;
+    A.WaitFor;
+    B.WaitFor;
+    AssertFalse('no call raised in thread A', A.Failed);
+    AssertFalse('no call raised in thread B', B.Failed);
+    AssertEquals('one RST_STREAM for 200 calls', 1, WaitForRstCount(1, 2000));
+    AssertEquals('still one after a short wait', 1, WaitForRstCount(2, 100));
+  finally
+    A.Free;
+    B.Free;
+  end;
+end;
+
+procedure TLeaseTunnelTest.TestEndSendOnHalfClosedSideSendsNothing;
+var
+  Raised: Boolean;
+begin
+  OpenTunnel;
+  // the request of a GET ends on the local side: EndSend has nothing to send
+  FTunnel.EndSend;
+  FTunnel.EndSend;
+  AssertEquals('no DATA frame from EndSend', 0, DataFrameCount);
+  Raised := False;
+  try
+    FTunnel.SendData(ToBytes('no'));
+  except
+    on E: EHttpConnectionError do
+      Raised := True;
+  end;
+  AssertTrue('SendData after the local side ended raises EHttpConnectionError', Raised);
+  AssertEquals('no DATA frame from the refused send', 0, DataFrameCount);
+end;
+
+procedure TLeaseTunnelTest.TestSendDataRaisesAfterPeerReset;
+var
+  Text: string;
+  Raised: Boolean;
+begin
+  OpenTunnel;
+  FServer.SendRstStream(1, ecCancel);
+  try
+    WaitForOctets(Text, 2000);
+  except
+    // the reader raises the reset: the test checks the state after it
+  end;
+  Raised := False;
+  try
+    FTunnel.SendData(ToBytes('x'));
+  except
+    on E: EHttpConnectionError do
+      Raised := True;
+  end;
+  AssertTrue('SendData after the peer reset raises', Raised);
+  AssertEquals('no DATA after the reset', 0, DataFrameCount);
+end;
+
+procedure TLeaseTunnelTest.TestSendDataRaisesAfterRelease;
+var
+  Raised: Boolean;
+begin
+  OpenTunnel;
+  FTunnel.Release;
+  Raised := False;
+  try
+    FTunnel.SendData(ToBytes('x'));
+  except
+    on E: EHttpConnectionError do
+      Raised := True;
+  end;
+  AssertTrue('SendData after release raises', Raised);
+end;
+
+procedure TLeaseTunnelTest.TestReadSomeRaisesAfterRelease;
+var
+  Text: string;
+  Raised: Boolean;
+begin
+  OpenTunnel;
+  FTunnel.Release;
+  Raised := False;
+  try
+    ReadSomeText(Text);
+  except
+    on E: EHttpConnectionError do
+      Raised := True;
+  end;
+  AssertTrue('ReadSome after release raises', Raised);
+end;
+
+procedure TLeaseTunnelTest.TestTunnelNeedsThePoolLock;
+var
+  Req: TStreamRequest;
+  Lease: TStreamLease;
+  Keep: IConnectionStream;
+  Raised: Boolean;
+  Tunnel: IH2Tunnel;
+begin
+  Req := TStreamRequest.WithMethod(hmGet, 'api.example:443').WithPath('/');
+  Lease := TStreamLease.Create(FConn, FAlloc, Req);
+  Keep := Lease;
+  Raised := False;
+  try
+    Tunnel := TLeaseTunnel.Create(Lease, FConn);
+  except
+    on E: EHttpError do
+      Raised := True;
+  end;
+  AssertTrue('a tunnel without the pool lock is refused', Raised);
+  Tunnel := nil;
+  Keep := nil;
+end;
+
+initialization
+  RegisterTest(TLeaseTunnelTest);
+
+end.
