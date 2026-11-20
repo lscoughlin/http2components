@@ -146,6 +146,8 @@ type
     /// give back all the credit that the hold rule keeps; a streamed message starts, so
     /// its inline octets must not wait for the queue to fall
     procedure FlushHeldCredit;
+    /// true on a channel that returns credit: its window slows the peer
+    function SlowsPeer: Boolean;
     /// the cap of the pipe of a streamed message: InboundPipeBytes on a channel that
     /// returns no credit, and none on a channel whose window bounds the unread octets
     function PipeCap: Integer;
@@ -433,12 +435,18 @@ begin
     FChannel.ReturnCredit(Give);
 end;
 
-function TWsSessionCore.PipeCap: Integer;
+function TWsSessionCore.SlowsPeer: Boolean;
 var
   Flow: IChannelFlow;
 begin
+  // a channel that returns credit slows its peer: the stream window bounds the peer
+  Result := Supports(FChannel, IChannelFlow, Flow) and Flow.ReturnsCredit;
+end;
+
+function TWsSessionCore.PipeCap: Integer;
+begin
   // on a channel that returns credit, the stream window bounds the unread octets
-  if Supports(FChannel, IChannelFlow, Flow) and Flow.ReturnsCredit then
+  if SlowsPeer then
     Result := MaxInt
   else
     Result := FOpts.InboundPipeBytes;

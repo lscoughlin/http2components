@@ -17,7 +17,7 @@ related:
   - "[errors-redirects](errors-redirects.md)"
   - "[server-sent-events](server-sent-events.md)"
   - "[websocket](websocket.md)"
-updated: 2026-10-24
+updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/request-observability.md at the source commit recorded in the source inventory.
 ---
@@ -182,7 +182,7 @@ IHttpClientObserver = interface
   /// before the attempt is sent. May inject headers through A.Headers.
   /// The returned token is passed to every later callback of this attempt.
   function OnAttemptStart(const A: THttpAttempt): IInterface;
-  /// response headers received (status 101 for a WebSocket)
+  /// response headers received (status 101 for a WebSocket on the HTTP/1.1 route, 200 on the HTTP/2 route)
   procedure OnResponseHeaders(const AToken: IInterface;
     const AResponse: IHttpResponse);
   /// a redirect is about to be followed (AToken belongs to the finished hop)
@@ -608,9 +608,11 @@ requested.
   the handshake owns (`sec-websocket-*`, `upgrade`, `connection`, `host`, and
   the framing headers `WithHeader` also refuses) raises `EHttpWebSocketError`.
   An observer that raises there is swallowed like any other.
-- `OnResponseHeaders` fires at the `101`, before the reader thread starts, with
-  the response headers and `Outcome.Subprotocol` set at the end. The request is
-  reported as written once the handshake bytes are out (`RequestSentUs`).
+- `OnResponseHeaders` fires at the `101` on the HTTP/1.1 route and at the `200` on the
+  HTTP/2 route, before the reader thread starts, with the response headers and
+  `Outcome.Subprotocol` set at the end. On the HTTP/1.1 route the request is reported as
+  written once the handshake bytes are out (`RequestSentUs`). On the HTTP/2 route that mark
+  follows the response head, because the request is written and its answer is read in one step.
 - A handshake that fails produces `OnAttemptStart` and `OnAttemptEnd` with the
   error and no `OnResponseHeaders`. A refusal carries the status the server
   answered in `StatusCode` (403, say) and `ClosedBy = ciError`; a dial or
@@ -629,7 +631,7 @@ requested.
 | `Abort` | `ciAbort` | 1006, empty | nil |
 | a failed handshake | `ciError` | 0, empty | the failure |
 | a protocol violation | `ciError` | the code this side closed with | the violation |
-| EOF without a close frame, a failed write, a timeout (close or ping) | `ciError` | 1006, empty | the failure |
+| EOF without a close frame, a failed write that no close frame of the server follows, a timeout (close or ping) | `ciError` | 1006, empty | the failure |
 | a listener callback that raises | `ciError` | 1006, empty | the exception |
 | a connection destroyed with none of the above | `ciNone` | 0, empty | nil (`Abandoned`) |
 

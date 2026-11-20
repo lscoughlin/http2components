@@ -169,13 +169,13 @@ measurement is not a test: it is `examples/observer_overhead.pas`, built by
 
 ## WebSocket tests
 
-`Http2.Client.WebSocket.Test` covers the pure unit: the RFC 6455 section 5.7 frames
+`Http2.Client.WebSocket.Codec.Test` and `Http2.Client.WebSocket.Handshake.Test` cover the pure units: the RFC 6455 section 5.7 frames
 byte for byte, the frame parser fed one byte at a time, in random chunks and
 whole, every protocol-error rule with its close code, the UTF-8 and close-code
 tables, message assembly across fragments, the handshake accept and reject
 matrix, request bytes, and the immutable request values.
 
-`Http2.Client.WebSocket.Connection.Test` runs the client against a scripted loopback
+`Http2.Client.WebSocketClient.Test` runs the client against a scripted loopback
 server on a raw socket that checks the handshake bytes, reads masked client
 frames and sends unmasked server frames: echo, demand, ping answered before
 the callback, both close directions, protocol violations, handshake refusal,
@@ -192,6 +192,14 @@ handshake, so the tests show that `wpmAuto` makes one handshake for an HTTP/1.1 
 mutual-TLS suites (`Http2.Client.MutualTls.*`) check the same route with a server that selects
 `http/1.1`. The observer of a WebSocket on the HTTP/2 route gets the HTTP/2 protocol; the
 TLS details of a `wss` session are not reported.
+
+The HTTP/2 route has these unit tests: `Http2.Client.WebSocket.H2Handshake.Test` (the request
+fields of the extended `CONNECT` and the answer rule), `Http2.Client.WebSocket.H2Socket.Test` (the
+adapter over a tunnel), `Http2.Client.WebSocket.LeaseTunnel.Test` (reads, sends, resets and
+releases of a tunnel over a stream lease), `Http2.Client.WebSocket.OpenH2.Test` and
+`Http2.Client.WebSocket.OpenH2.Close.Test` (the opening over a pooled connection, and the end of
+the session), `Http2.Client.Pool.Tunnel.Test` (the tunnel that the pool hands out) and
+`Http2.Client.Connection.PeerSettings.Test` (the wait for the peer SETTINGS).
 
 The opt-in live gate (`task validate:client:websocket`) starts
 `tools/client/ws_servers.py` and the proxy servers of `proxy_servers.py`,
@@ -322,9 +330,12 @@ The tests cover:
   no open stream within 5 seconds, and the server still has one connection.
 
 The server of these tests sets `QueuedMessages` to 10000 and the message bucket to 1000000
-tokens. The default queue holds 16 messages for the application. A peer that fills the queue
-in a burst is closed with 1008, so the burst tests need the larger queue.
->
+tokens, so the bursts of these tests stay below the count at which the queue holds the peer.
+On HTTP/2, a default server holds the peer past 16 queued messages: the credit of the arriving
+octets waits, and the stream window stops the sender until the handler takes messages. The
+byte budget bounds the queue. On a channel without flow control, a peer that fills the queue
+in a burst is closed with 1008, so a test of such a channel needs the larger queue.
+
 ## Concurrency tests
 
 `Http2.Client.Concurrency.Test` drives many threads calling `Send` against a slow

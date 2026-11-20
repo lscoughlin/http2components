@@ -24,8 +24,9 @@ type
   IHttpClient = interface
     ['{6B1C2D3E-4F50-4A61-9C72-000000000001}']
     function Send(const ARequest: THttpRequest): IHttpResponse; overload;
-    /// open a WebSocket (doc/design/websocket.md); the connection is not
-    /// pooled and outlives Close of this client until it is closed itself
+    /// open a WebSocket (doc/design/client/websocket.md); an HTTP/1.1 WebSocket
+    /// has a connection of its own that outlives Close of this client until it
+    /// is closed itself; an HTTP/2 WebSocket is a stream of a pooled connection
     function Send(const ARequest: IWebSocketRequest): IWebSocket; overload;
     procedure Close;
   end;

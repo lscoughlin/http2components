@@ -12,7 +12,7 @@ status: validated
 up: "[http2client](../../../README.md)"
 updated: 2026-11-04
 validation-results: "bin/validation-results.md"
-harness-log: "doc/verification/harness-run-full.log"
+harness-log: "doc/verification/source/client/harness-run-full.log"
 notes:
   - Imported from http2client/doc/verification/validation.md at the source commit recorded in the source inventory.
   - API and architecture details await final merged-source review.
@@ -166,7 +166,7 @@ connection returns window credit after receiving DATA, so a 100 KB response
 does not stall at the 65535-byte initial window. The logic lives in
 `src/Http2.Client.Connection.pas` (`TrackReceivedData` / `SendWindowUpdate`, batched
 at `cWindowUpdateBatchSize = 32768`) and is documented in
-`doc/design/protocol.md`.
+`doc/design/client/protocol.md`.
 
 ## B. h2-client-test-harness (primary conformance)
 
@@ -328,7 +328,7 @@ Command: `task validate:client:harness` (or `bash tools/client/validate/harness.
 detached because 146 x (~3.1 s reference verifier + ~8 s probe) is ~30 min.
 Positive control `6.5/1`: **pass** (when it does not, every row is scored
 `fail invalid`). Historical results table: `bin/validation-results.md`; raw
-log: `doc/verification/harness-run-full.log`.
+log: `doc/verification/source/client/harness-run-full.log`.
 
 | Verdict | Count |
 |---|---|

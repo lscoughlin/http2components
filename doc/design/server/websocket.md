@@ -35,7 +35,7 @@ invariants:
   - The handler is called on a thread of the streaming pool, one call at a time for a session, in the order of the events, and never on an IO thread.
   - A message that ends inside the inline limit reaches the handler as a reader over memory, and a read never waits. A longer message reaches the handler when it passes the limit, and a bounded pipe carries the later octets.
   - The IO thread never waits for the handler. A push into the pipe never blocks, and the lock of the pipe is a leaf lock.
-  - The credit of the octets of a pipe returns as the handler reads them. The credit of the inline octets and of every frame header returns when they arrive, except that it waits while the queue is half full (the frame headers of a streamed message that is open never wait).
+  - The credit of the octets of a pipe returns as the handler reads them. The credit of the inline octets and of every frame header returns when they arrive, except that it waits while the queue is at least half full (the frame headers of a streamed message that is open never wait).
   - The end of the session aborts every pipe whose message still arrives, before the streaming pool stops.
   - Exactly one of Closed or Failed ends the conversation, unless the application calls Abort.
   - The server never puts the close codes 1005, 1006 or 1015 on the wire.
@@ -237,20 +237,22 @@ rules.
 - On HTTP/2 a slow handler holds back the credit of its own stream only. The stream
   window is not refilled, so the peer stops when the window is full. Other streams and
   the connection window are not affected, because the connection window is credited when
-  a frame arrives.
+  a frame arrives. Once the queue of the session reaches `QueuedMessages`, the credit of
+  the arriving octets waits in the same way, so the window holds the peer after the
+  queue has reached the cap (see [The queue cap](#the-receive-path)).
 - An HTTP/1.1 upgrade and a unix socket have no flow control: `ReturnCredit` does nothing
   and the IO layer never pauses its reads. A slow handler does not slow its peer on such a
   channel. The pipe cap bounds the memory, and a handler that falls behind by more than
   the cap loses its session with 1009. The memory bound of a streamed message is
   `InboundPipeBytes` on these channels and the stream window plus `InlineLimit` on HTTP/2.
   The slowing of the peer exists on HTTP/2 only.
-- The credit that the queue rule holds back (`QueuedMessages` half full) is given back when
+- The credit that the queue rule holds back (`QueuedMessages` at least half full) is given back when
   a message starts to stream, so the inline octets of a streamed message never wait for a
   handler that is busy with an earlier message.
 - The frame headers of a message that is open never wait under the rule of
   `QueuedMessages` (see [The receive path](#the-receive-path)). A message that follows
   the end of a streamed message in the same receive call is not open, and its octets
-  wait while the queue is half full. While the session is open, the credit that waits is
+  wait while the queue is at least half full. While the session is open, the credit that waits is
   given back as the handler takes messages, and the sum of the credit equals the octets
   that arrived. After the session ends (an abort, a protocol error or a lost transport),
   the stream credit that waits is not returned. The HTTP/2 connection window is credited
@@ -260,7 +262,8 @@ rules.
 message bucket, it counts once in `QueuedMessages`, and it charges the server budget
 `MaxWsQueuedBytes` with `InboundPipeBytes`, because its length is not known then. The task
 keeps the same number, so the release is equal. A message in memory charges its length
-when it ends. `wcMessagesIn` counts at the same moment. `wcBytesIn` counts the octets of a
+plus `WsQueuedMessageOverhead` (256 octets) when it ends, so that a queue of messages of
+one octet uses the budget as well. `wcMessagesIn` counts at the same moment. `wcBytesIn` counts the octets of a
 streamed message as they arrive, so a message that ends by an abort, a Close frame, a stall
 or an overflow counts the octets that came before it. A streamed message whose pipe was
 aborted before its handler started (a Close frame between its fragments, for example) is
@@ -511,8 +514,9 @@ message](#the-inbound-message)).
   of a streamed message are credited when the handler reads them, or when the session
   drops them. A message of up to the HTTP/2 window can therefore arrive, and a control
   frame in pieces cannot raise the window above what the server consumed. When the
-  queue of a session is half full, the credit of the octets that the rule credits on
-  arrival waits until the application has taken messages. The headers of a streamed
+  queue of a session is at least half full, the credit of the octets that the rule credits
+  on arrival waits until the application has taken messages. The credit returns when the
+  queue falls below half full. The headers of a streamed
   message that is open do not wait, so a small `QueuedMessages` cannot stall the peer in
   the middle of a message. The octets of a receive call that follow the end of a streamed
   message do wait.
@@ -520,16 +524,29 @@ message](#the-inbound-message)).
   to `Message`, in order, and `Closed` follows the last of them. An abort, a failure of
   a callback and a protocol error drop the messages that still wait. A lost connection
   and a close timeout drop none.
-- **The queue cap.** A session holds at most `QueuedMessages` messages for the
-  application. A peer that sends more, because it ignores the window or because the
-  protocol has no window, is closed with 1008.
+- **The queue cap.** `QueuedMessages` is the count of messages at which the queue of a
+  session starts to hold the credit of the peer. On HTTP/2 the cap does not close the
+  session. A message past the cap is admitted, the credit of its octets and of the octets
+  that follow waits until the application has taken messages, and the stream window
+  stops the peer. The count of queued messages on HTTP/2 is therefore bounded by the
+  window and by the byte budget, not by `QueuedMessages`. A channel without flow control
+  (an HTTP/1.1 upgrade, a unix socket) has no window to hold the peer: a message past
+  the cap closes the session with 1008 and the reason `too many messages wait for the
+  application`. A peer that sends past the window of HTTP/2 is reset with
+  `RST_STREAM` and the error `FLOW_CONTROL_ERROR`, and the session ends. That rule of the
+  HTTP/2 layer governs such a peer, not the queue.
 - **The byte budget.** The octets of the queued messages of all sessions of a server
-  count in one budget, `MaxWsQueuedBytes`. A message in memory counts its length. A
-  streamed message counts `InboundPipeBytes` from its start, because its length is not
-  known then. A message that would pass the budget closes
-  its session with 1008, as a message past `QueuedMessages` does. The session gives
-  back its octets when a message leaves the queue and when the session ends, so the
-  count returns to zero when the sessions have ended.
+  count in one budget, `MaxWsQueuedBytes`. A message in memory charges its length plus
+  `WsQueuedMessageOverhead` (256 octets). A streamed message counts `InboundPipeBytes`
+  from its start, because its length is not known then. A message that would pass the
+  budget closes its session with 1008 and the reason `the queued bytes of the server are
+  full`, on every channel. The session gives back its octets when a message leaves the
+  queue and when the session ends, so the count returns to zero when the sessions have
+  ended. The budget is the memory bound of the queue on HTTP/2.
+- **The cost of the hold.** When a streamed message starts, the held credit returns at
+  once, because the inline octets of that message may be among the held octets. So a
+  session that streams can open its window while the queue is at the cap. The budget
+  still bounds the memory.
 - **The early bytes.** Before the session takes the channel, the octets that arrive
   wait in the channel. When they pass `WsEarlyBytes`, the connection closes at once.
 - **The buckets.** One token bucket counts the control frames that arrive (Ping and
@@ -665,7 +682,8 @@ upgraded connection (as described in [lifecycle](lifecycle.md)).
 - **No flow control.** HTTP/1.1 has no window. A client that sends a burst of
   messages faster than the application takes them fills the queue of the session,
   and the session closes with 1008 when the queue passes `QueuedMessages`. An
-  application that expects bursts sets a larger queue. A client that sends one large
+  application that expects bursts of this kind on HTTP/1.1 sets a larger queue. On
+  HTTP/2 the same burst waits for the window instead (see [The queue cap](#the-receive-path)). A client that sends one large
   message faster than the handler reads it fills the pipe of the message, and the session
   closes with 1009 when the unread octets pass `InboundPipeBytes`. This cap exists on a
   channel that returns no credit only; on HTTP/2 the stream window bounds the pipe.
@@ -676,7 +694,9 @@ upgraded connection (as described in [lifecycle](lifecycle.md)).
 A client opens a WebSocket on one HTTP/2 stream with the extended CONNECT method of
 RFC 8441 (checked on 2026-10-22 at https://www.rfc-editor.org/info/rfc8441). The
 handler code is the same: `AcceptWebSocket(ARequest, AResponse, AHandler)` picks the
-handshake from the response it receives.
+handshake from the response it receives. The library client (`Http2.Client`) opens a
+WebSocket over HTTP/2 with this request, and the integration tests run the library client
+against this server as described in [WebSocket](../client/websocket.md).
 
 - **The setting.** The server sends `SETTINGS_ENABLE_CONNECT_PROTOCOL` (code 8) with the
   value 1 in its first `SETTINGS` frame when the factory ran `WithWebSockets`. Without
@@ -774,7 +794,7 @@ defaults live in `Create`.
 | `MaxMessageSize` | 1048576 | the greatest message that the server receives, in octets, over all fragments; for a message that `SendStream` sends, the greatest chunk, in octets |
 | `MaxFrameSize` | 65536 | the greatest payload of one frame that the server accepts |
 | `MaxFragments` | 1024 | the greatest number of frames of one message |
-| `QueuedMessages` | 16 | the greatest number of messages that wait for the application |
+| `QueuedMessages` | 16 | the count of messages that wait for the application at which the queue closes a session with 1008 on a channel without flow control; on HTTP/2 the count at which the credit of the peer waits and the window holds it |
 | `FrameSize` | 16384 | the payload size of the frames the server sends |
 | `PingIntervalMs` | 30000 | the idle time before a Ping; 0 turns the Ping off |
 | `PongTimeoutMs` | 10000 | the wait for the Pong |

@@ -17,7 +17,7 @@ related:
   - "[fallback](fallback.md)"
   - "[proxy](proxy.md)"
   - "[open-questions](open-questions.md)"
-updated: 2026-11-13
+updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/transport.md at the source commit recorded in the source inventory.
 ---
@@ -595,7 +595,7 @@ than a pooled one. That dial speaks HTTP/1.1 only: for `https` the ALPN offer is
 alone (`IHttp1SocketFactory.DialHttp1`), a server that selects `h2` is refused, and a server
 that answers with no ALPN is accepted. Under `wpmAuto`, a WebSocket on the HTTP/2 route takes a
 stream of a live pooled HTTP/2 connection to the origin, and the pool never dials for it.
-`wpmHttp2` dials with the ALPN offer `h2` alone. The proxy tunnels
+`wpmHttp2` dials with the client's ALPN offer, which is `h2` alone unless `WithHttp1Fallback` is on. The proxy tunnels
 of [proxy](proxy.md) apply unchanged. After the `Upgrade` handshake one reader thread
 owns every read of the socket; sends from other threads are serialised by a
 lock, and on a connection whose reads and writes share one TLS state the

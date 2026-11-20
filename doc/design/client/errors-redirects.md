@@ -17,7 +17,7 @@ related:
   - "[proxy](proxy.md)"
   - "[server-sent-events](server-sent-events.md)"
   - "[open-questions](open-questions.md)"
-updated: 2026-10-09
+updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/errors-redirects.md at the source commit recorded in the source inventory.
 ---
@@ -209,6 +209,15 @@ accept the upgrade (it carries the status, the header lines and the first
 RFC 6455 (it carries the close code). A WebSocket handshake never follows a
 redirect. Failures after the handshake reach the listener's `OnError` instead
 of being raised.
+
+On the HTTP/2 route, a refused extended `CONNECT` raises `EHttpWebSocketHandshakeError`. The
+refusal carries the status and the header lines. A status other than `200` also keeps the first
+4 KiB of the body. A `content-length` field or an extension field refuses the answer too. A
+`wpmHttp2` opening that cannot get HTTP/2 raises `EHttpWebSocketError`. After the
+handshake, the listener gets `OnError` in these cases: a stream reset by the server,
+a stream that ends without a Close frame (`EHttpConnectionError`), and a close timeout
+(`EHttpTimeout`). The close timeout does not give `OnClose`. The observer records the
+close code 1006 for each of them.
 
 A connection-level failure **takes precedence over** a queued stream error:
 if the transport dies while a retryable stream error is pending, the caller

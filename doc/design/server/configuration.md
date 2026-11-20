@@ -126,6 +126,12 @@ socket have no flow control, so a handler that reads slower than the peer sends 
 limit and loses its session with 1009. `Validate` reports an `InboundPipeBytes` below
 `InlineLimit` plus `MaxFrameSize`. A program with more than 128 concurrent streamed
 messages raises `MaxWsQueuedBytes` (see [limits](limits.md)) or lowers `InboundPipeBytes`.
+A message in memory charges its payload plus 256 octets to the same budget, so the budget
+also bounds a queue of small messages.
+
+`QueuedMessages` is not a limit on HTTP/2. On HTTP/2 the messages past that count wait for
+the window, and the budget bounds them. On a channel without flow control, the messages past
+that count close the session with 1008.
 
 ### The Unix socket settings
 
