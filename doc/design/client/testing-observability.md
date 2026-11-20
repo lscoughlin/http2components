@@ -227,6 +227,54 @@ The tests cover:
   HTTP/1.1 Upgrade; `wpmAuto` with a pooled HTTP/2 connection for the same origin opens
   the WebSocket on that connection, and the server counts one connection.
 
+## WebSocket flow and error integration tests
+
+`Http2.Integration.WsH2Flow.Test` runs the library client against the library server over
+h2c, with no mock. Each test starts its own server on a port that the system picks, and
+`TearDown` stops it. Every wait has a limit of 10 seconds and fails with a message. No test
+sleeps for more than 2 seconds. The tests cover:
+
+- the volume of a server message: the server streams 16 MiB with `SendStream` as 256 chunks
+  of 64 KiB, and the client receives every octet in order. The client gets one frame of 16 KiB
+  for each 16 KiB of the message, and one more frame with no octets and the final flag. The
+  writer is asked once per chunk and once more for the end of the body;
+- the back pressure: the client holds its demand at zero. The writer then stops after fewer
+  than 64 of the 256 chunks, its count does not change while the demand stays at zero, and
+  the rest of the message arrives after `Request` calls;
+- the upload: the client sends 8 MiB as 64 binary fragments of 128 KiB, and the server reads
+  one message with the octets in the order of the fragments. The server limits of the test
+  are above the message and above one fragment, because the client writes each fragment as
+  one frame and the default frame limit is 64 KiB;
+- the message limit: a message of 2 MiB in fragments of 32 KiB closes the session with the
+  code 1009 when the total passes the limit of 1 MiB. The handler starts to read the message
+  when the inline limit passes, and its read then fails;
+- the server stop: `Stop` ends an open session, and the listener gets `OnClose` or `OnError`
+  within 10 seconds. The design of the server sends a Close frame with the code 1001 on stop;
+- the reset by the server: a handler that closes with the code 1008 and a reason reaches the
+  client with that code and reason, and the server sees the session end;
+- the abort by the server: a handler that aborts the session sends no Close frame, and the
+  listener gets `OnError`.
+
+The tests prove these limits:
+
+- the back-pressure test fails when the reader ignores the demand: the writer is then asked
+  for every chunk. The existing test `TestSlowReaderGetsBackpressure` in
+  `Http2.Integration.WsStream.Test` fails in the same way;
+- the volume tests prove the exact octet counts, the exact frame counts and the order of the
+  octets. They do not prove a throughput or a memory bound;
+- the tests run on loopback. They do not prove the behaviour on a network with loss or
+  delay;
+- the abort test proves the end of a stream without a Close frame from the server's handler.
+  The tests have no way to drop a TCP connection without a Close frame, so a lost connection
+  at the network level is not covered;
+- the server stop test accepts either callback, because the timing of the stop decides
+  which callback arrives first.
+
+Open defect: the test of the message limit fails at times. When a send of the client fails
+before the Close frame of the server is read, the listener gets neither `OnClose` nor
+`OnError`. The failed send marks the connection as aborted, and the close notification waits
+for demand while that mark is set.
+
 ## Concurrency tests
 
 `Http2.Client.Concurrency.Test` drives many threads calling `Send` against a slow
