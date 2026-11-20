@@ -291,8 +291,8 @@ peer allows the extended `CONNECT`.
   call does not use the connection for the WebSocket. The connection stays in the pool for other
   requests.
 - **The request.** The pseudo-header fields are `:method` (`CONNECT`), `:protocol` (`websocket`),
-  `:scheme`, `:path` and `:authority`. The name `:protocol` is the constant `HeaderProtocol` (see
-  [names](../common/names.md)). The stream stays open and carries the frames of the WebSocket. The
+  `:scheme`, `:path` and `:authority`. The name `:protocol` is the constant `HeaderProtocol`, as listed in
+  [names](../common/names.md). The stream stays open and carries the frames of the WebSocket. The
   request has no body. The field `sec-websocket-version` has the value `13` (RFC 6455).
   The handshake rules are in `Http2.Client.WebSocket.H2Handshake`.
 - **The answer.** The answer is accepted with the status `200` only, without a `content-length`

@@ -137,7 +137,7 @@ design](doc/design/server/unix-socket.md) and the [client
 transport](doc/design/client/transport.md) describe the rules. The examples are
 `examples/server/unix_server.pas` and `examples/client/unix_client.pas`. The
 [Unix socket verification record](doc/verification/unix-sockets-2026-11-12.md)
-states the results and one open client defect.
+states the results.
 
 ## TLS documentation
 

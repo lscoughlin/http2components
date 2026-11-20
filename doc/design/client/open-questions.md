@@ -18,7 +18,7 @@ related:
   - "[fallback](fallback.md)"
   - "[proxy](proxy.md)"
   - "[errors-redirects](errors-redirects.md)"
-updated: 2026-10-24
+updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/open-questions.md at the source commit recorded in the source inventory.
 ---

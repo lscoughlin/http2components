@@ -10,9 +10,9 @@ scope: The external tools, the runs and their results, the comparison with the C
 primary_types: []
 db_tables: []
 related_docs:
-  - doc/verification/toolchain.md
-  - doc/design/protocol.md
-  - doc/design/connection.md
+  - doc/verification/source/server/toolchain.md
+  - doc/design/server/protocol.md
+  - doc/design/server/connection.md
 invariants:
   - Every number in the run table comes from one run that is named.
   - Every gap holds the reason and the condition that closes it.

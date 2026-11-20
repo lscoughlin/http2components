@@ -678,7 +678,7 @@ RFC 8441 (checked on 2026-10-22 at https://www.rfc-editor.org/info/rfc8441). The
 handler code is the same: `AcceptWebSocket(ARequest, AResponse, AHandler)` picks the
 handshake from the response it receives. The library client (`Http2.Client`) opens a
 WebSocket over HTTP/2 with this request, and the integration tests run the library client
-against this server (see [WebSocket](../client/websocket.md)).
+against this server as described in [WebSocket](../client/websocket.md).
 
 - **The setting.** The server sends `SETTINGS_ENABLE_CONNECT_PROTOCOL` (code 8) with the
   value 1 in its first `SETTINGS` frame when the factory ran `WithWebSockets`. Without

@@ -166,7 +166,7 @@ the `101` head, in the same read, belong to the frame stream and are kept.
 
 On the HTTP/1.1 route, the connection to the server is made by a dial that speaks
 HTTP/1.1 only (`IHttp1SocketFactory`). The HTTP/2 route uses a pooled connection
-instead (see [WebSocket over HTTP/2](#websocket-over-http2)). For `wss` the ALPN
+instead, as described in [WebSocket over HTTP/2](#websocket-over-http2). For `wss` the ALPN
 offer of this dial is `http/1.1` alone, whatever the client fallback setting is. A
 server that selects `h2` is refused, and a server that answers no ALPN is accepted,
 since many WebSocket servers lack ALPN. The HTTP/1.1 route does not use the
@@ -264,9 +264,10 @@ HTTP/1.1 route.
   close timeout after the failed write to send its Close frame; when the timeout
   passes, the listener gets `OnError`.
 - On the HTTP/2 route, a send that fails in the transport (for example, a wait for
-  flow-control credit that expires) resets the stream with RST_STREAM and CANCEL. The
-  reader then fails at its next read, and the listener gets one `OnError` without a
-  wait for the close timeout. A Close frame of the server that is not read yet is lost.
+  flow-control credit that expires) resets the stream with RST_STREAM and CANCEL. A Close
+  frame that the reader has already taken from the stream still gives `OnClose`. A Close
+  frame that the reader has not yet read is lost: the reader fails at its next read, and
+  the listener gets one `OnError` without a wait for the close timeout.
 
 ### Back pressure
 
@@ -283,7 +284,9 @@ stream only while its count of open streams is below the lower of `MaxStreamsPer
 WebSocket never causes a dial of an HTTP/2 connection.
 
 WebSockets and ordinary requests share a pooled connection. The stream of a closed
-WebSocket leaves the connection, so a later WebSocket uses the same connection.
+WebSocket leaves the connection, so a later WebSocket uses the same connection. The stream
+stays registered on the connection while the client's side of it is open, even after the
+server's END_STREAM.
 
 The library client and the library server run WebSocket over HTTP/2 against each other
 in the integration tests (`Http2.Integration.WsH2.Test` over h2c, `Http2.Integration.WssH2.Test`
@@ -370,8 +373,8 @@ message sent in fragments must keep one kind: a binary send inside an open
 text message raises `EHttpWebSocketError`.
 
 A write that fails or times out ends the output: every later send raises
-`EHttpWebSocketClosedError`. The callbacks that follow depend on the route (see
-[Closing](#closing) and [Ending the stream](#ending-the-stream)). On the HTTP/2 route,
+`EHttpWebSocketClosedError`. The callbacks that follow depend on the route, as described in
+[Closing](#closing) and [Ending the stream](#ending-the-stream). On the HTTP/2 route,
 the END_STREAM of the server does not refuse a send. A send fails there only when the
 client's side has ended, the stream is reset or the tunnel is released.
 
