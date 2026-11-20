@@ -80,7 +80,7 @@ type
   end;
 
   TPartialStream = class(TInterfacedObject, IHttp2Socket, IPartialReader,
-    IPendingInput)
+    IPendingInput, IReadInterrupt)
   private
     FInput, FOutput: TBytes;
     FOpen: Boolean;
@@ -91,6 +91,7 @@ type
     FReadStarted, FReadRelease: PRTLEvent;
     FWriteStarted, FWriteRelease: PRTLEvent;
     FBlockRead, FReadHasStarted, FHoldRead: Boolean;
+    FRaiseTimeout, FInterrupt: Boolean;
     FBlockWrite, FWriteHasStarted: Boolean;
     FFailNextWrite: Boolean;
     FFailAllWrites: Boolean;
@@ -100,6 +101,11 @@ type
     procedure EnableReadBlocking;
     procedure ReleaseBlockedRead;
     procedure HoldBlockedReadUntilReleased;
+    /// an empty read ends as EHttpTimeout, as a socket read does
+    procedure EnableTimeoutRaise;
+    procedure EnableInterrupt;
+    /// the next empty read ends as EHttpTimeout at once, as a queued frame does
+    procedure InterruptRead;
     procedure EnableTrickleReads(const ADelayMs: Integer);
     function WaitForReadStart(const ATimeoutMs: Integer): Boolean;
     procedure EnableWriteBlocking;
@@ -123,6 +129,19 @@ type
     procedure SetReadTimeoutMs(const AValue: Integer);
     function GetWriteTimeoutMs: Integer;
     procedure SetWriteTimeoutMs(const AValue: Integer);
+  end;
+
+  /// delivers one peer byte after the blocked read has started and a delay
+  TDelayedAlertThread = class(TThread)
+  private
+    FRaw: TPartialStream;
+    FDelayMs: Integer;
+    FAlert: TBytes;
+  protected
+    procedure Execute; override;
+  public
+    constructor Create(const ARaw: TPartialStream; const ADelayMs: Integer;
+      const AAlert: TBytes);
   end;
 
   TContextSpy = class(TInterfacedObject, ITLSContext)
@@ -192,6 +211,39 @@ end;
 procedure TPartialStream.EnableTrickleReads(const ADelayMs: Integer);
 begin
   FTrickleDelayMs := ADelayMs;
+end;
+
+procedure TPartialStream.EnableTimeoutRaise;
+begin
+  FRaiseTimeout := True;
+end;
+
+procedure TPartialStream.EnableInterrupt;
+begin
+end;
+
+procedure TPartialStream.InterruptRead;
+begin
+  FInterrupt := True;
+  if FReadRelease <> nil then RTLEventSetEvent(FReadRelease);
+end;
+
+constructor TDelayedAlertThread.Create(const ARaw: TPartialStream;
+  const ADelayMs: Integer; const AAlert: TBytes);
+begin
+  inherited Create(True);
+  FreeOnTerminate := False;
+  FRaw := ARaw;
+  FDelayMs := ADelayMs;
+  FAlert := AAlert;
+end;
+
+procedure TDelayedAlertThread.Execute;
+begin
+  if not FRaw.WaitForReadStart(1000) then Exit;
+  Sleep(FDelayMs);
+  FRaw.Push(FAlert);
+  FRaw.ReleaseBlockedRead;
 end;
 
 function TPartialStream.WaitForReadStart(const ATimeoutMs: Integer): Boolean;
@@ -326,6 +378,13 @@ begin
       RTLEventWaitFor(FReadRelease, FReadTimeoutMs)
     else
       RTLEventWaitFor(FReadRelease, 5000);
+    if (Length(FInput) = 0) and FOpen and FInterrupt then
+    begin
+      FInterrupt := False;
+      raise EHttpTimeout.Create('read interrupted');
+    end;
+    if (Length(FInput) = 0) and FOpen and FRaiseTimeout then
+      raise EHttpTimeout.Create('read timed out');
   end;
   if (not FOpen) or (Length(FInput) = 0) or (ACount <= 0) then Exit(0);
   N := Length(FInput);

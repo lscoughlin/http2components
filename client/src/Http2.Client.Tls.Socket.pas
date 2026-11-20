@@ -137,6 +137,11 @@ implementation
 uses Http2.Client.Tls.Plain, Http2.Client.Tls.Tunnel, Http2.Client.Proxy,
   mormot.core.os;
 
+const
+  // The span, in ms, in which a peer alert is read after a failed write.  A
+  // peer that stays silent delays the failure by this span at most.
+  cPeerAlertReadMs = 300;
+
 function IsIpLiteral(const AHost: string): Boolean; forward;
 
 procedure RequireClientTlsContext(const AContext: ITLSContext;
@@ -350,7 +355,9 @@ begin
   // a server can send its TLS alert and reset the socket before the preface
   // write completes.  Read until a terminal TLS result or a short absolute
   // deadline so a preceding record fragment cannot hide the alert.  A timeout
-  // or EOF leaves the original write error as the connection failure.
+  // or an interrupt ends one read only; the loop reads again until the
+  // deadline.  EOF or the deadline leaves the original write error as the
+  // connection failure.
   // The caller does not hold the session lock.  The method holds it only to
   // look at or to change the session state, and never across the transport
   // read, so other threads can use the session while the read waits.
@@ -360,7 +367,7 @@ begin
   try
     PreviousTimeout := FTransport.ReadTimeoutMs;
     try
-      Deadline := mormot.core.os.GetTickCount64 + 100;
+      Deadline := mormot.core.os.GetTickCount64 + cPeerAlertReadMs;
       repeat
         NowMs := mormot.core.os.GetTickCount64;
         if NowMs >= Deadline then
@@ -420,6 +427,8 @@ begin
         except
           on E: EHttpTlsClientAuthError do
             raise;
+          on EHttpTimeout do
+            Continue; // the deadline check above ends the loop
           on Exception do
             Break; // keep the transport write error without a TLS auth alert
         end;

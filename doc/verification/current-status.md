@@ -72,7 +72,7 @@ strict passes.
   `lazbuild`.
 - The peer limitations remain: three Squid cases and the `nghttpd` case A.8 are
   skipped.
-- Other open limits of the WebSocket client and of the TLS alert path are in the
+- Other open limits of the WebSocket client are in the
   [Linux validation record](linux-validation-2026-11-20.md).
 
 No release approval or publication is recorded.

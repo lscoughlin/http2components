@@ -2,7 +2,21 @@
 
 ## 0.35.0 — in development
 
-- Version bump after the 0.34.0 source release. No other change yet.
+- Version bump after the 0.34.0 source release.
+
+### Client
+
+- Fix: a TLS client-certificate alert could be lost on an HTTP/2 connection when the write
+  of the connection failed first. The client read the peer alert for at most 100 ms after
+  the failed write, and it ended that read at the first timeout or interrupt. The stream
+  then reported `EHttpConnectionError` and not `EHttpTlsClientAuthError`. The client now
+  reads the peer alert until 300 ms after the failed write, and it reads again after a
+  timeout or an interrupt. A deterministic test of the TLS socket delivers the alert
+  150 ms after the failed write, and again after an interrupt that a queued frame sends
+  before the failed write. Before the fix, both runs raised `EHttpConnectionClosed`
+  with the write error. After the fix, both raise `EHttpTlsClientAuthError` with
+  "certificate required". A silent peer delays a failed write by at most 300 ms, 200 ms
+  more than before. The defect is in 0.34.0.
 
 ## 0.34.0 — 2026-11-20 (source release)
 
