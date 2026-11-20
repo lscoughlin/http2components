@@ -60,8 +60,6 @@ type
       const AUseIdentity: Boolean; const AIdentity: IClientIdentity;
       out AConn: IPooledConnection; out AUpgraded: Boolean;
       out AFirst: IHttpResponse): Boolean;
-    function TryH2cUpgrade(const Sock: IHttp2Socket;
-      const ARequest: TStreamRequest; out AStatusLine: string): Boolean;
   public
     function Acquire(const AOrigin, AHost: string; const APort: Word;
       const ARequest: TStreamRequest; const AHeaderTimeoutMs: Integer;
@@ -84,7 +82,7 @@ implementation
 
 uses
   Http2.Client.Pool.Http1, Http2.Client.Pool.Http2, Http2.Client.Upgrade, Http2.Client.Identity, Http2.Client.Defaults,
-  Http2.Client.WebSocket.LeaseTunnel;
+  Http2.Client.WebSocket.LeaseTunnel, Http2.Client.Pool.H2cUpgrade;
 
 function TConnectionPool.DialFor(const AHost: string; const APort: Word;
   const AScheme: string; const ATimeoutMs: Integer; const AProxy: IProxy;
@@ -186,62 +184,6 @@ begin
   // the client option for the body limit; a request may override it
   Pooled.MaxResponseBytes := FSecurity.MaxResponseBytes;
   Result := Pooled;
-end;
-
-function TConnectionPool.TryH2cUpgrade(const Sock: IHttp2Socket;
-  const ARequest: TStreamRequest; out AStatusLine: string): Boolean;
-var
-  Raw: TBytes;
-  Ofs, N: Integer;
-  Line, Version, Reason: string;
-  Status, Lines: Integer;
-begin
-  // write the Upgrade request and read the response head byte by byte, so a
-  // 101 leaves the HTTP/2 frames that FOLLOW the head untouched in the
-  // socket.  The Upgrade and Connection headers cannot travel through
-  // TStreamRequest.Headers (the shared map forbids connection-specific
-  // fields), so the wire bytes are built here (doc/design/fallback.md
-  // "h2c upgrade procedure").
-  AStatusLine := '';
-  Raw := BuildH2cUpgradeRequest(ARequest);
-  Ofs := 0;
-  while Ofs < Length(Raw) do
-  begin
-    N := Sock.Write(Raw[Ofs], Length(Raw) - Ofs);
-    if N <= 0 then
-      raise EHttpConnectionClosed.Create('h2c upgrade request write failed');
-    Inc(Ofs, N);
-  end;
-  // the probe carries the request, so this is the moment it was written; the
-  // declined and accepted paths report again after the response head was read
-  if ARequest.Exchange <> nil then
-    ARequest.Exchange.RequestWritten(Length(ARequest.Body.Data));
-  if not ReadHeadLineBytewise(Sock, Line) then
-    raise EHttpProtocolError.Create('peer closed during the h2c upgrade',
-      ecProtocolError);
-  ParseStatusLine(Line, Version, Status, Reason);
-  Result := Status = HttpStatusSwitchingProtocols;
-  if not Result then
-  begin
-    AStatusLine := Line;
-    Exit;
-  end;
-  // the 101 head continues with Upgrade/Connection fields and the mandatory
-  // empty line; consume them all before the socket becomes an HTTP/2
-  // transport, else the connection thread frames those bytes as HTTP/2
-  Lines := 0;
-  while True do
-  begin
-    if not ReadHeadLineBytewise(Sock, Line) then
-      raise EHttpProtocolError.Create('truncated 101 response head',
-        ecProtocolError);
-    if Line = '' then
-      Break;
-    Inc(Lines);
-    if Lines > 64 then
-      raise EHttpProtocolError.Create('101 response head is too large',
-        ecProtocolError);
-  end;
 end;
 
 function TConnectionPool.OpenForTxn(const AOrigin, AHost: string;
