@@ -20,6 +20,12 @@ not copied. The compiled probe binaries are also not copied. The source
 `testclient.pas` is retained as an historical probe source; it depends on the
 excluded duplicate unit and is not a merged-tree build target.
 
+The following table names the probe notes. The original purpose of each probe, the recorded commands and the caveats are in that document.
+
+| Document | Subject |
+| --- | --- |
+| [Source probe notes](source-notes.md) | The original purpose of each probe, the recorded commands, and the caveats. |
+
 SHA-256 values below identify the copied source files.
 
 | File | Establishes | SHA-256 |
