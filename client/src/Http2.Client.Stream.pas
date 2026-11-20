@@ -373,6 +373,15 @@ begin
     if (FLocalState = lsHeadersSent) and not LeaseOpensWithHeaders(FRequest) then
       SendBody;
   except
+    // the connection may fail while the first frames are built: the stream
+    // then reports the connection failure (with its TLS alert, if any)
+    // rather than the state error that the closed stream raised
+    if FFailed and FConnectionError then
+    begin
+      Err := MakeStreamError;
+      ReleaseLease;
+      raise Err;
+    end;
     ReleaseLease;
     raise;
   end;
