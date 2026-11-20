@@ -358,7 +358,10 @@ The `SETTINGS`, `empty DATA` and `CONTINUATION` buckets each hold 100 tokens,
 with a refill of 10 tokens a second (`server/src/Http2.Server.Config.pas` and `454-456`). The
 `PING` bucket holds the same values (`server/src/Http2.Server.Config.pas`). Each
 of these kinds is a flood signal with no legitimate high rate, so a small
-bucket is the correct default.
+bucket is the correct default. The `empty DATA` bucket does not count a `DATA`
+frame that has no payload and carries `END_STREAM`. That frame ends its stream,
+and a stream ends once, so a peer cannot repeat it on the same stream. A peer ends
+each WebSocket over HTTP/2 this way, and a body with no octets ends the same way.
 
 The `WINDOW_UPDATE` bucket holds 10000 tokens, with a refill of 4000 tokens
 a second (`server/src/Http2.Server.Config.pas`). The capacity admits a whole

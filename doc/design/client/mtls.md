@@ -19,7 +19,7 @@ related:
   - "[errors-redirects](errors-redirects.md)"
   - "[request-observability](request-observability.md)"
   - "[open-questions](open-questions.md)"
-updated: 2026-11-11
+updated: 2026-11-20
 notes:
   - The current TLS identity contract uses common provider-loaded identities.
 ---
@@ -59,6 +59,12 @@ metadata. No native certificate handle crosses the common API. Invalid
 presented identities fail authentication in both request and require modes.
 The copied PEM field is certificate data; private keys are not part of peer
 metadata. Secret key material is not written to logs or observer records.
+
+A WebSocket over HTTP/2 ([websocket](websocket.md)) presents the client identity in the
+same way. Under `wpmHttp2`, the TLS connection that the WebSocket dials carries the identity
+of the factory, or the identity of the request, and the server handler reads the verified
+certificate of the extended CONNECT request. The integration tests of
+`Http2.Integration.WssH2.Test` show both identities.
 
 The TLS 1.2 and TLS 1.3 sessions do not use session resumption or early data.
 The common session contract exposes no ticket or early-data controls. RFC

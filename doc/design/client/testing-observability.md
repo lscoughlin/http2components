@@ -275,6 +275,61 @@ before the Close frame of the server is read, the listener gets neither `OnClose
 `OnError`. The failed send marks the connection as aborted, and the close notification waits
 for demand while that mark is set.
 
+## WebSocket integration tests over TLS
+
+`Http2.Integration.WssH2.Test` runs the library client against the library server over
+TLS. The server uses the certificate of `localhost` from the test PKI, which the task
+`test:integration` makes. Each test starts its own server on a port that the system picks,
+and `TearDown` stops it. Every wait has a limit of 10 seconds and fails with a message.
+The tests cover:
+
+- an echo over ALPN `h2`: the client opens the WebSocket with `wpmHttp2`, and the server
+  handler sees the extended CONNECT with `:protocol` `websocket`;
+- a verified client certificate on the WebSocket over HTTP/2: the identity of the factory,
+  and the identity of the request, each reach the server handler, which reads the common
+  name `alice` and the request principal `alice`;
+- a 4 MiB binary message, sent and echoed over HTTP/2, against a server whose message and
+  frame limits are raised to 4 MiB;
+- `wpmAuto` over TLS: after an ordinary `https` request over HTTP/2, the WebSocket opens on
+  the pooled connection, and the server accepts one connection in total; with no pooled
+  connection, the WebSocket opens with the HTTP/1.1 Upgrade, and the server accepts one
+  connection in total;
+- `wpmAuto` against a server that offers `h2` alone, because its HTTP/1.1 fallback is off:
+  the TLS handshake fails with `EHttpConnectionError`.
+
+The server has no option that offers `http/1.1` alone. A server offers `h2` and `http/1.1`
+when its fallback is on, which is the default, and `h2` alone when it is off. The mock tests
+described above cover the route of a WebSocket with a peer that selects `http/1.1`.
+
+## Multiplexing integration tests
+
+`Http2.Integration.WsH2Mux.Test` runs the library client against the library server over
+h2c, with no mock. The tests check how several WebSockets and requests share one
+connection, and how the streams of a connection are released. Each test starts its own
+server on a port that the system picks, and `TearDown` stops it. Every wait has a limit of
+10 seconds and fails with a message. The server reports each accepted connection to its
+observer, so a test can count the connections.
+
+The tests cover:
+
+- 20 WebSockets that one client opens to one origin. Each socket sends 100 messages. Each
+  echo has the text that the socket sent, in the order of sending. The server reports one
+  accepted connection and 20 open streams.
+- An ordinary request that runs while a WebSocket is open. The request gets its answer, and
+  the server still reports one connection.
+- Four threads that send 250 messages each through one socket. The server checks each
+  message as a whole. The echoes are the sent messages, each one time, and the messages of
+  one thread keep their order.
+- A close while one thread sends. The sender ends within 10 seconds with
+  `EHttpWebSocketClosedError` and no other exception. The server reads exactly the messages
+  whose send returned.
+- 200 WebSockets that open and close one after another. After each close, the server reports
+  no open stream within 5 seconds, and the server still has one connection.
+
+The server of these tests sets `QueuedMessages` to 10000 and the message bucket to 1000000
+tokens. The default queue holds 16 messages for the application. A peer that fills the queue
+in a burst is closed with 1008, so the burst tests need the larger queue.
+>
 ## Concurrency tests
 
 `Http2.Client.Concurrency.Test` drives many threads calling `Send` against a slow
