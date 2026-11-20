@@ -30,6 +30,10 @@ uses
 //   buffer sizes still apply
 procedure ApplySocketOptions(const ASocket: TNetSocket;
   const AOptions: TSocketOptions; const AUnix: Boolean);
+/// set SO_LINGER to zero for an aborted socket
+// - the peer may have reset the socket, and then the option fails (EINVAL on
+//   macOS); the failure is ignored, so the close and its cleanup still run
+procedure AbortLinger(const ASocket: TNetSocket);
 /// read bytes still queued in the kernel TCP send queue when supported
 // - the result is false on platforms without the Linux TIOCOUTQ query
 function TryGetSocketSendQueue(const ASocket: TNetSocket;
@@ -103,6 +107,16 @@ begin
   end;
 end;
 {$ENDIF}
+
+procedure AbortLinger(const ASocket: TNetSocket);
+begin
+  try
+    ASocket.SetLinger(0);
+  except
+    on ENetSock do
+      ; // the socket keeps its linger value
+  end;
+end;
 
 procedure ApplySocketOptions(const ASocket: TNetSocket;
   const AOptions: TSocketOptions; const AUnix: Boolean);

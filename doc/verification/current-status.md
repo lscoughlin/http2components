@@ -66,7 +66,6 @@ strict passes.
 
 ## Open and not run
 
-- `TDetachLiveTest` fails about 1 run in 20 on Linux. The cause is not found.
 - No test has run on Windows.
 - The task `packages:check` did not run on Linux, because the image has no
   `lazbuild`.

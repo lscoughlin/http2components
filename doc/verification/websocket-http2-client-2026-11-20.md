@@ -108,9 +108,6 @@ Four suites ran 20 times each to find flaky tests.
 | `TPoolDialTest` | 20 | 0 | 6 |
 | `TMutualTlsRejectTest` | 20 | 0 | 11 |
 
-The failure of `TDetachLiveTest` is an open defect. The first open item below
-describes it.
-
 ## Volume results
 
 The tests of the volume prove the exact octet counts, the exact frame counts and
@@ -140,25 +137,19 @@ the [server WebSocket](../design/server/websocket.md) documents the queue, and
 
 ## Open items
 
-1. The test `TDetachLiveTest` fails about 1 run in 20 on Linux. In run 6 of 20
-   the test `TestDetachedStreamIsServedAndStopEndsIt` raised
-   `EArgumentOutOfRangeException` with the message "Argument out of range". The
-   cause is not found. The defect is in the test or in the detach path. On
-   macOS the same test has a second form of the flake: a socket error EINVAL
-   from `SetOptions`.
-2. The rule for a failed write of the WebSocket client is that a failed write
+1. The rule for a failed write of the WebSocket client is that a failed write
    no longer suppresses `OnClose` and `OnError`. The rule changes HTTP/1.1 also.
    No HTTP/1.1 test of the rule exists, because the mock socket has no failure
    switch.
-3. A window that depends on timing remains in `ReadPeerAlertAfterWriteFailure`
+2. A window that depends on timing remains in `ReadPeerAlertAfterWriteFailure`
    on HTTP/2. The function waits at most 100 ms. A TLS client-certificate alert
    can be lost when the write path fails first. No deterministic test exists.
-4. No test has run on Windows.
-5. No test covers a loss of the network connection with no Close frame for the
+3. No test has run on Windows.
+4. No test covers a loss of the network connection with no Close frame for the
    WebSocket client. The repository has no TCP relay helper. The abort tests
    cover the end of a stream without a Close frame from the handler of the
    server.
-6. The tests run on loopback. They do not prove the behavior on a network with
+5. The tests run on loopback. They do not prove the behavior on a network with
    loss or delay.
-7. The tests of the WebSocket over HTTP/2 route of the client use the library
+6. The tests of the WebSocket over HTTP/2 route of the client use the library
    server as the peer. No independent server peer runs this route.

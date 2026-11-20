@@ -4,6 +4,17 @@
 
 - Version bump after the 0.34.0 source release. No other change yet.
 
+### Server
+
+- Fix: a close that aborted a connection could raise an exception and leave the connection
+  in the server. The close set the socket option `SO_LINGER` to zero with no guard. When the
+  peer had already reset the socket, the system call failed with `EINVAL` on macOS, and the
+  exception left the call that started the close: `Stop`, or a write that failed. The
+  connection was not removed. The close now ignores the failed option and removes the
+  connection. Evidence: in 30 runs of `TDetachLiveTest` on macOS arm64 before the fix, 3 runs
+  failed with `ENetSock` ("SetOptions(65535,128)", `EINVAL`) in a test that calls `Stop` after
+  the client closes. The defect is in 0.34.0.
+
 ## 0.34.0 — 2026-11-20 (source release)
 
 - This release is a source release. It has no binary artifacts.

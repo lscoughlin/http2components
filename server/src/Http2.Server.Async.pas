@@ -774,7 +774,7 @@ begin
   // mORMot's Stop closes with the accepted socket's SO_LINGER value. A
   // positive linger can block this handler while queued output has no reader.
   if fSocket <> nil then
-    fSocket.SetLinger(0);
+    AbortLinger(fSocket);
   fOwner.ConnectionRemove(Handle);
 end;
 
