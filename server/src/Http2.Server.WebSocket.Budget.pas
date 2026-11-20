@@ -8,6 +8,8 @@ notes:
     messages and the cap on the open WebSocket sessions.
   - Each check and its change run under one lock, so two threads cannot pass
     the maximum together.
+  - A message in memory charges its payload plus WsQueuedMessageOverhead, so a
+    queue of one-octet messages is bounded by the budget as well.
 ---
 }
 /// The server-wide budget of the WebSocket queues and sessions
@@ -20,6 +22,15 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, SyncObjs;
+
+const
+  /// the octets that a message in memory charges to the budget besides its payload
+  // - the queue entry, the reader and the heap blocks of a queued message cost about this
+  //   much, so a message of one octet still charges the budget for its memory
+  WsQueuedMessageOverhead = 256;
+
+/// the budget charge of a message in memory with APayload octets
+function WsMemoryCharge(const APayload: Int64): Int64;
 
 type
   /// the bytes of the queued WebSocket messages and the open sessions of a server
@@ -53,6 +64,11 @@ type
   end;
 
 implementation
+
+function WsMemoryCharge(const APayload: Int64): Int64;
+begin
+  Result := APayload + WsQueuedMessageOverhead;
+end;
 
 { TWsByteBudget }
 

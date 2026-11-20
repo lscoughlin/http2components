@@ -330,8 +330,11 @@ The tests cover:
   no open stream within 5 seconds, and the server still has one connection.
 
 The server of these tests sets `QueuedMessages` to 10000 and the message bucket to 1000000
-tokens. The default queue holds 16 messages for the application. A peer that fills the queue
-in a burst is closed with 1008, so the burst tests need the larger queue.
+tokens, so the bursts of these tests stay below the count at which the queue holds the peer.
+On HTTP/2, a default server holds the peer past 16 queued messages: the credit of the arriving
+octets waits, and the stream window stops the sender until the handler takes messages. The
+byte budget bounds the queue. On a channel without flow control, a peer that fills the queue
+in a burst is closed with 1008, so a test of such a channel needs the larger queue.
 
 ## Concurrency tests
 

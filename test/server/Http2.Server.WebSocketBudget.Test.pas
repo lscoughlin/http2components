@@ -344,9 +344,10 @@ begin
     H.Gate := Gate;
     Ch := StartSession(Rig, H);
     AssertTrue('the session opens', WaitActivated(Ch));
-    // the first message waits in the handler, and its octets stay in the budget
+    // the first message waits in the handler, and its octets stay in the budget: 3000
+    // octets of payload and 256 octets of overhead of a message in memory
     Ch.Deliver(ClientText(StringOfChar('a', 3000)));
-    AssertTrue('the first message is counted', WaitBytes(Budget, 3000));
+    AssertTrue('the first message is counted', WaitBytes(Budget, 3000 + 256));
     // the second message would pass 4096 octets: the session closes with 1008
     Ch.Deliver(ClientText(StringOfChar('b', 3000)));
     AssertTrue('the session ends', WaitSessions(Budget, 0));
