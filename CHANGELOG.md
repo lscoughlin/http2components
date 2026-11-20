@@ -3,6 +3,7 @@
 ## 0.34.0 — in development
 
 - Version bump after the 0.33.0 source release.
+- **Docs.** Each directory under `doc/` has a `README.md` index. The `doc/README.md` map links each index.
 
 ### Client
 
