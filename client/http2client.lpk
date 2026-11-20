@@ -25,7 +25,7 @@
         </SyntaxOptions>
       </Parsing>
     </CompilerOptions>
-    <Files Count="70">
+    <Files Count="72">
       <Item1>
         <Filename Value="src/Http2.Client.Api.pas" />
         <UnitName Value="Http2.Client.Api" />
@@ -306,6 +306,14 @@
         <Filename Value="src/Http2.Client.Connection.Peer.pas" />
         <UnitName Value="Http2.Client.Connection.Peer" />
       </Item70>
+      <Item71>
+        <Filename Value="src/Http2.Client.Tunnel.Types.pas" />
+        <UnitName Value="Http2.Client.Tunnel.Types" />
+      </Item71>
+      <Item72>
+        <Filename Value="src/Http2.Client.WebSocket.H2Socket.pas" />
+        <UnitName Value="Http2.Client.WebSocket.H2Socket" />
+      </Item72>
     </Files>
     <RequiredPkgs Count="2">
       <Item1>
