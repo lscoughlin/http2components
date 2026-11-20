@@ -1,8 +1,8 @@
 # Changelog
 
-## 0.34.0 — in development
+## 0.34.0 — 2026-11-20 (source release)
 
-- Version bump after the 0.33.0 source release.
+- This release is a source release. It has no binary artifacts.
 - Documentation: the verification records state the results of the full Linux run of
   2026-11-20 in [current-status](doc/verification/current-status.md). The earlier
   verification records and the source records of the client and the server are removed from
