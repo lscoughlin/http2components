@@ -129,10 +129,17 @@ var
   Frame: TFrame;
   State: TLeaseLocalState;
   Fields: THeaderBlock;
+  I: Integer;
 begin
   SendHeaders(ConnectRequest, Frame, State);
   Fields := DecodeBlock(Frame);
   AssertEquals('five pseudo-headers and two regular fields', 7, Length(Fields));
+  // RFC 9113 section 8.3: every pseudo-header precedes every regular field
+  AssertEquals(':protocol follows :authority', ':protocol', Fields[4].Name);
+  for I := 0 to 4 do
+    AssertEquals('pseudo-header first', ':', Copy(Fields[I].Name, 1, 1));
+  for I := 5 to 6 do
+    AssertTrue('regular field after pseudo-headers', Copy(Fields[I].Name, 1, 1) <> ':');
   AssertEquals('method', 'CONNECT', FieldValue(Fields, ':method'));
   AssertEquals('scheme', 'https', FieldValue(Fields, ':scheme'));
   AssertEquals('path', '/chat', FieldValue(Fields, ':path'));
