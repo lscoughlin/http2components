@@ -30,10 +30,20 @@ uses
   Http2.Client.ClientCert,
   Http2.Client.Pool.State,
   Http2.Client.Pool.Types,
-  Http2.Client.SocketFactory.Types;
+  Http2.Client.SocketFactory.Types,
+  Http2.Client.Tunnel.Types,
+  Http2.Client.WebSocket;
 
 
 type
+  /// how an AcquireTunnel call ended
+  TTunnelOutcome = (
+    toTunnel,           // AFields and AStatus hold the 200 answer; the result is the tunnel
+    toRefused,          // the server answered with another status; the result is nil
+    toHttp1,            // the connection speaks HTTP/1.1 (or an h2c Upgrade dial); result nil
+    toNoExtendedConnect // HTTP/2, but the peer did not allow the extended CONNECT; result nil
+  );
+
   TConnectionPool = class(TPoolState)
   private
     function DialFor(const AHost: string; const APort: Word;
@@ -58,12 +68,23 @@ type
       const AToken: ICancellationToken = nil;
       const AProxy: IProxy = nil;
       const ARequestIdentity: IClientIdentity = nil): IHttpResponse;
+    /// acquire a tunnel: an extended CONNECT (RFC 8441) over a pooled connection.
+    /// The pool keys and dials as Acquire does, but it never uses the h2c Upgrade.
+    /// ARequest must keep its stream open (KeepOpen). The result is the tunnel for
+    /// a 200 answer; AOutcome says how the call ended.
+    function AcquireTunnel(const AOrigin, AHost: string;
+      const APort: Word; const ARequest: TStreamRequest;
+      const AHeaderTimeoutMs: Integer; const AProxy: IProxy;
+      const ARequestIdentity: IClientIdentity;
+      out AOutcome: TTunnelOutcome; out AStatus: Integer;
+      out AFields: TArray<TWsHeaderField>; out ARefusalBody: string): IH2Tunnel;
   end;
 
 implementation
 
 uses
-  Http2.Client.Pool.Http1, Http2.Client.Pool.Http2, Http2.Client.Upgrade, Http2.Client.Identity, Http2.Client.Defaults;
+  Http2.Client.Pool.Http1, Http2.Client.Pool.Http2, Http2.Client.Upgrade, Http2.Client.Identity, Http2.Client.Defaults,
+  Http2.Client.WebSocket.LeaseTunnel;
 
 function TConnectionPool.DialFor(const AHost: string; const APort: Word;
   const AScheme: string; const ATimeoutMs: Integer; const AProxy: IProxy;
@@ -673,6 +694,296 @@ begin
         end;
         if Waiting then
           AddPendingLocked(PendingKey, -1);
+      finally
+        FLock.Release;
+      end;
+    end;
+  end;
+end;
+
+function TConnectionPool.AcquireTunnel(const AOrigin, AHost: string;
+  const APort: Word; const ARequest: TStreamRequest;
+  const AHeaderTimeoutMs: Integer; const AProxy: IProxy;
+  const ARequestIdentity: IClientIdentity;
+  out AOutcome: TTunnelOutcome; out AStatus: Integer;
+  out AFields: TArray<TWsHeaderField>; out ARefusalBody: string): IH2Tunnel;
+var
+  Deadline: QWord;
+  Conn: IPooledConnection;
+  Sock: IHttp2Socket;
+  Protocol: TNegotiatedProtocol;
+  Key, BaseKey, ContextKey, Remembered, Fingerprint: string;
+  Selecting, Resolved, NeedSelect, Fixed, Marked, WasMarked: Boolean;
+  Dialing, DialOk, Retry, Acquired, Allowed: Boolean;
+  Late: IPooledConnection;
+  WaitDial: TOriginDial;
+  WaitGen: Cardinal;
+  Identity: IClientIdentity;
+  ContextKeyFactory: ITlsContextPoolKey;
+  H2: TConnection;
+  Lease: TStreamLease;
+  Keep: IConnectionStream;
+begin
+  Result := nil;
+  AOutcome := toHttp1;
+  AStatus := -1;
+  AFields := nil;
+  ARefusalBody := '';
+  if not ARequest.KeepOpen then
+    raise EHttpProtocolError.Create(
+      'a tunnel needs a request that keeps its stream open', ecProtocolError);
+  Marked := False;
+  WaitDial := nil;
+  WaitGen := 0;
+  Deadline := GetTickCount64 + QWord(AHeaderTimeoutMs);
+  // the key rules are those of Acquire: origin, TLS context, route and identity
+  ContextKey := '';
+  if Supports(FFactory, ITlsContextPoolKey, ContextKeyFactory) then
+    ContextKey := ContextKeyFactory.TlsContextPoolKey;
+  BaseKey := AOrigin + ' tls=' + ContextKey + ' protocol=' +
+    IntToStr(Ord(FHttp1Fallback)) + ':' + IntToStr(Ord(FClearTextPolicy));
+  Selecting := (FIdentitySelector <> nil) and (ARequest.Scheme = 'https') and
+    Supports(FFactory, IIdentitySocketFactory);
+  Resolved := False;
+  Identity := nil;
+  Fingerprint := '';
+  Fixed := (ARequestIdentity <> nil) and (ARequest.Scheme = 'https') and
+    Supports(FFactory, IIdentitySocketFactory);
+  if Fixed then
+  begin
+    Selecting := False;
+    Identity := ARequestIdentity;
+    Fingerprint := ARequestIdentity.Leaf.FingerprintSha256;
+  end;
+  try
+    while True do
+    begin
+      Dialing := False;
+      NeedSelect := False;
+      Retry := False;
+      Conn := nil;
+      FLock.Acquire;
+      try
+        // the wait of the last round ends: the checks below decide again
+        if WaitDial <> nil then
+        begin
+          LeaveWait(WaitDial);
+          WaitDial := nil;
+        end;
+        WasMarked := Marked;
+        Key := BaseKey;
+        if Selecting then
+        begin
+          if Resolved then
+            Remembered := Fingerprint
+          else if not FIdentityKeys.TryGetValue(BaseKey, Remembered) then
+            Remembered := '';
+          Key := BaseKey + ' id=' + Remembered;
+        end
+        else if Fixed then
+          Key := BaseKey + ' id=' + Fingerprint;
+        ReapClosed;
+        ReapIdleLocked;
+        Conn := PickEligible(Key);
+        if (Conn = nil) and (DialingForBase(Key) = 0) and
+          CanOpenNew(Key, not (Selecting and not Resolved)) then
+        begin
+          if Selecting and not Resolved then
+          begin
+            // ask the selector outside FLock; a concurrent request that is
+            // already asking leaves the answer to it and waits for its dial
+            if not FSelecting.ContainsKey(BaseKey) then
+            begin
+              NeedSelect := True;
+              FSelecting.Add(BaseKey, True);
+              Marked := True;
+            end;
+          end
+          else
+            Dialing := True;
+        end;
+        // last statement of the section that uses the mark of this round
+        if WasMarked and not Dialing then
+        begin
+          FSelecting.Remove(BaseKey);
+          SignalOrigin(Key);
+          Marked := False;
+        end;
+        if Dialing then
+          ReserveDial(Key)
+        else if (Conn = nil) and not NeedSelect then
+        begin
+          WaitDial := EnterWait(Key, WaitGen);
+          Retry := WaitDial = nil;
+        end;
+      finally
+        FLock.Release;
+      end;
+      if not Dialing then
+        CloseVictims;                  // what ReapIdleLocked took out, outside FLock
+      if Retry then
+      begin
+        ThreadSwitch;
+        Continue;
+      end;
+      if NeedSelect then
+      begin
+        Identity := ChooseClientIdentity(FIdentitySelector, AHost, APort);
+        Fingerprint := '';
+        if Identity <> nil then
+          Fingerprint := Identity.Leaf.FingerprintSha256;
+        Resolved := True;
+        Continue;
+      end;
+
+      if Dialing then
+      begin
+        // the one transport choice: the Upgrade is never used, so an HTTP/1.1
+        // dial stays a plain HTTP/1.1 connection (no h2c probe is written)
+        Late := nil;
+        DialOk := False;
+        Sock := nil;
+        try
+          try
+            CloseVictims;
+            Sock := DialFor(AHost, APort, ARequest.Scheme, FConnectTimeoutMs,
+              AProxy, Selecting or Fixed, Identity, Protocol);
+            case Protocol of
+              npHttp2Tls, npHttp2Cleartext:
+                Conn := StartHttp2(Sock, AOrigin, True);
+              npHttp1Tls, npHttp1Cleartext:
+                Conn := WrapHttp1(Sock, AOrigin);
+            end;
+          except
+            // a failure mid-handshake leaves the socket unusable
+            if (Conn = nil) and (Sock <> nil) then
+              Sock.Close;
+            raise;
+          end;
+          DialOk := True;
+        finally
+          FLock.Acquire;
+          try
+            ReleaseDial(Key, True);
+            if Marked then
+            begin
+              FSelecting.Remove(BaseKey);
+              Marked := False;
+            end;
+            if Conn <> nil then
+              if FClosed then
+                Late := Conn
+              else
+              begin
+                Register(Key, Conn);
+                if DialOk and Selecting then
+                  FIdentityKeys.AddOrSetValue(BaseKey, Fingerprint);
+              end;
+          finally
+            FLock.Release;
+          end;
+          // the pool closed during the dial: the new connection closes
+          if Late <> nil then
+            Late.Drain;
+        end;
+        if Late <> nil then
+          raise EHttpConnectionClosed.Create('client is closed');
+      end;
+
+      if Conn = nil then
+      begin
+        // no connection and no dial: wait for a slot, or for the dial in flight
+        if FClosed then
+          raise EHttpConnectionClosed.Create('client is closed');
+        if GetTickCount64 >= Deadline then
+          raise EHttpTimeout.Create(
+            'timed out waiting for a connection slot ' +
+            '(MaxConnectionsPerHost or MaxTotalConnections reached)');
+        if WaitDial <> nil then
+          WaitDial.WaitSlice(WaitGen, SliceMs(Deadline))
+        else
+          ThreadSwitch;
+        Continue;
+      end;
+
+      // an HTTP/1.1 connection has no extended CONNECT. A cleartext WebSocket
+      // speaks HTTP/1.1 unless the policy is prior knowledge (D3), so an HTTP/2
+      // connection that an Upgrade left on this key is not used either
+      if (Conn.Conn = nil) or ((ARequest.Scheme = 'http') and
+        (FClearTextPolicy <> ctPriorKnowledge)) then
+      begin
+        AOutcome := toHttp1;
+        Exit;
+      end;
+
+      // the answer of the peer's SETTINGS is read outside FLock
+      H2 := Conn.Conn;
+      Allowed := H2.WaitForPeerSettings(AHeaderTimeoutMs) and
+        H2.PeerAllowsExtendedConnect;
+      if not Allowed then
+      begin
+        if H2.State = csClosed then
+          raise EHttpConnectionError.Create(
+            'the connection closed before its SETTINGS');
+        // the connection stays in the pool: other requests still use it
+        AOutcome := toNoExtendedConnect;
+        Exit;
+      end;
+
+      Lease := (Conn as THttpConnection).AcquireTunnelLease(ARequest,
+        AHeaderTimeoutMs, Acquired, Keep, AStatus, AFields);
+      if not Acquired then
+      begin
+        // the connection filled up or is closing: wait for a slot and go round
+        if GetTickCount64 >= Deadline then
+          raise EHttpTimeout.Create(
+            'timed out waiting for a connection slot ' +
+            '(MaxConnectionsPerHost or MaxTotalConnections reached)');
+        FLock.Acquire;
+        try
+          WaitDial := EnterWait(Key, WaitGen);
+        finally
+          FLock.Release;
+        end;
+        if WaitDial <> nil then
+          WaitDial.WaitSlice(WaitGen, SliceMs(Deadline))
+        else
+          ThreadSwitch;
+        Continue;
+      end;
+      FLock.Acquire;
+      try
+        MarkUsed(Conn);
+      finally
+        FLock.Release;
+      end;
+      if AStatus = HttpStatusOk then
+      begin
+        Result := TPooledTunnel.Create(Conn,
+          TLeaseTunnel.Create(Lease, H2));
+        AOutcome := toTunnel;
+      end
+      else
+      begin
+        ARefusalBody := (Conn as THttpConnection).ReadTunnelRefusal(Lease,
+          AHeaderTimeoutMs);
+        AOutcome := toRefused;
+      end;
+      Exit;
+    end;
+  finally
+    // the same cleanup as Acquire: a mark or a wait this call still holds
+    if Marked or (WaitDial <> nil) then
+    begin
+      FLock.Acquire;
+      try
+        if WaitDial <> nil then
+          LeaveWait(WaitDial);
+        if Marked then
+        begin
+          FSelecting.Remove(BaseKey);
+          SignalOrigin(BaseKey);
+        end;
       finally
         FLock.Release;
       end;

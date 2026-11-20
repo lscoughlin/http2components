@@ -27,10 +27,32 @@ uses
   Http2.Client.Messages,
   Http2.Client.RequestObserver,
   Http2.Client.Pool.Types,
-  Http2.Client.Defaults;
+  Http2.Client.Defaults,
+  Http2.Client.WebSocket,
+  Http2.Client.Tunnel.Types;
 
 
 type
+  /// a tunnel that keeps its pooled connection alive. The lease tunnel holds the
+  /// pool lock and the connection only as weak references, so this wrapper holds
+  /// the pooled entry; a release after the end lets a drained connection close
+  TPooledTunnel = class(TInterfacedObject, IH2Tunnel)
+  private
+    FPooled: IPooledConnection;
+    FInner: IH2Tunnel;
+  public
+    constructor Create(const APooled: IPooledConnection;
+      const AInner: IH2Tunnel);
+    destructor Destroy; override;
+    procedure SendData(const AData: TBytes);
+    procedure EndSend;
+    function ReadSome(var ABuffer; ACount: Integer; ATimeoutMs: Integer): Integer;
+    procedure Reset;
+    function IsEnded: Boolean;
+    function EndedAbnormally: Boolean;
+    procedure Release;
+  end;
+
   THttpConnection = class(TInterfacedObject, IPooledConnection)
   private
     FConn: TConnection;
@@ -64,6 +86,18 @@ type
     /// is not the response; the response arrives on stream 1 (RFC 7540 s 3.2)
     function AcquireUpgraded(const ARequest: TStreamRequest;
       const ATimeoutMs: Integer): IHttpResponse;
+    /// start an extended CONNECT lease and wait for the response head. The
+    /// lease is not wrapped: a tunnel is not a response body. AAcquired is
+    /// False when the connection takes no lease. AKeep holds the lease alive
+    /// and the result is the same lease (nil when AAcquired is False).
+    function AcquireTunnelLease(const ARequest: TStreamRequest;
+      const ATimeoutMs: Integer; out AAcquired: Boolean;
+      out AKeep: IConnectionStream; out AStatus: Integer;
+      out AFields: TArray<TWsHeaderField>): TStreamLease;
+    /// read the first 4 KiB of the body of a refused tunnel answer, then end
+    /// the lease (RST_STREAM CANCEL when the peer did not end the stream)
+    function ReadTunnelRefusal(const ALease: TStreamLease;
+      const ATimeoutMs: Integer): string;
     function Closed: Boolean;
     procedure Drain;
     procedure ReleaseIfIdle;
@@ -421,6 +455,177 @@ begin
   Result := WrapDecodingResponse(Result,
     ARequest.Headers.Contains(HeaderAcceptEncoding),
     FConn.Security.MaxDecodedResponseBytes, FConn.Security.MaxDecodeRatio);
+end;
+
+const
+  /// the most octets of a refused tunnel answer that the pool keeps
+  cTunnelRefusalBodyMax = 4096;
+
+{ TPooledTunnel }
+
+constructor TPooledTunnel.Create(const APooled: IPooledConnection;
+  const AInner: IH2Tunnel);
+begin
+  inherited Create;
+  FPooled := APooled;
+  FInner := AInner;
+end;
+
+destructor TPooledTunnel.Destroy;
+begin
+  // the inner tunnel goes first: its release needs the pooled lock, which the
+  // pooled entry still keeps alive
+  FInner := nil;
+  if FPooled <> nil then
+    FPooled.ReleaseIfIdle;
+  inherited Destroy;
+end;
+
+procedure TPooledTunnel.SendData(const AData: TBytes);
+begin
+  FInner.SendData(AData);
+end;
+
+procedure TPooledTunnel.EndSend;
+begin
+  FInner.EndSend;
+end;
+
+function TPooledTunnel.ReadSome(var ABuffer; ACount: Integer;
+  ATimeoutMs: Integer): Integer;
+begin
+  Result := FInner.ReadSome(ABuffer, ACount, ATimeoutMs);
+end;
+
+procedure TPooledTunnel.Reset;
+begin
+  FInner.Reset;
+  FPooled.ReleaseIfIdle;
+end;
+
+function TPooledTunnel.IsEnded: Boolean;
+begin
+  Result := FInner.IsEnded;
+end;
+
+function TPooledTunnel.EndedAbnormally: Boolean;
+begin
+  Result := FInner.EndedAbnormally;
+end;
+
+procedure TPooledTunnel.Release;
+begin
+  FInner.Release;
+  FPooled.ReleaseIfIdle;
+end;
+
+/// the response fields of a tunnel answer, one entry per value
+function TunnelFields(const AHeaders: IHttpHeaders): TArray<TWsHeaderField>;
+var
+  FieldNames, Values: TArray<string>;
+  I, J, N: Integer;
+begin
+  Result := nil;
+  N := 0;
+  FieldNames := AHeaders.Names;
+  for I := 0 to High(FieldNames) do
+  begin
+    Values := AHeaders.GetValues(FieldNames[I]);
+    for J := 0 to High(Values) do
+    begin
+      SetLength(Result, N + 1);
+      Result[N].Name := FieldNames[I];
+      Result[N].Value := Values[J];
+      Inc(N);
+    end;
+  end;
+end;
+
+function THttpConnection.AcquireTunnelLease(const ARequest: TStreamRequest;
+  const ATimeoutMs: Integer; out AAcquired: Boolean;
+  out AKeep: IConnectionStream; out AStatus: Integer;
+  out AFields: TArray<TWsHeaderField>): TStreamLease;
+var
+  Lease: TStreamLease;
+begin
+  AAcquired := False;
+  AKeep := nil;
+  AStatus := -1;
+  AFields := nil;
+  Result := nil;
+  // the pool lock is held once, around the start and the header wait (the
+  // same as AcquireCancellable); the wait releases it while it sleeps
+  FLock.Acquire;
+  try
+    if FClosing or (not Eligible) then
+      Exit;
+    Lease := TStreamLease.Create(FConn, FAllocator, ARequest, FEncoder,
+      FDecoder);
+    AKeep := Lease;
+    Lease.WaitLock := FLock;
+    Lease.TimeoutMs := ATimeoutMs;
+    Lease.Start;
+    AAcquired := True;
+    if not Lease.WaitForResponseHeader(ATimeoutMs) then
+    begin
+      // a timed out stream is RESET, never orphaned (mirrors AcquireCancellable)
+      FConn.PostFrame(BuildRstStreamFrame(Lease.StreamId, ecCancel));
+      Lease.ReleaseLease;
+      raise EHttpTimeout.Create('timed out waiting for response headers');
+    end;
+    AStatus := Lease.StatusCode;
+    AFields := TunnelFields(Lease.ResponseHeaders);
+    Result := Lease;
+  finally
+    FLock.Release;
+  end;
+end;
+
+function THttpConnection.ReadTunnelRefusal(const ALease: TStreamLease;
+  const ATimeoutMs: Integer): string;
+var
+  Buf: TBytes;
+  Total, Got: Integer;
+  Deadline: QWord;
+begin
+  SetLength(Buf, cTunnelRefusalBodyMax);
+  Total := 0;
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  FLock.Acquire;
+  try
+    try
+      // a poll that finds no octet is not the end: the loop polls until the deadline
+      while (Total < Length(Buf)) and (GetTickCount64 < Deadline) do
+      begin
+        Got := -1;
+        try
+          Got := ALease.ReadBody(Buf[Total], Length(Buf) - Total);
+        except
+          on EHttpTimeout do
+            Got := -1;
+        end;
+        if Got = 0 then
+          Break;
+        if Got > 0 then
+          Inc(Total, Got);
+      end;
+    except
+      // best effort: the refusal status is the answer, its body is not
+      on EHttpError do
+      begin
+      end;
+    end;
+    // the request never sent END_STREAM (KeepOpen), so the stream is closed
+    // with RST_STREAM unless the peer reset it or the connection failed it
+    if not (ALease.RstReceived or ALease.Failed) then
+      FConn.PostFrame(BuildRstStreamFrame(ALease.StreamId, ecCancel));
+    ALease.ReleaseLease;
+  finally
+    FLock.Release;
+  end;
+  Result := '';
+  if Total > 0 then
+    SetString(Result, PAnsiChar(@Buf[0]), Total);
 end;
 
 { TSingleReadSocket }

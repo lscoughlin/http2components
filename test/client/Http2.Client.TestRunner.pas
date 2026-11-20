@@ -69,6 +69,7 @@ uses
   Http2.Client.SocketLock.Test,
   Http2.Client.WebSocket.H2Socket.Test,
   Http2.Client.SendCredit.Wakeup.Test,
-  Http2.Client.WebSocket.LeaseTunnel.Test;
+  Http2.Client.WebSocket.LeaseTunnel.Test,
+  Http2.Client.Pool.Tunnel.Test;
 
 end.
