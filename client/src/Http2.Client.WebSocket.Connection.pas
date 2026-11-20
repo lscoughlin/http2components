@@ -67,7 +67,8 @@ type
     FDemand: Int64;
     FInputClosed: Boolean;
     FOutputClosed: Boolean;
-    FAborted: Boolean;
+    FAborted: Boolean;          // the caller aborted, or a callback or the teardown ended the session
+    FWriteFailTick: QWord;      // NowMs of the first failed write; 0 while every write succeeded
     FSockClosed: Boolean;
     FTerminal: Boolean;
     FSendKind: Integer;         // 0 none, 1 text open, 2 binary open
@@ -275,7 +276,7 @@ procedure TWebSocketConnection.WriteFrame(const AOpcode: Byte;
 var
   Wire: TBytes;
 begin
-  if FSockClosed or FAborted then
+  if FSockClosed or FAborted or (FWriteFailTick <> 0) then
     raise EHttpWebSocketClosedError.Create('the WebSocket is closed');
   Wire := WsEncodeFrame(AOpcode, AFin, APayload, True,
     WsMaskKeyFromCardinal(FMask()));
@@ -285,7 +286,9 @@ begin
     on E: Exception do
     begin
       FFailText := E.Message;
-      FAborted := True;
+      // a failed write does not end the callbacks: the peer's Close frame may still come
+      if FWriteFailTick = 0 then
+        FWriteFailTick := NowMs;
       FDemandEvent.SetEvent;
       raise;
     end;
@@ -607,7 +610,7 @@ var
   Reason: string;
   Echo: TBytes;
   Stamp: Int64;
-  Echoed, Local, Aborted: Boolean;
+  Echoed, Local: Boolean;
   By: TCloseInitiator;
 begin
   WsParseClosePayload(AFrame.Payload, Code, Reason);
@@ -615,7 +618,6 @@ begin
   FPeerCode := Code;
   FPeerReason := Reason;
   Echoed := False;
-  Aborted := FAborted;
   Stamp := 0;
   FSendLock.Enter;                    // Close holds it until FLocalClose is set
   try
@@ -638,7 +640,6 @@ begin
         Echoed := True;
       except
       end;
-      if (not Echoed) and (not Aborted) and Supports(FSock, IH2Abortable) then FAborted := False; // HTTP/2 only: the server's Close was read
       FStateLock.Enter;
       try
         FOutputClosed := True;
@@ -813,6 +814,13 @@ begin
       True);
     Exit(False);
   end;
+  // after a failed write the peer has the close timeout to send its Close frame
+  if (FWriteFailTick <> 0) and (not FInputClosed) and (not FTerminal) and
+     (Now_ - FWriteFailTick > QWord(FRequest.CloseTimeoutMs)) then
+  begin
+    Terminal(EHttpConnectionError.Create(FFailText), True);
+    Exit(False);
+  end;
   if FRequest.PingIntervalMs > 0 then
   begin
     Interval := QWord(FRequest.PingIntervalMs);
@@ -840,7 +848,8 @@ var
   Ab: IH2Abortable;
 begin
   // an abnormal end resets an HTTP/2 stream; before the send lock, so a sender parked for credit wakes first
-  if FAborted and (not FSockClosed) and Supports(FSock, IH2Abortable, Ab) then
+  if (FAborted or (FWriteFailTick <> 0)) and (not FSockClosed) and
+     Supports(FSock, IH2Abortable, Ab) then
     Ab.Abort;
   // waits out a send in flight and sets FSockClosed, so that later sends end
   // at once; the close itself runs after the send lock is released, because

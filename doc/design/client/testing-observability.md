@@ -270,11 +270,6 @@ The tests prove these limits:
 - the server stop test accepts either callback, because the timing of the stop decides
   which callback arrives first.
 
-Open defect: the test of the message limit fails at times. When a send of the client fails
-before the Close frame of the server is read, the listener gets neither `OnClose` nor
-`OnError`. The failed send marks the connection as aborted, and the close notification waits
-for demand while that mark is set.
-
 ## WebSocket integration tests over TLS
 
 `Http2.Integration.WssH2.Test` runs the library client against the library server over
