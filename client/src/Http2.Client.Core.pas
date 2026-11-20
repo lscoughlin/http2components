@@ -109,11 +109,6 @@ uses
   Http2.Client.Attempt, Http2.Client.Url, Http2.Client.Defaults, Http2.Client.Identity, Http2.Client.SocketFactory, Http2.Client.WebSocket.Connection,
   Http2.Common.Uri, Http2.Client.Redirect, Http2.Client.WebSocket.Connection.OpenH2;
 
-const
-  /// the start of the message that ProtocolForTlsAlpn (Http2.Client.Tls.Types) gives
-  /// when the peer selects no allowed ALPN protocol
-  cAlpnRefusalPrefix = 'peer did not negotiate an allowed TLS ALPN protocol';
-
 function HttpMethodIsIdempotent(const AToken: string): Boolean;
 begin
   Result := (AToken = 'GET') or (AToken = 'HEAD') or (AToken = 'PUT') or
@@ -415,21 +410,17 @@ begin
     Exit;
   end;
   try
+    // wpmAuto never dials for a WebSocket: it uses only a live pooled HTTP/2
+    // connection of the origin (a normal request to the origin leaves one)
     Result := OpenWebSocketH2(FPool, ARequest, AProxy, AIdentity, FConnectTimeoutMs,
-      nil, AAttempt, Outcome);
+      nil, AAttempt, Outcome, Mode = wpmAuto);
   except
     on E: EHttpProtocolError do
     begin
-      // wpmAuto over TLS: the offer is h2 alone (fallback off), so a peer that
-      // selects http/1.1, or no protocol, fails the ALPN check of the dial with
-      // the message of ProtocolForTlsAlpn. That peer gets the HTTP/1.1 opening.
-      // The check runs before any HTTP/2 request is written.
-      if (Mode = wpmAuto) and ASecure and
-         (Pos(cAlpnRefusalPrefix, E.Message) = 1) then
-      begin
-        Result := nil;
-        Exit;
-      end;
+      // wpmHttp2 dials with the offer h2 alone: a peer that selects no HTTP/2
+      // (http/1.1, or no ALPN) is an HTTP/2 WebSocket refusal
+      if Mode = wpmHttp2 then
+        raise EHttpWebSocketError.Create('HTTP/2 WebSocket refused: ' + E.Message);
       raise;
     end;
   end;

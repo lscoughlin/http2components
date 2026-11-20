@@ -76,6 +76,22 @@ type
       const ARequestIdentity: IClientIdentity;
       out AOutcome: TTunnelOutcome; out AStatus: Integer;
       out AFields: TArray<TWsHeaderField>; out ARefusalBody: string): IH2Tunnel;
+    /// AcquireTunnel that never dials: the tunnel is taken only from a live pooled
+    /// connection of the key. Without one, AOutcome is toHttp1 and no socket is
+    /// opened (the caller then runs its HTTP/1.1 opening).
+    function AcquireTunnelPooled(const AOrigin, AHost: string;
+      const APort: Word; const ARequest: TStreamRequest;
+      const AHeaderTimeoutMs: Integer; const AProxy: IProxy;
+      const ARequestIdentity: IClientIdentity;
+      out AOutcome: TTunnelOutcome; out AStatus: Integer;
+      out AFields: TArray<TWsHeaderField>; out ARefusalBody: string): IH2Tunnel;
+    function AcquireTunnelCore(const AOrigin, AHost: string;
+      const APort: Word; const ARequest: TStreamRequest;
+      const AHeaderTimeoutMs: Integer; const AProxy: IProxy;
+      const ARequestIdentity: IClientIdentity;
+      out AOutcome: TTunnelOutcome; out AStatus: Integer;
+      out AFields: TArray<TWsHeaderField>; out ARefusalBody: string;
+      const ANoDial: Boolean): IH2Tunnel;
   end;
 
 implementation
@@ -649,7 +665,31 @@ function TConnectionPool.AcquireTunnel(const AOrigin, AHost: string;
   const ARequestIdentity: IClientIdentity;
   out AOutcome: TTunnelOutcome; out AStatus: Integer;
   out AFields: TArray<TWsHeaderField>; out ARefusalBody: string): IH2Tunnel;
+begin
+  Result := AcquireTunnelCore(AOrigin, AHost, APort, ARequest, AHeaderTimeoutMs,
+    AProxy, ARequestIdentity, AOutcome, AStatus, AFields, ARefusalBody, False);
+end;
+
+function TConnectionPool.AcquireTunnelPooled(const AOrigin, AHost: string;
+  const APort: Word; const ARequest: TStreamRequest;
+  const AHeaderTimeoutMs: Integer; const AProxy: IProxy;
+  const ARequestIdentity: IClientIdentity;
+  out AOutcome: TTunnelOutcome; out AStatus: Integer;
+  out AFields: TArray<TWsHeaderField>; out ARefusalBody: string): IH2Tunnel;
+begin
+  Result := AcquireTunnelCore(AOrigin, AHost, APort, ARequest, AHeaderTimeoutMs,
+    AProxy, ARequestIdentity, AOutcome, AStatus, AFields, ARefusalBody, True);
+end;
+
+function TConnectionPool.AcquireTunnelCore(const AOrigin, AHost: string;
+  const APort: Word; const ARequest: TStreamRequest;
+  const AHeaderTimeoutMs: Integer; const AProxy: IProxy;
+  const ARequestIdentity: IClientIdentity;
+  out AOutcome: TTunnelOutcome; out AStatus: Integer;
+  out AFields: TArray<TWsHeaderField>; out ARefusalBody: string;
+  const ANoDial: Boolean): IH2Tunnel;
 var
+  NoConn: Boolean;
   Deadline: QWord;
   Conn: IPooledConnection;
   Sock: IHttp2Socket;
@@ -727,7 +767,8 @@ begin
         ReapClosed;
         ReapIdleLocked;
         Conn := PickEligible(Key);
-        if (Conn = nil) and (DialingForBase(Key) = 0) and
+        NoConn := (Conn = nil) and ANoDial;
+        if (Conn = nil) and not ANoDial and (DialingForBase(Key) = 0) and
           CanOpenNew(Key, not (Selecting and not Resolved)) then
         begin
           if Selecting and not Resolved then
@@ -753,7 +794,7 @@ begin
         end;
         if Dialing then
           ReserveDial(Key)
-        else if (Conn = nil) and not NeedSelect then
+        else if (Conn = nil) and not NeedSelect and not NoConn then
         begin
           WaitDial := EnterWait(Key, WaitGen);
           Retry := WaitDial = nil;
@@ -763,6 +804,8 @@ begin
       end;
       if not Dialing then
         CloseVictims;                  // what ReapIdleLocked took out, outside FLock
+      if NoConn then
+        Exit;                          // AOutcome is toHttp1: no live connection, no dial
       if Retry then
       begin
         ThreadSwitch;

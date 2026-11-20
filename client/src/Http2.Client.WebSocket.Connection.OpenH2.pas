@@ -26,7 +26,7 @@ uses
 function OpenWebSocketH2(const APool: TConnectionPool; const ARequest: IWebSocketRequest;
   const AProxy: IProxy; const AIdentity: IClientIdentity; const ADefaultConnectTimeoutMs: Integer;
   const AMask: TMaskKeySource; const AAttempt: IWebSocketAttempt;
-  out AOutcome: TTunnelOutcome): IWebSocket;
+  out AOutcome: TTunnelOutcome; const APooledOnly: Boolean = False): IWebSocket;
 
 implementation
 
@@ -49,7 +49,7 @@ end;
 function OpenWebSocketH2(const APool: TConnectionPool; const ARequest: IWebSocketRequest;
   const AProxy: IProxy; const AIdentity: IClientIdentity; const ADefaultConnectTimeoutMs: Integer;
   const AMask: TMaskKeySource; const AAttempt: IWebSocketAttempt;
-  out AOutcome: TTunnelOutcome): IWebSocket;
+  out AOutcome: TTunnelOutcome; const APooledOnly: Boolean): IWebSocket;
 var
   Secure: Boolean;
   Host, Target, Authority, Origin, Why, Chosen, Body: string;
@@ -80,8 +80,13 @@ begin
   Req := WsBuildH2Request(Secure, Target, Authority, ARequest.Subprotocols, Headers);
   // the pool key of a direct route is the origin, as the request path builds it
   Origin := OriginOfUrl(ARequest.Url) + ProxyRouteKey(AProxy);
-  Tunnel := APool.AcquireTunnel(Origin, Host, Port, Req, Timeout, AProxy, AIdentity,
-    AOutcome, Status, Fields, Body);
+  // APooledOnly: a live pooled HTTP/2 connection or nil (toHttp1); nothing is dialled
+  if APooledOnly then
+    Tunnel := APool.AcquireTunnelPooled(Origin, Host, Port, Req, Timeout, AProxy,
+      AIdentity, AOutcome, Status, Fields, Body)
+  else
+    Tunnel := APool.AcquireTunnel(Origin, Host, Port, Req, Timeout, AProxy, AIdentity,
+      AOutcome, Status, Fields, Body);
   if (AOutcome = toHttp1) or (AOutcome = toNoExtendedConnect) then
     Exit(nil);
   if AAttempt <> nil then
