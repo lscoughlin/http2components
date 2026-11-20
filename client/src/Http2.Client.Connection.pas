@@ -274,28 +274,10 @@ type
     property Security: TClientSecurityOptions read FSecurity;
   end;
 
-/// the 24-byte client connection preface (RFC 7540 section 3.5)
-function ClientPrefaceBytes: TBytes;
-
 implementation
 
 uses
   Http2.Client.Connection.Thread;
-
-const
-  cClientPreface: array[0..23] of Byte = (
-    $50, $52, $49, $20, $2A, $20, $48, $54, $54, $50, $2F, $32, $2E, $30,
-    $0D, $0A, $0D, $0A, $53, $4D, $0D, $0A, $0D, $0A);
-
-function ClientPrefaceBytes: TBytes;
-var
-  I: Integer;
-begin
-  Result := nil;
-  SetLength(Result, SizeOf(cClientPreface));
-  for I := 0 to High(cClientPreface) do
-    Result[I] := cClientPreface[I];
-end;
 
 constructor TBlockingQueue<T>.Create(const ACapacity: Integer);
 begin

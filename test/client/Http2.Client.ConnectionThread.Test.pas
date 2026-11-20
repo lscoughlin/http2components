@@ -25,7 +25,7 @@ interface
 uses
   SysUtils, Classes, SyncObjs, fpcunit, testregistry,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Client.Tls, Http2.Client.Tls.Types,
-  Http2.Client.Connection;
+  Http2.Client.Connection, Http2.Client.Connection.Preface;
 
 type
   /// when the read script is exhausted, either surface a timeout (so the
