@@ -227,6 +227,32 @@ The tests cover:
   HTTP/1.1 Upgrade; `wpmAuto` with a pooled HTTP/2 connection for the same origin opens
   the WebSocket on that connection, and the server counts one connection.
 
+## WebSocket integration tests over TLS
+
+`Http2.Integration.WssH2.Test` runs the library client against the library server over
+TLS. The server uses the certificate of `localhost` from the test PKI, which the task
+`test:integration` makes. Each test starts its own server on a port that the system picks,
+and `TearDown` stops it. Every wait has a limit of 10 seconds and fails with a message.
+The tests cover:
+
+- an echo over ALPN `h2`: the client opens the WebSocket with `wpmHttp2`, and the server
+  handler sees the extended CONNECT with `:protocol` `websocket`;
+- a verified client certificate on the WebSocket over HTTP/2: the identity of the factory,
+  and the identity of the request, each reach the server handler, which reads the common
+  name `alice` and the request principal `alice`;
+- a 4 MiB binary message, sent and echoed over HTTP/2, against a server whose message and
+  frame limits are raised to 4 MiB;
+- `wpmAuto` over TLS: after an ordinary `https` request over HTTP/2, the WebSocket opens on
+  the pooled connection, and the server accepts one connection in total; with no pooled
+  connection, the WebSocket opens with the HTTP/1.1 Upgrade, and the server accepts one
+  connection in total;
+- `wpmAuto` against a server that offers `h2` alone, because its HTTP/1.1 fallback is off:
+  the TLS handshake fails with `EHttpConnectionError`.
+
+The server has no option that offers `http/1.1` alone. A server offers `h2` and `http/1.1`
+when its fallback is on, which is the default, and `h2` alone when it is off. The mock tests
+described above cover the route of a WebSocket with a peer that selects `http/1.1`.
+
 ## Concurrency tests
 
 `Http2.Client.Concurrency.Test` drives many threads calling `Send` against a slow

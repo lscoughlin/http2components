@@ -265,8 +265,8 @@ stream counts against the stream limit of the connection. Under `wpmAuto`, the
 WebSocket never causes a dial of an HTTP/2 connection.
 
 The library client and the library server run WebSocket over HTTP/2 against each other
-in the integration tests (`Http2.Integration.WsH2.Test`, as described in
-[testing-observability](testing-observability.md)).
+in the integration tests (`Http2.Integration.WsH2.Test` over h2c and `Http2.Integration.WssH2.Test`
+over TLS, as described in [testing-observability](testing-observability.md)).
 
 ## Frames
 
