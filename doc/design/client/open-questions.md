@@ -50,8 +50,7 @@ is recorded) and is not restated here.
 4. The overhead of the observers has no committed bound yet. The measurement
    (a loopback request with no observer, with the three example adapters, and
    with the per-event gate on) is a program and a recorded method, and the
-   bound is stated when the results are recorded in
-   [observer-overhead](../../verification/source/client/observer-overhead.md).
+   bound is stated when the results are recorded.
 
 ## Settled decisions
 

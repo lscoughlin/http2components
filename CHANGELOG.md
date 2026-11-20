@@ -3,6 +3,11 @@
 ## 0.34.0 — in development
 
 - Version bump after the 0.33.0 source release.
+- Documentation: the verification records state the results of the full Linux run of
+  2026-11-20 in [current-status](doc/verification/current-status.md). The earlier
+  verification records and the source records of the client and the server are removed from
+  `doc/verification`. The file `harness-expectations.tsv` of the client harness gate is in
+  `tools/client/validate`.
 
 ### Client
 
@@ -787,7 +792,7 @@ The follow-up recommendations are listed in the project notes.
 - The server and the client support Unix domain sockets: `WithUnixSocket` on
   both factories, `WithUnixSocketMode` on the server, and `WithUnixProxy` on the
   client. Results are in the
-  [Unix socket verification record](doc/verification/unix-sockets-2026-11-12.md).
+  [Linux validation record](doc/verification/linux-validation-2026-11-20.md).
 - The client inbound queues are unbounded, so a large request body echo no longer
   stalls the connection reader or fails with a flow-control timeout.
 - The Unix socket suites and the unfiltered common, client, integration and

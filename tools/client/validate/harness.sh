@@ -23,7 +23,7 @@
 #   UNKNOWN: neither side resolves to an outcome class.
 #
 # The outcome class for every id is DECLARED in
-# doc/verification/source/client/harness-expectations.tsv, generated from the harness verifier
+# tools/client/validate/harness-expectations.tsv, generated from the harness verifier
 # sources. The reference run only tells us whether it demonstrated that declared
 # outcome; where it could not (Go's verifier fails, or the whole oracle was
 # invalid) a declared outcome we DO meet still counts as BETTER rather than
@@ -73,7 +73,7 @@ fi
 
 # --- static expectation annotation (from verifier/cases/*.go source) --------
 # --- declared expectations (authority: the verifier's own sources) ----------
-# doc/verification/source/client/harness-expectations.tsv is generated from
+# tools/client/validate/harness-expectations.tsv is generated from
 # third_party/h2-client-test-harness/verifier/cases/*.go by
 # tools/client/validate/extract_expectations.py. Each row is "<id>\t<expectation>"
 # with expectation in {success, conn-error, stream-error}.
@@ -83,12 +83,12 @@ fi
 # as ExpectConnectionError can still log "Verifier passed" while Go actually
 # reported a *stream* error (e.g. 5.1/1, 6.2/4). Scoring us against that
 # observed wording would import Go's imprecision; the declaration is the rule.
-EXPECTATIONS="$REPO_ROOT/doc/verification/source/client/harness-expectations.tsv"
+EXPECTATIONS="$REPO_ROOT/tools/client/validate/harness-expectations.tsv"
 if [ ! -f "$EXPECTATIONS" ]; then
   echo "ERROR: $EXPECTATIONS missing; regenerate with:" >&2
   echo "  python3 tools/client/validate/extract_expectations.py \\" >&2
   echo "      third_party/h2-client-test-harness/verifier/cases \\" >&2
-  echo "      > doc/verification/source/client/harness-expectations.tsv" >&2
+  echo "      > tools/client/validate/harness-expectations.tsv" >&2
   exit 1
 fi
 
@@ -119,7 +119,7 @@ compile_probe() {
 classify_ref_log() { # logfile id -> "pass|fail class"
   # The reference run tells us only whether the reference client produced the
   # declared outcome. The EXPECTED class itself comes from the declarations in
-  # doc/verification/source/client/harness-expectations.tsv (see declared_intent), NOT from the reference
+  # tools/client/validate/harness-expectations.tsv (see declared_intent), NOT from the reference
   # log: the image's verifier matches error SUBSTRINGS, so its own wording can
   # disagree with the case author's expectation.
   #

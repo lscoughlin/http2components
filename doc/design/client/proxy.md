@@ -19,7 +19,6 @@ related:
   - "[fallback](fallback.md)"
   - "[errors-redirects](errors-redirects.md)"
   - "[open-questions](open-questions.md)"
-  - "[toolchain](../../verification/source/client/toolchain.md)"
 updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/proxy.md at the source commit recorded in the source inventory.
@@ -421,8 +420,8 @@ the kind `pkHttps`, raises `EHttpProxyConfigError` at `Send`.
 > implementations of nearly every parser and matcher that proxy routing needs.
 > `Http2.Client.Proxy` and `Http2.Client.Socks` take **no** dependency on it: they are
 > self-contained units that mirror these designs, with mORMot2's behaviour
-> and edge cases as the guide. Names below are from the checkout recorded in
-> [toolchain](../../verification/source/client/toolchain.md).
+> and edge cases as the guide. Names below are from the checkout of mORMot2
+> that `third_party/mORMot2` pins.
 
 | mORMot2 piece | What it shows | Mirrored here by |
 | --- | --- | --- |

@@ -234,8 +234,8 @@ research result.
 | --- | --- |
 | a caller of the library | [public-api](public-api.md), then [configuration](configuration.md) |
 | a maintainer of a layer | [threading](threading.md), then the document of the layer |
-| a reader of the conformance record | [validation](../../verification/source/server/validation.md) |
-| a reader of the build and the platform | [toolchain](../../verification/source/server/toolchain.md) |
+| a reader of the conformance record | [Linux validation record](../../verification/linux-validation-2026-11-20.md) |
+| a reader of the build and the platform | [fpc-runtime](fpc-runtime.md) |
 
 ## RFC references
 

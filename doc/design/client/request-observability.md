@@ -700,7 +700,7 @@ stand-in with its own library and keeps the observer.
 | `examples/observer_metrics.pas` | `TMetricsObserver` over `TMetricRegistry` | the table in [Metrics an adapter derives](#metrics-an-adapter-derives) computed in `OnAttemptEnd`, an in-flight gauge, a pull gauge over `PoolStats` (`TPoolStatsCollector`), and an `IHttpMessageObserver` that feeds an inter-event histogram from `SinceLastUs` |
 | `examples/observer_logging.pas` | `TLoggingObserver` | one `key=value` line from every callback, with the redirect, retry, abandoned and error cases, written to an `IHttpLogger` |
 | `examples/observer_all.pas` | all three installed together | a plain request, an SSE stream with a reconnect and a WebSocket session; it prints one trace, the metrics and the log lines |
-| `examples/observer_overhead.pas` | none | what the observers cost on loopback; as described in [observer-overhead](../../verification/source/client/observer-overhead.md) |
+| `examples/observer_overhead.pas` | none | what the observers cost on loopback; the program prints the measurement |
 
 An adapter for a tracer implements `IHttpClientObserver`:
 
