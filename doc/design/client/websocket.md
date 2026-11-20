@@ -258,7 +258,7 @@ HTTP/1.1 route.
 - A sender that waits for flow-control credit and is then released ends with one
   RST_STREAM with CANCEL.
 - A failed write ends the client's output, and the callbacks go on. This rule holds on
-  both routes. A user `Abort` still ends the session with no callback. On the HTTP/1.1
+  both routes. A user `Abort` ends the session with no callback. On the HTTP/1.1
   route, the listener gets `OnClose` with the code of the server's Close frame when that
   frame is read, and `OnError` when the session ends without one. The peer has the
   close timeout after the failed write to send its Close frame; when the timeout

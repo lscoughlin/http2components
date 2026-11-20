@@ -297,6 +297,7 @@ begin
   Started := GetTickCount64;
   AssertTrue('one OnError after the close timeout',
     FRec.WaitFor('error:EHttpConnectionError', 3000));
+  AssertTrue('not before the close timeout', GetTickCount64 - Started >= 250);
   AssertTrue('promptly', GetTickCount64 - Started < 2000);
   Sleep(500);
   AssertEquals('exactly one OnError', 1, CountOf('error:'));
