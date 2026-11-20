@@ -14,7 +14,7 @@ related:
   - "[architecture](architecture.md)"
   - "[protocol](protocol.md)"
   - "[transport](transport.md)"
-updated: 2026-10-13
+updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/testing-observability.md at the source commit recorded in the source inventory.
 ---
@@ -206,6 +206,26 @@ once. `task validate:client:websocket:autobahn` runs the Autobahn|Testsuite fuzz
 (Docker) against `tools/client/autobahn_client.pas` and summarises its
 report; cases 12 and 13 (`permessage-deflate`) are excluded because the client
 offers no extension.
+
+## WebSocket integration tests
+
+`Http2.Integration.WsH2.Test` runs the library client against the library server over
+h2c, with no mock. Each test starts its own server on a port that the system picks,
+and `TearDown` stops it. Every wait has a limit of 10 seconds and fails with a message.
+The tests cover:
+
+- the echo of a text message and of a binary message over HTTP/2, and a ping with its pong;
+- a message that the client sends in three fragments, which the server reads as one
+  message in the order of the fragments;
+- the close paths: a close from the client, a close from the server, and an abort, which
+  the server sees as an end that is not a normal close;
+- the refusals: a path with no route gives status 404, and a foreign origin under an
+  allow-list gives status 403;
+- the subprotocol that the server chooses from the two that it offers;
+- the protocol modes: `wpmHttp2` opens over HTTP/2, and it fails against a server without
+  the extended CONNECT; `wpmHttp1` and `wpmAuto` without a pooled connection use the
+  HTTP/1.1 Upgrade; `wpmAuto` with a pooled HTTP/2 connection for the same origin opens
+  the WebSocket on that connection, and the server counts one connection.
 
 ## Concurrency tests
 

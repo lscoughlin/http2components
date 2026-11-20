@@ -52,7 +52,7 @@ function OpenWebSocketH2(const APool: TConnectionPool; const ARequest: IWebSocke
   out AOutcome: TTunnelOutcome; const APooledOnly: Boolean): IWebSocket;
 var
   Secure: Boolean;
-  Host, Target, Authority, Origin, Why, Chosen, Body: string;
+  Host, Target, Authority, Origin, Mapped, Why, Chosen, Body: string;
   Port: Word;
   Timeout, Status: Integer;
   Mask: TMaskKeySource;
@@ -78,8 +78,13 @@ begin
   else
     Headers := ARequest.Headers;
   Req := WsBuildH2Request(Secure, Target, Authority, ARequest.Subprotocols, Headers);
-  // the pool key of a direct route is the origin, as the request path builds it
-  Origin := OriginOfUrl(ARequest.Url) + ProxyRouteKey(AProxy);
+  // the pool key of a direct route is the origin of the equivalent http(s) URL, as
+  // the request path builds it: ws shares the key of http, wss the key of https
+  if Secure then
+    Mapped := 'https://' + Authority + Target
+  else
+    Mapped := 'http://' + Authority + Target;
+  Origin := OriginOfUrl(Mapped) + ProxyRouteKey(AProxy);
   // APooledOnly: a live pooled HTTP/2 connection or nil (toHttp1); nothing is dialled
   if APooledOnly then
     Tunnel := APool.AcquireTunnelPooled(Origin, Host, Port, Req, Timeout, AProxy,
