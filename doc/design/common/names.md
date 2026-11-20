@@ -46,7 +46,7 @@ and for a field that it adds.
 
 The connection group names fields that HTTP/2 forbids on the wire (RFC 9113 section
 8.2.2). The header map refuses to add them. The constants serve HTTP/1.1 code and the
-WebSocket handshake, which runs over HTTP/1.1.
+WebSocket handshake, on HTTP/1.1 and on the extended CONNECT of HTTP/2 (RFC 8441).
 
 The unit `Http2.Common` repeats each name, so a program that uses `Http2.Common` needs no
 second unit for a name.

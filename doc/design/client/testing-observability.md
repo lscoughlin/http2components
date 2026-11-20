@@ -184,6 +184,15 @@ message, abort, the close and ping timeouts, a raising listener, and a fresh
 masking key per frame. Tests wait on events with a bounded timeout and never
 sleep to wait for another thread.
 
+`Http2.Client.WebSocket.ProtocolMode.Test` covers the choice of the protocol in `Send`: the
+default mode, each mode of `WithProtocolMode`, the pooled HTTP/2 connection that `wpmAuto`
+reuses (a `wpmHttp2` opening leaves it in the pool), the cleartext rules of `ws` URLs, and a
+refused extended CONNECT, which does not fall back. The mock factory counts each dial as a TLS
+handshake, so the tests show that `wpmAuto` makes one handshake for an HTTP/1.1 route. The
+mutual-TLS suites (`Http2.Client.MutualTls.*`) check the same route with a server that selects
+`http/1.1`. The observer of a WebSocket on the HTTP/2 route gets the HTTP/2 protocol; the
+TLS details of a `wss` session are not reported.
+
 The opt-in live gate (`task validate:client:websocket`) starts
 `tools/client/ws_servers.py` and the proxy servers of `proxy_servers.py`,
 runs `Http2.Client.WebSocketLive.Test` over `ws` and `wss`, directly and through an

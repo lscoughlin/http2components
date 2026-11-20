@@ -6,6 +6,16 @@
 
 ### Client
 
+- **New.** WebSocket over HTTP/2 (RFC 8441). A WebSocket runs on a stream of a pooled HTTP/2
+  connection to its origin, with the extended `CONNECT`. The request setting
+  `WithProtocolMode` takes `wpmAuto` (the default), `wpmHttp1` or `wpmHttp2`. `wpmHttp2`
+  dials HTTP/2 for the WebSocket and raises `EHttpWebSocketError` when the peer does not
+  advertise the extended `CONNECT` or selects no HTTP/2.
+- **Behavior change.** Under the default `wpmAuto`, a WebSocket uses a live pooled HTTP/2
+  connection to its origin when one exists and advertises the extended `CONNECT`. A normal
+  `https` request that ran over HTTP/2 leaves such a connection in the pool. Without one, the
+  WebSocket runs as in 0.33.0: its own HTTP/1.1 dial, with the ALPN offer `http/1.1` alone, and
+  no extra TLS connection.
 - Fix: a sender that waited for flow-control credit could miss the wake-up sent when the
   peer ended or reset its stream. The reader thread set the peer flag outside the
   connection lock. A sender that tested the flag and then registered its wait did not

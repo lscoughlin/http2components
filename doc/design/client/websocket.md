@@ -22,7 +22,7 @@ related:
   - "[testing-observability](testing-observability.md)"
   - "[open-questions](open-questions.md)"
   - "[toolchain](../../verification/source/client/toolchain.md)"
-updated: 2026-10-13
+updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/websocket.md at the source commit recorded in the source inventory.
 ---
@@ -50,9 +50,9 @@ begin
 
 ## Scope
 
-- RFC 6455 over HTTP/1.1 only. The opening handshake is an HTTP/1.1
-  `Upgrade`; RFC 8441 (WebSocket over HTTP/2 with extended `CONNECT`) is not
-  implemented, as in Go's `net/http` and the JDK.
+- RFC 6455 over HTTP/1.1, and RFC 8441 (WebSocket over HTTP/2 with extended
+  `CONNECT`) on a pooled HTTP/2 connection (section [WebSocket over HTTP/2](#websocket-over-http2)).
+  The HTTP/1.1 opening is an `Upgrade`. The client never uses the h2c `Upgrade` for a WebSocket.
 - No extension is offered, and any `Sec-WebSocket-Extensions` answer fails the
   handshake. In particular `permessage-deflate` is not supported.
 - The units are `Http2.Client.WebSocket` (frame codec, message assembly, handshake
@@ -60,7 +60,7 @@ begin
   `sha1` and `base64`, and `Http2.Common.Errors`) and `Http2.Client.WebSocket.Connection` (the
   connection and the opening handshake). Both are exported by `Http2.Client`, and
   `Http2.Client` declares aliases for `IWebSocket`, `IWebSocketListener`,
-  `IWebSocketRequest`, `TWebSocketListener` and `TWebSocketRequest`, so a
+  `IWebSocketRequest`, `TWebSocketListener`, `TWebSocketRequest` and `TWsProtocolMode`, so a
   program that names only `Http2.Client` can use the API.
 
 ## Interfaces
@@ -87,6 +87,7 @@ scheme or an unusable authority raises `EHttpWebSocketError`.
 | Method | Meaning |
 | --- | --- |
 | `WithConnectTimeoutMs(n)` | bounds the dial and each handshake read; `0` uses the client's connect timeout |
+| `WithProtocolMode(mode)` | the protocol of the opening: `wpmAuto` (default), `wpmHttp1` or `wpmHttp2`; see [WebSocket over HTTP/2](#websocket-over-http2) |
 | `WithHeader(name, value)` | adds a request header; names the handshake owns (`Host`, `Upgrade`, `Connection`, `Content-Length`, `Transfer-Encoding`, `Expect`, every `Sec-WebSocket-*`) raise at this call |
 | `WithSubprotocol(name)`, `WithSubprotocols(list)` | offered in `Sec-WebSocket-Protocol`; each must be an HTTP token |
 | `WithCloseTimeoutMs(n)` | how long to wait for the server's close frame, and for it to close TCP, default `5000` |
@@ -127,7 +128,7 @@ A connection that the caller does not `Abort` ends with exactly one of
 ```mermaid
 flowchart TB
   S["Send(IWebSocketRequest)"] --> R["proxy selector on the http/https form of the URL"]
-  R --> D["dial: HTTP/1.1 only, ALPN offers http/1.1 alone for wss"]
+  R --> D["dial: HTTP/1.1, ALPN offers http/1.1 alone for wss"]
   D --> Q["GET with Upgrade, Connection, Sec-WebSocket-Key, -Version 13, -Protocol"]
   Q --> A{"response"}
   A -->|"101 and every check passes"| O["connection object, reader thread, OnOpen"]
@@ -157,12 +158,111 @@ header lines and up to 4 KiB of the body. Redirects are not followed, and a
 the `101` head, in the same read, belong to the frame stream and are kept.
 
 The connection to the server is made by a dial that speaks HTTP/1.1 only
-(`IHttp1SocketFactory`): for `wss` the ALPN offer is `http/1.1` alone, a server
+(`IHttp1SocketFactory`), unless `wpmAuto` carries the WebSocket on a live pooled
+HTTP/2 connection (see [WebSocket over HTTP/2](#websocket-over-http2)). For `wss`
+the ALPN offer of the dial is `http/1.1` alone, a server
 that selects `h2` is refused, and a server that answers no ALPN is accepted,
 since many WebSocket servers lack ALPN. The fallback and cleartext switches of
 [fallback](fallback.md) do not apply: a `ws://` URL is allowed under the default
 cleartext policy. A socket factory that lacks the dial makes `Send` raise
 `EHttpWebSocketError`.
+
+## WebSocket over HTTP/2
+
+[RFC 8441](https://www.rfc-editor.org/info/rfc8441) defines the extended `CONNECT`
+method for a WebSocket on one stream of an HTTP/2 connection. The client follows
+RFC 8441 as described in this section. The RFC was checked on 2026-11-20; the
+reference copy is `doc/references/rfc8441.txt`.
+
+### Choice of the route
+
+`WithProtocolMode(mode)` sets the protocol of the opening. The type is
+`TWsProtocolMode`. The default is `wpmAuto`.
+
+| Mode | Route |
+| --- | --- |
+| `wpmAuto` | A live connection of the pool that speaks HTTP/2 to the origin and advertises `SETTINGS_ENABLE_CONNECT_PROTOCOL` = 1 carries the WebSocket on a new stream. Without such a connection, the route is the HTTP/1.1 route of the earlier releases: its own dial, with the ALPN offer `http/1.1` alone. Under this mode, a WebSocket never dials an HTTP/2 connection. |
+| `wpmHttp1` | The HTTP/1.1 route only. |
+| `wpmHttp2` | The HTTP/2 route only. The client dials the origin over TLS with the ALPN offer `h2` alone, or over cleartext with prior knowledge. A peer that does not advertise the setting, or that selects no HTTP/2, raises `EHttpWebSocketError`. |
+
+A pooled HTTP/2 connection to an origin exists after an `https` request to that
+origin that ran over HTTP/2. The connection stays in the pool while it is idle,
+up to the idle timeout. A `wpmHttp2` opening also leaves its connection in the
+pool, and `wpmAuto` reuses it. A `ws` URL uses a pooled connection under
+`wpmAuto` only with prior knowledge (`WithClearText(ctPriorKnowledge)`). The
+h2c `Upgrade` is never used for a WebSocket.
+
+```mermaid
+flowchart TB
+  S["Send(IWebSocketRequest)"] --> M{"ProtocolMode"}
+  M -->|"wpmHttp1"| H1["HTTP/1.1 route"]
+  M -->|"wpmAuto"| P{"live pooled HTTP/2 connection of the origin?"}
+  P -->|"no"| H1
+  P -->|"yes, without the setting"| H1
+  P -->|"yes, with the setting"| X["extended CONNECT on a new stream"]
+  M -->|"wpmHttp2"| D["dial: ALPN h2 alone, or prior knowledge"]
+  D -->|"no setting, or no HTTP/2"| E["EHttpWebSocketError"]
+  D -->|"setting"| X
+  X --> A{"response status"}
+  A -->|"200"| O["WebSocket open"]
+  A -->|"other"| R["EHttpWebSocketHandshakeError"]
+```
+
+### Request fields
+
+The extended `CONNECT` carries these fields:
+
+| Field | Value |
+| --- | --- |
+| `:method` | `CONNECT` |
+| `:protocol` | `websocket` |
+| `:scheme` | `https` for `wss`, `http` for `ws` |
+| `:path` | the request target, with its query |
+| `:authority` | the origin (host and port), not a tunnel target |
+| `sec-websocket-version` | `13` |
+| `sec-websocket-protocol` | the offered subprotocols, comma-separated, when at least one is set |
+| other fields | the fields of `WithHeader`; the names that `WithHeader` refuses for the HTTP/1.1 route are refused here too |
+
+The fields `connection`, `upgrade` and `sec-websocket-key` are not sent. The
+request has no body. The stream then carries the frames of RFC 6455 as DATA
+octets, masked by the client as on the HTTP/1.1 route.
+
+### Response rule
+
+The client accepts the status `200` only. The response is accepted when
+`sec-websocket-protocol` is absent or names one subprotocol that the request
+offered, and when `sec-websocket-extensions` is absent. The field
+`sec-websocket-accept` is ignored, because RFC 8441 has no key exchange. Any other
+status raises `EHttpWebSocketHandshakeError`, with the status, the header lines and
+the first 4 KiB of the body. A refused extended `CONNECT` never falls back to the
+HTTP/1.1 route.
+
+### Ending the stream
+
+- The Close frames are exchanged: the client sends a masked Close frame, the
+  server's Close frame is echoed, and the client waits for the server's
+  END_STREAM. Then the client ends its side and releases the stream.
+- `Abort` sends RST_STREAM with CANCEL and no Close frame.
+- A close timeout sends RST_STREAM with CANCEL, and the listener's `OnClose` gets
+  the code 1006, as on the HTTP/1.1 route.
+- An END_STREAM of the server without a Close frame gives `OnError`, as a TCP end
+  without a Close frame does on the HTTP/1.1 route.
+- A RST_STREAM of the server, or a GOAWAY whose last stream identifier is below the
+  identifier of the WebSocket stream, gives `OnError`.
+- A sender that waits for flow-control credit and is then released ends with one
+  RST_STREAM with CANCEL.
+
+### Back pressure
+
+The reader thread reads the stream only while demand is above zero (see
+[Delivery and demand](#delivery-and-demand)). Unread DATA keeps the flow-control
+window closed, so the server stops sending. The HTTP/2 route adds no buffer.
+
+### Connection use
+
+The WebSocket holds one stream of a pooled connection for its whole life. That
+stream counts against the stream limit of the connection. Under `wpmAuto`, the
+WebSocket never causes a dial of an HTTP/2 connection.
 
 ## Frames
 
@@ -286,9 +386,11 @@ Both `ws` and `wss` go through the tunnel kinds described in [transport](transpo
 `CONNECT`, `CONNECT` inside TLS to an `https://` proxy, and SOCKS5. Loopback
 connects directly.
 
-A WebSocket owns its connection for its whole life. It is not pooled and does
-not count against `MaxConnectionsPerHost` or `MaxTotalConnections`, since a
-long-lived socket held against those caps would starve ordinary requests.
+A WebSocket on the HTTP/1.1 route owns its connection for its whole life. That
+connection is not pooled and does not count against `MaxConnectionsPerHost` or
+`MaxTotalConnections`, since a long-lived socket held against those caps would
+starve ordinary requests. A WebSocket on the HTTP/2 route holds one stream of a
+pooled connection (section [WebSocket over HTTP/2](#websocket-over-http2)).
 `IHttpClient.Close` does not close live WebSockets; each is closed or aborted
 by its owner.
 
@@ -299,6 +401,7 @@ by its owner.
 | unusable URL, scheme, header, subprotocol, argument, or a factory that cannot dial HTTP/1.1 | `EHttpWebSocketError` | request construction, `WithX`, `Send`, `Send*` |
 | send after the output side closed | `EHttpWebSocketClosedError` | `Send*` |
 | handshake refused (status, headers, body kept) | `EHttpWebSocketHandshakeError` | `Send` |
+| `wpmHttp2` opening without the setting, or with a peer that selects no HTTP/2 | `EHttpWebSocketError` | `Send` |
 | the server broke RFC 6455 (carries the close code) | `EHttpWebSocketProtocolError` | `OnError` |
 | dial, TLS or proxy failure; EOF without a close frame | `EHttpConnectionError` | `Send`, `OnError` |
 | connect, close or ping timeout | `EHttpTimeout` | `Send`, `OnError` |
@@ -349,8 +452,14 @@ kind `akWebSocket` (as described in [request-observability](request-observabilit
 - The attempt starts before the dial, and the observer may inject handshake
   headers through `Headers`; the headers the handshake owns are refused with
   `EHttpWebSocketError`, as `WithHeader` refuses them.
-- `OnResponseHeaders` fires at the `101`; a refused handshake ends the attempt
-  with the error and the refusal's status.
+- `OnResponseHeaders` fires at the `101` on the HTTP/1.1 route and at the `200` on
+  the HTTP/2 route; a refused handshake ends the attempt with the error and the
+  refusal's status. On the HTTP/2 route, the observer gets `RouteChosen` with the
+  HTTP/2 protocol (`npHttp2Tls` for `wss`, `npHttp2Cleartext` for `ws`) and
+  `reused` False, and `HandshakeWritten` once, after the response head was read.
+  The attempt builds a synthetic HTTP/1.1 response with the status and the reason
+  `Switching Protocols`; the method stays `GET`. No TLS details of a `wss` session over
+  HTTP/2 are reported, since the stream has no TLS socket information.
 - The attempt ends once: after the close handshake, on `Abort`, on a failure,
   or (only for a connection that never started) on release. `ClosedBy`,
   `CloseCode` and `CloseReason` say how. The end does not wait for the
@@ -369,7 +478,8 @@ stamps are the server's. Delivery itself is unchanged.
 
 ## Known limits
 
-- HTTP/1.1 only; RFC 8441 is not implemented.
+- Under `wpmAuto`, a WebSocket uses HTTP/2 only on a pooled connection; it never dials one.
+- The TLS details of a `wss` session over HTTP/2 are not reported to the observer.
 - No extension, including `permessage-deflate`.
 - No automatic reconnection; reopening is the caller's decision.
 - No transport-observer events per frame (`IHttp2Observer` sees nothing of a
@@ -429,4 +539,4 @@ end;
 ## RFC references
 
 - [RFC 6455](https://www.rfc-editor.org/rfc/rfc6455.html), checked 2026-11-11.
-- [RFC 8441](https://www.rfc-editor.org/rfc/rfc8441.html), checked 2026-11-11.
+- [RFC 8441](https://www.rfc-editor.org/info/rfc8441), checked 2026-11-20.
