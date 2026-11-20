@@ -118,15 +118,30 @@ increases. A worker that takes an entry whose stream is already cancelled
 discards the entry without a handler call. In both paths the handler of the
 cancelled stream never runs.
 
-## The handler error hook
+## The handler error answer
 
 A handler that raises `EStreamCancelled` ends quietly. The cancellation is the
 expected end of a stream that the peer or the connection stopped. Any other
-exception reaches `OnHandlerError` (`server/src/Http2.Server.Admission.pas`). The
-hook receives the stream and a flag. The flag is `True` when the handler had
-not sent the response headers, and `False` after a header send. The core later
-answers with a 500 before the headers and with `RST_STREAM` after them. The
-pool records the error and does not build the 500 or the reset itself.
+exception is recorded by the pool, which emits `seHandlerException` to the
+observer and calls its error hook `OnHandlerError`
+(`server/src/Http2.Server.Admission.pas`). The server sets no hook. The hook
+receives the stream and a flag: `True` when the handler had not sent the
+response headers, `False` after a header send. The answer is built by
+`AnswerHandlerError` (`server/src/Http2.Server.Admission.Errors.pas`), which the
+pool calls for each exception:
+
+- Before the headers, the answer is a `500 Internal Server Error` with no body.
+  The response ends with END_STREAM. The body of the exception never reaches the
+  peer.
+- If the peer has not ended its request body, the flush of the connection resets
+  the stream with `RST_STREAM` `NO_ERROR` after the HEADERS of the 500
+  (RFC 9113 section 8.1). The flush empties the inbound buffer of the stream at
+  the same time. The octets of that buffer already returned their connection
+  credit when they arrived, so the flush refills the connection window at once.
+  The stream then ends in both directions. A peer that has already ended its
+  body gets no reset; the stream closes at the normal end.
+- After the headers, the stream is reset with `RST_STREAM` `INTERNAL_ERROR`,
+  because the status of the response cannot change.
 
 ## The handler time limit
 

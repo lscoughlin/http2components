@@ -563,7 +563,17 @@ begin
     // sent RST_STREAM. They were in flight before the peer saw the reset, and
     // the connection window above counts them
     if FResetIds.Contains(AFrame.Header.StreamId) then
+    begin
+      // the octets of a reset stream are never read, so their connection credit
+      // goes back now and not at the update threshold
+      if FConnUpdatePending > 0 then
+      begin
+        QueueFrame(BuildWindowUpdateFrame(0, FConnUpdatePending));
+        FRecv.ApplyConnectionUpdate(FConnUpdatePending);
+        FConnUpdatePending := 0;
+      end;
       Exit;
+    end;
     // RFC 9113 section 5.1: DATA on an idle or a closed stream is a
     // connection error, and the two states take different codes
     if AFrame.Header.StreamId > FLastStreamId then

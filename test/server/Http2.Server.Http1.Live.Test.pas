@@ -430,13 +430,16 @@ end;
 procedure THttp1LiveTest.TestHandlerExceptionBeforeTheHeadersGets500;
 var
   C: TRawHttp;
-  R: TRawResponse;
+  R, R2: TRawResponse;
 begin
   StartServer(LiveFactory(FHandlerRef));
   C := Get('/raise', R);
   try
     AssertEquals(500, R.Status);
-    AssertTrue(C.WaitClosed(ResponseMs));
+    // a 500 with no unread body keeps the connection: the next request is answered
+    C.Send('GET /raise HTTP/1.1' + CRLF + 'Host: a' + CRLF + CRLF);
+    AssertTrue('the connection stays open after the 500', C.ReadResponse(False, ResponseMs, R2));
+    AssertEquals(500, R2.Status);
   finally
     C.Free;
   end;

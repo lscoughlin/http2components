@@ -55,6 +55,10 @@ function H1BuildResponseHead(const AMethod: string; const AMinor: Integer;
 function H1ErrorResponse(const AStatus, AMinor: Integer;
   const AExtra: THeaderBlock): TBytes;
 
+/// the answer of a handler exception whose connection stays open: an empty
+// body and no Connection: close (HTTP/1.1), or keep-alive (HTTP/1.0)
+function H1DrainErrorResponse(const AStatus, AMinor: Integer): TBytes;
+
 /// the 100 Continue interim response
 function H1ContinueResponse: TBytes;
 
@@ -77,6 +81,18 @@ end;
 function H1ContinueResponse: TBytes;
 begin
   Result := H1TextBytes('HTTP/1.1 100 Continue'#13#10#13#10);
+end;
+
+function H1DrainErrorResponse(const AStatus, AMinor: Integer): TBytes;
+var
+  S: string;
+begin
+  S := Http1StatusLine(AStatus, AMinor) + 'content-length: 0'#13#10;
+  // HTTP/1.1 keeps the connection by default; an HTTP/1.0 client asks for it
+  if AMinor = 0 then
+    S := S + 'connection: keep-alive'#13#10;
+  S := S + 'date: ' + HttpDateNow + #13#10#13#10;
+  Result := H1TextBytes(S);
 end;
 
 function H1ErrorResponse(const AStatus, AMinor: Integer;

@@ -76,6 +76,7 @@ type
     FOutboundLimit: Integer;
     FRemoteEnded: Boolean;
     FLocalEnded: Boolean;
+    FResetAfterEnd: Boolean;
     FReset: Boolean;
     FResetCode: THttp2ErrorCode;
     FReadTimeoutMs: Integer;
@@ -144,6 +145,17 @@ type
     //   flow-control fault) and the paths that answer a frame from the peer
     //   (its RST_STREAM, its GOAWAY) must not echo one
     procedure Refuse(const AErrorCode: THttp2ErrorCode);
+
+    /// ask the flush to reset the stream with NO_ERROR after its response has
+    /// ended, when the peer has not ended its request body
+    // - the flush sends the reset after the HEADERS of the response, and it
+    //   discards the buffered request body
+    procedure ResetAfterEnd;
+    /// true when the flush must send the NO_ERROR reset now
+    function ResetAfterEndDue: Boolean;
+    /// empty the inbound buffer; the connection credit of those octets came
+    /// back when they arrived
+    procedure DiscardInbound;
 
     /// name the connection that carries the refusal frames of this stream
     procedure SetRefusalHost(const AHost: IRefusalHost);
@@ -509,6 +521,41 @@ begin
   // speak HTTP has no frame to send, so the failure is silent there
   if Assigned(FRefusalHost) then
     FRefusalHost.QueueRefusal(FStreamId, AErrorCode);
+end;
+
+procedure TServerStream.ResetAfterEnd;
+begin
+  LockStream;
+  try
+    FResetAfterEnd := True;
+  finally
+    UnlockStream;
+  end;
+  // the IO side must run a flush to send the reset
+  if Assigned(FHost) then
+    FHost.OutputPending(FStreamId);
+end;
+
+function TServerStream.ResetAfterEndDue: Boolean;
+begin
+  LockStream;
+  try
+    Result := FResetAfterEnd and FLocalEnded and not FRemoteEnded and not FReset;
+  finally
+    UnlockStream;
+  end;
+end;
+
+procedure TServerStream.DiscardInbound;
+begin
+  LockStream;
+  try
+    FInboundStart := 0;
+    FInboundCount := 0;
+    CompactInbound;
+  finally
+    UnlockStream;
+  end;
 end;
 
 procedure TServerStream.SetRefusalHost(const AHost: IRefusalHost);

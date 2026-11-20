@@ -295,7 +295,9 @@ var
   Chunk: RawByteString;
 begin
   Pending := FSock.SockReceivePending(AWaitMs);
-  if Pending in [cspSocketError, cspSocketClosed] then
+  // a read without pending data waits for the socket timeout, so it runs only
+  // when the poll reports octets
+  if not (Pending in [cspDataAvailable, cspDataAvailableOnClosedSocket]) then
     Exit;
   Chunk := FSock.SockReceiveString;
   if Chunk <> '' then

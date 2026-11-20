@@ -65,6 +65,19 @@
   octets to the budget, on every channel, so the budget of small messages is smaller than
   before. On an HTTP/1.1 upgrade and a unix socket, a message past `QueuedMessages` still
   closes the session with 1008.
+- Fix: a handler that raised an exception before its response head left the HTTP/2 stream
+  open while the peer still sent its request body. The stream kept its buffered octets, and
+  the peer stalled at the stream window. In the test with 100 failing requests that each sent
+  a 4 KiB body, 100 streams stayed open after the last 500, and in the test with a 1 MiB
+  body the body stopped at the 64 KiB window with no reset. The server now resets the
+  stream with `NO_ERROR` after the 500 when the body is not complete, and it empties the
+  buffer and refills the connection window at once. In the same tests no stream stays
+  open and the body ends. The defect is in 0.33.0.
+- **Behavior change.** On HTTP/1.1, a handler exception before the response head gets a
+  `500` with no body and keeps the connection open, when the request is keep-alive, not
+  chunked, under 256 KiB, and without `Expect: 100-continue`. The server reads and discards
+  the unread body first. Before, every such exception closed the connection after the 500.
+  A larger body still closes the connection.
 
 ## 0.33.0 — 2026-11-19 (source release)
 

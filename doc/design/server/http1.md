@@ -126,8 +126,17 @@ A connection serves one request at a time. The octets of later requests wait in 
 parser buffer until the response ends, and their number is bounded by
 `MaxPipelinedOctets`. Responses leave in request order. A request with
 `Connection: close`, an HTTP/1.0 request without `keep-alive`, a framing error, a
-cut response or a handler exception ends the connection after the response. After
+cut response or a handler exception after the head ends the connection after the response; a handler exception before the head is answered as described below. After
 `Connection: close` the server serves no later pipelined request.
+
+A handler exception before the response head gets a 500 with no body. The
+connection stays open after that 500 when the request is keep-alive, the request
+body is not chunked, the body is shorter than `cHttp1DrainBound` (262144 octets,
+`server/src/Http2.Server.Http1.Exchange.pas`), and the request has no
+`Expect: 100-continue`. The parser reads the rest of such a body and discards it
+before the next request is served. Any other case closes the connection after the
+500. An HTTP/1.0 client gets `connection: keep-alive` in that answer. The bound
+is the same 256 KiB that Go's `net/http` uses for an unread body.
 
 A response that the handler gave a `Content-Length` is sent with that length. Any
 other response to an HTTP/1.1 request is chunked. A body writer of a chunked
