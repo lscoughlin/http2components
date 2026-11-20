@@ -227,6 +227,35 @@ The tests cover:
   HTTP/1.1 Upgrade; `wpmAuto` with a pooled HTTP/2 connection for the same origin opens
   the WebSocket on that connection, and the server counts one connection.
 
+## Multiplexing integration tests
+
+`Http2.Integration.WsH2Mux.Test` runs the library client against the library server over
+h2c, with no mock. The tests check how several WebSockets and requests share one
+connection, and how the streams of a connection are released. Each test starts its own
+server on a port that the system picks, and `TearDown` stops it. Every wait has a limit of
+10 seconds and fails with a message. The server reports each accepted connection to its
+observer, so a test can count the connections.
+
+The tests cover:
+
+- 20 WebSockets that one client opens to one origin. Each socket sends 100 messages. Each
+  echo has the text that the socket sent, in the order of sending. The server reports one
+  accepted connection and 20 open streams.
+- An ordinary request that runs while a WebSocket is open. The request gets its answer, and
+  the server still reports one connection.
+- Four threads that send 250 messages each through one socket. The server checks each
+  message as a whole. The echoes are the sent messages, each one time, and the messages of
+  one thread keep their order.
+- A close while one thread sends. The sender ends within 10 seconds with
+  `EHttpWebSocketClosedError` and no other exception. The server reads exactly the messages
+  whose send returned.
+- 200 WebSockets that open and close one after another. After each close, the server reports
+  no open stream within 5 seconds, and the server still has one connection.
+
+The server of these tests sets `QueuedMessages` to 10000 and the message bucket to 1000000
+tokens. The default queue holds 16 messages for the application. A peer that fills the queue
+in a burst is closed with 1008, so the burst tests need the larger queue.
+
 ## Concurrency tests
 
 `Http2.Client.Concurrency.Test` drives many threads calling `Send` against a slow

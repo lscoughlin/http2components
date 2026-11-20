@@ -261,12 +261,20 @@ window closed, so the server stops sending. The HTTP/2 route adds no buffer.
 ### Connection use
 
 The WebSocket holds one stream of a pooled connection for its whole life. That
-stream counts against the stream limit of the connection. Under `wpmAuto`, the
+stream counts against the stream limit of the connection. A connection takes a new
+stream only while its count of open streams is below the lower of `MaxStreamsPerConnection`
+(default 100) and the `SETTINGS_MAX_CONCURRENT_STREAMS` of the peer. Under `wpmAuto`, the
 WebSocket never causes a dial of an HTTP/2 connection.
 
+WebSockets and ordinary requests share a pooled connection. The stream of a closed
+WebSocket leaves the connection, so a later WebSocket uses the same connection.
+
 The library client and the library server run WebSocket over HTTP/2 against each other
-in the integration tests (`Http2.Integration.WsH2.Test`, as described in
-[testing-observability](testing-observability.md)).
+in the integration tests (`Http2.Integration.WsH2.Test` and
+`Http2.Integration.WsH2Mux.Test`, as described in
+[testing-observability](testing-observability.md)). The multiplexing tests show that 20
+WebSockets and one ordinary request share one connection, and that 200 WebSockets opened
+and closed in turn keep one connection.
 
 ## Frames
 
