@@ -17,7 +17,7 @@ related:
   - "[client-api](client-api.md)"
   - "[errors-redirects](errors-redirects.md)"
   - "[open-questions](open-questions.md)"
-updated: 2026-10-13
+updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/fallback.md at the source commit recorded in the source inventory.
 ---
@@ -286,6 +286,9 @@ connection. It takes a stream of a live pooled HTTP/2 connection of the origin, 
 connection advertises the extended CONNECT setting. Otherwise it runs the HTTP/1.1 route: a
 dial of its own, with the ALPN offer `http/1.1` alone for `wss`, whatever the client fallback
 setting is. A pooled connection without the setting is not used, and that case is not an error.
+A server that offers `h2` alone (its HTTP/1.1 fallback is off) ends that dial at the TLS
+handshake, which raises `EHttpConnectionError`. The mode `wpmHttp2` offers `h2` alone, and such
+a server selects `h2`.
 
 The mode `wpmHttp2` dials with the ALPN offer `h2` alone (over TLS). A peer that selects no
 HTTP/2 raises `EHttpWebSocketError`. The h2c `Upgrade` is never used for a WebSocket. A `ws` URL
