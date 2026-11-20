@@ -257,13 +257,15 @@ HTTP/1.1 route.
   identifier of the WebSocket stream, gives `OnError`.
 - A sender that waits for flow-control credit and is then released ends with one
   RST_STREAM with CANCEL.
-- On the HTTP/1.1 route, a failed write ends the client's output, and the callbacks go
-  on. The listener gets `OnClose` with the code of the server's Close frame when that
+- A failed write ends the client's output, and the callbacks go on. This rule holds on
+  both routes. A user `Abort` still ends the session with no callback. On the HTTP/1.1
+  route, the listener gets `OnClose` with the code of the server's Close frame when that
   frame is read, and `OnError` when the session ends without one. The peer has the
   close timeout after the failed write to send its Close frame; when the timeout
   passes, the listener gets `OnError`.
-- On the HTTP/2 route, a send that fails in the transport (for example, a wait for
-  flow-control credit that expires) resets the stream with RST_STREAM and CANCEL. A Close
+- On the HTTP/2 route, the rule above holds with one difference. A send that fails in the
+  transport (for example, a wait for flow-control credit that expires) resets the stream
+  with RST_STREAM and CANCEL. A Close
   frame that the reader has already taken from the stream still gives `OnClose`. A Close
   frame that the reader has not yet read is lost: the reader fails at its next read, and
   the listener gets one `OnError` without a wait for the close timeout.
