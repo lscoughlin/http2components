@@ -110,6 +110,8 @@ type
     procedure TestNoCreditEchoStillGivesOnClose;
     procedure TestSendAfterPeerResetRaises;
     procedure TestSendAfterSessionEndRaisesAndEndsOnce;
+    procedure TestCloseAfterFailedSendGivesOnClose;
+    procedure TestFailedSendWithoutCloseGivesOneOnError;
   end;
 
 implementation
@@ -119,6 +121,8 @@ const
   cWaitMs = 5000;
   /// the payload of a Close frame with the status 1001 (going away)
   cCode1001 = #3#$E9;
+  /// the payload of a Close frame with the status 1009 (message too big)
+  cCode1009 = #3#$F1;
 
 /// the octets of an ASCII text (one octet per character)
 function ToBytes(const AText: string): TBytes;
@@ -615,6 +619,44 @@ begin
   AssertEquals('one END_STREAM from the client', 1, ClientEndCount);
   AssertTrue('a send after the client side ended raises', SendRaises('late'));
   AssertEquals('still one END_STREAM from the client', 1, ClientEndCount);
+end;
+
+procedure TOpenH2CloseTest.TestCloseAfterFailedSendGivesOnClose;
+var
+  Outcome: TTunnelOutcome;
+begin
+  // the reader waits for demand after one text message; the client send fails for want of
+  // credit; then the reader reads the server's Close frame, and OnClose must still come
+  Build(0);
+  FSess := Open(TWebSocketRequest.Create(cTestUrl, FRecRef).WithCloseTimeoutMs(300),
+    Outcome);
+  AssertTrue('open', FRec.WaitForCount('open', 1, cWaitMs));
+  FFactory.Sock.EnqueueData(1, ServerFrame($1, ToBytes('x')), False);
+  FFactory.Sock.EnqueueData(1, ServerFrame($8, ToBytes(cCode1009)), True);
+  Sleep(200);
+  AssertTrue('the send fails for want of credit', SendRaises('late'));
+  FSess.Request(10);
+  AssertTrue('the text reaches the listener', FRec.WaitForCount('text:x', 1, cWaitMs));
+  AssertTrue('OnClose with the server code', FRec.WaitForCount('close:1009', 1, cWaitMs));
+  Sleep(200);
+  AssertEquals('exactly one OnClose', 1, FRec.Count('close:'));
+  AssertEquals('no OnError', 0, FRec.Count('error:'));
+end;
+
+procedure TOpenH2CloseTest.TestFailedSendWithoutCloseGivesOneOnError;
+var
+  Outcome: TTunnelOutcome;
+begin
+  // the send fails for want of credit and no Close frame comes: one OnError ends the session
+  Build(0);
+  FSess := Open(TWebSocketRequest.Create(cTestUrl, FRecRef).WithCloseTimeoutMs(300),
+    Outcome);
+  AssertTrue('open', FRec.WaitForCount('open', 1, cWaitMs));
+  AssertTrue('the send fails for want of credit', SendRaises('late'));
+  AssertTrue('one OnError after the failed send', FRec.WaitForCount('error:', 1, cWaitMs));
+  Sleep(200);
+  AssertEquals('exactly one OnError', 1, FRec.Count('error:'));
+  AssertEquals('no OnClose', 0, FRec.Count('close:'));
 end;
 
 initialization

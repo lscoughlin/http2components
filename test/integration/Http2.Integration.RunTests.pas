@@ -10,6 +10,7 @@ uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   consoletestrunner, Http2.Integration.Http.Test, Http2.Integration.Events.Test,
   Http2.Integration.Unix.Test, Http2.Integration.WsStream.Test, Http2.Integration.WsH2.Test,
+  Http2.Integration.WsH2Flow.Test,
   Http2.Integration.WssH2.Test, Http2.Integration.WsH2Mux.Test;
 var Runner: TTestRunner;
 begin
