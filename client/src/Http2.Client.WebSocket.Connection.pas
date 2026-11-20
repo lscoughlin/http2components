@@ -149,7 +149,7 @@ function OpenWebSocket(const AFactory: IHttp1SocketFactory;
 implementation
 
 uses Http2.Client.WebSocket.Connection.Open, Http2.Client.WebSocket.Connection.Io,
-  Http2.Client.WebSocket.Connection.Observer;
+  Http2.Client.WebSocket.Connection.Observer, Http2.Client.Tunnel.Types;
 
 function NowMs: QWord;
 begin
@@ -863,7 +863,11 @@ end;
 procedure TWebSocketConnection.CloseTransport;
 var
   DoClose: Boolean;
+  Ab: IH2Abortable;
 begin
+  // an abnormal end resets an HTTP/2 stream; before the send lock, so a sender parked for credit wakes first
+  if FAborted and (not FSockClosed) and Supports(FSock, IH2Abortable, Ab) then
+    Ab.Abort;
   // waits out a send in flight and sets FSockClosed, so that later sends end
   // at once; the close itself runs after the send lock is released, because
   // a TLS close can wait for the peer

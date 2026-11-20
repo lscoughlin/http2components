@@ -216,6 +216,8 @@ begin
 end;
 
 procedure TLeaseTunnel.EndSend;
+var
+  Send: Boolean;
 begin
   FSendLock.Acquire;
   try
@@ -223,9 +225,11 @@ begin
     try
       if FEndSent or FReleased then
         Exit;
-      FEndSent := True;
+      // tested before FEndSent is set: that flag alone makes LocalSideDone true
       // END_STREAM only on an open send side of a stream that is not closed
-      if (FLease.LocalState = lsHeadersSent) and (not StreamClosed) then
+      Send := (FLease.LocalState = lsHeadersSent) and (not StreamClosed);
+      FEndSent := True;
+      if Send then
         FLease.EndSend;
     finally
       UnlockPool;
