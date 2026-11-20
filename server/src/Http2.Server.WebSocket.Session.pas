@@ -18,10 +18,11 @@ notes:
   - The credit of the octets of a message in memory, and of every frame header, goes back
     to the channel when the octets arrive, so a message of up to the HTTP/2 window can
     arrive. The credit of the octets of a pipe goes back as the handler reads them, so a
-    slow handler slows its own stream only. When the queue of a session is half full, the
-    credit of the data octets is held until the handler has taken messages, and a queue
-    over its cap closes the session with 1008. The headers of a streamed message that is
-    open are never held.
+    slow handler slows its own stream only. When the queue of a session is at least half
+    full, the credit of the data octets is held until the handler has taken messages. On
+    HTTP/2 a message past the cap is admitted and the credit holds the peer; on a channel
+    without credit, a message past the cap closes the session with 1008. The headers of a
+    streamed message that is open are never held.
   - The end of the session aborts the pipe of a message that still arrives, before the
     pool stops, so a handler that waits in Read returns.
   - The state, the sender, the closing handshake and the timers are in
@@ -564,7 +565,8 @@ begin
     if FState = wsEnded then
       Exit;
     AfterClose := FInputClosed;
-    TooMany := FQueuedMsgs >= FOpts.QueuedMessages;
+    // on a channel that slows its peer, the cap holds the credit and admits the message
+    TooMany := (FQueuedMsgs >= FOpts.QueuedMessages) and not SlowsPeer;
     OverBudget := False;
     if not (AfterClose or TooMany) then
     begin
@@ -718,7 +720,7 @@ begin
     Exit;
   end;
   // a message that ended inside the inline limit goes to the handler now
-  if not Admit(Length(FInline)) then
+  if not Admit(WsMemoryCharge(Length(FInline))) then
   begin
     FInline := nil;
     Exit;
@@ -728,7 +730,7 @@ begin
   T.Kind := wtMessage;
   T.Text := FInlineText;
   T.Reader := TWsMemoryReader.Create(FInline);
-  T.Charge := Length(FInline);
+  T.Charge := WsMemoryCharge(Length(FInline));
   FInline := nil;
   Post(T);
 end;

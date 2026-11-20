@@ -262,6 +262,14 @@ streamed messages can run at the same time. The 129th closes its session with 10
 reason `the queued bytes of the server are full`. A program with more concurrent streamed
 messages raises `MaxWsQueuedBytes` or lowers `InboundPipeBytes`.
 
+A message in memory charges its payload plus 256 octets (`WsQueuedMessageOverhead`) from the
+time it is queued until its handler call returns. The overhead is a fixed constant and is not
+an option. With the defaults about 522000 queued messages of one octet fit in the budget.
+On HTTP/2 this budget is the bound of the queue: a session whose messages wait for the
+handler is held by its window and not closed, and the session that passes the budget is
+closed with 1008 and the reason above. On a channel without flow control the session
+closes at `QueuedMessages` first.
+
 ## Handshake refusals on HTTP/2
 
 A WebSocket handshake that fails a check of `AcceptWebSocket` is answered with an

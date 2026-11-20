@@ -50,6 +50,20 @@
   The bucket now counts only the empty frames that do not end their stream. In the
   multiplexing test of 200 sockets over one connection, the connection closed after 124
   sockets before the fix. The defect is in 0.33.0.
+- Fix: a WebSocket session over HTTP/2 closed with 1008 ("too many messages wait for the
+  application") when a client sent a burst of small messages and the handler was slower
+  than the burst. The default queue holds 16 messages, so the server closed the session
+  at the 17th message, although the client kept to the stream window. In the test with a
+  blocked handler and 100 messages of about 10 octets each, the close with 1008 came before
+  the release. After the fix, the same test receives all 100 messages in order, and no
+  close. The defect is in 0.33.0.
+- **Behavior change.** On HTTP/2, `QueuedMessages` no longer closes a WebSocket session.
+  A message past the count is admitted, and the credit of the arriving octets waits until the
+  handler takes messages, so the stream window holds the peer. The server-wide byte budget
+  `MaxWsQueuedBytes` bounds the queue. A message in memory now charges its payload plus 256
+  octets to the budget, on every channel, so the budget of small messages is smaller than
+  before. On an HTTP/1.1 upgrade and a unix socket, a message past `QueuedMessages` still
+  closes the session with 1008.
 
 ## 0.33.0 — 2026-11-19 (source release)
 
