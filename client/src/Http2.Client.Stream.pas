@@ -702,7 +702,8 @@ begin
 
   if AEndStream then
     MarkResponseComplete;
-  if FBodyEof then
+  // a KeepOpen lease with its local side open stays registered for its tunnel (story B4)
+  if FBodyEof and not (FRequest.KeepOpen and (FLocalState = lsHeadersSent)) then
     ReleaseLease;
 end;
 
@@ -746,7 +747,9 @@ begin
   if AFrame.IsEndStream then
   begin
     MarkResponseComplete;
-    ReleaseLease;
+    // a KeepOpen lease with its local side open stays registered for its tunnel (story B4)
+    if not (FRequest.KeepOpen and (FLocalState = lsHeadersSent)) then
+      ReleaseLease;
   end;
 end;
 
