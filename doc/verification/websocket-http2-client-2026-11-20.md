@@ -74,9 +74,12 @@ no mock.
 
 On Linux the integration task (`task test:integration`) ran 55 tests with 0
 errors and 0 failures, and the server suite (`task test:server`) ran 1086 tests
-with 0 errors and 0 failures. The macOS arm64 runs of the unit and integration
-suites passed. This record states no macOS count, because the macOS runs are not
-in the run that this record describes.
+with 0 errors and 0 failures. On macOS arm64 the client suite ran 1239 tests and
+the integration task ran 55 tests, each with 0 errors and 0 failures, on commit
+`1fc1c33`. The server suite ran 1086 tests with 0 errors and 0 failures on
+commit `7628a51`. The two commits differ from the commit of the Linux run only
+in tests of the handler exception. The macOS runs are not part of the Linux run
+that this record describes.
 
 The WebSocket live gate (`task validate:client:websocket`) ran 18 tests with 0
 errors and 0 failures. The Autobahn run of the client has OK 296,
