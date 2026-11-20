@@ -23,6 +23,9 @@ uses
 
 function LeaseMaxFrameSize(const AConnection: TConnection): LongWord;
 function RequestIsBodyless(const AMethod: string): Boolean;
+/// true when the request sends HEADERS only and keeps the stream open for
+/// DATA that the caller sends later (KeepOpen, no body, no body writer)
+function LeaseOpensWithHeaders(const ARequest: TStreamRequest): Boolean;
 procedure LeaseSendHeaders(const ARequest: TStreamRequest;
   const AEncoder: THpackCodec; const AOutbound: IBlockingQueue<TFrame>;
   const AStreamId: LongWord; const AMaxFrameSize: LongWord;
@@ -64,6 +67,12 @@ end;
 function RequestIsBodyless(const AMethod: string): Boolean;
 begin
   Result := SameText(AMethod, 'HEAD');
+end;
+
+function LeaseOpensWithHeaders(const ARequest: TStreamRequest): Boolean;
+begin
+  Result := ARequest.KeepOpen and (not ARequest.Body.IsSet) and
+    (ARequest.BodyWriter = nil);
 end;
 
 function AcquireCredit(const AConnection: TConnection;

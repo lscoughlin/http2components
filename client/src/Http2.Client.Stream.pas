@@ -34,7 +34,8 @@ uses
   SysUtils, Classes, SyncObjs, Generics.Collections,
   Http2.Client.Errors, Http2.Common.Frames, Http2.Common.Headers, Http2.Common.Hpack, Http2.Common.Status,
   Http2.Client.Tls,
-  Http2.Client.Connection, Http2.Client.Stream.Types, Http2.Client.Stream.Receive, Http2.Common.Body;
+  Http2.Client.Connection, Http2.Client.Stream.Types, Http2.Client.Stream.ResponseState,
+  Http2.Client.Stream.Receive, Http2.Common.Body;
 
 const
   /// polls as often as this many milliseconds while waiting for a cancel
@@ -75,9 +76,6 @@ type
 
   TLeaseLocalState = Http2.Client.Stream.Types.TLeaseLocalState;
   TLeaseEndDue = Http2.Client.Stream.Types.TLeaseEndDue;
-
-  /// the response (receive) side assembly state
-  TResponseState = (rsIdle, rsBodyOpen, rsBodyComplete, rsFailed);
 
   TStreamLease = class;
 
@@ -394,7 +392,8 @@ begin
   end;
   try
     SendHeaders;
-    if FLocalState = lsHeadersSent then
+    // a KeepOpen request without a body keeps its stream open for SendData
+    if (FLocalState = lsHeadersSent) and not LeaseOpensWithHeaders(FRequest) then
       SendBody;
   except
     ReleaseLease;
