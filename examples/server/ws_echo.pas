@@ -21,8 +21,9 @@ notes:
   - The server runs until the caller presses Enter, then stops.
   - There are three optional arguments. They are the host (default 127.0.0.1), the port (default 8084) and the
     word big, which raises the message limits to 32 MiB for a conformance run. The word
-    load raises the limits of detached streams and listener connections to
-    30000 for a load run. The listener limit remains 10000 in other modes.
+    load raises the limits of detached streams, listener connections and WebSocket
+    sessions to 30000 for a load run. The listener limit remains 10000 in other modes,
+    and the session limit remains at its default of 5000.
 ---
 }
 /// A WebSocket echo server with a browser page
@@ -178,6 +179,7 @@ end;
 
 var
   Server: IHttp2Server;
+  Limits: TServerLimits;
   Line, Host: string;
   Port: Integer;
   Options: TWsOptions;
@@ -197,12 +199,16 @@ begin
       .WithInboundPipeBytes(67108864)
       .WithMessageBucket(TTokenBucketOptions.Create.WithCapacity(1000000)
         .WithRefillPerSecond(1000000));
+  Limits := TServerLimits.Create.WithMaxConnections(
+    IfThen((ParamCount >= 3) and (ParamStr(3) = 'load'), 30000, 10000));
+  // the session cap keeps its default (5000) outside the load run
+  if (ParamCount >= 3) and (ParamStr(3) = 'load') then
+    Limits := Limits.WithMaxWsSessions(30000);
   Server := THttp2ServerFactory.Create
     .WithMaxConcurrentStreams(256)
     .WithStreamPoolSize(8)
     .WithMaxDetachedStreams(IfThen((ParamCount >= 3) and (ParamStr(3) = 'load'), 30000, 10000))
-    .WithServerLimits(TServerLimits.Create.WithMaxConnections(
-      IfThen((ParamCount >= 3) and (ParamStr(3) = 'load'), 30000, 10000)))
+    .WithServerLimits(Limits)
     .WithHost(Host)
     .WithPort(Port)
     .WithClearTextAllowed(True)
