@@ -284,7 +284,7 @@ describes the bucket itself.
 | reset | `WithResetBucket` | `RST_STREAM`, the rapid-reset technique of CVE-2023-44487 |
 | ping | `WithPingBucket` | `PING` |
 | settings | `WithSettingsBucket` | `SETTINGS` |
-| empty data | `WithEmptyDataBucket` | `DATA` with no payload |
+| empty data | `WithEmptyDataBucket` | `DATA` with no payload and without `END_STREAM` |
 | window update | `WithWindowUpdateBucket` | `WINDOW_UPDATE`, the tiny-increment technique of RFC 9113 section 10.5 |
 | continuation | `WithContinuationBucket` | `CONTINUATION`, the flooding technique of CERT VU#421644 |
 

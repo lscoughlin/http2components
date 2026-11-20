@@ -31,6 +31,17 @@
   failure. In 20 runs of the `TMutualTlsRejectTest` suite, 16 runs failed before the fix.
   The defect is in 0.33.0.
 
+### Server
+
+- Fix: a server closed a connection with `ENHANCE_YOUR_CALM` after about 100 streams that
+  ended with an empty `DATA` frame carrying `END_STREAM`, when they came in a short time. The
+  server counted each such frame against the empty `DATA` bucket (100 tokens, refilled 10 a
+  second), so a client that sent a body with no octets for each of many requests lost its
+  connection and every stream on it.
+  The bucket now counts only the empty frames that do not end their stream. In the
+  multiplexing test of 200 sockets over one connection, the connection closed after 124
+  sockets before the fix. The defect is in 0.33.0.
+
 ## 0.33.0 — 2026-11-19 (source release)
 
 - This release is a source release. It has no binary artifacts.

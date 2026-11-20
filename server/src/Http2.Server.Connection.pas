@@ -530,7 +530,9 @@ begin
   // flow control counts the whole payload: the pad length octet and the padding
   // belong to it (RFC 9113 section 6.9.1)
   Total := LongWord(Length(AFrame.Payload));
-  if N = 0 then
+  // an empty DATA frame that ends the stream is the normal end of a stream, and a
+  // stream ends once; the bucket counts only the empty frames that do not end it
+  if (N = 0) and (not AFrame.IsEndStream) then
   begin
     if FLimits <> nil then
       FLimits.Charge(lkEmptyData, 1);
