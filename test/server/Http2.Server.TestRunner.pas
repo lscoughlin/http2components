@@ -87,6 +87,8 @@ uses
   Http2.Server.Admission.Test,
   Http2.Server.Admission.Connections.Test,
   Http2.Server.HandlerError.Test,
+  Http2.Server.HandlerException.Test,
+  Http2.Server.HandlerException.Http1.Test,
   Http2.Server.AccessLog.Test,
   Http2.Server.Mtls.Test,
   Http2.Server.H2Peer.Test,

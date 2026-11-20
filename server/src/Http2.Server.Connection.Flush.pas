@@ -25,7 +25,7 @@ interface
 uses
   {$IFDEF UNIX}cthreads,{$ENDIF}
   SysUtils, Generics.Collections,
-  Http2.Common.Frames, Http2.Common.Hpack, Http2.Common.FlowControl,
+  Http2.Common.Errors, Http2.Common.Frames, Http2.Common.Hpack, Http2.Common.FlowControl,
   Http2.Server.Stream, Http2.Server.HpackConnection, Http2.Server.Output;
 
 type
@@ -33,6 +33,9 @@ type
   TQueueFrameProc = procedure(const AFrame: TFrame) of object;
   /// the byte queue of the core, as a callback
   TQueueBytesProc = procedure(const AData: TBytes) of object;
+  /// the reset of a stream by the core, as a callback
+  TResetProc = procedure(const AStreamId: LongWord;
+    const AErrorCode: THttp2ErrorCode) of object;
 
 /// queue the HEADERS run of one encoded header block
 procedure EmitHeaderRun(AHpack: THpackConnection;
@@ -42,6 +45,14 @@ procedure EmitHeaderRun(AHpack: THpackConnection;
 /// encode every pending response head and queue its frames
 procedure FlushPendingHeaders(AStreams: TObjectList<TServerStream>;
   AHpack: THpackConnection; const AQueue: TQueueFrameProc);
+
+/// reset with NO_ERROR the streams whose response ended before the request
+/// body did; the flush calls this after it encoded the HEADERS of the response
+// - the answer is True when a stream was reset, so the caller refills the
+//   connection window at once: the octets of the reset stream never return
+//   through a stream reader
+function FlushResetAfterEnd(AStreams: TObjectList<TServerStream>;
+  const AReset: TResetProc): Boolean;
 
 /// refill every stream window whose consumed credit passed the threshold
 procedure FlushStreamCredits(AStreams: TObjectList<TServerStream>;
@@ -97,6 +108,28 @@ begin
       AQueue(BuildDataFrame(Stream.StreamId, nil, True));
       Stream.MarkLocalEnded;
     end;
+  end;
+end;
+
+function FlushResetAfterEnd(AStreams: TObjectList<TServerStream>;
+  const AReset: TResetProc): Boolean;
+var
+  I: Integer;
+  Stream: TServerStream;
+begin
+  Result := False;
+  for I := 0 to AStreams.Count - 1 do
+  begin
+    Stream := AStreams[I];
+    if not Stream.ResetAfterEndDue then
+      Continue;
+    Stream.DiscardInbound;
+    // the reset leaves after the HEADERS and the END_STREAM DATA of the response,
+    // which this flush queued before it reaches this call
+    AReset(Stream.StreamId, ecNoError);
+    // the cancel ends the stream in both directions; the core closes it after the flush
+    Stream.Cancel(ecNoError);
+    Result := True;
   end;
 end;
 

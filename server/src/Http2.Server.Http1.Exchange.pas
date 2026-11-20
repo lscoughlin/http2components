@@ -93,6 +93,12 @@ type
     procedure Emit(const AData: TBytes);
     procedure CompleteExchange(const AFailed: Boolean);
     procedure SendError(const AStatus: Integer);
+    /// the answer of an uncaught handler exception: keeps the connection when
+    // the unread request body is under the drain bound, else as SendError
+    procedure SendFailure(const AStatus: Integer);
+    /// true when the request body is short enough for the server to read and
+    // discard it, so the connection can serve the next request
+    function DrainableBody: Boolean;
     function ClaimResponse: Boolean;
     procedure SendHead(const AStatus: Integer; const AHeaders: THeaderBlock);
     procedure WriteBody(const ABuffer; const ACount: Integer);
@@ -191,6 +197,10 @@ uses
 
 const
   cWaitSliceMs = 5;
+  /// the greatest request body, in octets, that the server reads and discards
+  // after a handler exception so that the connection stays open; a larger
+  // unread body closes the connection (the bound of Go's net/http, 256 KiB)
+  cHttp1DrainBound = 262144;
 
 { TH1Exchange }
 
@@ -723,6 +733,27 @@ begin
   CompleteExchange(True);
 end;
 
+function TH1Exchange.DrainableBody: Boolean;
+begin
+  Result := (FHead.Framing <> bfChunked) and (FHead.ContentLength < cHttp1DrainBound) and
+    not FHead.Expect100;
+end;
+
+procedure TH1Exchange.SendFailure(const AStatus: Integer);
+begin
+  if (not FKeep) or (not DrainableBody) then
+  begin
+    SendError(AStatus);
+    Exit;
+  end;
+  if not ClaimResponse then
+    Exit;
+  FStatus := AStatus;
+  // the request body finishes in the parser: the next request waits for it
+  Emit(H1DrainErrorResponse(AStatus, FHead.Line.Minor));
+  CompleteExchange(False);
+end;
+
 procedure TH1Exchange.Fail(const AStatus: Integer);
 begin
   // wake the handler first, then answer if the handler has not
@@ -756,7 +787,7 @@ begin
     begin
       if not FDetached then
         if not FHeadersSent then
-          SendError(HttpStatusInternalServerError)
+          SendFailure(HttpStatusInternalServerError)
         else
           // the response is cut: a truncated chunked body must not look whole
           CompleteExchange(True);

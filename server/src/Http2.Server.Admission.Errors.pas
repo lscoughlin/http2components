@@ -39,8 +39,13 @@ procedure AnswerHandlerError(const AStream: TServerStream;
   const ABeforeHeaders: Boolean);
 begin
   if ABeforeHeaders then
+  begin
     AStream.QueueResponseHeaders(HttpStatusInternalServerError,
-      WithDate(nil, HttpStatusInternalServerError), True)
+      WithDate(nil, HttpStatusInternalServerError), True);
+    // the request body may still be on its way: the flush resets the stream
+    // after the 500 when it is
+    AStream.ResetAfterEnd;
+  end
   else
     AStream.Refuse(ecInternalError);
 end;

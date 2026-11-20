@@ -561,6 +561,8 @@ end;
 procedure TConnectionCoreBase.FlushLocked;
 var
   DrainedFrames, I: Integer;
+  ResetDone: Boolean;
+  Threshold: LongWord;
 begin
   try
     FlushPendingHeaders(FStreams, FHpack, QueueFrame);
@@ -572,10 +574,15 @@ begin
     DrainedFrames := FOut.TakeQueuedFrames;
     for I := 1 to DrainedFrames do
       FBudget.CountFrame(ftData);
+    ResetDone := FlushResetAfterEnd(FStreams, SendRstStream);
     FlushStreamCredits(FStreams, FRecv, FOptions.StreamUpdateThreshold,
       QueueFrame);
-    FlushConnectionCredit(FRecv, FOptions.ConnectionUpdateThreshold,
-      FConnUpdatePending, QueueFrame);
+    // a reset stream never reads its octets, so the credit of the connection
+    // goes back at once, not at the update threshold
+    Threshold := FOptions.ConnectionUpdateThreshold;
+    if ResetDone then
+      Threshold := 1;
+    FlushConnectionCredit(FRecv, Threshold, FConnUpdatePending, QueueFrame);
   except
     // a fault while the output is built ends the connection with a code. No
     // exception may leave: the IO thread and the handler threads both call here
