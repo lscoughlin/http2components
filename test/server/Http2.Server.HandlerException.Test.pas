@@ -121,6 +121,9 @@ type
     // preface, minus the octets that the client sent; zero or more means every
     // sent octet came back
     function ConnectionCredit: Int64;
+    /// read the frames that arrive until ConnectionCredit is zero or more, or
+    // until ATimeoutMs passes; the answer is the last ConnectionCredit read
+    function WaitConnectionCredit(const ATimeoutMs: Integer): Int64;
     /// the octets of the send window of the stream that are free now
     function StreamAvailable(const AStreamId: LongWord): Int64;
     /// the text of every DATA payload that the server sent
@@ -476,6 +479,20 @@ begin
   Result := CreditOf(0) - FBaseline - SentOf(0);
 end;
 
+function THandlerExceptionClient.WaitConnectionCredit(const ATimeoutMs: Integer): Int64;
+var
+  Deadline: QWord;
+begin
+  // the WINDOW_UPDATE of the last reset stream can follow the last frame that
+  // the client read, so the client reads on until the credit is back
+  Result := 0;
+  Deadline := GetTickCount64 + QWord(ATimeoutMs);
+  repeat
+    Drain(10);
+    Result := ConnectionCredit;
+  until (Result >= 0) or (GetTickCount64 >= Deadline);
+end;
+
 function THandlerExceptionClient.SendBody(const AStreamId: LongWord;
   const ATotal: Int64; const ATimeoutMs: Integer): Int64;
 var
@@ -657,7 +674,7 @@ var
   Status, Sent: Integer;
   Code: THttp2ErrorCode;
   Reset: Boolean;
-  Total: Int64;
+  Total, Credit: Int64;
 begin
   StartServer(hemRaiseNow);
   C := THandlerExceptionClient.Create(FServer.Port);
@@ -677,9 +694,9 @@ begin
       AssertEquals('the reset after a complete 500 is NO_ERROR', Ord(ecNoError), Ord(Code));
     AssertTrue('the streams close', WaitIdle(StepMs));
     // every octet the server received came back to the connection window
+    Credit := C.WaitConnectionCredit(5000);
     AssertTrue('the connection window leaked: credit ' +
-      IntToStr(C.ConnectionCredit) + ' after ' + IntToStr(Sent) + ' octets',
-      C.ConnectionCredit >= 0);
+      IntToStr(Credit) + ' after ' + IntToStr(Sent) + ' octets', Credit >= 0);
     C.SendRequest(3, 'GET', '/ok', True);
     AssertTrue('a second request got no head', C.WaitStatus(3, StepMs, Status));
     AssertEquals('the second request is served', 500, Status);
@@ -733,7 +750,7 @@ begin
     AssertTrue('the request body was not finished and no reset came',
       Reset or (Total = UnreadBodyBytes));
     AssertTrue('the streams close', WaitIdle(StepMs));
-    AssertTrue('the connection window leaked', C.ConnectionCredit >= 0);
+    AssertTrue('the connection window leaked', C.WaitConnectionCredit(5000) >= 0);
   finally
     C.Free;
   end;
@@ -744,6 +761,7 @@ var
   C: THandlerExceptionClient;
   I, Status: Integer;
   Id: LongWord;
+  Credit: Int64;
 begin
   StartServer(hemRaiseNow);
   C := THandlerExceptionClient.Create(FServer.Port);
@@ -760,8 +778,9 @@ begin
     end;
     AssertTrue('streams are left open after 100 failures',
       WaitIdle(StepMs));
-    AssertTrue('the connection window leaked after 100 failures',
-      C.ConnectionCredit >= 0);
+    Credit := C.WaitConnectionCredit(5000);
+    AssertTrue('the connection window leaked after 100 failures: credit ' +
+      IntToStr(Credit), Credit >= 0);
     AssertEquals('one exception per request', 100, FObserver.Exceptions);
   finally
     C.Free;
