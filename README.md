@@ -136,8 +136,8 @@ TLS run over the same byte stream. The [server
 design](doc/design/server/unix-socket.md) and the [client
 transport](doc/design/client/transport.md) describe the rules. The examples are
 `examples/server/unix_server.pas` and `examples/client/unix_client.pas`. The
-[Unix socket verification record](doc/verification/unix-sockets-2026-11-12.md)
-states the results.
+[Linux validation record](doc/verification/linux-validation-2026-11-20.md)
+states the results of the Unix socket gate on Linux.
 
 ## TLS documentation
 
@@ -190,19 +190,19 @@ These behaviors have no option:
 
 ## Verification
 
-The TLS implementation has bounded provider, transport, integration, and
-package isolation results on macOS arm64, and a native Linux validation run
-that completed on 2026-11-12, with load stages and documented peer
-limitations. The client 0.23.0 and server 0.29.0 source records describe
-earlier source revisions. Their test counts are not results for this TLS
-implementation.
-
-The WebSocket over HTTP/2 client (RFC 8441) in 0.34.0 has unit and
-integration results from the library server and the library client on macOS
-arm64. It has no Linux run, no load check, and no independent-peer check. No
-test has run on Windows. The merged result and remaining validation limits
-are recorded in the [current verification
-record](doc/verification/current-status.md).
+Version 0.34.0 has a full validation run on Linux x86_64, from 2026-11-20. The
+run covers the build, the unit and integration tests, the TLS tasks, the
+interoperability and conformance gates, the live gates, the real peer
+matrices, the Unix socket gate, the load stages and repeated runs of the
+suites that use threads. The WebSocket over HTTP/2 client (RFC 8441) is part
+of the run. The task `packages:check` did not run on Linux, because the image
+has no `lazbuild`. No test has run on Windows. The peer limitations and the
+open items are recorded in the [current verification
+record](doc/verification/current-status.md), the [Linux validation
+record](doc/verification/linux-validation-2026-11-20.md), the [Linux
+performance record](doc/verification/linux-performance-2026-11-20.md) and the
+[WebSocket over HTTP/2 client
+record](doc/verification/websocket-http2-client-2026-11-20.md).
 
 ## License
 

@@ -21,7 +21,6 @@ related:
   - "[fallback](fallback.md)"
   - "[testing-observability](testing-observability.md)"
   - "[open-questions](open-questions.md)"
-  - "[toolchain](../../verification/source/client/toolchain.md)"
 updated: 2026-11-20
 notes:
   - Imported from http2client/doc/design/websocket.md at the source commit recorded in the source inventory.
@@ -458,7 +457,7 @@ All derive from `EHttpError`.
 > owned by the provider-neutral context, not by the WebSocket unit. `Http2.Client.WebSocket`
 > and `Http2.Client.WebSocket.Connection` take **no** dependency on it: they are
 > self-contained units that mirror its designs. Names below are from the
-> checkout recorded in [toolchain](../../verification/source/client/toolchain.md).
+> checkout of mORMot2 that `third_party/mORMot2` pins.
 
 | mORMot2 piece | What it shows | Mirrored here by |
 | --- | --- | --- |

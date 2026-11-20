@@ -10,7 +10,6 @@ primary_types: []
 db_tables: []
 related_docs:
   - doc/design/server/architecture.md
-  - doc/verification/source/server/toolchain.md
 invariants:
   - The library compiles in the Delphi mode.
   - The thread manager comes from mORMot2 and not from a program unit.

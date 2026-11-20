@@ -112,9 +112,8 @@ options.
 
 A shared bucket of one capacity does not serve these kinds. The legitimate
 rates are far apart. A peer sends one `WINDOW_UPDATE` frame for each window
-that it refills, so a large body needs thousands of them: a measurement of
-a 100 MB body sent 6102 such frames, at a steady rate of 2450 frames in
-one second ([validation](../../verification/source/server/validation.md)). A `CONTINUATION` frame,
+that it refills, so a large body needs thousands of them, at a steady rate
+of thousands of frames in one second. A `CONTINUATION` frame,
 by contrast, follows only a header block that already passed the frame
 size. One shared bucket of the least capacity closes a healthy connection
 that streams a large body.
@@ -373,11 +372,10 @@ each WebSocket over HTTP/2 this way, and a body with no octets ends the same way
 
 The `WINDOW_UPDATE` bucket holds 10000 tokens, with a refill of 4000 tokens
 a second (`server/src/Http2.Server.Config.pas`). The capacity admits a whole
-burst of a few megabytes, and the refill rate sits above the measured
-rate of 2450 frames a second with headroom. A small bucket of 100 tokens
-closed a healthy connection on a body of less than two megabytes: 107
-control frames arrived before the body ended. The measurement is in
-[validation](../../verification/source/server/validation.md).
+burst of a few megabytes, and the refill rate sits above the rate of a
+large body with headroom. A small bucket of 100 tokens closes a healthy
+connection on a body of less than two megabytes, because more than 100
+control frames arrive before the body ends.
 
 The queue depth of 64 (`server/src/Http2.Server.Config.pas`) and the IO thread
 count of 4 (`server/src/Http2.Server.Config.pas`) come from the same seam

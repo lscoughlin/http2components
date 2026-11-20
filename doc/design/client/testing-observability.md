@@ -165,7 +165,7 @@ and the scripted peers, so nothing needs a live server.
 The recording observer in these tests is registered first, so its end callback
 runs last and a wait on it means the adapters have finished. The overhead
 measurement is not a test: it is `examples/observer_overhead.pas`, built by
-`task examples` and run by hand (as described in [observer-overhead](../../verification/source/client/observer-overhead.md)).
+`task examples` and run by hand.
 
 ## WebSocket tests
 

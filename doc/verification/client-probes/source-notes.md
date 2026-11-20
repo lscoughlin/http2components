@@ -12,9 +12,10 @@ notes:
 # FPC-verified reference probes
 
 This directory contains the minimal Free Pascal programs used to verify the
-language/runtime claims in [`../source/client/toolchain.md`](../source/client/toolchain.md)
-(the *Verified Free Pascal facts* table). Every claim marked "verified" in
-that document is traceable to one of these files.
+language/runtime claims of the client source project (the *Verified Free
+Pascal facts* table of its toolchain record). Every claim marked "verified" in
+that record is traceable to one of these files. The toolchain record is in the
+history of the repository.
 
 Toolchain used:
 

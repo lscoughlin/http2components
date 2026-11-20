@@ -369,7 +369,7 @@ in the log once. Under `ctHttp1` none carries an `Upgrade` header; under
 `ctUpgrade` each carries the probe once.
 
 Result: `interop: PASS=13 FAIL=0 SKIP=1` → `interop gate GREEN`
-(as described in [validation](../../verification/source/client/validation.md)).
+(as recorded in the [Linux validation record](../../verification/linux-validation-2026-11-20.md)).
 
 ## Known gaps
 

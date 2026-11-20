@@ -8,9 +8,8 @@ notes:
 
 # Documentation map
 
-This directory holds the design documents, reference copies, and source
-verification records. The source verification records describe earlier
-source revisions. They do not report results for the combined TLS implementation.
+This directory holds the design documents, reference copies, and
+verification records.
 
 The [design index](design/README.md) lists the design sections, and each section has its own index.
 
@@ -111,47 +110,25 @@ The [history index](history/README.md) lists the source changelog snapshots.
 
 ## Verification records
 
-The [TLS replacement record](verification/tls-replacement-0.30.0.md) describes
-the current bounded checks, provider isolation, review limits, and deferred
-validation for version 0.30.0.
+The [current verification record](verification/current-status.md) summarizes
+the results of the full Linux run of 2026-11-20 and links the records.
 
-The [native Linux record](verification/linux-tls-2026-11-11.md) identifies
-completed Docker checks, repairs, retained evidence, and acceptance work
-that is still in progress.
+The [Linux validation record](verification/linux-validation-2026-11-20.md)
+states the host, the commits, every stage with its result, the peers and
+their limits, and the open items.
 
-The [Unix socket record](verification/unix-sockets-2026-11-12.md) states the
-macOS and Linux results of the Unix domain socket feature.
+The [Linux performance record](verification/linux-performance-2026-11-20.md)
+states the numbers of the load stages of the same run.
 
-The [streamed bodies record](verification/body-reader-2026-11-18.md) states the
-Linux gate results and the load runs of the streamed bodies and messages, and three open
-findings of code review: the handler pool, the stream lock and the lock order with the socket layer.
+The [WebSocket over HTTP/2 client record](verification/websocket-http2-client-2026-11-20.md)
+states the tests, the loop results, the volume results and the open items of the
+WebSocket over HTTP/2 client.
 
 The [client compiler probes](verification/client-probes/README.md) are
-historical compiler evidence. The source validation and toolchain records
-are grouped by role:
+historical compiler evidence. The file
+`verification/client-probes/source-notes.md` describes their original purpose.
 
-- [Client source records](verification/source/client/)
-- [Server source records](verification/source/server/)
-
-The source-record files are listed below for direct access.
-
-- `verification/client-probes/source-notes.md`
-- `verification/source/client/README.md`
-- `verification/source/client/toolchain.md`
-- `verification/source/client/validation.md`
-- `verification/source/client/proxy-real.md`
-- `verification/source/client/mtls-real.md`
-- `verification/source/client/observer-overhead.md`
-- `verification/source/client/harness-run-full.log`
-- `verification/source/client/harness-expectations.tsv`
-- `verification/source/server/README.md`
-- `verification/source/server/toolchain.md`
-- `verification/source/server/validation.md`
-
-These source records describe their pinned source revisions. Combined-tree
-results are in the [current verification record](verification/current-status.md).
-
-The [verification index](verification/README.md) lists the records of this section, and the [source record index](verification/source/README.md) lists the source records by role.
+The [verification index](verification/README.md) lists the records of this section.
 
 ## RFC references
 
