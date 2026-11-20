@@ -955,14 +955,14 @@ begin
           if (Granted > 0) and FFlowControl.TryConsume(AStreamId, Granted) then
             Exit(Granted);
         end;
-        // credit that is there is still used; only a wait for more is cut short
-        if (AAbort <> nil) and (InterlockedExchangeAdd(AAbort^, 0) <> 0) then
-          Exit(0);
         // Register before releasing FLock, so a settings or window update
         // cannot land between the credit check and the park.
         if Waiter = nil then
           Waiter := FSendCreditWaiters.NewWaiter;
         Waiter.Register;
+        // the peer flag is set outside FLock: test it after Register too
+        if (AAbort <> nil) and (InterlockedExchangeAdd(AAbort^, 0) <> 0) then
+          Exit(0);
       finally
         FLock.Release;
       end;

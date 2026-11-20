@@ -5,3 +5,5 @@ Http2.Client.ConnectionSettings.Test.pas	TConnectionSettingsRegressionTest	TestH
 Http2.Client.ConnectionSettings.Test.pas	TConnectionSettingsRegressionTest	TestSettingsFailureReleasesEncoderLock	Protect lock cleanup on invalid window settings
 Http2.Client.ConnectionSettings.Test.pas	TConnectionSettingsRegressionTest	TestEveryFlowCreditWaiterReceivesItsOwnWake	Keep concurrent send-credit waiters from sharing a coalescing event
 Http2.Client.FlowControl.Test.pas	TFlowControlTest	TestLargeBodyEchoDoesNotStallTheReader	Protect the connection reader from a full lease queue
+Http2.Client.SendCredit.Wakeup.Test.pas	TSendCreditWakeupTest	TestPeerEndWakesWaitingSender	Protect a sender waiting for credit from a lost peer-end wake-up
+Http2.Client.SendCredit.Wakeup.Test.pas	TSendCreditWakeupTest	TestPeerResetWakesWaitingSender	Protect a sender waiting for credit from a lost peer-reset wake-up
