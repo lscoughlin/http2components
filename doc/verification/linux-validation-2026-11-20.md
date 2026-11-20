@@ -235,20 +235,16 @@ The items below are open limits and open defects of this run.
    no longer suppresses `OnClose` and `OnError`. The rule changes HTTP/1.1 also.
    No HTTP/1.1 test of the rule exists, because the mock socket has no
    failure switch.
-3. A window that depends on timing remains in `ReadPeerAlertAfterWriteFailure`
-   on HTTP/2. The function waits at most 100 ms. A TLS client-certificate
-   alert can be lost when the write path fails first. No deterministic test
-   exists.
-4. No test has run on Windows.
-5. No test covers a loss of the network connection with no Close frame for the
+3. No test has run on Windows.
+4. No test covers a loss of the network connection with no Close frame for the
    WebSocket client. The repository has no TCP relay helper.
-6. The task `packages:check` did not run on Linux, because the image has no
+5. The task `packages:check` did not run on Linux, because the image has no
    `lazbuild`.
-7. The distribution of the classes of the independent harness differs from the
+6. The distribution of the classes of the independent harness differs from the
    distribution of an earlier Linux run, because the peers differ. The count of
    WORSE is 0, and the count of UNKNOWN is 62.
-8. The connection load and the million-request runs were 4 to 5 percent slower
+7. The connection load and the million-request runs were 4 to 5 percent slower
    than in the previous Linux run. A million-request run took 381 to 389 s in
    this run, and 364 to 371 s in the previous run.
-9. The peer limitations in the section above remain: three Squid cases
+8. The peer limitations in the section above remain: three Squid cases
    skipped, and the case A.8 of `nghttpd` skipped.

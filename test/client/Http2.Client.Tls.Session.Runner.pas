@@ -854,6 +854,60 @@ begin
   end;
 end;
 
+{ The peer alert arrives after the write failed.  AInterruptFirst queues a
+  frame wake before the failed write, as a stream does, so the first read of
+  the recovery is interrupted.  The alert arrives 150 ms after that read
+  started, longer than the former 100 ms read deadline. }
+procedure CheckDelayedPeerAlert(const AInterruptFirst: Boolean;
+  const AWhat: string);
+var
+  Raw: TPartialStream;
+  RawSocket, Socket: IHttp2Socket;
+  Context: ITLSContext;
+  Wake: IReadInterrupt;
+  Driver: TDelayedAlertThread;
+  Alert, Payload: TBytes;
+  GotAlert: Boolean;
+  Failure: string;
+begin
+  Raw := TPartialStream.Create;
+  Raw.EnableReadBlocking;
+  Raw.EnableTimeoutRaise;
+  RawSocket := Raw;
+  Context := TTlsFakeContext.Create([trClient], tlsAuthNone, 0);
+  Socket := TTlsSocket.Create(RawSocket, 'example.test', Context, nil,
+    ['h2'], 1000);
+  SetLength(Alert, 1);
+  Alert[0] := $FA;
+  if AInterruptFirst then
+  begin
+    Check(Supports(Socket, IReadInterrupt, Wake), 'TLS socket has no interrupt');
+    Wake.EnableInterrupt;
+    Wake.InterruptRead;
+  end;
+  Raw.FailNextWrite;
+  Driver := TDelayedAlertThread.Create(Raw, 150, Alert);
+  Driver.Start;
+  Payload := Bytes('preface');
+  GotAlert := False;
+  Failure := '';
+  try
+    Socket.Write(Payload[0], Length(Payload));
+  except
+    on E: EHttpTlsClientAuthError do
+      GotAlert := E.Alert = 'certificate required';
+    on E: Exception do
+      Failure := E.ClassName + ': ' + E.Message;
+  end;
+  Driver.WaitFor;
+  Driver.Free;
+  Check(GotAlert, AWhat + ' lost the client-certificate alert: ' + Failure);
+  Socket.Close;
+  Socket := nil;
+  RawSocket := nil;
+  Context := nil;
+end;
+
 var
   Cases: Integer;
 begin
@@ -904,5 +958,9 @@ begin
   TestWriteFailureZeroFeedDoesNotRetryOutput; Inc(Cases);
   WriteLn('RUN alert-read-session-lock'); Flush(Output);
   TestAlertReadDoesNotHoldSessionLock; Inc(Cases);
+  WriteLn('RUN delayed-peer-alert'); Flush(Output);
+  CheckDelayedPeerAlert(False, 'an alert after the read deadline'); Inc(Cases);
+  WriteLn('RUN interrupted-peer-alert'); Flush(Output);
+  CheckDelayedPeerAlert(True, 'an alert after an interrupted read'); Inc(Cases);
   WriteLn('PASS ', Cases, ' cases');
 end.
