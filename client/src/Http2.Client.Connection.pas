@@ -24,7 +24,7 @@ uses
   Http2.Client.Connection.Queue, Http2.Client.Connection.SendCredit,
   Http2.Client.Connection.Credit, Http2.Client.Connection.HeaderBlock,
   Http2.Client.Connection.Control,
-  Http2.Client.Config.Security;
+  Http2.Client.Config.Security, Http2.Client.Connection.Peer;
 
 const
   /// connection-level receive window we advertise (RFC 7540 section 6.9.2)
@@ -150,6 +150,7 @@ type
     FCredit: TReceiveCreditTracker;
     FSendCreditWaiters: ISendCreditWaiterRegistry;
     FSecurity: TClientSecurityOptions;
+    FPeerGate: TPeerSettingsGate;
     function GetState: TConnectionState;
     function GetWorkerHeaderStream: LongWord;
     function GetPeerSettings: TConnectionSettings;
@@ -204,6 +205,10 @@ type
     /// bounded, event-driven wait for a lifecycle state (test/pool seam)
     function WaitForState(const AState: TConnectionState;
       const ATimeoutMs: Integer): Boolean;
+    /// wait up to ATimeoutMs for the first peer SETTINGS frame (False on timeout or failure)
+    function WaitForPeerSettings(const ATimeoutMs: Integer): Boolean;
+    /// True once a peer SETTINGS frame enabled the extended CONNECT (RFC 8441 section 3)
+    function PeerAllowsExtendedConnect: Boolean;
     /// record a peer GOAWAY; stops new streams, marks higher ids retryable
     procedure MarkGoAway(const ALastStreamId: LongWord);
     /// move to a failed state and unblock every waiter (thread-internal seam)
@@ -274,28 +279,10 @@ type
     property Security: TClientSecurityOptions read FSecurity;
   end;
 
-/// the 24-byte client connection preface (RFC 7540 section 3.5)
-function ClientPrefaceBytes: TBytes;
-
 implementation
 
 uses
   Http2.Client.Connection.Thread;
-
-const
-  cClientPreface: array[0..23] of Byte = (
-    $50, $52, $49, $20, $2A, $20, $48, $54, $54, $50, $2F, $32, $2E, $30,
-    $0D, $0A, $0D, $0A, $53, $4D, $0D, $0A, $0D, $0A);
-
-function ClientPrefaceBytes: TBytes;
-var
-  I: Integer;
-begin
-  Result := nil;
-  SetLength(Result, SizeOf(cClientPreface));
-  for I := 0 to High(cClientPreface) do
-    Result[I] := cClientPreface[I];
-end;
 
 constructor TBlockingQueue<T>.Create(const ACapacity: Integer);
 begin
@@ -379,6 +366,7 @@ begin
   FCredit.StreamCreditOnRead := True;
   FStreams := TDictionary<LongWord, IConnectionStream>.Create;
   FStreamOneReserved := False;
+  FPeerGate := TPeerSettingsGate.Create;
 end;
 
 destructor TConnection.Destroy;
@@ -391,6 +379,7 @@ begin
   FreeAndNil(FFlowControl);
   FreeAndNil(FNotifications);
   FreeAndNil(FStreams);
+  FreeAndNil(FPeerGate);
   RTLEventDestroy(FStateEvent);
   FSendCreditWaiters := nil;
   FLock.Free;
@@ -554,6 +543,12 @@ begin
   end;
 end;
 
+function TConnection.WaitForPeerSettings(const ATimeoutMs: Integer): Boolean;
+begin Result := FPeerGate.Wait(ATimeoutMs); end;
+
+function TConnection.PeerAllowsExtendedConnect: Boolean;
+begin Result := FPeerGate.AllowsExtendedConnect; end;
+
 function TConnection.GetState: TConnectionState;
 begin
   FLock.Acquire;
@@ -583,6 +578,7 @@ begin
     FLock.Release;
   end;
   RTLEventSetEvent(FStateEvent);
+  if AValue = csClosed then FPeerGate.NoteFailed;
   // a sender parked on send credit must not outlive the state it waited on
   if AValue in [csGoAway, csClosed] then
     WakeSendCredit;
@@ -629,6 +625,7 @@ begin
     if Locked and (FHeaderEncoderLock <> nil) then
       FHeaderEncoderLock.Release;
   end;
+  FPeerGate.NoteSettings(ASettings.EnableConnectProtocol);
   // wake every sender: a raised window grants credit, and a sender parked only
   // because the peer's SETTINGS had not arrived is now unblocked
   WakeSendCredit;
@@ -793,6 +790,7 @@ begin
     FLock.Release;
   end;
   RTLEventSetEvent(FStateEvent);
+  FPeerGate.NoteFailed;
   WakeSendCredit;
   // fail every in-flight stream and release every blocked waiter
   FOutbound.Shutdown;

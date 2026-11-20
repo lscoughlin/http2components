@@ -62,7 +62,7 @@ implementation
 
 uses
   Http2.Client.Clock, Http2.Client.Observer, Http2.Common.Hpack,
-  Http2.Common.FlowControl;
+  Http2.Common.FlowControl, Http2.Client.Connection.Preface;
 
 { TSocketStream: adapts an IHttp2Socket to the TStream ReadFrame/WriteFrame
   API. A read timeout before the first byte of a frame is re-raised so the

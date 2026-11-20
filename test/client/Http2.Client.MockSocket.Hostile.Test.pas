@@ -17,7 +17,7 @@ uses
   SysUtils, fpcunit, testregistry,
   Http2.Common.Frames, Http2.Client.Connection, Http2.Client.MockSocket.Support,
   Http2.Client.MockSocket.TestSupport, Http2.Client.MockSocket.Frames,
-  Http2.Client.MockSocket.Hostile;
+  Http2.Client.MockSocket.Hostile, Http2.Client.Connection.Preface;
 
 type
   THostilePeerTest = class(TTestCase)
