@@ -1,8 +1,14 @@
 # Changelog
 
-## 0.35.0 — in development
+## 0.34.1 — 2026-11-21 (source release)
 
-- Version bump after the 0.34.0 source release.
+- This release is a source release. It has no binary artifacts.
+- This release fixes two defects of 0.34.0, one in the client and one in the server. It has
+  no change of the API.
+- Documentation: the pages of the server I/O pool and of the client mutual TLS describe the
+  abortive close and the report of a rejected client certificate. The WebSocket client has
+  HTTP/1.1 tests of the failed-write rule. The verification records list only the items that
+  remain open.
 
 ### Client
 

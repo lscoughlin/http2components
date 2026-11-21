@@ -1,7 +1,7 @@
-# http2components 0.35.0
+# http2components 0.34.1
 
 This repository contains Free Pascal HTTP/2 client and server libraries. The
-source version is 0.35.0. This text does not state that the version is a
+source version is 0.34.1. This text does not state that the version is a
 published release.
 
 ## Public units and packages
@@ -17,7 +17,7 @@ published release.
 
 Production units are in five source roots: `common/src`, `client/src`,
 `server/src`, `tls/openssl/src`, and `tls/tlslib/src`. Readers remain
-separate from client core. All six packages use version 0.35.0.
+separate from client core. All six packages use version 0.34.1.
 
 Applications select a provider by creating a context and passing it to a role
 factory with `WithTlsContext`. HTTPS proxy TLS uses the separate
@@ -196,7 +196,10 @@ interoperability and conformance gates, the live gates, the real peer
 matrices, the Unix socket gate, the load stages and repeated runs of the
 suites that use threads. The WebSocket over HTTP/2 client (RFC 8441) is part
 of the run. The task `packages:check` did not run on Linux, because the image
-has no `lazbuild`. No test has run on Windows. The peer limitations and the
+has no `lazbuild`. Version 0.34.1 changes the code of version 0.34.0 in two places
+(the read of a TLS alert after a failed write in the client, and the abortive
+close of the server). The Linux run did not use that code. The unit and
+integration suites ran on macOS arm64 on the code of 0.34.1. No test has run on Windows. The peer limitations and the
 open items are recorded in the [current verification
 record](doc/verification/current-status.md), the [Linux validation
 record](doc/verification/linux-validation-2026-11-20.md), the [Linux

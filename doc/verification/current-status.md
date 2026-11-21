@@ -22,6 +22,16 @@ WebSocket sessions and 10,000 server-sent event streams. That stage ran on commi
 commits is the `load` mode of `examples/server/ws_echo.pas`, which raises the
 WebSocket session limit to 30000.
 
+Version 0.34.1 follows version 0.34.0. It changes the code in two places: the client
+reads a TLS alert for up to 300 ms after a failed write, and the server ignores a
+failed `SO_LINGER` call when it aborts a connection. The Linux run did not use that
+code. On macOS arm64 the client suite ran 1244 tests, the server suite 1086 tests and
+the integration task 55 tests on the code of version 0.34.1, each with 0 errors and
+0 failures. The TLS alert change has two deterministic tests. The `SO_LINGER` change has
+no deterministic test, because a test needs a way to make the call fail. The suite
+`TDetachLiveTest` exercises the abortive close, and it ran 30 times in a row with no
+failure.
+
 ## Records
 
 | Record | Content |
