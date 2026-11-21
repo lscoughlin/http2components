@@ -6,7 +6,7 @@
     <Type Value="RunTimeOnly" />
     <Author Value="Liam Seamus Coughlin" />
     <Description Value="HTTP/2 openssl library for Free Pascal" />
-    <Version Major="0" Minor="34" Release="1" Build="0" />
+    <Version Major="0" Minor="35" Release="0" Build="0" />
     <License Value="Apache-2.0 OR (LGPL-2.1-only WITH Independent-modules-exception)" />
     <CompilerOptions>
       <Version Value="11" />
