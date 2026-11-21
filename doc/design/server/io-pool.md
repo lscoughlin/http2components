@@ -246,6 +246,18 @@ it closes an idle connection with no open stream and no queued output. The
 close is `TAsyncConnections.ConnectionRemove` (`mormot.net.async.pas`),
 because a write to an idle connection would itself need the write lock.
 
+## The abortive close
+
+`THttp2AsyncConnection.CloseAbortively` (`server/src/Http2.Server.Async.pas`)
+ends a connection that the server aborts, for example on a `Stop` with `ccAbort`
+or after a failed write. It sets the socket option `SO_LINGER` to zero, so that
+the close does not wait for queued output, and then it removes the connection
+with `TAsyncConnections.ConnectionRemove`. The peer may have reset the socket
+already. The system call can then fail (`EINVAL` on macOS). `AbortLinger`
+(`server/src/Http2.Server.Async.Socket.pas`) ignores that failure. The
+connection is therefore always removed, and no exception leaves the call that
+started the close.
+
 ## The age sweep
 
 mORMot2 calls `OnLastOperationIdle` only for a connection that did no read

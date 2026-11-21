@@ -19,7 +19,7 @@ related:
   - "[errors-redirects](errors-redirects.md)"
   - "[request-observability](request-observability.md)"
   - "[open-questions](open-questions.md)"
-updated: 2026-11-20
+updated: 2026-11-21
 notes:
   - The current TLS identity contract uses common provider-loaded identities.
 ---
@@ -80,6 +80,17 @@ presented invalid certificate is rejected in request and require modes. A
 required certificate policy cannot be combined with cleartext access. A
 cleartext connection has no TLS certificate identity. System trust is
 provider policy and the TlsLib provider does not support it.
+
+In TLS 1.3 the client finishes its handshake before the server checks the client
+certificate. A server in require mode can therefore reject a missing or invalid
+certificate after the handshake, with a TLS alert such as "certificate required".
+The request then fails with `EHttpTlsClientAuthError`, which carries the alert. When a
+write of the connection fails before the client has read the alert, the client reads
+the transport for the alert for at most `cPeerAlertReadMs` (300 ms,
+`Http2.Client.Tls.Socket`). It reads again after a timeout or an interrupt, and it
+stops at the end of the span, at the end of the stream, or on a reset. A peer that
+stays silent therefore delays the failure by 300 ms at most, and the failure is then
+an `EHttpConnectionError` of the write.
 
 OpenSSL identities support PEM and PKCS#12 files or memory. TlsLib identities
 support PEM and PKCS#12 files or memory; DER is unsupported. OpenSSL exposes
